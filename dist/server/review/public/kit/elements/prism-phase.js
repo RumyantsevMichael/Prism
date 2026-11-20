@@ -1,10 +1,8 @@
-// prism-phase: a slice phase as the mark's facet in the phase's color and its name, plain or boxed as a tag.
+// Generated from src/server/review/public/kit/elements/prism-phase.ts by scripts/native-build/compile.mjs.
 import { Base, setAttribute, shadow } from "./base.js";
 import { unwatchShortening, watchShortening } from "../shorten.js";
-
-export const PHASES = Object.freeze(["requirements", "design", "frozen", "build", "review", "shipped"]);
-
-export class PrismPhase extends Base {
+const PHASES = Object.freeze(["requirements", "design", "frozen", "build", "review", "shipped"]);
+class PrismPhase extends Base {
   static tag = "prism-phase";
   static styles = ["prism-phase.css"];
   static observedAttributes = ["label"];
@@ -18,24 +16,24 @@ export class PrismPhase extends Base {
     states: ["plain", "tag", "phases"],
     keyboard: ["A phase whose text is shortened joins the Tab order so its full text can be read."]
   };
-
   constructor() {
     super();
     this.root = shadow(this, PrismPhase.styles, `<span class="phase" part="phase"><span class="facet" aria-hidden="true"></span><span class="text"><slot></slot></span></span>`);
   }
-
   connectedCallback() {
     this.attributeChangedCallback();
     watchShortening(this, this.root.querySelector(".text"));
   }
-
   attributeChangedCallback() {
     const label = this.getAttribute("label");
     setAttribute(this, "role", label ? "img" : null);
     setAttribute(this, "aria-label", label || null);
   }
-
   disconnectedCallback() {
     unwatchShortening(this);
   }
 }
+export {
+  PHASES,
+  PrismPhase
+};

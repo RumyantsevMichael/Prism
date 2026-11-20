@@ -1,18 +1,14 @@
-// prism-time: a time in words, such as 5 min ago or 30 min left, in light DOM, that keeps its words current every minute while it is shown.
+// Generated from src/server/review/public/kit/elements/prism-time.ts by scripts/native-build/compile.mjs.
 import { Base, setAttribute } from "./base.js";
 import { agoText, everyMinute, exactTime, timeLeft } from "../claim-time.js";
-
 const FORMATS = ["ago", "short", "left"];
-
-/** The words of a time in a format: `ago` as 5 min ago, `short` as 5 min or now, `left` as 30 min left or Expired 4 min ago. */
-export function timeWords(datetime, format = "ago", now = Date.now()) {
+function timeWords(datetime, format = "ago", now = Date.now()) {
   if (format === "left") return timeLeft(datetime, now).text;
   const ago = agoText(datetime, now);
   if (format === "short") return ago === "just now" ? "now" : ago.replace(/ ago$/, "");
   return ago;
 }
-
-export class PrismTime extends Base {
+class PrismTime extends Base {
   static tag = "prism-time";
   static observedAttributes = ["datetime", "format"];
   static catalog = {
@@ -24,25 +20,20 @@ export class PrismTime extends Base {
     states: ["ago", "short", "left", "expired"],
     keyboard: ["A time takes no keys; it is text."]
   };
-
   connectedCallback() {
     this.update();
     this.stop ??= everyMinute(() => this.update());
   }
-
   disconnectedCallback() {
     this.stop?.();
     this.stop = null;
   }
-
   attributeChangedCallback() {
     if (this.isConnected) this.update();
   }
-
   get format() {
     return FORMATS.includes(this.getAttribute("format")) ? this.getAttribute("format") : "ago";
   }
-
   update() {
     const datetime = this.getAttribute("datetime") ?? "";
     const words = timeWords(datetime, this.format);
@@ -52,3 +43,7 @@ export class PrismTime extends Base {
     setAttribute(this, "tip", exactTime(datetime) || null);
   }
 }
+export {
+  PrismTime,
+  timeWords
+};

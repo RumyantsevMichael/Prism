@@ -1,3 +1,4 @@
+// Generated from src/hooks/record-session-trace.mts by scripts/native-build/compile.mjs.
 import { createHash } from "node:crypto";
 import { realpath as defaultRealpath, stat as defaultStat } from "node:fs/promises";
 import path from "node:path";
@@ -25,16 +26,14 @@ import {
 import { recordFinishedRuns } from "../server/session/run-records.mjs";
 import { readWorkflowConfig, runStatisticsCollection } from "../server/workflow/workflow-config.mjs";
 import { configureRecordSync } from "../server/workflow/record-store-sync.mjs";
-
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 const DEFAULT_USAGE_READ_BUDGET_MS = 1500;
-// Run finalization starts no trace read and no append after this point of the hook, which the host stops after 5 s.
 const FINALIZATION_BUDGET_MS = 2500;
-const RUN_ENDING_EVENTS = new Set(["SessionEnd", "SubagentStop"]);
+const RUN_ENDING_EVENTS = /* @__PURE__ */ new Set(["SessionEnd", "SubagentStop"]);
 const AGENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
-const USAGE_READ_EVENTS = new Set(["PostToolUse", "PostToolUseFailure", "PreCompact", "SubagentStop", "SessionEnd"]);
-const TOOL_EVENTS = new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure"]);
-const TOOL_RESULT_EVENTS = new Set(["PostToolUse", "PostToolUseFailure"]);
+const USAGE_READ_EVENTS = /* @__PURE__ */ new Set(["PostToolUse", "PostToolUseFailure", "PreCompact", "SubagentStop", "SessionEnd"]);
+const TOOL_EVENTS = /* @__PURE__ */ new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure"]);
+const TOOL_RESULT_EVENTS = /* @__PURE__ */ new Set(["PostToolUse", "PostToolUseFailure"]);
 const MAX_ESTIMATED_RESPONSE_BYTES = 1024 * 1024;
 const CUSTOM_EVENT_KEYS = [
   "event_id",
@@ -57,7 +56,7 @@ const EVENT_TYPES = new Set(SESSION_TRACE_EVENT_TYPES);
 const COVERAGE = new Set(SESSION_TRACE_COVERAGE);
 const GAP_REASONS = new Set(SESSION_TRACE_GAP_REASONS);
 const HOST_EVENTS = new Set(SESSION_TRACE_HOST_EVENTS);
-const BUILTIN_TOOL_CATEGORIES = new Map([
+const BUILTIN_TOOL_CATEGORIES = /* @__PURE__ */ new Map([
   ["read", "read"],
   ["read_file", "read"],
   ["read-source", "read"],
@@ -77,25 +76,21 @@ const BUILTIN_TOOL_CATEGORIES = new Map([
   ["shell", "shell"],
   ["exec_command", "shell"]
 ]);
-const PROVIDER_TOOL_CATEGORIES = new Map([
+const PROVIDER_TOOL_CATEGORIES = /* @__PURE__ */ new Map([
   ["codegraph_context", "search"],
   ["codegraph_explore", "search"],
   ["mcp__codegraph__codegraph_context", "search"],
   ["mcp__codegraph__codegraph_explore", "search"]
 ]);
-
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-
 function nonemptyString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
-
 function safeCount(value) {
-  return Number.isSafeInteger(value) ? value : undefined;
+  return Number.isSafeInteger(value) ? value : void 0;
 }
-
 function timestamp(value, now) {
   if (typeof value === "string") {
     const parsed = new Date(value);
@@ -107,45 +102,30 @@ function timestamp(value, now) {
   const date = current instanceof Date ? current : new Date(current);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
-
 function normalizedHostEvent(value) {
   const name = nonemptyString(value);
   return name && HOST_EVENTS.has(name) ? name : "Unknown";
 }
-
 function toolCategory(toolName) {
   const exact = nonemptyString(toolName) ?? "";
   const normalized = exact.toLowerCase();
-  return BUILTIN_TOOL_CATEGORIES.get(normalized)
-    ?? PROVIDER_TOOL_CATEGORIES.get(exact)
-    ?? "unknown";
+  return BUILTIN_TOOL_CATEGORIES.get(normalized) ?? PROVIDER_TOOL_CATEGORIES.get(exact) ?? "unknown";
 }
-
 function isSameOrDescendant(root, candidate) {
   const relative = path.relative(root, candidate);
-  return relative === "" || (
-    relative !== ".."
-    && !relative.startsWith(`..${path.sep}`)
-    && !path.isAbsolute(relative)
-  );
+  return relative === "" || relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
-
 function rebaseAbsolutePath(value, aliases) {
   const normalized = path.normalize(value);
   for (const alias of aliases) {
     if (!alias?.raw || !alias?.canonical) continue;
     const relative = path.relative(path.normalize(alias.raw), normalized);
-    if (relative === "" || (
-      relative !== ".."
-      && !relative.startsWith(`..${path.sep}`)
-      && !path.isAbsolute(relative)
-    )) {
+    if (relative === "" || relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) {
       return path.join(alias.canonical, relative);
     }
   }
   return normalized;
 }
-
 async function canonicalSourcePath(candidate, realpath) {
   let cursor = candidate;
   const suffix = [];
@@ -162,7 +142,6 @@ async function canonicalSourcePath(candidate, realpath) {
     }
   }
 }
-
 async function sourceLocation(toolInput, { projectRoot, currentWorkingDirectory, pathAliases, realpath }) {
   if (!isObject(toolInput)) {
     return { location: null, pathProvided: false, insideProject: false };
@@ -184,11 +163,11 @@ async function sourceLocation(toolInput, { projectRoot, currentWorkingDirectory,
     return { location: null, pathProvided: true, insideProject: false };
   }
   const rawStart = safeCount(toolInput.start_line) ?? safeCount(toolInput.offset);
-  const startLine = rawStart === undefined ? null : Math.max(1, rawStart);
+  const startLine = rawStart === void 0 ? null : Math.max(1, rawStart);
   const rawEnd = safeCount(toolInput.end_line);
   const limit = safeCount(toolInput.limit);
   let endLine = rawEnd ?? null;
-  if (endLine === null && startLine !== null && limit !== undefined && limit > 0) {
+  if (endLine === null && startLine !== null && limit !== void 0 && limit > 0) {
     endLine = startLine + limit - 1;
   }
   return {
@@ -197,7 +176,6 @@ async function sourceLocation(toolInput, { projectRoot, currentWorkingDirectory,
     insideProject: true
   };
 }
-
 function observedCounts(input) {
   const counts = {};
   const values = {
@@ -208,28 +186,20 @@ function observedCounts(input) {
     exitCode: safeCount(input.exit_code)
   };
   for (const [key, value] of Object.entries(values)) {
-    if (value !== undefined) {
+    if (value !== void 0) {
       counts[key] = value;
     }
   }
   return counts;
 }
-
 function estimatedCodexResponseTokens(input, collector, traceBehavior) {
-  if (
-    collector !== "codex-hook"
-    || safeCount(input.rendered_tokens) !== undefined
-    || safeCount(input.rendered_token_count) !== undefined
-  ) {
+  if (collector !== "codex-hook" || safeCount(input.rendered_tokens) !== void 0 || safeCount(input.rendered_token_count) !== void 0) {
     return null;
   }
   if (traceBehavior?.modelFacingResponseShape !== "bounded-string") {
     return { status: "missing" };
   }
-  if (
-    typeof input.tool_response !== "string"
-    || Buffer.byteLength(input.tool_response, "utf8") > MAX_ESTIMATED_RESPONSE_BYTES
-  ) {
+  if (typeof input.tool_response !== "string" || Buffer.byteLength(input.tool_response, "utf8") > MAX_ESTIMATED_RESPONSE_BYTES) {
     return { status: "missing" };
   }
   return {
@@ -237,7 +207,6 @@ function estimatedCodexResponseTokens(input, collector, traceBehavior) {
     count: approximateTokenCounter.count(input.tool_response)
   };
 }
-
 async function canonicalDirectory(value, realpath, stat) {
   const normalized = nonemptyString(value);
   if (!normalized || !path.isAbsolute(normalized)) return null;
@@ -249,29 +218,20 @@ async function canonicalDirectory(value, realpath, stat) {
     return null;
   }
 }
-
 function hasCodexMarker(hookInput, environment) {
   return Boolean(
-    nonemptyString(environment.CODEX_VERSION)
-    || nonemptyString(hookInput.turn_id)
-    || Object.hasOwn(hookInput, "subagent")
+    nonemptyString(environment.CODEX_VERSION) || nonemptyString(hookInput.turn_id) || Object.hasOwn(hookInput, "subagent")
   );
 }
-
 function exactCustomEvent(value) {
   return isObject(value) && Object.keys(value).every((key) => CUSTOM_EVENT_KEYS.includes(key));
 }
-
 function baseEvent({ input, eventType, occurredAt, hostEvent, collector, suffix, source = null }) {
   const sessionId = nonemptyString(input.session_id) ?? nonemptyString(input.sessionId);
   const projectRoot = nonemptyString(input.cwd) ?? nonemptyString(input.project_root);
-  const externalId = nonemptyString(input.event_id)
-    ?? nonemptyString(input.hook_event_id)
-    ?? nonemptyString(input.tool_use_id);
+  const externalId = nonemptyString(input.event_id) ?? nonemptyString(input.hook_event_id) ?? nonemptyString(input.tool_use_id);
   const stableSuffix = suffix.split(occurredAt).join("event-time");
-  const eventId = externalId
-    ? `host:${createHash("sha256").update(externalId, "utf8").digest("hex")}:${hostEvent}:${eventType}:${stableSuffix}`
-    : `${sessionId ?? "missing"}:${suffix}`;
+  const eventId = externalId ? `host:${createHash("sha256").update(externalId, "utf8").digest("hex")}:${hostEvent}:${eventType}:${stableSuffix}` : `${sessionId ?? "missing"}:${suffix}`;
   return {
     sessionId,
     projectRoot,
@@ -286,14 +246,11 @@ function baseEvent({ input, eventType, occurredAt, hostEvent, collector, suffix,
     provenance: { collector, hostEvent }
   };
 }
-
 function normalizeCustomEvent({ input, custom, occurredAt, collector }) {
   if (!exactCustomEvent(custom) || !EVENT_TYPES.has(custom.event_type) || ["first_edit", "prism_call"].includes(custom.event_type)) {
     return null;
   }
-  const eventType = custom.event_type === "edit" && custom.confirmed_success !== true
-    ? "edit_attempt"
-    : custom.event_type;
+  const eventType = custom.event_type === "edit" && custom.confirmed_success !== true ? "edit_attempt" : custom.event_type;
   const event = baseEvent({
     input: { ...input, event_id: custom.event_id },
     eventType,
@@ -301,13 +258,11 @@ function normalizeCustomEvent({ input, custom, occurredAt, collector }) {
     hostEvent: "Custom",
     collector,
     suffix: `custom:${eventType}:${occurredAt}`,
-    source: custom.source_path
-      ? {
-          path: custom.source_path,
-          startLine: custom.start_line ?? null,
-          endLine: custom.end_line ?? null
-        }
-      : null
+    source: custom.source_path ? {
+      path: custom.source_path,
+      startLine: custom.start_line ?? null,
+      endLine: custom.end_line ?? null
+    } : null
   });
   event.counts = observedCounts(custom);
   if (nonemptyString(custom.model)) {
@@ -325,7 +280,6 @@ function normalizeCustomEvent({ input, custom, occurredAt, collector }) {
   }
   return event;
 }
-
 async function readRunStatisticsSwitch(projectRoot) {
   try {
     return runStatisticsCollection(await readWorkflowConfig(projectRoot));
@@ -333,21 +287,15 @@ async function readRunStatisticsSwitch(projectRoot) {
     return "unknown";
   }
 }
-
-// A run-statistics trace is keyed by the digest of "<session digest>\0<execution>", so a reader holding only the
-// session correlation key finds the root execution's trace, and link events name each subagent trace by that digest.
 function executionKeyFor(sessionId, execution) {
   return `${hashSessionTraceValue(sessionId, "sessionId")}\0${execution}`;
 }
-
 function sha256(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
-
-// Run-statistics events go to execution traces keyed by executionKey, never to the root session trace.
 function runStatisticsEvent({ base, executionKey, executionHash, eventType, eventId, occurredAt, counts = {}, call = null, prismCall = null }) {
   return {
-    ...(eventType === "prism_call" ? { prismCall } : {}),
+    ...eventType === "prism_call" ? { prismCall } : {},
     sessionId: base.sessionId,
     projectRoot: base.projectRoot,
     executionKey,
@@ -355,20 +303,18 @@ function runStatisticsEvent({ base, executionKey, executionHash, eventType, even
     eventType,
     occurredAt,
     counts,
-    hashValues: { execution: executionHash, ...(call ? { call } : {}) },
+    hashValues: { execution: executionHash, ...call ? { call } : {} },
     coverage: eventType === "session_start" ? "exact" : null,
     gapReason: null,
     provenance: { collector: base.collector, hostEvent: base.hostEvent }
   };
 }
-
 function runStatisticsGap(options, gapReason, coverage = "partial") {
   const event = runStatisticsEvent({ ...options, eventType: "coverage_gap" });
   event.coverage = coverage;
   event.gapReason = gapReason;
   return event;
 }
-
 function claudeUsageEvents(result, options) {
   if (result.status === "absent" || result.status === "empty") return [];
   const gapId = `usage-unavailable:${options.base.hostEvent}:${options.base.callId ?? ""}:${options.occurredAt}`;
@@ -388,10 +334,9 @@ function claudeUsageEvents(result, options) {
     counts
   })];
 }
-
 function codexUsageEvents(metadata, options) {
   const usage = metadata?.totalTokenUsage ?? null;
-  if (metadata?.status === "SUPPORTED" && usage === null && metadata.contextWindowTokens === undefined) {
+  if (metadata?.status === "SUPPORTED" && usage === null && metadata.contextWindowTokens === void 0) {
     return [];
   }
   if (usage === null) {
@@ -412,7 +357,6 @@ function codexUsageEvents(metadata, options) {
     counts
   })];
 }
-
 async function runStatisticsEvents({
   hookInput,
   hostEvent,
@@ -430,28 +374,26 @@ async function runStatisticsEvents({
   const callId = nonemptyString(hookInput.tool_use_id);
   const base = { sessionId, projectRoot, collector, hostEvent, callId };
   const rootOptions = { base, executionKey: rootKey, executionHash: rootKey, occurredAt };
-  const incomplete = (options = rootOptions) => [runStatisticsGap({
-    ...options,
+  const incomplete = (options2 = rootOptions) => [runStatisticsGap({
+    ...options2,
     eventId: `observation-incomplete:${hostEvent}:${callId ?? ""}:${occurredAt}`
   }, "observation-incomplete")];
-  const lifecycle = (options) => {
+  const lifecycle = (options2) => {
     if (hostEvent === "SessionStart") {
-      return [runStatisticsEvent({ ...options, eventType: "session_start", eventId: `session-start:${sha256(options.executionHash)}` })];
+      return [runStatisticsEvent({ ...options2, eventType: "session_start", eventId: `session-start:${sha256(options2.executionHash)}` })];
     }
     if (hostEvent === "SessionEnd") {
-      return [runStatisticsEvent({ ...options, eventType: "session_end", eventId: `session-end:${sha256(options.executionHash)}` })];
+      return [runStatisticsEvent({ ...options2, eventType: "session_end", eventId: `session-end:${sha256(options2.executionHash)}` })];
     }
     return [];
   };
-  const toolSpan = (options) => {
+  const toolSpan = (options2) => {
     if (!TOOL_EVENTS.has(hostEvent)) return [];
-    if (!callId) return incomplete(options);
+    if (!callId) return incomplete(options2);
     const eventType = hostEvent === "PreToolUse" ? "tool_start" : "tool_end";
-    return [runStatisticsEvent({ ...options, eventType, eventId: `${eventType}:${callId}`, call: callId })];
+    return [runStatisticsEvent({ ...options2, eventType, eventId: `${eventType}:${callId}`, call: callId })];
   };
-  // A Prism call that names a target adds one prism_call after its tool_end and before the usage read.
-  // A target whose project config cannot be read adds a prism_call without target facts, which lowers the following cost.
-  const prismCall = async (options) => {
+  const prismCall = async (options2) => {
     if (!TOOL_RESULT_EVENTS.has(hostEvent) || !callId) return [];
     let target = null;
     try {
@@ -466,17 +408,14 @@ async function runStatisticsEvents({
     }
     if (!isObject(target)) return [];
     return [runStatisticsEvent({
-      ...options,
+      ...options2,
       eventType: "prism_call",
-      eventId: `prism-call:${sha256(options.executionHash)}:${callId}`,
+      eventId: `prism-call:${sha256(options2.executionHash)}:${callId}`,
       call: callId,
       prismCall: target.collected === false ? null : target
     })];
   };
-
   if (collector === "codex-hook") {
-    // Codex names a spawned agent by its thread id, so its start link carries the hash its own events use; the
-    // subagent's cost before its own first Prism call then belongs to the root segment current at that link.
     if (hostEvent === "SubagentStart") {
       const agentThread = nonemptyString(hookInput.agent_id);
       if (!agentThread) return incomplete();
@@ -486,16 +425,13 @@ async function runStatisticsEvents({
     const usesThread = ["SessionStart", "SessionEnd", "PreCompact", ...TOOL_EVENTS].includes(hostEvent);
     if (!usesThread) return [];
     if (!threadId || !["root", "subagent"].includes(transcriptMetadata?.execution)) return incomplete();
-    const options = { ...rootOptions, executionHash: threadId };
-    const events = [...lifecycle(options), ...toolSpan(options), ...await prismCall(options)];
-    if (USAGE_READ_EVENTS.has(hostEvent)) events.push(...codexUsageEvents(transcriptMetadata, options));
-    return events;
+    const options2 = { ...rootOptions, executionHash: threadId };
+    const events2 = [...lifecycle(options2), ...toolSpan(options2), ...await prismCall(options2)];
+    if (USAGE_READ_EVENTS.has(hostEvent)) events2.push(...codexUsageEvents(transcriptMetadata, options2));
+    return events2;
   }
-
   const hasAgent = Object.hasOwn(hookInput, "agent_id");
-  const agentId = hasAgent && typeof hookInput.agent_id === "string" && AGENT_ID_PATTERN.test(hookInput.agent_id)
-    ? hookInput.agent_id
-    : null;
+  const agentId = hasAgent && typeof hookInput.agent_id === "string" && AGENT_ID_PATTERN.test(hookInput.agent_id) ? hookInput.agent_id : null;
   if (hasAgent && agentId === null) {
     return ["SubagentStart", "SubagentStop", ...TOOL_EVENTS].includes(hostEvent) ? incomplete() : [];
   }
@@ -514,30 +450,23 @@ async function runStatisticsEvents({
   }
   events.push(...toolSpan(options));
   events.push(...await prismCall(options));
-  if (!USAGE_READ_EVENTS.has(hostEvent) || (agentId === null && hostEvent === "SubagentStop")) return events;
-
+  if (!USAGE_READ_EVENTS.has(hostEvent) || agentId === null && hostEvent === "SubagentStop") return events;
   const rootTranscript = nonemptyString(hookInput.transcript_path);
   let transcriptPath = rootTranscript;
   if (agentId !== null) {
-    transcriptPath = nonemptyString(hookInput.agent_transcript_path)
-      ?? (rootTranscript && path.isAbsolute(rootTranscript) && AGENT_ID_PATTERN.test(sessionId)
-        ? path.join(path.dirname(rootTranscript), sessionId, "subagents", `agent-${agentId}.jsonl`)
-        : null);
+    transcriptPath = nonemptyString(hookInput.agent_transcript_path) ?? (rootTranscript && path.isAbsolute(rootTranscript) && AGENT_ID_PATTERN.test(sessionId) ? path.join(path.dirname(rootTranscript), sessionId, "subagents", `agent-${agentId}.jsonl`) : null);
   }
   let result;
   try {
-    result = transcriptPath
-      ? await readClaudeUsage({ transcriptPath, sessionId, agentId, deadline })
-      : { status: "unreadable" };
+    result = transcriptPath ? await readClaudeUsage({ transcriptPath, sessionId, agentId, deadline }) : { status: "unreadable" };
   } catch {
     result = { status: "unreadable" };
   }
   events.push(...claudeUsageEvents(result, options));
   return events;
 }
-
-export function createSessionTraceNormalizer({
-  now = () => new Date(),
+function createSessionTraceNormalizer({
+  now = () => /* @__PURE__ */ new Date(),
   inspectCodexTranscript = inspectCodexTranscriptMetadata,
   realpath = defaultRealpath,
   stat = defaultStat,
@@ -590,7 +519,6 @@ export function createSessionTraceNormalizer({
           transcriptMetadata = null;
         }
       }
-
       let collector = "host-hook";
       let projectRoot = null;
       let codexExecutionUncertain = false;
@@ -623,8 +551,6 @@ export function createSessionTraceNormalizer({
       if (!projectRoot) {
         return [];
       }
-
-      // A hook input carrying agent_id is a subagent execution and never reaches the root session trace.
       const rootSessionEvents = async () => {
         if (Object.hasOwn(hookInput, "agent_id")) {
           return [];
@@ -636,12 +562,8 @@ export function createSessionTraceNormalizer({
           project_root: projectRoot
         };
         const pathAliases = [
-          ...(collector === "claude-code-hook"
-            ? [{ raw: environment.CLAUDE_PROJECT_DIR, canonical: projectRoot }]
-            : []),
-          ...(rawHookDirectory === nonemptyString(hookInput.project_root)
-            ? [{ raw: hookInput.project_root, canonical: projectRoot }]
-            : []),
+          ...collector === "claude-code-hook" ? [{ raw: environment.CLAUDE_PROJECT_DIR, canonical: projectRoot }] : [],
+          ...rawHookDirectory === nonemptyString(hookInput.project_root) ? [{ raw: hookInput.project_root, canonical: projectRoot }] : [],
           { raw: hookInput.cwd, canonical: currentWorkingDirectory }
         ];
         const makeExecutionGap = () => {
@@ -682,9 +604,7 @@ export function createSessionTraceNormalizer({
             collector,
             suffix: "session-start"
           });
-          event.coverage = !codexExecutionUncertain && COVERAGE.has(hookInput.instrumentation_coverage)
-            ? hookInput.instrumentation_coverage
-            : "partial";
+          event.coverage = !codexExecutionUncertain && COVERAGE.has(hookInput.instrumentation_coverage) ? hookInput.instrumentation_coverage : "partial";
           if (model) {
             event.hashValues.model = model;
           }
@@ -727,7 +647,6 @@ export function createSessionTraceNormalizer({
             suffix: "session-end"
           })];
         }
-
         if (!["PreToolUse", "PostToolUse", "PostToolUseFailure"].includes(hostEvent)) {
           return [];
         }
@@ -770,11 +689,8 @@ export function createSessionTraceNormalizer({
             return [makeGap("missing-token-count"), event];
           }
           event.counts.renderedTokens = estimate.count;
-          return approximateTokenCounter.exact
-            ? [event]
-            : [makeGap("estimated-token-count"), event];
+          return approximateTokenCounter.exact ? [event] : [makeGap("estimated-token-count"), event];
         };
-
         if (hostEvent === "PreToolUse") {
           if (category === "edit") {
             if (locationResult.pathProvided && !locationResult.insideProject) {
@@ -803,9 +719,7 @@ export function createSessionTraceNormalizer({
           return [];
         }
         if (category === "read") {
-          return location
-            ? withRenderedTokenObservation(makeToolEvent("source_read", `source-read:${occurredAt}`))
-            : [makeGap("unsupported-read-path")];
+          return location ? withRenderedTokenObservation(makeToolEvent("source_read", `source-read:${occurredAt}`)) : [makeGap("unsupported-read-path")];
         }
         if (category === "search") {
           return withRenderedTokenObservation(makeToolEvent("search", `search:${occurredAt}`, null));
@@ -814,8 +728,7 @@ export function createSessionTraceNormalizer({
           if (locationResult.pathProvided && !locationResult.insideProject) {
             return [makeGap("unsupported-mutation-path")];
           }
-          const confirmedCodexMutation = collector === "codex-hook"
-            && traceBehavior?.postToolUseSuccessTools.includes(toolName);
+          const confirmedCodexMutation = collector === "codex-hook" && traceBehavior?.postToolUseSuccessTools.includes(toolName);
           const confirmedClaudeMutation = collector === "claude-code-hook";
           if (!confirmedCodexMutation && !confirmedClaudeMutation) {
             return [
@@ -866,8 +779,6 @@ export function createSessionTraceNormalizer({
     }
   };
 }
-
-// The trace identity of a run-statistics event that could not be built, so its loss can still be recorded.
 function lostEventIdentity(eventInput) {
   return {
     sessionDigest: hashSessionTraceValue(eventInput.executionKey, "executionKey"),
@@ -876,9 +787,6 @@ function lostEventIdentity(eventInput) {
     hashes: {}
   };
 }
-
-// Run-statistics events exist only while collection is on, so the hook marks the session pending after its appends and
-// records finished runs: its own at an observed end or a newly opened run, and other quiet sessions of the project.
 async function finishRuns({ dataDirectory, eventInput, latestStored, ownSession, deadline }) {
   try {
     const sessionDigest = hashSessionTraceValue(eventInput.sessionId, "sessionId");
@@ -888,10 +796,8 @@ async function finishRuns({ dataDirectory, eventInput, latestStored, ownSession,
     }
     await recordFinishedRuns({ dataDirectory, projectRoot, sessionDigest, own: ownSession, sweep: true, deadline });
   } catch {
-    // A run that cannot be recorded now stays pending for the next Prism hook or session consumption read.
   }
 }
-
 async function readHookInput(input = process.stdin) {
   const chunks = [];
   let size = 0;
@@ -905,8 +811,7 @@ async function readHookInput(input = process.stdin) {
   }
   return Buffer.concat(chunks).toString("utf8");
 }
-
-export async function recordSessionTrace({
+async function recordSessionTrace({
   input = process.stdin,
   environment = process.env,
   normalizer = createSessionTraceNormalizer(),
@@ -920,9 +825,7 @@ export async function recordSessionTrace({
     const inputText = await readHookInput(input);
     const parsedHookInput = JSON.parse(inputText);
     const hookInput = parsedHookInput;
-    const normalize = typeof normalizer === "function"
-      ? normalizer
-      : normalizer?.normalize?.bind(normalizer);
+    const normalize = typeof normalizer === "function" ? normalizer : normalizer?.normalize?.bind(normalizer);
     if (typeof normalize !== "function" || typeof storeEvent !== "function") {
       return { status: "ignored", reasonCode: SESSION_TRACE_REASON.INVALID_EVENT };
     }
@@ -935,7 +838,6 @@ export async function recordSessionTrace({
     if (!nonemptyString(dataDirectory)) {
       return { status: "ignored", reasonCode: SESSION_TRACE_REASON.NO_DATA_DIRECTORY };
     }
-
     const results = [];
     for (const eventInput of eventInputs.filter((candidate) => !candidate?.executionKey)) {
       const event = createSessionTraceEvent(eventInput);
@@ -943,9 +845,6 @@ export async function recordSessionTrace({
       results.push(result);
       if (!["appended", "duplicate"].includes(result?.status)) break;
     }
-    // Run-statistics events are stored after the root session events, and their failures only lower run-measure coverage.
-    // After the first refused append, that event and every later one are recorded as lost instead of being retried
-    // under the same contended lock, so the affected executions report below exact rather than an exact undercount.
     let refused = false;
     let latestStored = null;
     let openedRun = false;
@@ -969,7 +868,6 @@ export async function recordSessionTrace({
       try {
         await recordLoss(event ?? lostEventIdentity(eventInput), { dataDirectory });
       } catch {
-        // A loss that cannot be recorded stays undetectable; the host action still proceeds.
       }
     }
     if (runInputs.length > 0) {
@@ -986,14 +884,15 @@ export async function recordSessionTrace({
     return { status: "ignored", reasonCode: SESSION_TRACE_REASON.INVALID_EVENT };
   }
 }
-
 async function main() {
-  // A hook must answer within its host's time limit, so its record reads never start a store pull; the session's server keeps the store current.
   configureRecordSync({ pullOnRead: false });
   await recordSessionTrace();
 }
-
 const modulePath = fileURLToPath(import.meta.url);
 if (process.argv[1] && modulePath === path.resolve(process.argv[1])) {
   await main();
 }
+export {
+  createSessionTraceNormalizer,
+  recordSessionTrace
+};

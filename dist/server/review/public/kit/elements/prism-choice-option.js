@@ -1,42 +1,35 @@
-// prism-choice-option: one option of a prism-choice, a native radio input drawn by an indicator, with a title and a description from slot="detail".
+// Generated from src/server/review/public/kit/elements/prism-choice-option.ts by scripts/native-build/compile.mjs.
 import { Base, setAttribute, uniqueId } from "./base.js";
-
-export class PrismChoiceOption extends Base {
+class PrismChoiceOption extends Base {
   static tag = "prism-choice-option";
   static observedAttributes = ["value", "disabled", "tone"];
   static catalog = {
-    purpose: "One option of a prism-choice: a native radio input, drawn by an indicator, with its title and a description from slot=\"detail\".",
+    purpose: 'One option of a prism-choice: a native radio input, drawn by an indicator, with its title and a description from slot="detail".',
     options: [
       { name: "value", values: ["text"], default: "", description: "The value the choice takes when this option is chosen." },
       { name: "tone", values: ["neutral", "danger"], default: "neutral", description: "danger marks an option that rejects or removes." },
       { name: "disabled", values: ["boolean"], default: "false", description: "The option cannot be chosen and arrow keys skip it." },
-      { name: "slot=\"detail\"", values: ["children"], default: "", description: "A description shown below the title." }
+      { name: 'slot="detail"', values: ["children"], default: "", description: "A description shown below the title." }
     ],
     states: ["unchecked", "checked", "danger", "disabled", "detail"],
     keyboard: ["Inside a prism-choice, the arrow keys move the choice to the next or previous enabled option."]
   };
-
   connectedCallback() {
     if (!this.input) this.build();
     this.sync();
   }
-
   attributeChangedCallback() {
     this.sync();
   }
-
   get value() {
     return this.getAttribute("value") ?? "";
   }
-
   get checked() {
     return Boolean(this.input?.checked);
   }
-
   set checked(value) {
     if (this.input) this.input.checked = Boolean(value);
   }
-
   build() {
     const document = this.ownerDocument;
     const id = uniqueId("prism-choice-option");
@@ -69,7 +62,6 @@ export class PrismChoiceOption extends Base {
     this.append(box);
     this.input = input;
   }
-
   sync() {
     const input = this.input;
     if (!input) return;
@@ -83,6 +75,9 @@ export class PrismChoiceOption extends Base {
     input.value = this.value;
     input.disabled = this.hasAttribute("disabled");
     const wanted = choice?.getAttribute("value");
-    if (wanted !== null && wanted !== undefined && wanted === this.value && !choice.touched) input.checked = true;
+    if (wanted !== null && wanted !== void 0 && wanted === this.value && !choice.touched) input.checked = true;
   }
 }
+export {
+  PrismChoiceOption
+};

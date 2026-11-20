@@ -1,7 +1,7 @@
+// Generated from src/server/session/host-adapters/codex-config.mts by scripts/native-build/compile.mjs.
 import { spawn as defaultSpawn } from "node:child_process";
 import path from "node:path";
 import { commandLaunch } from "../../command-launch.mjs";
-
 const CONFIG_KEYS = [
   "model",
   "model_context_window",
@@ -9,13 +9,9 @@ const CONFIG_KEYS = [
   "model_auto_compact_token_limit_scope"
 ];
 const CAPACITY_KEYS = CONFIG_KEYS.slice(1);
-// A Codex app server answers config/read in about 0.3 s, but on a busy Windows runner about one read in thirty took over 1.2 s, and the slowest of 280 took 2.7 s.
-// The read returns as soon as the answer arrives, so the bound costs time only when the app server is slow, and it stays inside the hook's 5 s budget.
-// A hook that runs past its budget is stopped before it writes, so the session keeps the settings it last read.
-const CONFIG_TIMEOUT_MS = 4000;
+const CONFIG_TIMEOUT_MS = 4e3;
 const MAX_APP_SERVER_OUTPUT_BYTES = 1024 * 1024;
-
-export const CODEX_CONFIG_REASON = Object.freeze({
+const CODEX_CONFIG_REASON = Object.freeze({
   NO_CWD: "NO_CWD",
   INVALID_CWD: "INVALID_CWD",
   APP_SERVER_UNAVAILABLE: "APP_SERVER_UNAVAILABLE",
@@ -23,47 +19,37 @@ export const CODEX_CONFIG_REASON = Object.freeze({
   CONFLICTING_VALUES: "CONFLICTING_VALUES",
   UNSUPPORTED_SCOPE: "UNSUPPORTED_SCOPE"
 });
-
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-
 function nonemptyString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
-
 function positiveSafeInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
-
 function unsupported(reasonCode) {
   return { status: "UNSUPPORTED", reasonCode };
 }
-
 function isoNow(now) {
   const value = now();
   const date = value instanceof Date ? value : new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
-
 function configuredCommand(environment) {
   const command = nonemptyString(environment.CODEX_CLI_PATH);
   return command || "codex";
 }
-
 function configuredArguments(environment) {
   const socket = nonemptyString(
     environment.CODEX_APP_SERVER_SOCKET || environment.CODEX_APP_SERVER_CONTROL_SOCKET
   );
-  return socket
-    ? ["app-server", "proxy", "--sock", socket]
-    : ["app-server", "--stdio"];
+  return socket ? ["app-server", "proxy", "--sock", socket] : ["app-server", "--stdio"];
 }
-
 function writeRequest(child, request) {
-  child.stdin.write(`${JSON.stringify(request)}\n`);
+  child.stdin.write(`${JSON.stringify(request)}
+`);
 }
-
 function requestWithAppServer({ cwd, environment, spawnProcess = defaultSpawn, timeoutMs = CONFIG_TIMEOUT_MS }) {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -121,9 +107,7 @@ function requestWithAppServer({ cwd, environment, spawnProcess = defaultSpawn, t
           }
           if (!configRequestSent) {
             configRequestSent = true;
-            serverInfo = isObject(message.result?.serverInfo)
-              ? message.result.serverInfo
-              : { version: nonemptyString(message.result?.userAgent) };
+            serverInfo = isObject(message.result?.serverInfo) ? message.result.serverInfo : { version: nonemptyString(message.result?.userAgent) };
             writeRequest(child, {
               jsonrpc: "2.0",
               method: "initialized",
@@ -157,61 +141,45 @@ function requestWithAppServer({ cwd, environment, spawnProcess = defaultSpawn, t
     });
   });
 }
-
 function validateOriginShape(origins) {
-  return isObject(origins) && CAPACITY_KEYS.every((key) => (
-    !Object.hasOwn(origins, key) || isObject(origins[key])
-  ));
+  return isObject(origins) && CAPACITY_KEYS.every((key) => !Object.hasOwn(origins, key) || isObject(origins[key]));
 }
-
 function normalizeConfigResponse(response, { now }) {
-  if (
-    !isObject(response)
-    || !isObject(response.config)
-    || !validateOriginShape(response.origins)
-    || !Array.isArray(response.layers)
-    || response.layers.some((layer) => !isObject(layer) || !isObject(layer.config))
-  ) {
+  if (!isObject(response) || !isObject(response.config) || !validateOriginShape(response.origins) || !Array.isArray(response.layers) || response.layers.some((layer) => !isObject(layer) || !isObject(layer.config))) {
     return unsupported(CODEX_CONFIG_REASON.INVALID_RESPONSE);
   }
   const config = response.config;
   const layers = response.layers;
-  const model = config.model === null || config.model === undefined ? null : nonemptyString(config.model);
+  const model = config.model === null || config.model === void 0 ? null : nonemptyString(config.model);
   const contextWindow = config.model_context_window;
   const threshold = config.model_auto_compact_token_limit;
   const scope = config.model_auto_compact_token_limit_scope;
-  if (config.model !== null && config.model !== undefined && !model) {
+  if (config.model !== null && config.model !== void 0 && !model) {
     return unsupported(CODEX_CONFIG_REASON.INVALID_RESPONSE);
   }
-  if (contextWindow !== null && contextWindow !== undefined && !positiveSafeInteger(contextWindow)) {
+  if (contextWindow !== null && contextWindow !== void 0 && !positiveSafeInteger(contextWindow)) {
     return unsupported(CODEX_CONFIG_REASON.INVALID_RESPONSE);
   }
-  if (threshold !== null && threshold !== undefined && !positiveSafeInteger(threshold)) {
+  if (threshold !== null && threshold !== void 0 && !positiveSafeInteger(threshold)) {
     return unsupported(CODEX_CONFIG_REASON.INVALID_RESPONSE);
   }
-  if (scope !== null && scope !== undefined && scope !== "total" && scope !== "body_after_prefix") {
+  if (scope !== null && scope !== void 0 && scope !== "total" && scope !== "body_after_prefix") {
     return unsupported(CODEX_CONFIG_REASON.INVALID_RESPONSE);
   }
   if (scope === "body_after_prefix") {
     return unsupported(CODEX_CONFIG_REASON.UNSUPPORTED_SCOPE);
   }
   for (const key of CAPACITY_KEYS) {
-    const effectivePresent = config[key] !== null && config[key] !== undefined;
+    const effectivePresent = config[key] !== null && config[key] !== void 0;
     const originPresent = Object.hasOwn(response.origins, key);
-    const layerPresent = layers.some((layer) => (
-      Object.hasOwn(layer.config, key)
-      && layer.config[key] !== null
-      && layer.config[key] !== undefined
-    ));
+    const layerPresent = layers.some((layer) => Object.hasOwn(layer.config, key) && layer.config[key] !== null && layer.config[key] !== void 0);
     if (effectivePresent !== originPresent || effectivePresent !== layerPresent) {
       return unsupported(CODEX_CONFIG_REASON.CONFLICTING_VALUES);
     }
   }
   const verifiedAt = isoNow(now);
   if (!verifiedAt) return unsupported(CODEX_CONFIG_REASON.INVALID_RESPONSE);
-  const sourceVersion = nonemptyString(response.serverInfo?.version)
-    || nonemptyString(response.version)
-    || "codex-app-server";
+  const sourceVersion = nonemptyString(response.serverInfo?.version) || nonemptyString(response.version) || "codex-app-server";
   return {
     status: "SUPPORTED",
     config: {
@@ -226,30 +194,23 @@ function normalizeConfigResponse(response, { now }) {
       verifiedAt,
       fields: {
         model: model === null ? null : "config.model",
-        model_context_window: contextWindow === null || contextWindow === undefined
-          ? null
-          : "config.model_context_window",
-        model_auto_compact_token_limit: threshold === null || threshold === undefined
-          ? null
-          : "config.model_auto_compact_token_limit",
-        model_auto_compact_token_limit_scope: scope === null || scope === undefined
-          ? null
-          : "config.model_auto_compact_token_limit_scope"
+        model_context_window: contextWindow === null || contextWindow === void 0 ? null : "config.model_context_window",
+        model_auto_compact_token_limit: threshold === null || threshold === void 0 ? null : "config.model_auto_compact_token_limit",
+        model_auto_compact_token_limit_scope: scope === null || scope === void 0 ? null : "config.model_auto_compact_token_limit_scope"
       },
       absent: Object.fromEntries(CAPACITY_KEYS.map((key) => [
         key,
-        config[key] === null || config[key] === undefined
+        config[key] === null || config[key] === void 0
       ])),
       layerKeys: CAPACITY_KEYS
     }
   };
 }
-
-export async function inspectCodexEffectiveConfig({
+async function inspectCodexEffectiveConfig({
   cwd,
   environment = process.env,
   request = requestWithAppServer,
-  now = () => new Date(),
+  now = () => /* @__PURE__ */ new Date(),
   timeoutMs = CONFIG_TIMEOUT_MS
 } = {}) {
   const normalizedCwd = nonemptyString(cwd);
@@ -267,5 +228,8 @@ export async function inspectCodexEffectiveConfig({
     return unsupported(CODEX_CONFIG_REASON.APP_SERVER_UNAVAILABLE);
   }
 }
-
-export { normalizeConfigResponse };
+export {
+  CODEX_CONFIG_REASON,
+  inspectCodexEffectiveConfig,
+  normalizeConfigResponse
+};

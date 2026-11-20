@@ -1,10 +1,8 @@
-// prism-count-link: one link of a list of counts in light DOM, such as a menu's way to a filtered page: a leading glyph, its label, and a count badge at its end.
-// The page handles the link's click itself when it opens the address in place.
+// Generated from src/server/review/public/kit/elements/prism-count-link.ts by scripts/native-build/compile.mjs.
 import { Base, distribute, make, setAttribute } from "./base.js";
 import { ICON_NAMES } from "./prism-icon.js";
 import { unwatchShortening, watchShortening } from "../shorten.js";
-
-export class PrismCountLink extends Base {
+class PrismCountLink extends Base {
   static tag = "prism-count-link";
   static observedAttributes = ["href", "icon", "count"];
   static catalog = {
@@ -17,7 +15,6 @@ export class PrismCountLink extends Base {
     states: ["default", "zero", "list", "long-text"],
     keyboard: ["Tab reaches the link, and Enter follows it."]
   };
-
   connectedCallback() {
     if (!this.anchor) {
       this.anchor = make(this, "a", "prism-count-link-anchor");
@@ -29,18 +26,14 @@ export class PrismCountLink extends Base {
       this.children$ = distribute(this, { default: this.label }, [this.anchor]);
     }
     this.attributeChangedCallback();
-    // A shortened label shows its full text in the tooltip; the link already takes focus.
     watchShortening(this, this.label, { focusable: () => true });
   }
-
   disconnectedCallback() {
     unwatchShortening(this);
   }
-
   get tooltipText() {
     return this.label?.textContent.replace(/\s+/g, " ").trim() ?? "";
   }
-
   attributeChangedCallback() {
     if (!this.anchor) return;
     setAttribute(this.anchor, "href", this.getAttribute("href") || "#");
@@ -51,3 +44,6 @@ export class PrismCountLink extends Base {
     if (this.badge.textContent !== count) this.badge.textContent = count;
   }
 }
+export {
+  PrismCountLink
+};

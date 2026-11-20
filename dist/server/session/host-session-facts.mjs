@@ -1,20 +1,19 @@
+// Generated from src/server/session/host-session-facts.mts by scripts/native-build/compile.mjs.
 import { createHash, randomUUID } from "node:crypto";
 import * as defaultFileSystem from "node:fs/promises";
 import path from "node:path";
 import { createPrivateSessionStore, defaultIsProcessAlive } from "./private-session-store.mjs";
-
 const SCHEMA_VERSION = 1;
 const FACT_DIRECTORY = "session-capacity";
 const MAX_FACT_BYTES = 64 * 1024;
-const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
-const DEFAULT_MAX_AGE_MS = 30 * 60 * 1000;
-export const HOST_FACT_MAX_DIRECTORY_BYTES = 16 * 1024 * 1024;
-export const HOST_FACT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_FUTURE_SKEW_MS = 5 * 60 * 1e3;
+const DEFAULT_MAX_AGE_MS = 30 * 60 * 1e3;
+const HOST_FACT_MAX_DIRECTORY_BYTES = 16 * 1024 * 1024;
+const HOST_FACT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
 const HOST_VALUE_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._:/@\[\]-]{0,255}$/;
-
-export const HOST_FACT_REASON = Object.freeze({
+const HOST_FACT_REASON = Object.freeze({
   NO_DATA_DIRECTORY: "NO_DATA_DIRECTORY",
   NO_SESSION_ID: "NO_SESSION_ID",
   NO_CORRELATION_KEY: "NO_CORRELATION_KEY",
@@ -39,7 +38,6 @@ export const HOST_FACT_REASON = Object.freeze({
   EFFECTIVE_SETTINGS_UNAVAILABLE: "EFFECTIVE_SETTINGS_UNAVAILABLE",
   UNSUPPORTED_COMPACTION_SCOPE: "UNSUPPORTED_COMPACTION_SCOPE"
 });
-
 const REASON_MESSAGES = Object.freeze({
   [HOST_FACT_REASON.NO_DATA_DIRECTORY]: "The plugin data directory is unavailable.",
   [HOST_FACT_REASON.NO_SESSION_ID]: "The active host session identifier is unavailable.",
@@ -65,7 +63,6 @@ const REASON_MESSAGES = Object.freeze({
   [HOST_FACT_REASON.EFFECTIVE_SETTINGS_UNAVAILABLE]: "The effective capacity settings are unavailable.",
   [HOST_FACT_REASON.UNSUPPORTED_COMPACTION_SCOPE]: "The active compaction accounting scope is unsupported."
 });
-
 const PERSISTED_KEYS = [
   "schemaVersion",
   "status",
@@ -90,18 +87,18 @@ const SOURCE_KEYS = [
   "compactionScope"
 ];
 const SOURCE_VALUES = Object.freeze({
-  harness: new Set(["codex-adapter", "claude-code-adapter"]),
-  harnessVersion: new Set(["transcript.session_meta.cli_version", "transcript.version", null]),
-  provider: new Set(["transcript.session_meta.model_provider", "environment.claude_code_provider", null]),
-  model: new Set(["hook.model", "transcript.message.model", null]),
-  contextWindowTokens: new Set([
+  harness: /* @__PURE__ */ new Set(["codex-adapter", "claude-code-adapter"]),
+  harnessVersion: /* @__PURE__ */ new Set(["transcript.session_meta.cli_version", "transcript.version", null]),
+  provider: /* @__PURE__ */ new Set(["transcript.session_meta.model_provider", "environment.claude_code_provider", null]),
+  model: /* @__PURE__ */ new Set(["hook.model", "transcript.message.model", null]),
+  contextWindowTokens: /* @__PURE__ */ new Set([
     "hook.model_context_window",
     "transcript.event_msg.token_count.info.model_context_window",
     "transcript.event_msg.task_started.model_context_window",
     "estimate.claude_code.context_window",
     null
   ]),
-  compactionThresholdTokens: new Set([
+  compactionThresholdTokens: /* @__PURE__ */ new Set([
     "hook.model_auto_compact_token_limit",
     "config.model_auto_compact_token_limit",
     "config.absent.model_auto_compact_token_limit",
@@ -109,7 +106,7 @@ const SOURCE_VALUES = Object.freeze({
     "estimate.claude_code.auto_compact_threshold",
     null
   ]),
-  compactionScope: new Set([
+  compactionScope: /* @__PURE__ */ new Set([
     "hook.model_auto_compact_token_limit_scope",
     "config.model_auto_compact_token_limit_scope",
     "config.default.model_auto_compact_token_limit_scope",
@@ -122,7 +119,6 @@ const HARNESS_ADAPTERS = Object.freeze({
   "claude-code": "claude-code-adapter"
 });
 const REASON_CODES = new Set(Object.values(HOST_FACT_REASON));
-
 const factStore = createPrivateSessionStore({
   directoryName: FACT_DIRECTORY,
   subject: "host-session fact",
@@ -130,11 +126,9 @@ const factStore = createPrivateSessionStore({
   maxLockOwnerBytes: 128,
   lockProtocol: "staged"
 });
-
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-
 function assertExactKeys(value, allowed, required, name) {
   if (!isObject(value)) {
     throw new Error(`${name} must be an object.`);
@@ -150,19 +144,16 @@ function assertExactKeys(value, allowed, required, name) {
     }
   }
 }
-
 function assertNullableHostValue(value, name, pattern) {
   if (value !== null && (typeof value !== "string" || !pattern.test(value))) {
     throw new Error(`${name} is invalid.`);
   }
 }
-
 function assertTokenCount(value, name) {
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new Error(`${name} must be a positive safe integer.`);
   }
 }
-
 function assertIsoDate(value, name) {
   if (typeof value !== "string") {
     throw new Error(`${name} must be an ISO date string.`);
@@ -172,17 +163,14 @@ function assertIsoDate(value, name) {
     throw new Error(`${name} must be an ISO date string.`);
   }
 }
-
 function assertDigest(value, name) {
   if (typeof value !== "string" || !DIGEST_PATTERN.test(value)) {
     throw new Error(`${name} must be a SHA-256 digest.`);
   }
 }
-
 function normalizedIdentifier(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
-
 function projectIdentity(value) {
   const normalized = normalizedIdentifier(value);
   if (!normalized || !path.isAbsolute(normalized)) {
@@ -190,23 +178,19 @@ function projectIdentity(value) {
   }
   return path.normalize(normalized);
 }
-
 function digest(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
-
-export function createSessionCorrelationKey(sessionId) {
+function createSessionCorrelationKey(sessionId) {
   const normalized = normalizedIdentifier(sessionId);
   if (!normalized) {
     throw new Error(REASON_MESSAGES[HOST_FACT_REASON.NO_SESSION_ID]);
   }
   return digest(normalized);
 }
-
 function factPath(directory, sessionDigest) {
   return path.join(directory, `${sessionDigest}.json`);
 }
-
 async function readStoredFactRecord(target, directory, fileSystem) {
   const opened = await factStore.openExistingRegularFile(target, directory, fileSystem, { missing: true });
   if (!opened) return null;
@@ -229,7 +213,6 @@ async function readStoredFactRecord(target, directory, fileSystem) {
     await opened.handle.close();
   }
 }
-
 function materialFactText(record) {
   const capacityOverrides = {};
   for (const key of CAPACITY_KEYS) {
@@ -249,11 +232,9 @@ function materialFactText(record) {
     sources: Object.fromEntries(SOURCE_KEYS.map((key) => [key, record.sources[key]]))
   });
 }
-
 function positiveSafeInteger(value, fallback) {
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
-
 async function storedFactFiles(directory, target, fileSystem, assertOwnership) {
   const facts = [];
   for (const entry of await fileSystem.readdir(directory, { withFileTypes: true })) {
@@ -285,7 +266,6 @@ async function storedFactFiles(directory, target, fileSystem, assertOwnership) {
   }
   return facts;
 }
-
 async function enforceFactDirectoryLimits({
   directory,
   target,
@@ -325,7 +305,6 @@ async function enforceFactDirectoryLimits({
   }
   return aggregateBytes <= maxDirectoryBytes;
 }
-
 function unsupported(reasonCode, extra = {}) {
   if (!REASON_CODES.has(reasonCode)) {
     throw new Error(`Unknown host-fact reason code: ${reasonCode}.`);
@@ -337,12 +316,10 @@ function unsupported(reasonCode, extra = {}) {
     ...extra
   };
 }
-
-export function unsupportedHostSessionFacts(reasonCode, extra = {}) {
+function unsupportedHostSessionFacts(reasonCode, extra = {}) {
   return unsupported(reasonCode, extra);
 }
-
-export function validateHostSessionFacts(record) {
+function validateHostSessionFacts(record) {
   assertExactKeys(record, PERSISTED_KEYS, PERSISTED_KEYS, "hostSessionFacts");
   if (record.schemaVersion !== SCHEMA_VERSION) {
     throw new Error(`Unsupported host-session fact schema version: ${record.schemaVersion}.`);
@@ -359,11 +336,9 @@ export function validateHostSessionFacts(record) {
   if (record.status === "UNSUPPORTED" && record.reasonCode === null) {
     throw new Error("Unsupported host-session facts require a reason code.");
   }
-
   assertDigest(record.sessionDigest, "hostSessionFacts.sessionDigest");
   assertDigest(record.projectDigest, "hostSessionFacts.projectDigest");
   assertIsoDate(record.observedAt, "hostSessionFacts.observedAt");
-
   assertExactKeys(record.host, HOST_KEYS, HOST_KEYS, "hostSessionFacts.host");
   if (!Object.hasOwn(HARNESS_ADAPTERS, record.host.harness)) {
     throw new Error("hostSessionFacts.host.harness is invalid.");
@@ -371,25 +346,18 @@ export function validateHostSessionFacts(record) {
   assertNullableHostValue(record.host.harnessVersion, "hostSessionFacts.host.harnessVersion", VERSION_PATTERN);
   assertNullableHostValue(record.host.provider, "hostSessionFacts.host.provider", HOST_VALUE_PATTERN);
   assertNullableHostValue(record.host.model, "hostSessionFacts.host.model", HOST_VALUE_PATTERN);
-
   assertExactKeys(record.capacityOverrides, CAPACITY_KEYS, [], "hostSessionFacts.capacityOverrides");
   for (const key of CAPACITY_KEYS) {
     if (Object.hasOwn(record.capacityOverrides, key)) {
       assertTokenCount(record.capacityOverrides[key], `hostSessionFacts.capacityOverrides.${key}`);
     }
   }
-  if (
-    Object.hasOwn(record.capacityOverrides, "contextWindowTokens")
-    && Object.hasOwn(record.capacityOverrides, "compactionThresholdTokens")
-    && record.capacityOverrides.compactionThresholdTokens > record.capacityOverrides.contextWindowTokens
-  ) {
+  if (Object.hasOwn(record.capacityOverrides, "contextWindowTokens") && Object.hasOwn(record.capacityOverrides, "compactionThresholdTokens") && record.capacityOverrides.compactionThresholdTokens > record.capacityOverrides.contextWindowTokens) {
     throw new Error("The compaction threshold cannot exceed the context window.");
   }
-
   if (!["total", "body_after_prefix", null].includes(record.compactionScope)) {
     throw new Error("hostSessionFacts.compactionScope is invalid.");
   }
-
   assertExactKeys(record.sources, SOURCE_KEYS, SOURCE_KEYS, "hostSessionFacts.sources");
   for (const key of SOURCE_KEYS) {
     if (!SOURCE_VALUES[key].has(record.sources[key])) {
@@ -400,13 +368,12 @@ export function validateHostSessionFacts(record) {
     throw new Error("hostSessionFacts.sources.harness does not match the host harness.");
   }
   for (const key of ["harnessVersion", "provider", "model"]) {
-    if ((record.host[key] === null) !== (record.sources[key] === null)) {
+    if (record.host[key] === null !== (record.sources[key] === null)) {
       throw new Error(`hostSessionFacts.${key} value and source must be present together.`);
     }
   }
   for (const key of CAPACITY_KEYS) {
-    const absentThresholdProof = key === "compactionThresholdTokens"
-      && record.sources[key] === "config.absent.model_auto_compact_token_limit";
+    const absentThresholdProof = key === "compactionThresholdTokens" && record.sources[key] === "config.absent.model_auto_compact_token_limit";
     if (absentThresholdProof && Object.hasOwn(record.capacityOverrides, key)) {
       throw new Error("An absent threshold proof cannot accompany a threshold value.");
     }
@@ -414,10 +381,9 @@ export function validateHostSessionFacts(record) {
       throw new Error(`hostSessionFacts.${key} value and source must be present together.`);
     }
   }
-  if ((record.compactionScope === null) !== (record.sources.compactionScope === null)) {
+  if (record.compactionScope === null !== (record.sources.compactionScope === null)) {
     throw new Error("hostSessionFacts.compactionScope value and source must be present together.");
   }
-
   if (record.status === "SUPPORTED") {
     for (const key of ["harnessVersion", "provider", "model"]) {
       if (record.host[key] === null) {
@@ -431,16 +397,14 @@ export function validateHostSessionFacts(record) {
       throw new Error("Supported host-session facts require capacityOverrides.contextWindowTokens.");
     }
     const hasThreshold = Object.hasOwn(record.capacityOverrides, "compactionThresholdTokens");
-    const provesDefaultThreshold = record.sources.compactionThresholdTokens
-      === "config.absent.model_auto_compact_token_limit";
+    const provesDefaultThreshold = record.sources.compactionThresholdTokens === "config.absent.model_auto_compact_token_limit";
     if (!hasThreshold && !provesDefaultThreshold) {
       throw new Error("Supported host-session facts require a threshold or proof that its override is absent.");
     }
   }
   return true;
 }
-
-export function createHostSessionFactRecord({
+function createHostSessionFactRecord({
   sessionId,
   projectRoot,
   observedAt,
@@ -474,20 +438,20 @@ export function createHostSessionFactRecord({
   validateHostSessionFacts(record);
   return record;
 }
-
-export async function writeHostSessionFacts(record, {
+async function writeHostSessionFacts(record, {
   dataDirectory,
   fileSystem = defaultFileSystem,
   isProcessAlive = defaultIsProcessAlive,
   maxDirectoryBytes = HOST_FACT_MAX_DIRECTORY_BYTES,
   maxFactAgeMs = HOST_FACT_MAX_AGE_MS,
-  now = () => new Date()
+  now = () => /* @__PURE__ */ new Date()
 } = {}) {
   validateHostSessionFacts(record);
   if (typeof dataDirectory !== "string" || !path.isAbsolute(dataDirectory)) {
     throw new Error(REASON_MESSAGES[HOST_FACT_REASON.NO_DATA_DIRECTORY]);
   }
-  const recordText = `${JSON.stringify(record)}\n`;
+  const recordText = `${JSON.stringify(record)}
+`;
   const recordBytes = Buffer.byteLength(recordText, "utf8");
   if (recordBytes > MAX_FACT_BYTES) {
     throw new Error("The host-session fact record is too large.");
@@ -546,15 +510,7 @@ export async function writeHostSessionFacts(record, {
     await assertOwnership();
     await factStore.assertDirectory(store, fileSystem);
     const currentTarget = await factStore.inspectRegularFile(target, store.directory, fileSystem, { missing: true });
-    if (
-      (existing === null && currentTarget !== null)
-      || (existing !== null && (
-        currentTarget === null
-        || currentTarget.dev !== existing.metadata.dev
-        || currentTarget.ino !== existing.metadata.ino
-        || currentTarget.nlink !== 1
-      ))
-    ) {
+    if (existing === null && currentTarget !== null || existing !== null && (currentTarget === null || currentTarget.dev !== existing.metadata.dev || currentTarget.ino !== existing.metadata.ino || currentTarget.nlink !== 1)) {
       throw new Error("The host-session fact record changed during replacement.");
     }
     await assertOwnership();
@@ -562,7 +518,8 @@ export async function writeHostSessionFacts(record, {
     return target;
   } catch (error) {
     if (handle) {
-      await handle.close().catch(() => {});
+      await handle.close().catch(() => {
+      });
     }
     if (typeof fileSystem.unlink === "function") {
       try {
@@ -570,38 +527,33 @@ export async function writeHostSessionFacts(record, {
         const metadata = await fileSystem.lstat(temporary);
         if (!metadata.isDirectory()) await fileSystem.unlink(temporary);
       } catch {
-        // Best-effort cleanup must not follow a replaced store path.
       }
     }
     throw error;
   } finally {
     if (directoryLock) {
-      await factStore.releaseLock(directoryLock, store.directory, fileSystem).catch(() => {});
+      await factStore.releaseLock(directoryLock, store.directory, fileSystem).catch(() => {
+      });
     }
   }
 }
-
 function clockMilliseconds(now) {
-  const value = typeof now === "function" ? now() : new Date();
+  const value = typeof now === "function" ? now() : /* @__PURE__ */ new Date();
   const milliseconds = value instanceof Date ? value.getTime() : Number(value);
   return Number.isFinite(milliseconds) ? milliseconds : Number.NaN;
 }
-
-/**
- * This function returns a session object that resolveSessionCapacity accepts.
- */
-export async function readHostSessionFacts({
+async function readHostSessionFacts({
   dataDirectory,
   correlationKey,
   projectRoot,
   maxAgeMs = DEFAULT_MAX_AGE_MS,
-  now = () => new Date(),
+  now = () => /* @__PURE__ */ new Date(),
   fileSystem = defaultFileSystem
 } = {}) {
   if (typeof dataDirectory !== "string" || !path.isAbsolute(dataDirectory)) {
     return unsupported(HOST_FACT_REASON.NO_DATA_DIRECTORY);
   }
-  if (correlationKey === undefined || correlationKey === null || correlationKey === "") {
+  if (correlationKey === void 0 || correlationKey === null || correlationKey === "") {
     return unsupported(HOST_FACT_REASON.NO_CORRELATION_KEY);
   }
   if (typeof correlationKey !== "string" || !DIGEST_PATTERN.test(correlationKey)) {
@@ -614,7 +566,6 @@ export async function readHostSessionFacts({
   if (!Number.isSafeInteger(maxAgeMs) || maxAgeMs < 0) {
     return unsupported(HOST_FACT_REASON.INVALID_SESSION_FACTS);
   }
-
   const sessionDigest = correlationKey;
   let store;
   try {
@@ -644,9 +595,9 @@ export async function readHostSessionFacts({
     }
     return unsupported(HOST_FACT_REASON.FACTS_UNAVAILABLE);
   } finally {
-    if (opened) await opened.handle.close().catch(() => {});
+    if (opened) await opened.handle.close().catch(() => {
+    });
   }
-
   let record;
   try {
     record = JSON.parse(text);
@@ -660,7 +611,6 @@ export async function readHostSessionFacts({
   if (record.projectDigest !== digest(normalizedProjectRoot)) {
     return unsupported(HOST_FACT_REASON.PROJECT_MISMATCH);
   }
-
   const currentTime = clockMilliseconds(now);
   const observedTime = Date.parse(record.observedAt);
   if (!Number.isFinite(currentTime) || observedTime - currentTime > MAX_FUTURE_SKEW_MS) {
@@ -669,7 +619,6 @@ export async function readHostSessionFacts({
   if (currentTime - observedTime > maxAgeMs) {
     return unsupported(HOST_FACT_REASON.STALE_SESSION_FACTS);
   }
-
   const provenance = {
     source: "active-host-session",
     observedAt: record.observedAt,
@@ -685,12 +634,22 @@ export async function readHostSessionFacts({
     session.capacityOverrides = { ...record.capacityOverrides };
   }
   if (record.status === "UNSUPPORTED") {
-    const hasCompleteIdentity = [session.harness, session.harnessVersion, session.provider, session.model]
-      .every((value) => typeof value === "string" && value.length > 0);
+    const hasCompleteIdentity = [session.harness, session.harnessVersion, session.provider, session.model].every((value) => typeof value === "string" && value.length > 0);
     return unsupported(record.reasonCode, {
       provenance,
-      ...(hasCompleteIdentity ? { session, compactionScope: record.compactionScope } : {})
+      ...hasCompleteIdentity ? { session, compactionScope: record.compactionScope } : {}
     });
   }
   return { status: "SUPPORTED", session, compactionScope: record.compactionScope, provenance };
 }
+export {
+  HOST_FACT_MAX_AGE_MS,
+  HOST_FACT_MAX_DIRECTORY_BYTES,
+  HOST_FACT_REASON,
+  createHostSessionFactRecord,
+  createSessionCorrelationKey,
+  readHostSessionFacts,
+  unsupportedHostSessionFacts,
+  validateHostSessionFacts,
+  writeHostSessionFacts
+};

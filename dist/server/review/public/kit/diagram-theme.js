@@ -1,8 +1,5 @@
-// themeDiagram: recolors a PlantUML SVG attached to the page so it follows the theme.
-// Only the vendored runtime's default colors change, to the --prism-color-diagram-* values computed on the SVG; every color the author set stays,
-// except that an author's text on a default ground or the paper, and an author's line, is lightened or darkened with its hue kept until it reads.
+// Generated from src/server/review/public/kit/diagram-theme.ts by scripts/native-build/compile.mjs.
 import { PLANTUML_DEFAULTS, PLANTUML_TEXT } from "./plantuml-defaults.js";
-
 const ROLES = ["paper", "ink", "line", "surface", "surface-2", "group", "group-line", "note", "note-line", "danger"];
 const SHAPES = "rect, path, polygon, ellipse, circle";
 const STROKED = "rect, path, polygon, ellipse, circle, line, polyline";
@@ -10,10 +7,7 @@ const TEXT_RATIO = 4.5;
 const LINE_RATIO = 3;
 const WHITE = [255, 255, 255];
 const BLACK = [0, 0, 0];
-
 let paint = null;
-
-// Any CSS color as [r, g, b, a] with a in 0..1, read through a canvas so every color syntax a token may use works.
 function channels(color) {
   const hex = /^#([0-9a-f]{3,8})$/i.exec(String(color).trim())?.[1];
   if (hex && [3, 4, 6, 8].includes(hex.length)) {
@@ -29,20 +23,12 @@ function channels(color) {
   const [r, g, b, a] = paint.getImageData(0, 0, 1, 1).data;
   return [r, g, b, a / 255];
 }
-
 const toHex = ([r, g, b]) => `#${[r, g, b].map((value) => Math.round(value).toString(16).padStart(2, "0")).join("")}`.toUpperCase();
-
-const luminance = ([r, g, b]) => [r, g, b]
-  .map((value) => value / 255)
-  .map((value) => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4))
-  .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
-
+const luminance = ([r, g, b]) => [r, g, b].map((value) => value / 255).map((value) => value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
 function contrast(left, right) {
   const [high, low] = [luminance(left), luminance(right)].sort((a, b) => b - a);
   return (high + 0.05) / (low + 0.05);
 }
-
-// Moves a color toward white or black, whichever the ground contrasts with more, until it reaches the ratio; mixing with white or black keeps its hue.
 function lift(color, ground, ratio) {
   const rgb = channels(color);
   if (contrast(rgb, ground) >= ratio) return color;
@@ -53,11 +39,9 @@ function lift(color, ground, ratio) {
   }
   return toHex(end);
 }
-
 const upper = (value) => (value ?? "").trim().toUpperCase();
 const isColor = (value) => value.startsWith("#") && channels(value)[3] > 0;
-const roleOf = (value) => (Object.hasOwn(PLANTUML_DEFAULTS, value) ? PLANTUML_DEFAULTS[value] : undefined);
-
+const roleOf = (value) => Object.hasOwn(PLANTUML_DEFAULTS, value) ? PLANTUML_DEFAULTS[value] : void 0;
 function box(element) {
   try {
     return element.getBBox();
@@ -65,22 +49,18 @@ function box(element) {
     return null;
   }
 }
-
-/** Recolors `svg`, attached to the page, from the diagram tokens computed on it; call it on a fresh copy of the runtime's SVG each time. */
-export function themeDiagram(svg) {
+function themeDiagram(svg) {
   if (!svg?.isConnected) return;
   const style = getComputedStyle(svg);
   const palette = Object.fromEntries(ROLES.map((role) => [role, toHex(channels(style.getPropertyValue(`--prism-color-diagram-${role}`).trim() || "transparent"))]));
   const paper = channels(palette.paper);
   const order = new Map([...svg.querySelectorAll("*")].map((element, index) => [element, index]));
-
-  // The ground each shape gives the text drawn over it, read before anything is recolored: a default fill in its new color, or the author's fill.
   const grounds = [];
   for (const shape of svg.querySelectorAll(SHAPES)) {
     const fill = upper(shape.getAttribute("fill"));
     const role = roleOf(fill);
     if (!isColor(fill) || role === "line") continue;
-    const ground = role ? { by: "default", color: channels(palette[role]) } : role === undefined ? { by: "author", color: channels(fill) } : null;
+    const ground = role ? { by: "default", color: channels(palette[role]) } : role === void 0 ? { by: "author", color: channels(fill) } : null;
     const bounds = ground && box(shape);
     if (bounds) grounds.push({ shape, bounds, ...ground });
   }
@@ -97,8 +77,6 @@ export function themeDiagram(svg) {
     }
     return under;
   };
-
-  // Text first, while every ground still has its runtime color.
   const texts = [...svg.querySelectorAll("text")].map((text) => [text, upper(text.getAttribute("fill")), groundOf(text)]);
   for (const [text, fill, ground] of texts) {
     if (!isColor(fill)) continue;
@@ -111,7 +89,6 @@ export function themeDiagram(svg) {
       text.setAttribute("fill", lift(fill, ground?.color ?? paper, TEXT_RATIO));
     }
   }
-
   for (const element of svg.querySelectorAll(STROKED)) {
     const fill = upper(element.getAttribute("fill"));
     const stroke = upper(element.getAttribute("stroke"));
@@ -121,7 +98,6 @@ export function themeDiagram(svg) {
     if (strokeRole) {
       element.setAttribute("stroke", palette[fillRole === "note" ? "note-line" : strokeRole]);
     } else if (isColor(stroke)) {
-      // A line the author colored, or the runtime's black, stays its own hue and reaches 3:1 on the paper; an arrowhead filled with its line's color follows it.
       const lifted = lift(stroke, paper, LINE_RATIO);
       if (lifted !== stroke) {
         element.setAttribute("stroke", lifted);
@@ -130,3 +106,6 @@ export function themeDiagram(svg) {
     }
   }
 }
+export {
+  themeDiagram
+};

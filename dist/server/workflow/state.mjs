@@ -1,3 +1,4 @@
+// Generated from src/server/workflow/state.mts by scripts/native-build/compile.mjs.
 import { createHash, randomBytes } from "node:crypto";
 import { applyActiveOperations, withReviewGatesLocked } from "./active-operations.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
@@ -11,32 +12,55 @@ import { revisionMismatch } from "./revision.mjs";
 import { refuseShipped } from "./shipped-history.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { parseStoreJson } from "./store-json.mjs";
-
+import { HOSTS } from "../session/launch-hosts.mjs";
+import { NAME_RULE_MESSAGES, RUN_KINDS, validEffort, validModel, validProvider } from "../session/run-options.mjs";
 const SCHEMA_VERSION = 1;
-
-const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence", "closed", "history", "personSettings"]);
-// Only the review app's action registry writes the person's history and setting marks, so agents' state changes never carry them.
-const REGISTRY_KEYS = new Set(["history", "personSettings"]);
-// The initiative settings that coordination state accepts, in the order the review app lists their actions.
-export const INITIATIVE_SETTINGS = Object.freeze(["autonomy", "commit", "push", "continuation", "review", "models"]);
+const TOP_LEVEL_KEYS = /* @__PURE__ */ new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence", "closed", "history", "personSettings"]);
+const REGISTRY_KEYS = /* @__PURE__ */ new Set(["history", "personSettings"]);
+const INITIATIVE_SETTINGS = Object.freeze(["host", "autonomy", "commit", "push", "continuation", "review", "models"]);
 const SETTING_KEYS = new Set(INITIATIVE_SETTINGS);
-
-/** The six effective setting values, each stored or else its default, and personSettings, the names of the settings the person set. */
-export function effectiveSettings(state) {
+const RUN_HOSTS = HOSTS.map(({ host }) => host);
+const KIND_NAMES = RUN_KINDS.map(({ kind }) => kind);
+const AGENT_KINDS = RUN_KINDS.filter(({ purpose }) => purpose === "agents").map(({ kind }) => kind);
+const EARLIER_ROLES = Object.freeze({ delivery: "designImplementation", review: "codeReview", securityReview: "securityReview", examples: "gateSummary" });
+const EARLIER_DEFAULTS = /* @__PURE__ */ new Set(["defaults", "host defaults"]);
+const EARLIER_NAME_LIMIT = 200;
+const EARLIER_NAME = /^[^\s\p{Cc}]+(?: [^\s\p{Cc}]+)*$/u;
+function validEarlierName(name) {
+  return typeof name === "string" && EARLIER_NAME.test(name) && [...name].length <= EARLIER_NAME_LIMIT;
+}
+const earlierReason = (hostLabel, earlier) => `Prism kept the earlier model name ${earlier}, which ${hostLabel} cannot take as a model.`;
+function earlierName(name) {
+  return [...name.replace(/[\s\p{Cc}]+/gu, " ").trim()].slice(0, EARLIER_NAME_LIMIT).join("").trimEnd();
+}
+function earlierAssignment(value) {
+  return isRecord(value) && Object.keys(value).length > 0 && Object.entries(value).every(([key, name]) => Object.hasOwn(EARLIER_ROLES, key) && typeof name === "string");
+}
+function earlierChoice(name) {
+  if (validModel(name.trim())) return { model: name.trim(), typed: true };
+  const earlier = earlierName(name);
+  return earlier ? { earlier } : null;
+}
+function migratedModels(value) {
+  if (typeof value === "string" && EARLIER_DEFAULTS.has(value)) return {};
+  if (!earlierAssignment(value)) return value;
+  const entry = () => Object.fromEntries(Object.entries(EARLIER_ROLES).filter(([role]) => Object.hasOwn(value, role)).map(([role, kind]) => [kind, earlierChoice(value[role])]).filter(([, choice]) => choice !== null));
+  return Object.fromEntries(RUN_HOSTS.map((host) => [host, entry()]));
+}
+function effectiveSettings(state) {
   const stored = isRecord(state?.settings) ? state.settings : {};
   const autonomy = stored.autonomy ?? "conservative";
   return {
+    host: stored.host ?? null,
     autonomy,
     commit: stored.commit ?? (autonomy === "full" ? "on" : "off"),
     push: stored.push ?? "off",
     continuation: stored.continuation ?? "auto",
     review: stored.review ?? "marked",
-    models: stored.models === undefined || stored.models === "defaults" ? "host defaults" : stored.models,
+    models: stored.models === void 0 ? {} : migratedModels(stored.models),
     personSettings: INITIATIVE_SETTINGS.filter((name) => isRecord(state?.personSettings) && Object.hasOwn(state.personSettings, name))
   };
 }
-
-// An agent's settings write keeps each setting the person changed in the review app, and lists what it kept.
 function keepPersonSettings(before, requested) {
   const marks = isRecord(before.personSettings) ? before.personSettings : {};
   const settings = { ...requested };
@@ -48,38 +72,36 @@ function keepPersonSettings(before, requested) {
   }
   return { settings, kept };
 }
-const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
-const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
-const GATE_KEYS = new Set(["id", "kind", "slice", "question", "context", "artifacts", "options", "recommended", "askedAt", "standing", "answer"]);
+const ACTIVE_KEYS = /* @__PURE__ */ new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
+const GATE_KINDS = /* @__PURE__ */ new Set(["visual-review", "correctness", "decision", "assistance"]);
+const GATE_KEYS = /* @__PURE__ */ new Set(["id", "kind", "slice", "question", "context", "artifacts", "options", "recommended", "askedAt", "standing", "answer"]);
 const ASK_KEYS = ["op", "kind", "slice", "question", "context", "artifacts", "options", "recommended"];
-const OPTION_KEYS = new Set(["id", "label", "consequence"]);
-const RECOMMENDED_KEYS = new Set(["option", "reason"]);
-const CONTEXT_LIMIT = 8000;
+const OPTION_KEYS = /* @__PURE__ */ new Set(["id", "label", "consequence"]);
+const RECOMMENDED_KEYS = /* @__PURE__ */ new Set(["option", "reason"]);
+const CONTEXT_LIMIT = 8e3;
 const CONSEQUENCE_LIMIT = 300;
 const RECOMMENDATION_LIMIT = 500;
-// A person who has not followed the run decides from the gate alone, so a choice or an action carries its situation.
-const CONTEXT_KINDS = new Set(["decision", "assistance"]);
+const CONTEXT_KINDS = /* @__PURE__ */ new Set(["decision", "assistance"]);
 const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
 const OPTION_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
-const ANSWER_KEYS = new Set(["choice", "note", "via", "answeredAt", "by", "entry"]);
+const ANSWER_KEYS = /* @__PURE__ */ new Set(["choice", "note", "via", "answeredAt", "by", "entry"]);
 const ENTRY_ID = /^[0-9a-f]{32}$/;
-const ENTRY_KEYS = new Set(["id", "action", "target", "before", "after", "at", "by", "via"]);
-const AUTHOR_KEYS = new Set(["name", "email", "checkout"]);
-export const HISTORY_LIMIT = 200;
-// Closed gates stay readable so the user can see what they answered and why a question went away.
+const ENTRY_KEYS = /* @__PURE__ */ new Set(["id", "action", "target", "before", "after", "at", "by", "via"]);
+const AUTHOR_KEYS = /* @__PURE__ */ new Set(["name", "email", "checkout"]);
+const HISTORY_LIMIT = 200;
 const CLOSED_LIMIT = 20;
-const REASON_LIMIT = 1000;
-const REVIEW_CHOICES = new Set(["approve", "request-changes"]);
+const REASON_LIMIT = 1e3;
+const REVIEW_CHOICES = /* @__PURE__ */ new Set(["approve", "request-changes"]);
 const STATE_MAX_BYTES = 1024 * 1024;
 const SETTING_VALUES = {
-  autonomy: new Set(["conservative", "broad", "full"]),
-  commit: new Set(["on", "off"]),
-  push: new Set(["on", "off"]),
-  continuation: new Set(["auto", "stepwise"]),
-  review: new Set(["marked", "recommended", "all"])
+  host: new Set(RUN_HOSTS),
+  autonomy: /* @__PURE__ */ new Set(["conservative", "broad", "full"]),
+  commit: /* @__PURE__ */ new Set(["on", "off"]),
+  push: /* @__PURE__ */ new Set(["on", "off"]),
+  continuation: /* @__PURE__ */ new Set(["auto", "stepwise"]),
+  review: /* @__PURE__ */ new Set(["marked", "recommended", "all"])
 };
-
-export class CoordinationStateError extends Error {
+class CoordinationStateError extends Error {
   constructor(code, message, details = {}) {
     super(message);
     this.name = "CoordinationStateError";
@@ -87,20 +109,16 @@ export class CoordinationStateError extends Error {
     Object.assign(this, details);
   }
 }
-
 function error(code, message, details = {}) {
   return new CoordinationStateError(code, message, details);
 }
-
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-
 function isInside(root, target) {
   const relative = path.relative(root, target);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  return relative === "" || !relative.startsWith("..") && !path.isAbsolute(relative);
 }
-
 async function assertNearestExistingPathInside(root, target) {
   let current = target;
   while (true) {
@@ -122,8 +140,6 @@ async function assertNearestExistingPathInside(root, target) {
     }
   }
 }
-
-// Coordination state is an initiative's record; evidence paths in it stay relative to the initiative's plans folder.
 async function resolveState(projectRoot, initiative) {
   if (typeof projectRoot !== "string" || !path.isAbsolute(projectRoot)) {
     throw error("invalid_project_root", "The project root must be an absolute path.");
@@ -135,11 +151,9 @@ async function resolveState(projectRoot, initiative) {
   const config = await readWorkflowConfig(located.root);
   return { root: located.root, initiative, path: located.target, displayPath: located.path, directory: initiativeDirectory(config, initiative), store: (config.workspace?.store ?? null) !== null };
 }
-
 function revisionOf(contents) {
   return createHash("sha256").update(contents).digest("hex");
 }
-
 function defaultState() {
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -150,17 +164,15 @@ function defaultState() {
     evidence: []
   };
 }
-
-// Every child now runs in a fresh agent, so a stored agent flow from an older Prism is dropped on read.
-const RETIRED_SETTINGS = new Set(["agentFlow"]);
-
+const RETIRED_SETTINGS = /* @__PURE__ */ new Set(["agentFlow"]);
 function withoutRetiredSettings(settings) {
   if (!isRecord(settings)) {
     return settings;
   }
-  return Object.fromEntries(Object.entries(settings).filter(([key]) => !RETIRED_SETTINGS.has(key)));
+  const kept = Object.fromEntries(Object.entries(settings).filter(([key]) => !RETIRED_SETTINGS.has(key)));
+  if (kept.models !== void 0) kept.models = migratedModels(kept.models);
+  return kept;
 }
-
 function normalizeState(raw) {
   if (!isRecord(raw)) {
     return raw;
@@ -172,9 +184,9 @@ function normalizeState(raw) {
     pending: raw.pending ?? [],
     next: raw.next ?? [],
     evidence: raw.evidence ?? [],
-    ...(raw.closed === undefined ? {} : { closed: raw.closed }),
-    ...(raw.history === undefined ? {} : { history: raw.history }),
-    ...(raw.personSettings === undefined ? {} : { personSettings: raw.personSettings })
+    ...raw.closed === void 0 ? {} : { closed: raw.closed },
+    ...raw.history === void 0 ? {} : { history: raw.history },
+    ...raw.personSettings === void 0 ? {} : { personSettings: raw.personSettings }
   };
   for (const [key, value] of Object.entries(raw)) {
     if (!TOP_LEVEL_KEYS.has(key)) {
@@ -183,21 +195,18 @@ function normalizeState(raw) {
   }
   return state;
 }
-
 function addError(errors, pathValue, message) {
   errors.push(`${pathValue}: ${message}`);
 }
-
 function addWarning(warnings, pathValue, message) {
   warnings.push(`${pathValue}: ${message}`);
 }
-
 function validateStringArray(value, pathValue, errors) {
   if (!Array.isArray(value)) {
     addError(errors, pathValue, "must be an array of strings");
     return;
   }
-  const seen = new Set();
+  const seen = /* @__PURE__ */ new Set();
   value.forEach((item, index) => {
     if (typeof item !== "string" || !item.trim()) {
       addError(errors, `${pathValue}[${index}]`, "must be a non-empty string");
@@ -209,34 +218,55 @@ function validateStringArray(value, pathValue, errors) {
     seen.add(item);
   });
 }
-
 function validateModels(value, errors) {
   if (typeof value === "string") {
-    if (value !== "defaults" && value !== "host defaults") {
-      addError(errors, "settings.models", "must be defaults, host defaults, or a model assignment object");
-    }
+    if (!EARLIER_DEFAULTS.has(value)) addError(errors, "settings.models", "must be an object keyed by host");
     return;
   }
   if (!isRecord(value)) {
-    addError(errors, "settings.models", "must be a supported defaults value or an object");
+    addError(errors, "settings.models", "must be an object keyed by host");
     return;
   }
-  const requiredRoles = ["delivery", "review", "securityReview"];
-  for (const role of requiredRoles) {
-    if (typeof value[role] !== "string" || !value[role].trim()) {
-      addError(errors, `settings.models.${role}`, "must be a non-empty model name");
+  if (earlierAssignment(value)) return;
+  for (const [host, entry] of Object.entries(value)) {
+    const at = `settings.models.${host}`;
+    if (!RUN_HOSTS.includes(host)) {
+      addError(errors, at, `is not a supported host; the hosts are ${RUN_HOSTS.join(", ")}`);
+      continue;
     }
-  }
-  if (value.examples !== undefined && (typeof value.examples !== "string" || !value.examples.trim())) {
-    addError(errors, "settings.models.examples", "must be a non-empty model name when present");
-  }
-  for (const key of Object.keys(value)) {
-    if (!requiredRoles.includes(key) && key !== "examples") {
-      addError(errors, `settings.models.${key}`, "is not a supported model role");
+    if (!isRecord(entry)) {
+      addError(errors, at, "must be an object of a provider and run choices");
+      continue;
+    }
+    for (const [key, item] of Object.entries(entry)) {
+      if (key === "provider") {
+        if (!validProvider(item)) addError(errors, `${at}.provider`, NAME_RULE_MESSAGES.provider);
+      } else if (!KIND_NAMES.includes(key)) {
+        addError(errors, `${at}.${key}`, `is not a kind of run choice; the kinds are ${KIND_NAMES.join(", ")}`);
+      } else {
+        validateRunChoice(item, `${at}.${key}`, errors, AGENT_KINDS.includes(key));
+      }
     }
   }
 }
-
+function validateRunChoice(value, at, errors, agent) {
+  if (!isRecord(value)) {
+    addError(errors, at, "must be an object of model, effort, and typed");
+    return;
+  }
+  if (Object.hasOwn(value, "earlier")) {
+    if (!agent) addError(errors, `${at}.earlier`, "is kept only by an agent's choice, never the coordinator's");
+    else if (Object.keys(value).length > 1) addError(errors, `${at}.earlier`, "stands alone in its choice, without a model, an effort, or typed");
+    else if (!validEarlierName(value.earlier)) addError(errors, `${at}.earlier`, "has 1 to 200 characters, no control character, and only single spaces between its words");
+    return;
+  }
+  for (const key of Object.keys(value)) {
+    if (!["model", "effort", "typed"].includes(key)) addError(errors, `${at}.${key}`, "is not a part of a run choice; its parts are model, effort, typed, and on an agent's choice an earlier name alone");
+  }
+  if (value.model !== void 0 && !validModel(value.model)) addError(errors, `${at}.model`, NAME_RULE_MESSAGES.model);
+  if (value.effort !== void 0 && !validEffort(value.effort)) addError(errors, `${at}.effort`, NAME_RULE_MESSAGES.effort);
+  if (value.typed !== void 0 && (value.typed !== true || value.model === void 0)) addError(errors, `${at}.typed`, "is true only beside a model name the person typed, and left out otherwise");
+}
 function validateSettings(value, errors, warnings) {
   if (!isRecord(value)) {
     addError(errors, "settings", "must be an object");
@@ -256,14 +286,13 @@ function validateSettings(value, errors, warnings) {
     }
   }
 }
-
 function validateActive(value, errors, warnings) {
   if (!Array.isArray(value)) {
     addError(errors, "active", "must be an array of active work records");
     return;
   }
-  const slices = new Set();
-  const workers = new Set();
+  const slices = /* @__PURE__ */ new Set();
+  const workers = /* @__PURE__ */ new Set();
   value.forEach((entry, index) => {
     const entryPath = `active[${index}]`;
     if (!isRecord(entry)) {
@@ -283,7 +312,7 @@ function validateActive(value, errors, warnings) {
     if (!Array.isArray(entry.workers) || entry.workers.length === 0) {
       addError(errors, `${entryPath}.workers`, "must contain at least one worker");
     } else {
-      const localWorkers = new Set();
+      const localWorkers = /* @__PURE__ */ new Set();
       entry.workers.forEach((worker, workerIndex) => {
         if (typeof worker !== "string" || !worker.trim()) {
           addError(errors, `${entryPath}.workers[${workerIndex}]`, "must be a non-empty string");
@@ -298,10 +327,10 @@ function validateActive(value, errors, warnings) {
     if (typeof entry.workspace !== "string" || !entry.workspace.trim()) {
       addError(errors, `${entryPath}.workspace`, "must be a non-empty path");
     }
-    if (entry.reviewLanes !== undefined && !Array.isArray(entry.reviewLanes)) {
+    if (entry.reviewLanes !== void 0 && !Array.isArray(entry.reviewLanes)) {
       addError(errors, `${entryPath}.reviewLanes`, "must be an array when present");
     }
-    if (entry.findingsPath !== undefined && (typeof entry.findingsPath !== "string" || !entry.findingsPath.trim())) {
+    if (entry.findingsPath !== void 0 && (typeof entry.findingsPath !== "string" || !entry.findingsPath.trim())) {
       addError(errors, `${entryPath}.findingsPath`, "must be a non-empty path when present");
     }
     for (const key of Object.keys(entry)) {
@@ -311,7 +340,6 @@ function validateActive(value, errors, warnings) {
     }
   });
 }
-
 function validGatePath(value) {
   if (typeof value !== "string" || !value.trim() || path.isAbsolute(value) || value.includes("\\")) {
     return false;
@@ -319,28 +347,22 @@ function validGatePath(value) {
   const normalized = path.posix.normalize(value);
   return normalized === value && normalized !== "." && !normalized.startsWith("../");
 }
-
 function boundedText(value, limit) {
   return typeof value === "string" && value.trim() !== "" && value.length <= limit;
 }
-
-// A new question must stand on its own; gates recorded before these fields existed stay valid as they are.
 function askProblems(gate) {
   const problems = [];
-  if (CONTEXT_KINDS.has(gate.kind) && gate.context === undefined) {
+  if (CONTEXT_KINDS.has(gate.kind) && gate.context === void 0) {
     problems.push("context is required for a decision or assistance gate: in plain language, say what happened, what was tried, what the choice changes, and give a concrete example, so a person who has not followed the run can decide from the gate alone");
   }
   if (gate.kind !== "decision") return problems;
-  const missing = (gate.options ?? []).filter((option) => isRecord(option) && option.consequence === undefined).map((option) => option.id);
+  const missing = (gate.options ?? []).filter((option) => isRecord(option) && option.consequence === void 0).map((option) => option.id);
   if (missing.length) problems.push(`each option needs a consequence, one sentence on what happens if the person picks it; missing for ${missing.join(", ")}`);
-  if (gate.recommended === undefined) {
-    problems.push(gate.options?.length
-      ? "recommended is required: { option, reason } naming the option you recommend and why"
-      : "recommended is required: { reason } with the answer you recommend and why");
+  if (gate.recommended === void 0) {
+    problems.push(gate.options?.length ? "recommended is required: { option, reason } naming the option you recommend and why" : "recommended is required: { reason } with the answer you recommend and why");
   }
   return problems;
 }
-
 function validateGate(entry, entryPath, errors) {
   for (const key of Object.keys(entry)) {
     if (!GATE_KEYS.has(key)) {
@@ -353,10 +375,10 @@ function validateGate(entry, entryPath, errors) {
   if (!GATE_KINDS.has(entry.kind)) {
     addError(errors, `${entryPath}.kind`, `must be one of ${[...GATE_KINDS].join(", ")}`);
   }
-  if (entry.slice !== undefined && (typeof entry.slice !== "string" || !entry.slice.trim())) {
+  if (entry.slice !== void 0 && (typeof entry.slice !== "string" || !entry.slice.trim())) {
     addError(errors, `${entryPath}.slice`, "must be a non-empty slice slug when present");
   }
-  if (typeof entry.question !== "string" || !entry.question.trim() || entry.question.length > 4000) {
+  if (typeof entry.question !== "string" || !entry.question.trim() || entry.question.length > 4e3) {
     addError(errors, `${entryPath}.question`, "must be a non-empty question of at most 4000 characters");
   }
   if (!Array.isArray(entry.artifacts) || entry.artifacts.length > 50) {
@@ -368,17 +390,17 @@ function validateGate(entry, entryPath, errors) {
       }
     });
   }
-  if (entry.options !== undefined) {
+  if (entry.options !== void 0) {
     if (entry.kind !== "decision") {
       addError(errors, `${entryPath}.options`, "is allowed only for decision gates; visual-review and correctness answers are approve or request-changes, and assistance answers are done");
     } else if (!Array.isArray(entry.options) || entry.options.length === 0 || entry.options.length > 8) {
       addError(errors, `${entryPath}.options`, "must list one to eight options");
     } else {
-      const ids = new Set();
+      const ids = /* @__PURE__ */ new Set();
       entry.options.forEach((option, index) => {
         if (!isRecord(option) || Object.keys(option).some((key) => !OPTION_KEYS.has(key)) || !OPTION_ID.test(option.id ?? "") || typeof option.label !== "string" || !option.label.trim() || option.label.length > 200) {
           addError(errors, `${entryPath}.options[${index}]`, "must be { id, label, consequence } with a lowercase slug id and a label of at most 200 characters");
-        } else if (option.consequence !== undefined && !boundedText(option.consequence, CONSEQUENCE_LIMIT)) {
+        } else if (option.consequence !== void 0 && !boundedText(option.consequence, CONSEQUENCE_LIMIT)) {
           addError(errors, `${entryPath}.options[${index}].consequence`, `must be non-empty text of at most ${CONSEQUENCE_LIMIT} characters`);
         } else if (ids.has(option.id)) {
           addError(errors, `${entryPath}.options[${index}].id`, "must not duplicate another option");
@@ -388,27 +410,27 @@ function validateGate(entry, entryPath, errors) {
       });
     }
   }
-  if (entry.context !== undefined && !boundedText(entry.context, CONTEXT_LIMIT)) {
+  if (entry.context !== void 0 && !boundedText(entry.context, CONTEXT_LIMIT)) {
     addError(errors, `${entryPath}.context`, `must be non-empty Markdown of at most ${CONTEXT_LIMIT} characters`);
   }
-  if (entry.recommended !== undefined) {
+  if (entry.recommended !== void 0) {
     const recommended = entry.recommended;
     if (entry.kind !== "decision") {
       addError(errors, `${entryPath}.recommended`, "is allowed only for decision gates");
     } else if (!isRecord(recommended) || Object.keys(recommended).some((key) => !RECOMMENDED_KEYS.has(key)) || !boundedText(recommended.reason, RECOMMENDATION_LIMIT)) {
       addError(errors, `${entryPath}.recommended`, `must be { option, reason } with a reason of at most ${RECOMMENDATION_LIMIT} characters`);
-    } else if (recommended.option !== undefined && !(entry.options ?? []).some((option) => isRecord(option) && option.id === recommended.option)) {
+    } else if (recommended.option !== void 0 && !(entry.options ?? []).some((option) => isRecord(option) && option.id === recommended.option)) {
       addError(errors, `${entryPath}.recommended.option`, "must name one of the gate's options");
     }
   }
   if (typeof entry.askedAt !== "string" || Number.isNaN(Date.parse(entry.askedAt))) {
     addError(errors, `${entryPath}.askedAt`, "must be an ISO timestamp");
   }
-  if (entry.standing !== undefined) {
+  if (entry.standing !== void 0) {
     if (entry.kind !== "correctness") addError(errors, `${entryPath}.standing`, "is recorded only on a correctness gate");
     else if (!wellFormedStanding(entry.standing)) addError(errors, `${entryPath}.standing`, "must be { runs, slices, repositories, adrs } as the ask operation records it");
   }
-  if (entry.answer !== undefined) {
+  if (entry.answer !== void 0) {
     if (!isRecord(entry.answer) || Object.keys(entry.answer).some((key) => !ANSWER_KEYS.has(key))) {
       addError(errors, `${entryPath}.answer`, "must contain only choice, note, via, answeredAt, by, and entry");
     } else {
@@ -416,31 +438,22 @@ function validateGate(entry, entryPath, errors) {
       if (problem) addError(errors, `${entryPath}.answer`, problem);
       if (entry.answer.via !== "browser") addError(errors, `${entryPath}.answer.via`, "must be browser");
       if (typeof entry.answer.answeredAt !== "string" || Number.isNaN(Date.parse(entry.answer.answeredAt))) addError(errors, `${entryPath}.answer.answeredAt`, "must be an ISO timestamp");
-      if (entry.answer.by !== undefined && !validAuthor(entry.answer.by)) addError(errors, `${entryPath}.answer.by`, "must be an author { name, email, checkout }");
-      if (entry.answer.entry !== undefined && (typeof entry.answer.entry !== "string" || !ENTRY_ID.test(entry.answer.entry))) addError(errors, `${entryPath}.answer.entry`, "must be a history entry id of 32 lowercase hexadecimal characters");
+      if (entry.answer.by !== void 0 && !validAuthor(entry.answer.by)) addError(errors, `${entryPath}.answer.by`, "must be an author { name, email, checkout }");
+      if (entry.answer.entry !== void 0 && (typeof entry.answer.entry !== "string" || !ENTRY_ID.test(entry.answer.entry))) addError(errors, `${entryPath}.answer.entry`, "must be a history entry id of 32 lowercase hexadecimal characters");
     }
   }
 }
-
-const STANDING_ITEMS_MAX = 1000;
+const STANDING_ITEMS_MAX = 1e3;
 const exactly = (value, keys) => isRecord(value) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 const shortText = (value, max) => typeof value === "string" && value !== "" && value.length <= max;
-
-// What an initiative stood at when a correctness gate was asked: each leaf's latest passing run id, or null, each slice.md's version,
-// the repositories that each slice's links resolve in, and the version of each ADR that its ship would accept.
 function wellFormedStanding(value) {
   const listed = (key) => Array.isArray(value[key]) && value[key].length <= STANDING_ITEMS_MAX;
-  const version = (item) => exactly(item, ["scope", "path", "version"]) && shortText(item.scope, 200) && shortText(item.path, 1000) && /^sha256:[0-9a-f]{64}$/.test(item.version);
+  const version = (item) => exactly(item, ["scope", "path", "version"]) && shortText(item.scope, 200) && shortText(item.path, 1e3) && /^sha256:[0-9a-f]{64}$/.test(item.version);
   if (!exactly(value, ["runs", "slices", "repositories", "adrs"]) || !["runs", "slices", "repositories", "adrs"].every(listed)) return false;
-  return value.runs.every((item) => exactly(item, ["slice", "run"]) && shortText(item.slice, 200) && (item.run === null || shortText(item.run, 200)))
-    && value.slices.every(version)
-    && value.repositories.every((item) => exactly(item, ["folder", "repositories"]) && shortText(item.folder, 1000) && Array.isArray(item.repositories) && item.repositories.length <= STANDING_ITEMS_MAX && item.repositories.every((name) => shortText(name, 200)))
-    && value.adrs.every(version);
+  return value.runs.every((item) => exactly(item, ["slice", "run"]) && shortText(item.slice, 200) && (item.run === null || shortText(item.run, 200))) && value.slices.every(version) && value.repositories.every((item) => exactly(item, ["folder", "repositories"]) && shortText(item.folder, 1e3) && Array.isArray(item.repositories) && item.repositories.length <= STANDING_ITEMS_MAX && item.repositories.every((name) => shortText(name, 200))) && value.adrs.every(version);
 }
-
-// Each gate kind accepts its own choices; a note carries the reason whenever the answer is not a plain acceptance.
 function answerProblem(gate, choice, note) {
-  if (note !== null && (typeof note !== "string" || !note.trim() || note.length > 4000)) {
+  if (note !== null && (typeof note !== "string" || !note.trim() || note.length > 4e3)) {
     return "note must be null or a non-empty text of at most 4000 characters";
   }
   if (gate.kind === "visual-review" || gate.kind === "correctness") {
@@ -457,13 +470,12 @@ function answerProblem(gate, choice, note) {
   }
   return null;
 }
-
 function validatePending(value, errors) {
   if (!Array.isArray(value)) {
     addError(errors, "pending", "must be an array of strings or user gates");
     return;
   }
-  const seen = new Set();
+  const seen = /* @__PURE__ */ new Set();
   value.forEach((item, index) => {
     const entryPath = `pending[${index}]`;
     if (isRecord(item)) {
@@ -484,7 +496,6 @@ function validatePending(value, errors) {
     seen.add(item);
   });
 }
-
 function validateClosed(value, errors) {
   if (!Array.isArray(value) || value.length > CLOSED_LIMIT) {
     addError(errors, "closed", `must be an array of at most ${CLOSED_LIMIT} closed user gates`);
@@ -498,23 +509,18 @@ function validateClosed(value, errors) {
     }
     const { closedAt, reason, choice, ...gate } = entry;
     validateGate(gate, entryPath, errors);
-    if (choice !== undefined && (gate.kind !== "decision" || !(gate.options ?? []).some((option) => option?.id === choice))) addError(errors, `${entryPath}.choice`, "must be the id of one of the decision gate's options");
-    else if (choice !== undefined && conflictingChoice(gate.answer, choice)) addError(errors, `${entryPath}.choice`, "must match the option of the gate's browser answer");
+    if (choice !== void 0 && (gate.kind !== "decision" || !(gate.options ?? []).some((option) => option?.id === choice))) addError(errors, `${entryPath}.choice`, "must be the id of one of the decision gate's options");
+    else if (choice !== void 0 && conflictingChoice(gate.answer, choice)) addError(errors, `${entryPath}.choice`, "must match the option of the gate's browser answer");
     if (typeof closedAt !== "string" || Number.isNaN(Date.parse(closedAt))) addError(errors, `${entryPath}.closedAt`, "must be an ISO timestamp");
-    if (reason !== undefined && (typeof reason !== "string" || !reason.trim() || reason.length > REASON_LIMIT)) addError(errors, `${entryPath}.reason`, `must be a non-empty reason of at most ${REASON_LIMIT} characters`);
+    if (reason !== void 0 && (typeof reason !== "string" || !reason.trim() || reason.length > REASON_LIMIT)) addError(errors, `${entryPath}.reason`, `must be a non-empty reason of at most ${REASON_LIMIT} characters`);
   });
 }
-
-// A browser answer that chose an option leaves no room for a different choice on the closed gate.
 const conflictingChoice = (answer, choice) => isRecord(answer) && typeof answer.choice === "string" && answer.choice !== choice;
-
 function closedGate(gate, reason, choice) {
-  return { ...gate, closedAt: new Date().toISOString(), ...(reason ? { reason } : {}), ...(choice === undefined ? {} : { choice }) };
+  return { ...gate, closedAt: (/* @__PURE__ */ new Date()).toISOString(), ...reason ? { reason } : {}, ...choice === void 0 ? {} : { choice } };
 }
-
-// Replacing the pending list may drop answered gates, but an unanswered question is withdrawn only through resolve with a reason.
 function droppedGates(before, replacement) {
-  if (replacement === undefined) return [];
+  if (replacement === void 0) return [];
   const kept = new Set(replacement.filter(isRecord).map((gate) => gate.id));
   const dropped = before.filter((gate) => isRecord(gate) && !kept.has(gate.id));
   const unanswered = dropped.find((gate) => !gate.answer);
@@ -523,7 +529,6 @@ function droppedGates(before, replacement) {
   }
   return dropped.map((gate) => closedGate(gate, null));
 }
-
 function applyGateOperations(pending, operations, standing = null) {
   const next = [...pending];
   const opened = [];
@@ -541,15 +546,15 @@ function applyGateOperations(pending, operations, standing = null) {
       const gate = {
         id: `gate-${randomBytes(6).toString("hex")}`,
         kind: operation.kind,
-        ...(operation.slice === undefined ? {} : { slice: operation.slice }),
+        ...operation.slice === void 0 ? {} : { slice: operation.slice },
         question: operation.question,
-        ...(operation.context === undefined ? {} : { context: operation.context }),
+        ...operation.context === void 0 ? {} : { context: operation.context },
         artifacts: operation.artifacts ?? [],
-        ...(operation.options === undefined ? {} : { options: operation.options }),
-        ...(operation.recommended === undefined ? {} : { recommended: operation.recommended }),
-        askedAt: new Date().toISOString(),
+        ...operation.options === void 0 ? {} : { options: operation.options },
+        ...operation.recommended === void 0 ? {} : { recommended: operation.recommended },
+        askedAt: (/* @__PURE__ */ new Date()).toISOString(),
         // With a record store, a correctness gate records what the initiative stands at, which a ship that it confirms compares with the initiative then.
-        ...(operation.kind === "correctness" && standing !== null ? { standing } : {})
+        ...operation.kind === "correctness" && standing !== null ? { standing } : {}
       };
       const errors = [];
       validateGate(gate, `gateOperations[${index}]`, errors);
@@ -560,8 +565,6 @@ function applyGateOperations(pending, operations, standing = null) {
       if (errors.length) {
         throw error("invalid_changes", `The user gate is invalid: ${errors.join("; ")}.`, { errors });
       }
-      // A new correctness gate asks the person to confirm the initiative as it stands now, so it supersedes each earlier one the person already answered,
-      // which closes with a reason naming the new gate, and a ship never meets an answered question that no one acts on; an unanswered one stays the person's question.
       if (gate.kind === "correctness") {
         const answered = next.filter((earlier) => isRecord(earlier) && earlier.kind === "correctness" && earlier.answer);
         for (const earlier of answered) {
@@ -582,18 +585,16 @@ function applyGateOperations(pending, operations, standing = null) {
         throw error("unknown_gate", `No pending user gate has the id ${operation.id}.`);
       }
       const reason = typeof operation.reason === "string" ? operation.reason.trim() : "";
-      if (operation.reason !== undefined && (!reason || reason.length > REASON_LIMIT)) {
+      if (operation.reason !== void 0 && (!reason || reason.length > REASON_LIMIT)) {
         throw error("invalid_changes", `gateOperations[${index}].reason must be a non-empty reason of at most ${REASON_LIMIT} characters.`);
       }
       if (!next[position].answer && !reason) {
         throw error("invalid_changes", `gateOperations[${index}] resolves the unanswered gate ${operation.id}; give a reason, such as the user's answer in the conversation or why the question no longer applies.`);
       }
-      // A choice the user gave in the conversation stays on the closed gate, so a later operation can act on it.
-      if (operation.choice !== undefined && (next[position].kind !== "decision" || !(next[position].options ?? []).some((option) => option?.id === operation.choice))) {
+      if (operation.choice !== void 0 && (next[position].kind !== "decision" || !(next[position].options ?? []).some((option) => option?.id === operation.choice))) {
         throw error("invalid_changes", `gateOperations[${index}].choice must be the id of one of the options of the decision gate ${operation.id}.`);
       }
-      // The user's browser answer is their decision, so a choice from the conversation may repeat it but never replace it.
-      if (operation.choice !== undefined && conflictingChoice(next[position].answer, operation.choice)) {
+      if (operation.choice !== void 0 && conflictingChoice(next[position].answer, operation.choice)) {
         throw error("invalid_changes", `gateOperations[${index}].choice ${operation.choice} differs from the option ${next[position].answer.choice} that the user chose for the gate ${operation.id} in the review browser.`);
       }
       closed.push(closedGate(next[position], reason, operation.choice));
@@ -604,20 +605,16 @@ function applyGateOperations(pending, operations, standing = null) {
   });
   return { pending: next, opened, closed, superseded: superseded.sort() };
 }
-
-// Only the review browser records answers, so agent updates may keep an answer but never add or change one,
-// and a gate that has an answer stays as the person was shown it: an update may drop it, which closes it, but changes nothing else about it.
-// What a correctness gate records the initiative stood at is Prism's own, so only the ask operation that opens the gate records it.
 function assertAnsweredGatesUnchanged(before, after, opened) {
   const previous = new Map(before.filter(isRecord).map((gate) => [gate.id, gate]));
   const asked = new Set(opened.map((gate) => gate.id));
   for (const gate of after.filter(isRecord)) {
     if (asked.has(gate.id)) continue;
     const earlier = previous.get(gate.id);
-    if (gate.answer !== undefined && JSON.stringify(earlier?.answer ?? null) !== JSON.stringify(gate.answer)) {
+    if (gate.answer !== void 0 && JSON.stringify(earlier?.answer ?? null) !== JSON.stringify(gate.answer)) {
       throw error("invalid_changes", `The user gate ${gate.id} has an answer that only the review browser can record.`);
     }
-    if (earlier?.answer !== undefined && canonicalJson(earlier) !== canonicalJson(gate)) {
+    if (earlier?.answer !== void 0 && canonicalJson(earlier) !== canonicalJson(gate)) {
       throw error("invalid_changes", `The user gate ${gate.id} has an answer, so it stays as the person was shown it: drop it from pending to close it, or ask a new question with a gateOperations ask.`);
     }
     if (canonicalJson(gate.standing ?? null) !== canonicalJson(earlier?.standing ?? null)) {
@@ -625,41 +622,29 @@ function assertAnsweredGatesUnchanged(before, after, opened) {
     }
   }
 }
-
-// A correctness gate asked in a project with a record store records what the initiative stands at, read before the state lock is taken, so the read never waits on a store sync while holding it.
 async function askedStanding(resolved, changes) {
   if (!resolved.store || !(changes.gateOperations ?? []).some((operation) => isRecord(operation) && operation.op === "ask" && operation.kind === "correctness")) return null;
   const { initiativeStanding } = await import("./ship-standing.mjs");
-  // A gate whose standing could not be read, as one asked while the store is unreadable, or that is more than a gate records, is still asked, and confirms no ship: the ship then asks for a new one.
   const standing = await initiativeStanding(resolved.root, resolved.initiative).catch(() => null);
   return standing !== null && wellFormedStanding(standing) ? standing : null;
 }
-
-const nullableText = (value) => value === null || (typeof value === "string" && value.length <= 200);
-
+const nullableText = (value) => value === null || typeof value === "string" && value.length <= 200;
 function validAuthor(value) {
   return isRecord(value) && Object.keys(value).every((key) => AUTHOR_KEYS.has(key)) && nullableText(value.name) && nullableText(value.email) && typeof value.checkout === "string" && value.checkout.trim() !== "" && value.checkout.length <= 400;
 }
-
 const validTime = (value) => typeof value === "string" && !Number.isNaN(Date.parse(value));
-
-/** The order of a history: ascending by the time of the machine that applied each entry, and then by id. */
-export function historyOrder(left, right) {
+function historyOrder(left, right) {
   if (left.at !== right.at) return left.at < right.at ? -1 : 1;
   return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
 }
-
-/** A history with one more entry at its place in history order, keeping the newest entries within the limit. */
-export function insertHistoryEntry(history, entry, limit = HISTORY_LIMIT) {
-  const entries = [...(history ?? [])];
+function insertHistoryEntry(history, entry, limit = HISTORY_LIMIT) {
+  const entries = [...history ?? []];
   let position = entries.length;
   while (position > 0 && historyOrder(entries[position - 1], entry) > 0) position -= 1;
   entries.splice(position, 0, entry);
   return entries.slice(-limit);
 }
-
-/** The problem of a history entry, or null when it is well formed. */
-export function historyEntryProblem(entry) {
+function historyEntryProblem(entry) {
   if (!isRecord(entry) || Object.keys(entry).some((key) => !ENTRY_KEYS.has(key))) return "must contain only id, action, target, before, after, at, by, and via";
   if (typeof entry.id !== "string" || !ENTRY_ID.test(entry.id)) return "id must be 32 lowercase hexadecimal characters";
   for (const key of ["action", "target", "via"]) if (typeof entry[key] !== "string" || !entry[key].trim() || entry[key].length > 400) return `${key} must be a non-empty text`;
@@ -668,13 +653,12 @@ export function historyEntryProblem(entry) {
   if (!validAuthor(entry.by)) return "by must be an author { name, email, checkout }";
   return null;
 }
-
 function validateHistory(value, errors) {
   if (!Array.isArray(value) || value.length > HISTORY_LIMIT) {
     addError(errors, "history", `must be an array of at most ${HISTORY_LIMIT} history entries`);
     return;
   }
-  const seen = new Set();
+  const seen = /* @__PURE__ */ new Set();
   value.forEach((entry, index) => {
     const problem = historyEntryProblem(entry);
     if (problem) {
@@ -686,7 +670,6 @@ function validateHistory(value, errors) {
     if (index > 0 && historyEntryProblem(value[index - 1]) === null && historyOrder(value[index - 1], entry) > 0) addError(errors, `history[${index}]`, "must follow the entries before it by time and then by id");
   });
 }
-
 function validatePersonSettings(value, errors) {
   if (!isRecord(value)) {
     addError(errors, "personSettings", "must be an object");
@@ -697,38 +680,37 @@ function validatePersonSettings(value, errors) {
     else if (!isRecord(mark) || Object.keys(mark).some((name) => name !== "at" && name !== "entry") || !validTime(mark.at) || typeof mark.entry !== "string" || !ENTRY_ID.test(mark.entry)) addError(errors, `personSettings.${key}`, "must be { at, entry } with an ISO time and a history entry id");
   }
 }
-
 function validateStateValue(raw) {
   const errors = [];
   const warnings = [];
   if (!isRecord(raw)) {
     return { errors: ["state: must be a JSON object"], warnings };
   }
-  if (raw.schemaVersion === undefined) {
+  if (raw.schemaVersion === void 0) {
     addWarning(warnings, "schemaVersion", "is missing and will be added on the next update");
   } else if (raw.schemaVersion !== SCHEMA_VERSION) {
     addError(errors, "schemaVersion", `must equal ${SCHEMA_VERSION}`);
   }
-  if (raw.settings !== undefined) {
+  if (raw.settings !== void 0) {
     validateSettings(raw.settings, errors, warnings);
   }
-  if (raw.active !== undefined) {
+  if (raw.active !== void 0) {
     validateActive(raw.active, errors, warnings);
   }
-  if (raw.pending !== undefined) {
+  if (raw.pending !== void 0) {
     validatePending(raw.pending, errors);
   }
-  if (raw.closed !== undefined) {
+  if (raw.closed !== void 0) {
     validateClosed(raw.closed, errors);
   }
-  if (raw.history !== undefined) {
+  if (raw.history !== void 0) {
     validateHistory(raw.history, errors);
   }
-  if (raw.personSettings !== undefined) {
+  if (raw.personSettings !== void 0) {
     validatePersonSettings(raw.personSettings, errors);
   }
   for (const key of ["next", "evidence"]) {
-    if (raw[key] !== undefined) {
+    if (raw[key] !== void 0) {
       validateStringArray(raw[key], key, errors);
     }
   }
@@ -739,7 +721,6 @@ function validateStateValue(raw) {
   }
   return { errors, warnings };
 }
-
 function validateChanges(changes) {
   if (!isRecord(changes) || Object.keys(changes).length === 0) {
     throw error("invalid_changes", "The changes argument must contain at least one managed state field.");
@@ -748,24 +729,22 @@ function validateChanges(changes) {
     if (REGISTRY_KEYS.has(key)) {
       throw error("invalid_changes", `The state field ${key} records the person's changes in the review app, so only the review app's actions write it.`);
     }
-    if ((!TOP_LEVEL_KEYS.has(key) && key !== "activeOperations" && key !== "gateOperations") || key === "schemaVersion" || key === "closed") {
+    if (!TOP_LEVEL_KEYS.has(key) && key !== "activeOperations" && key !== "gateOperations" || key === "schemaVersion" || key === "closed") {
       throw error("invalid_changes", `The state field ${key} cannot be changed through this capability.`);
     }
   }
-  if (changes.settings !== undefined && !isRecord(changes.settings)) {
+  if (changes.settings !== void 0 && !isRecord(changes.settings)) {
     throw error("invalid_changes", "The changes.settings field must be an object.");
   }
   for (const key of ["active", "pending", "next", "evidence", "gateOperations"]) {
-    if (changes[key] !== undefined && !Array.isArray(changes[key])) {
+    if (changes[key] !== void 0 && !Array.isArray(changes[key])) {
       throw error("invalid_changes", `The changes.${key} field must be an array.`);
     }
   }
 }
-
 async function loadState(statePath) {
   let contents;
   try {
-    // The state is read without following a link and only within its kind's bound, so a larger file reads as a damaged one, unread.
     const bytes = await readStoreFileBytes(statePath, STORE_FILE_BOUNDS.state);
     if (bytes === null) throw Object.assign(new Error("missing"), { code: "ENOENT" });
     contents = bytes.toString("utf8");
@@ -811,7 +790,6 @@ async function loadState(statePath) {
     warnings: validation.warnings
   };
 }
-
 function publicStateResult(resolved, loaded) {
   return {
     initiative: resolved.initiative,
@@ -823,11 +801,9 @@ function publicStateResult(resolved, loaded) {
     warnings: loaded.warnings
   };
 }
-
-const serialize = (state) => `${JSON.stringify(state, null, 2)}\n`;
+const serialize = (state) => `${JSON.stringify(state, null, 2)}
+`;
 const fits = (contents) => Buffer.byteLength(contents) <= STATE_MAX_BYTES;
-
-// The smallest count in [0, max] whose drop makes the state fit, or null when even max does not; a larger drop never grows the state.
 function fewestDrops(max, contentsAfter) {
   if (!fits(contentsAfter(max))) return null;
   let [low, high] = [0, max];
@@ -838,11 +814,6 @@ function fewestDrops(max, contentsAfter) {
   }
   return low;
 }
-
-/**
- * A coordination state fitted to 1 MiB: the oldest history entries other than `keep` give way first, and then the oldest closed gates,
- * so pending gates, settings, the person's marks, and every other part stay. Null when the state exceeds the limit with both dropped.
- */
 function fitState(state, keep = null) {
   const contents = serialize(state);
   if (fits(contents)) return { state, contents };
@@ -850,52 +821,44 @@ function fitState(state, keep = null) {
   const droppable = history.filter((item) => item?.id !== keep);
   const withoutHistory = (count) => {
     const gone = new Set(droppable.slice(0, count));
-    return { ...state, ...(state.history === undefined ? {} : { history: history.filter((item) => !gone.has(item)) }) };
+    return { ...state, ...state.history === void 0 ? {} : { history: history.filter((item) => !gone.has(item)) } };
   };
   const historyDrops = fewestDrops(droppable.length, (count) => serialize(withoutHistory(count)));
   if (historyDrops !== null) {
-    const fitted = withoutHistory(historyDrops);
-    return { state: fitted, contents: serialize(fitted) };
+    const fitted2 = withoutHistory(historyDrops);
+    return { state: fitted2, contents: serialize(fitted2) };
   }
   const trimmed = withoutHistory(droppable.length);
   const closed = Array.isArray(state.closed) ? state.closed : [];
-  const withoutClosed = (count) => ({ ...trimmed, ...(state.closed === undefined ? {} : { closed: closed.slice(count) }) });
+  const withoutClosed = (count) => ({ ...trimmed, ...state.closed === void 0 ? {} : { closed: closed.slice(count) } });
   const closedDrops = fewestDrops(closed.length, (count) => serialize(withoutClosed(count)));
   if (closedDrops === null) return null;
   const fitted = withoutClosed(closedDrops);
   return { state: fitted, contents: serialize(fitted) };
 }
-
-// Every coordination state write serializes through here, so no state that a writer accepts exceeds the limit a merge applies.
 function stateContents(state, keep = null) {
   const fitted = fitState(state, keep);
   if (fitted === null) throw error("artifact_too_large", "The coordination state exceeds 1 MiB with its history and closed gates dropped and was not written.");
   return fitted.contents;
 }
-
 function changedFields(before, after) {
   return ["settings", "active", "pending", "next", "evidence", "closed"].filter((key) => JSON.stringify(before?.[key]) !== JSON.stringify(after[key]));
 }
-
 const ABSENT = Symbol("absent");
 const sameJson = (left, right) => (left === ABSENT ? "\0absent" : canonicalJson(left)) === (right === ABSENT ? "\0absent" : canonicalJson(right));
 const valueOf = (record, key) => isRecord(record) && Object.hasOwn(record, key) ? record[key] : ABSENT;
-
-// A person's mark orders by its time and then by its entry id; a side without a mark comes before any mark.
 function laterMark(left, right) {
-  if (left === ABSENT || right === ABSENT) return left === ABSENT ? (right === ABSENT ? 0 : -1) : 1;
+  if (left === ABSENT || right === ABSENT) return left === ABSENT ? right === ABSENT ? 0 : -1 : 1;
   if (left.at !== right.at) return left.at < right.at ? -1 : 1;
   return left.entry < right.entry ? -1 : left.entry > right.entry ? 1 : 0;
 }
-
-// Each setting merges with its person mark: a setting both sides changed differently takes the side the person changed later.
 function mergeSettings(base, local, upstream) {
-  const names = [...new Set([...Object.keys(upstream.settings), ...Object.keys(local.settings), ...Object.keys(base.settings)])];
+  const names = [.../* @__PURE__ */ new Set([...Object.keys(upstream.settings), ...Object.keys(local.settings), ...Object.keys(base.settings)])];
   const settings = {};
   const marks = {};
   const marksOf = (state) => isRecord(state.personSettings) ? state.personSettings : {};
   const [baseMarks, localMarks, upstreamMarks] = [base, local, upstream].map(marksOf);
-  for (const name of [...new Set([...names, ...Object.keys(upstreamMarks), ...Object.keys(localMarks), ...Object.keys(baseMarks)])]) {
+  for (const name of [.../* @__PURE__ */ new Set([...names, ...Object.keys(upstreamMarks), ...Object.keys(localMarks), ...Object.keys(baseMarks)])]) {
     const pair = (state, stateMarks) => ({ value: valueOf(state.settings, name), mark: valueOf(stateMarks, name) });
     const [b, l, u] = [pair(base, baseMarks), pair(local, localMarks), pair(upstream, upstreamMarks)];
     const same = (left, right) => sameJson(left.value, right.value) && sameJson(left.mark, right.mark);
@@ -914,15 +877,12 @@ function mergeSettings(base, local, upstream) {
   }
   return { settings, personSettings: marks };
 }
-
 const gateKey = (item) => isRecord(item) ? item.id : item;
 const askedPart = (gate) => {
   if (!isRecord(gate)) return gate;
   const { answer, ...asked } = gate;
   return asked;
 };
-
-// A gate keeps what it was asked with; answers on both sides keep the earlier one, and the upstream's on equal times.
 function mergeGate(id, base, local, upstream) {
   if (!sameJson(askedPart(local), askedPart(upstream))) throw new MergeConflict(`The user gate ${id} differs between the sides.`);
   if (!isRecord(local)) return local;
@@ -935,13 +895,11 @@ function mergeGate(id, base, local, upstream) {
   const { answer: _, ...asked } = local;
   return answer === ABSENT ? asked : { ...asked, answer };
 }
-
-// Merge a list of items keyed by id: an item one side removed stays removed, and the merged order follows mergeOrder with upstream additions first.
 function mergeList(label, base, local, upstream, keyOf, mergeItem) {
   const index = (list) => new Map(list.map((item) => [keyOf(item), item]));
   const [b, l, u] = [base, local, upstream].map(index);
-  const merged = new Map();
-  for (const key of new Set([...u.keys(), ...l.keys(), ...b.keys()])) {
+  const merged = /* @__PURE__ */ new Map();
+  for (const key of /* @__PURE__ */ new Set([...u.keys(), ...l.keys(), ...b.keys()])) {
     const inBase = b.has(key);
     if (inBase && (!l.has(key) || !u.has(key))) continue;
     if (!l.has(key)) merged.set(key, u.get(key));
@@ -951,45 +909,42 @@ function mergeList(label, base, local, upstream, keyOf, mergeItem) {
   const ids = (map) => [...map.keys()];
   return mergeOrder(label, ids(b), ids(l), ids(u), new Set(merged.keys()), { upstreamFirst: true }).map((key) => merged.get(key));
 }
-
-// Entries of either side once by id, except a base entry that either side dropped, ordered by `order` and cut to the newest `limit`.
 function mergeUnion(base, local, upstream, keyOf, order, limit) {
   const held = (list) => new Set(list.map(keyOf));
   const [inLocal, inUpstream] = [held(local), held(upstream)];
   const dropped = new Set(base.map(keyOf).filter((key) => !inLocal.has(key) || !inUpstream.has(key)));
-  const entries = new Map();
+  const entries = /* @__PURE__ */ new Map();
   for (const item of [...local, ...upstream]) if (!dropped.has(keyOf(item))) entries.set(keyOf(item), item);
   return [...entries.values()].sort(order).slice(-limit);
 }
-
 const closedOrder = (left, right) => {
   if (left.closedAt !== right.closedAt) return String(left.closedAt) < String(right.closedAt) ? -1 : 1;
   return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
 };
-
 const STRUCTURED = ["settings", "personSettings", "pending", "history", "active", "closed", "evidence"];
-
-/**
- * The structural merge of a coordination state that changed on two machines: { path, base, local, upstream } as UTF-8 text,
- * base null for a state new on both sides, answering { contents } or { conflict }.
- */
-export function mergeCoordinationState(versions) {
+function mergeCoordinationState(versions) {
   try {
     const parsed = parseVersions(versions, defaultState);
     if (Object.values(parsed).some((state) => !isRecord(state))) throw new MergeConflict("A version of the coordination state is not a JSON object.");
     const [base, local, upstream] = [parsed.base, parsed.local, parsed.upstream].map(normalizeState);
     for (const state of [base, local, upstream]) {
-      if (!isRecord(state.settings) || (state.personSettings !== undefined && !isRecord(state.personSettings))) throw new MergeConflict("A version of the coordination state has malformed settings.");
+      if (!isRecord(state.settings) || state.personSettings !== void 0 && !isRecord(state.personSettings)) throw new MergeConflict("A version of the coordination state has malformed settings.");
       for (const key of ["active", "pending", "evidence", "closed", "history"]) {
-        if (state[key] !== undefined && !Array.isArray(state[key])) throw new MergeConflict(`A version of the coordination state has a malformed ${key}.`);
+        if (state[key] !== void 0 && !Array.isArray(state[key])) throw new MergeConflict(`A version of the coordination state has a malformed ${key}.`);
       }
     }
     const list = (state, key) => state[key] ?? [];
-    const has = (key) => [base, local, upstream].some((state) => state[key] !== undefined);
+    const has = (key) => [base, local, upstream].some((state) => state[key] !== void 0);
     const { settings, personSettings } = mergeSettings(base, local, upstream);
     const pending = mergeList("The pending user gates", base.pending, local.pending, upstream.pending, gateKey, mergeGate);
-    const active = mergeList("The active work", base.active, local.active, upstream.active, (item) => isRecord(item) ? item.slice : item,
-      (slice, b, l, u) => mergeUnit(`The active work of ${slice}`, b, l, u));
+    const active = mergeList(
+      "The active work",
+      base.active,
+      local.active,
+      upstream.active,
+      (item) => isRecord(item) ? item.slice : item,
+      (slice, b, l, u) => mergeUnit(`The active work of ${slice}`, b, l, u)
+    );
     const history = mergeUnion(list(base, "history"), list(local, "history"), list(upstream, "history"), (item) => item?.id, historyOrder, HISTORY_LIMIT);
     const closed = mergeUnion(list(base, "closed"), list(local, "closed"), list(upstream, "closed"), (item) => item?.id, closedOrder, CLOSED_LIMIT);
     const removed = new Set(base.evidence.filter((item) => !local.evidence.includes(item) || !upstream.evidence.includes(item)));
@@ -1001,11 +956,10 @@ export function mergeCoordinationState(versions) {
       active,
       pending,
       evidence,
-      ...(has("closed") || closed.length ? { closed } : {}),
-      ...(has("history") ? { history } : {}),
-      ...(has("personSettings") || Object.keys(personSettings).length ? { personSettings } : {})
+      ...has("closed") || closed.length ? { closed } : {},
+      ...has("history") ? { history } : {},
+      ...has("personSettings") || Object.keys(personSettings).length ? { personSettings } : {}
     });
-    // No entry is protected here, so both machines fit the same three versions to the same bytes.
     const fitted = fitState(merged);
     if (fitted === null) return { conflict: "The merged coordination state exceeds 1 MiB with its history and closed gates dropped." };
     const { contents } = fitted;
@@ -1016,81 +970,68 @@ export function mergeCoordinationState(versions) {
     return { conflict: caught instanceof MergeConflict ? caught.message : `The coordination state versions could not be merged: ${caught.message}` };
   }
 }
-
-export async function readCoordinationState({ projectRoot, initiative }) {
+async function readCoordinationState({ projectRoot, initiative }) {
   const resolved = await resolveState(projectRoot, initiative);
   return publicStateResult(resolved, await loadState(resolved.path));
 }
-
-export async function validateCoordinationState({ projectRoot, initiative }) {
+async function validateCoordinationState({ projectRoot, initiative }) {
   return readCoordinationState({ projectRoot, initiative });
 }
-
-export async function updateCoordinationState({ projectRoot, initiative, expectedRevision, changes }) {
+async function updateCoordinationState({ projectRoot, initiative, expectedRevision, changes }) {
   validateChanges(changes);
   if (expectedRevision !== null && typeof expectedRevision !== "string") {
     throw error("invalid_revision", "The expectedRevision argument must be a state revision string or null.");
   }
-  // A shipped initiative's coordination state is history, so a change to it is refused after argument validation and before any other check or write.
   await refuseShipped(projectRoot, initiative);
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
   const standing = await askedStanding(resolved, changes);
   const result = await withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
-    // A ship that landed after the first check refuses the change too, so the state never changes after the initiative shipped.
     await refuseShipped(projectRoot, initiative);
     return applyStateChange(resolved, expectedRevision, changes, standing);
   }, error, { renew: Boolean(changes.activeOperations?.length) }));
   await markLaunchedGates(projectRoot, initiative, result.openedGates);
   return result;
 }
-
-// A gate asked by a launched session of this machine, whose environment names its launch, is marked in that launch folder once the
-// ask is written; the gate record stays as it is, and a mark that cannot be written leaves the ask as it succeeded.
 async function markLaunchedGates(projectRoot, initiative, opened) {
   if (typeof process.env.PRISM_LAUNCH !== "string" || !process.env.PRISM_LAUNCH || !Array.isArray(opened) || !opened.length) return;
   try {
     const { markLaunchGates } = await import("../session/launched-sessions.mjs");
     await markLaunchGates({ projectRoot, initiative, gates: opened.map((gate) => gate?.id), env: process.env });
   } catch {
-    // The launched session then shows no wait for the gate, and the person resumes it after answering.
   }
 }
-
-// Resolving a gate by its id removes only that gate, so it holds after any other change, such as the browser answer that prompted it.
 function resolvesGatesOnly(changes) {
   const keys = Object.keys(changes ?? {});
   return keys.length === 1 && keys[0] === "gateOperations" && changes.gateOperations.length > 0 && changes.gateOperations.every((operation) => operation?.op === "resolve");
 }
-
 async function applyStateChange(resolved, expectedRevision, changes, standing = null) {
-    const current = await loadState(resolved.path);
-    if (current.revision !== expectedRevision && !(current.exists && resolvesGatesOnly(changes))) {
-      throw error(expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("coordination state", expectedRevision, current.revision), { current: publicStateResult(resolved, current) });
-    }
-    if (current.exists && !current.valid) {
-      throw error("invalid_state", "The existing state is invalid and was not changed.", { validation: publicStateResult(resolved, current) });
-    }
-    const before = current.state ?? defaultState();
-    if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(before.active)) throw error("gate_blocked", "Use typed activeOperations to change active work; array replacement cannot bypass review gates.");
-    return withReviewGatesLocked(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? [], async () => {
+  const current = await loadState(resolved.path);
+  if (current.revision !== expectedRevision && !(current.exists && resolvesGatesOnly(changes))) {
+    throw error(expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("coordination state", expectedRevision, current.revision), { current: publicStateResult(resolved, current) });
+  }
+  if (current.exists && !current.valid) {
+    throw error("invalid_state", "The existing state is invalid and was not changed.", { validation: publicStateResult(resolved, current) });
+  }
+  const before = current.state ?? defaultState();
+  if (changes.active !== void 0 && JSON.stringify(changes.active) !== JSON.stringify(before.active)) throw error("gate_blocked", "Use typed activeOperations to change active work; array replacement cannot bypass review gates.");
+  return withReviewGatesLocked(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? [], async () => {
     const activeResult = await applyActiveOperations(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? []);
-    // A replacement pending list keeps an answered gate as it stands too, so a resolve in the same change cannot close a reworded copy.
     if (Array.isArray(changes.pending)) assertAnsweredGatesUnchanged(before.pending, changes.pending, []);
     const dropped = droppedGates(before.pending, changes.pending);
     const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? [], standing);
     assertAnsweredGatesUnchanged(before.pending, gateResult.pending, gateResult.opened);
-    const closed = [...(before.closed ?? []), ...dropped, ...gateResult.closed].slice(-CLOSED_LIMIT);
-    const requested = changes.settings === undefined ? null : keepPersonSettings(before, changes.settings);
+    const closed = [...before.closed ?? [], ...dropped, ...gateResult.closed].slice(-CLOSED_LIMIT);
+    const requested = changes.settings === void 0 ? null : keepPersonSettings(before, changes.settings);
     const candidate = normalizeState({
       ...before,
       active: activeResult.active,
-      ...(requested === null ? {} : { settings: { ...before.settings, ...requested.settings } }),
+      ...requested === null ? {} : { settings: { ...before.settings, ...requested.settings } },
       pending: gateResult.pending,
-      ...(changes.next === undefined ? {} : { next: changes.next }),
-      ...(changes.evidence === undefined ? {} : { evidence: changes.evidence }),
-      ...(closed.length ? { closed } : {})
+      ...changes.next === void 0 ? {} : { next: changes.next },
+      ...changes.evidence === void 0 ? {} : { evidence: changes.evidence },
+      ...closed.length ? { closed } : {}
     });
     const validation = validateStateValue(candidate);
     if (validation.errors.length > 0) {
@@ -1105,20 +1046,15 @@ async function applyStateChange(resolved, expectedRevision, changes, standing = 
       ...publicStateResult(resolved, updated),
       created: !current.exists,
       changedFields: changedFields(before, updated.state),
-      previousRevision: current.revision
-      ,completions: activeResult.completions,
+      previousRevision: current.revision,
+      completions: activeResult.completions,
       openedGates: gateResult.opened,
-      ...(gateResult.superseded.length ? { supersededGates: gateResult.superseded } : {}),
-      ...(requested?.kept.length ? { keptSettings: requested.kept } : {})
+      ...gateResult.superseded.length ? { supersededGates: gateResult.superseded } : {},
+      ...requested?.kept.length ? { keptSettings: requested.kept } : {}
     };
-    });
+  });
 }
-
-/**
- * Close the pending gate that confirmed a ship, which the caller holds the state record's lock for, as update_roadmap does while it ships:
- * the gate moves to closed with its answer, and a gate that is already closed or gone leaves the state as it is.
- */
-export async function closeShipGate(projectRoot, initiative, id) {
+async function closeShipGate(projectRoot, initiative, id) {
   const resolved = await resolveState(projectRoot, initiative);
   const current = await loadState(resolved.path);
   if (!current.exists || !current.valid) return false;
@@ -1126,7 +1062,7 @@ export async function closeShipGate(projectRoot, initiative, id) {
   if (position === -1) return false;
   const pending = [...current.state.pending];
   const [gate] = pending.splice(position, 1);
-  const closed = [...(current.state.closed ?? []), closedGate(gate, "The initiative shipped with this gate's approval.")].slice(-CLOSED_LIMIT);
+  const closed = [...current.state.closed ?? [], closedGate(gate, "The initiative shipped with this gate's approval.")].slice(-CLOSED_LIMIT);
   const candidate = normalizeState({ ...current.state, pending, closed });
   const validation = validateStateValue(candidate);
   if (validation.errors.length > 0) {
@@ -1135,8 +1071,7 @@ export async function closeShipGate(projectRoot, initiative, id) {
   await writeRecord(resolved.root, { kind: "state", initiative: resolved.initiative }, stateContents(candidate));
   return true;
 }
-
-export async function answerUserGate({ projectRoot, initiative, id, choice = null, note = null, write = writeRecord }) {
+async function answerUserGate({ projectRoot, initiative, id, choice = null, note = null, write = writeRecord }) {
   await refuseShipped(projectRoot, initiative);
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
@@ -1161,7 +1096,7 @@ export async function answerUserGate({ projectRoot, initiative, id, choice = nul
       throw error("invalid_answer", `The answer is invalid: ${problem}.`);
     }
     const pending = [...current.state.pending];
-    pending[position] = { ...gate, answer: { choice, note: normalizedNote, via: "browser", answeredAt: new Date().toISOString() } };
+    pending[position] = { ...gate, answer: { choice, note: normalizedNote, via: "browser", answeredAt: (/* @__PURE__ */ new Date()).toISOString() } };
     const candidate = normalizeState({ ...current.state, pending });
     const validation = validateStateValue(candidate);
     if (validation.errors.length > 0) {
@@ -1172,26 +1107,17 @@ export async function answerUserGate({ projectRoot, initiative, id, choice = nul
     return { ...publicStateResult(resolved, updated), gate: pending[position] };
   }, error));
 }
-
-/**
- * The review app's one write of a person's action on coordination state, under the state lock.
- * prepare(current) sees { exists, revision, state, valid } as the lock found it and returns null to change nothing,
- * or { entry, setting?: { name, value }, answer?: { id, choice, note } }: a setting is stored and marked in personSettings, an answer is recorded on its gate with its author and entry,
- * and the entry joins history at its place, in the same write.
- */
-export async function recordPersonAction({ projectRoot, initiative, prepare }) {
-  const decide = async (resolved, current) => {
+async function recordPersonAction({ projectRoot, initiative, prepare }) {
+  const decide = async (resolved2, current) => {
     const change = await prepare({ exists: current.exists, revision: current.revision, state: current.state, valid: current.valid });
     if (change !== null && current.exists && !current.valid) {
-      throw error("invalid_state", "The existing state is invalid and was not changed.", { validation: publicStateResult(resolved, current) });
+      throw error("invalid_state", "The existing state is invalid and was not changed.", { validation: publicStateResult(resolved2, current) });
     }
     return change;
   };
-  // The checks run first on the state as it is read, so a refused or unchanged action moves no legacy record and creates no folder.
   const preview = await resolveState(projectRoot, initiative);
   const previewed = await loadState(preview.path);
   if (await decide(preview, previewed) === null) return { ...publicStateResult(preview, previewed), entry: null };
-  // The action's own checks answer first, so the review browser can say why an action is unavailable; a change that passes them is still refused for a shipped initiative.
   await refuseShipped(projectRoot, initiative);
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
@@ -1200,7 +1126,6 @@ export async function recordPersonAction({ projectRoot, initiative, prepare }) {
     const current = await loadState(resolved.path);
     const change = await decide(resolved, current);
     if (change === null) return { ...publicStateResult(resolved, current), entry: null };
-    // A ship that landed after the first check refuses the action too, so the state never changes after the initiative shipped.
     await refuseShipped(projectRoot, initiative);
     const { entry, setting, answer } = change;
     const problem = historyEntryProblem(entry);
@@ -1210,7 +1135,7 @@ export async function recordPersonAction({ projectRoot, initiative, prepare }) {
     if (setting) {
       if (!SETTING_KEYS.has(setting.name)) throw error("invalid_changes", `${setting.name} is not an initiative setting.`);
       candidate.settings = { ...before.settings, [setting.name]: setting.value };
-      candidate.personSettings = { ...(before.personSettings ?? {}), [setting.name]: { at: entry.at, entry: entry.id } };
+      candidate.personSettings = { ...before.personSettings ?? {}, [setting.name]: { at: entry.at, entry: entry.id } };
     }
     if (answer) {
       const position = before.pending.findIndex((item) => isRecord(item) && item.id === answer.id);
@@ -1230,14 +1155,11 @@ export async function recordPersonAction({ projectRoot, initiative, prepare }) {
     return { ...publicStateResult(resolved, await loadState(resolved.path)), created: !current.exists, entry };
   }, error));
 }
-
-// The recovery note is a human document, so it sits in the slice's plans folder beside slice.md, in the record store when the project names one.
-export async function checkpointPause({ projectRoot, initiative, expectedRevision, activeSlice, recoveryContent, changes }) {
+async function checkpointPause({ projectRoot, initiative, expectedRevision, activeSlice, recoveryContent, changes }) {
   validateChanges(changes);
   if (typeof activeSlice !== "string" || !SLUG_PATTERN.test(activeSlice) || typeof recoveryContent !== "string" || !recoveryContent.trim() || Buffer.byteLength(recoveryContent) > 65536) {
     throw error("invalid_pause", "An active slice and a recovery note of at most 64 KiB are required.");
   }
-  // A shipped initiative's state is history, so the pause is refused before the recovery note or any record is written.
   await refuseShipped(projectRoot, initiative);
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
@@ -1255,7 +1177,6 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
   await mkdir(path.dirname(resolved.path), { recursive: true });
   const standing = await askedStanding(resolved, changes);
   const paused = await withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
-    // A ship that landed after the first check refuses the pause too, before the recovery note is written.
     await refuseShipped(projectRoot, initiative);
     const current = await loadState(resolved.path);
     if (current.revision !== expectedRevision) {
@@ -1266,34 +1187,59 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
     }
     const stateRelativeRecovery = path.relative(path.resolve(resolved.root, resolved.directory), recovery).split(path.sep).join("/");
     const remainingActive = current.state.active.filter((item) => item.slice !== activeSlice);
-    if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(remainingActive)) {
+    if (changes.active !== void 0 && JSON.stringify(changes.active) !== JSON.stringify(remainingActive)) {
       throw error("invalid_pause", "The pause must preserve every other active slice.");
     }
-    if (changes.activeOperations !== undefined) throw error("invalid_pause", "A pause releases only its named slice; other active operations are not allowed.");
+    if (changes.activeOperations !== void 0) throw error("invalid_pause", "A pause releases only its named slice; other active operations are not allowed.");
     let previous;
     if (inStore) previous = await readArtifactText(resolved.root, recoveryRelative);
     else {
       const existing = await lstat(recovery).catch((caught) => caught.code === "ENOENT" ? null : Promise.reject(caught));
-      if (existing?.isSymbolicLink() || (existing && !existing.isFile())) throw error("invalid_path", "The recovery note must be a regular file.");
+      if (existing?.isSymbolicLink() || existing && !existing.isFile()) throw error("invalid_path", "The recovery note must be a regular file.");
       previous = existing ? await readFile(recovery, "utf8") : null;
     }
     try {
       if (!inStore) await conservationStore.registerCoordinationOutputs(resolved.root, [recoveryRelative]);
-      await writeArtifactText(resolved.root, recoveryRelative, recoveryContent.endsWith("\n") ? recoveryContent : `${recoveryContent}\n`, { write: (target, text) => conservationStore.writeManaged(resolved.root, target, text) });
+      await writeArtifactText(resolved.root, recoveryRelative, recoveryContent.endsWith("\n") ? recoveryContent : `${recoveryContent}
+`, { write: (target, text) => conservationStore.writeManaged(resolved.root, target, text) });
       const result = await applyStateChange(resolved, expectedRevision, {
         ...changes,
-        active: undefined,
+        active: void 0,
         activeOperations: [{ op: "release", slice: activeSlice }],
-        evidence: [...new Set([...current.state.evidence, ...(changes.evidence ?? []), stateRelativeRecovery])]
+        evidence: [.../* @__PURE__ */ new Set([...current.state.evidence, ...changes.evidence ?? [], stateRelativeRecovery])]
       }, standing);
-      return { ...result, recoveryPath: recoveryRelative, recoveryDigest: createHash("sha256").update(recoveryContent.endsWith("\n") ? recoveryContent : `${recoveryContent}\n`).digest("hex"), pausedSlice: activeSlice };
+      return { ...result, recoveryPath: recoveryRelative, recoveryDigest: createHash("sha256").update(recoveryContent.endsWith("\n") ? recoveryContent : `${recoveryContent}
+`).digest("hex"), pausedSlice: activeSlice };
     } catch (caught) {
-      if (inStore) await writeArtifactText(resolved.root, recoveryRelative, previous).catch(() => {});
-      else if (previous === null) await rm(recovery, { force: true }).catch(() => {});
-      else await writeAtomically(recovery, previous).catch(() => {});
+      if (inStore) await writeArtifactText(resolved.root, recoveryRelative, previous).catch(() => {
+      });
+      else if (previous === null) await rm(recovery, { force: true }).catch(() => {
+      });
+      else await writeAtomically(recovery, previous).catch(() => {
+      });
       throw caught;
     }
   }, error));
   await markLaunchedGates(projectRoot, initiative, paused.openedGates);
   return paused;
 }
+export {
+  CoordinationStateError,
+  HISTORY_LIMIT,
+  INITIATIVE_SETTINGS,
+  answerUserGate,
+  checkpointPause,
+  closeShipGate,
+  earlierReason,
+  effectiveSettings,
+  historyEntryProblem,
+  historyOrder,
+  insertHistoryEntry,
+  mergeCoordinationState,
+  migratedModels,
+  readCoordinationState,
+  recordPersonAction,
+  updateCoordinationState,
+  validEarlierName,
+  validateCoordinationState
+};

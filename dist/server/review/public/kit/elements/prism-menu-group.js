@@ -1,9 +1,7 @@
-// prism-menu-group: a named group of menu items, such as the radio items of one choice, as a list, as tiles, or as a segmented switch.
+// Generated from src/server/review/public/kit/elements/prism-menu-group.ts by scripts/native-build/compile.mjs.
 import { Base, distribute, setAttribute, uniqueId } from "./base.js";
-
 const LAYOUTS = ["list", "tiles", "segmented"];
-
-export class PrismMenuGroup extends Base {
+class PrismMenuGroup extends Base {
   static tag = "prism-menu-group";
   static observedAttributes = ["label", "layout"];
   static catalog = {
@@ -15,7 +13,6 @@ export class PrismMenuGroup extends Base {
     states: ["default", "tiles", "segmented"],
     keyboard: ["ArrowUp and ArrowDown move through the items of every group of the menu in order.", "In tiles or a segmented switch, ArrowLeft and ArrowRight also move between the group's items, wrapping at its ends."]
   };
-
   connectedCallback() {
     setAttribute(this, "role", "group");
     if (!this.heading) {
@@ -31,12 +28,10 @@ export class PrismMenuGroup extends Base {
     this.children$ ??= distribute(this, { default: this.itemsElement }, [this.heading, this.itemsElement]);
     this.attributeChangedCallback();
   }
-
   /** The layout the group draws, list unless it names tiles or segmented. */
   get layout() {
     return LAYOUTS.includes(this.getAttribute("layout")) ? this.getAttribute("layout") : "list";
   }
-
   attributeChangedCallback() {
     if (!this.heading) return;
     const label = this.getAttribute("label") ?? "";
@@ -45,3 +40,6 @@ export class PrismMenuGroup extends Base {
     setAttribute(this, "aria-label", label || null);
   }
 }
+export {
+  PrismMenuGroup
+};

@@ -1,11 +1,8 @@
-// prism-slice-bar: one segment per slice in the color of the slice's status class, and a label such as "1 of 5 done", as one image for assistive technology.
+// Generated from src/server/review/public/kit/elements/prism-slice-bar.ts by scripts/native-build/compile.mjs.
 import { Base, setAttribute, shadow } from "./base.js";
 import { STATUSES, statusOf } from "../statuses.js";
-
-// The segments read as progress: done first, then the work under way, then what waits, and what has not started last.
 const ORDER = ["done", "active", "waiting", "problem", "ready", "idle", "retired"];
-
-export class PrismSliceBar extends Base {
+class PrismSliceBar extends Base {
   static tag = "prism-slice-bar";
   static styles = ["prism-slice-bar.css"];
   static observedAttributes = ["statuses", "label", "tip"];
@@ -18,26 +15,21 @@ export class PrismSliceBar extends Base {
     states: ["default", "not-started", "done"],
     keyboard: []
   };
-
   constructor() {
     super();
     this.root = shadow(this, PrismSliceBar.styles, `<span class="bar" part="bar"></span><span class="label" part="label"></span>`);
   }
-
   connectedCallback() {
     setAttribute(this, "role", "img");
     this.render();
   }
-
   attributeChangedCallback() {
     if (this.isConnected) this.render();
   }
-
   render() {
     const raw = this.getAttribute("statuses") ?? "";
     const rank = (status) => ORDER.indexOf(statusOf(status).cls);
-    const statuses = (raw === "" ? [] : raw.split(",").map((status) => status.trim())).map((status, index) => ({ status, index }))
-      .sort((left, right) => rank(left.status) - rank(right.status) || left.index - right.index).map(({ status }) => status);
+    const statuses = (raw === "" ? [] : raw.split(",").map((status) => status.trim())).map((status, index) => ({ status, index })).sort((left, right) => rank(left.status) - rank(right.status) || left.index - right.index).map(({ status }) => status);
     this.root.querySelector(".bar").replaceChildren(...statuses.map((status) => {
       const segment = this.ownerDocument.createElement("prism-status");
       segment.setAttribute("value", status);
@@ -51,3 +43,6 @@ export class PrismSliceBar extends Base {
     setAttribute(this, "aria-label", label || null);
   }
 }
+export {
+  PrismSliceBar
+};

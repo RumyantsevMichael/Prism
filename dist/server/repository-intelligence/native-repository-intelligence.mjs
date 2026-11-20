@@ -1,18 +1,18 @@
+// Generated from src/server/repository-intelligence/native-repository-intelligence.mts by scripts/native-build/compile.mjs.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, readlink, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { normalizeRepositorySourcePath, normalizeRepositorySourceRange } from "./repository-source-path.mjs";
 import { domainFor } from "../../native-runtime/domains.mjs";
-
-const DEFAULT_MAX_FILES = 20000;
+const DEFAULT_MAX_FILES = 2e4;
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024;
-const DEFAULT_GIT_TIMEOUT_MS = 5000;
+const DEFAULT_GIT_TIMEOUT_MS = 5e3;
 const DEFAULT_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_SEARCH_RESULTS = 100;
-export const NATIVE_SNAPSHOT_IDENTITY_SCHEME = "prism-native-sha256-v2";
-const FALLBACK_EXCLUDED_DIRECTORIES = new Set([
+const NATIVE_SNAPSHOT_IDENTITY_SCHEME = "prism-native-sha256-v2";
+const FALLBACK_EXCLUDED_DIRECTORIES = /* @__PURE__ */ new Set([
   ".git",
   ".hg",
   ".svn",
@@ -29,7 +29,7 @@ const FALLBACK_EXCLUDED_DIRECTORIES = new Set([
   "target",
   "venv"
 ]);
-const STOP_WORDS = new Set([
+const STOP_WORDS = /* @__PURE__ */ new Set([
   "a",
   "an",
   "and",
@@ -53,23 +53,19 @@ const STOP_WORDS = new Set([
   "to",
   "with"
 ]);
-
 function positiveInteger(value, fallback, name) {
-  if (value === undefined) return fallback;
+  if (value === void 0) return fallback;
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new TypeError(`${name} must be a positive safe integer.`);
   }
   return value;
 }
-
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
-
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
-
 function normalizedRepositoryPath(value) {
   try {
     return normalizeRepositorySourcePath(value);
@@ -77,22 +73,18 @@ function normalizedRepositoryPath(value) {
     return null;
   }
 }
-
 function isContained(root, absolutePath) {
   const relative = path.relative(root, absolutePath);
-  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+  return relative === "" || !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`);
 }
-
 function lineSegments(content) {
   if (content.length === 0) return [""];
   return content.match(/[^\n]*\n|[^\n]+$/g) || [""];
 }
-
 function isBinary(buffer) {
   const sample = buffer.subarray(0, Math.min(buffer.length, 8192));
   return sample.includes(0);
 }
-
 function decodeUtf8(buffer) {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
@@ -100,28 +92,23 @@ function decodeUtf8(buffer) {
     return null;
   }
 }
-
 function escapedRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-
 function exactLexicalPattern(value, flags = "m") {
   const unicodeFlags = flags.includes("u") ? flags : `${flags}u`;
   return new RegExp(`(?<![\\p{L}\\p{N}_$])${escapedRegex(value)}(?![\\p{L}\\p{N}_$])`, unicodeFlags);
 }
-
 function queryTokens(values) {
   const tokens = String(values).toLowerCase().match(/[\p{L}\p{N}_$-]+/gu) || [];
   return unique(tokens.filter((token) => token.length > 1 && !STOP_WORDS.has(token)));
 }
-
 function countMatches(content, token) {
   const pattern = exactLexicalPattern(token, "gim");
   let count = 0;
   while (pattern.exec(content) && count < 20) count += 1;
   return count;
 }
-
 function nodeFor(file, name = file.file) {
   return {
     id: `native:file:${file.file}`,
@@ -132,17 +119,14 @@ function nodeFor(file, name = file.file) {
     rangeComplete: true
   };
 }
-
 function diagnostic(code, message, details) {
-  return { code, message, ...(details ? { details } : {}) };
+  return { code, message, ...details ? { details } : {} };
 }
-
 function commandFailure(code, message, cause) {
   const error = new Error(message, { cause });
   error.code = code;
   return error;
 }
-
 function runCommand(command, args, { cwd, timeoutMs, maxOutputBytes }) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
@@ -179,7 +163,6 @@ function runCommand(command, args, { cwd, timeoutMs, maxOutputBytes }) {
     }));
   });
 }
-
 async function gitFiles(root, options) {
   const output = await runCommand(
     options.gitCommand,
@@ -188,7 +171,7 @@ async function gitFiles(root, options) {
   );
   const rawPaths = output.toString("utf8").split("\0").filter(Boolean);
   const rejectedPaths = [];
-  const normalizedGroups = new Map();
+  const normalizedGroups = /* @__PURE__ */ new Map();
   for (const rawPath of rawPaths) {
     if ([".codegraph", ".codenib"].includes(rawPath.split("/")[0])) continue;
     const normalized = normalizedRepositoryPath(rawPath);
@@ -217,7 +200,6 @@ async function gitFiles(root, options) {
   files.sort((left, right) => left.localeCompare(right));
   return { files, rejectedPaths: rejectedPaths.length, aliasedPaths, collidingPaths };
 }
-
 async function gitCommit(root, options) {
   try {
     const output = await runCommand(
@@ -231,8 +213,6 @@ async function gitCommit(root, options) {
     return null;
   }
 }
-
-// A filter keeps only the files it accepts, and only those count toward maxFiles, so a component's scan never stops in another component's files.
 async function filesystemFiles(root, maxFiles, filter = null) {
   const files = [];
   let unreadableDirectories = 0;
@@ -247,7 +227,7 @@ async function filesystemFiles(root, maxFiles, filter = null) {
     }
     entries.sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
-      if (truncated || (!filter && files.length >= maxFiles)) {
+      if (truncated || !filter && files.length >= maxFiles) {
         truncated = true;
         return;
       }
@@ -268,10 +248,9 @@ async function filesystemFiles(root, maxFiles, filter = null) {
   await visit(root);
   return { files, unreadableDirectories, truncated };
 }
-
 async function enumerateFiles(root, options) {
   try {
-    return { ...(await gitFiles(root, options)), enumerator: "git", diagnostics: [] };
+    return { ...await gitFiles(root, options), enumerator: "git", diagnostics: [] };
   } catch {
     const fallback = await filesystemFiles(root, options.maxFiles, options.filter);
     return {
@@ -284,7 +263,6 @@ async function enumerateFiles(root, options) {
     };
   }
 }
-
 async function sourceRecord(root, relativePath, limits) {
   const normalized = normalizedRepositoryPath(relativePath);
   if (!normalized) return { status: "unsafe" };
@@ -311,7 +289,7 @@ async function sourceRecord(root, relativePath, limits) {
         file: normalized,
         bytes: linkValue.length,
         hash: sha256(linkValue),
-        ...(limits.retainOpaque ? { mode: metadata.mode & 0o777, target: linkValue.toString("utf8") } : {})
+        ...limits.retainOpaque ? { mode: metadata.mode & 511, target: linkValue.toString("utf8") } : {}
       }
     };
   }
@@ -331,9 +309,7 @@ async function sourceRecord(root, relativePath, limits) {
     return { status: "unreadable" };
   }
   const content = decodeUtf8(buffer);
-  if (isBinary(buffer) || content === null) return limits.retainOpaque
-    ? { status: "identity", identity: { kind: "opaque", file: normalized, bytes: buffer.length, hash: sha256(buffer), mode: metadata.mode & 0o777, absolutePath: canonicalPath } }
-    : { status: "binary" };
+  if (isBinary(buffer) || content === null) return limits.retainOpaque ? { status: "identity", identity: { kind: "opaque", file: normalized, bytes: buffer.length, hash: sha256(buffer), mode: metadata.mode & 511, absolutePath: canonicalPath } } : { status: "binary" };
   return {
     status: "source",
     file: {
@@ -342,7 +318,7 @@ async function sourceRecord(root, relativePath, limits) {
       bytes: buffer.length,
       content,
       kind: "source",
-      mode: metadata.mode & 0o777,
+      mode: metadata.mode & 511,
       hash: sha256(buffer),
       lineCount: lineSegments(content).length,
       size: metadata.size,
@@ -350,32 +326,30 @@ async function sourceRecord(root, relativePath, limits) {
     }
   };
 }
-
 async function evidenceOutputsOf(root) {
-  // Evidence paths are registered by server mutations, never supplied as caller exclusion patterns.
   const { conservationStore } = await import("../conservation/conservation-store.mjs");
   return new Set(await conservationStore.outputs(root));
 }
-
-/**
- * One Git listing of a repository, its evidence outputs, and its commit, shared by the sources of its components, so that a call over many
- * components asks Git once instead of once per component. A pass stays until refresh(), which the next read then repeats; a source whose
- * repository has no Git listing falls back to its own bounded filesystem scan.
- */
-export class RepositoryScan {
-  constructor() { this.pass = null; }
+class RepositoryScan {
+  constructor() {
+    this.pass = null;
+  }
   enumeration(root, options) {
     if (!this.pass) {
       this.pass = (async () => {
         const listed = await gitFiles(root, options).then((value) => ({ ...value, enumerator: "git", diagnostics: [] }), () => null);
         return { listed, evidenceOutputs: await evidenceOutputsOf(root), head: listed ? await gitCommit(root, options) : null };
-      })().catch((error) => { this.pass = null; throw error; });
+      })().catch((error) => {
+        this.pass = null;
+        throw error;
+      });
     }
     return this.pass;
   }
-  refresh() { this.pass = null; }
+  refresh() {
+    this.pass = null;
+  }
 }
-
 async function buildSnapshot(projectRoot, options) {
   const root = await realpath(projectRoot);
   const rootMetadata = await stat(root);
@@ -384,8 +358,7 @@ async function buildSnapshot(projectRoot, options) {
   const enumeration = shared?.listed ? { ...shared.listed, files: [...shared.listed.files] } : await enumerateFiles(root, options);
   const { isManagedRecordFile } = await import("../workflow/record-store.mjs");
   const evidenceOutputs = shared ? shared.evidenceOutputs : await evidenceOutputsOf(root);
-  enumeration.files = enumeration.files.filter(file => !evidenceOutputs.has(file) && !isManagedRecordFile(file));
-  // A component's source scans only the files of its component, so the native limits apply to each component on its own.
+  enumeration.files = enumeration.files.filter((file) => !evidenceOutputs.has(file) && !isManagedRecordFile(file));
   if (options.filter) enumeration.files = enumeration.files.filter(options.filter);
   const diagnostics = [...enumeration.diagnostics];
   const counters = {
@@ -397,16 +370,12 @@ async function buildSnapshot(projectRoot, options) {
     unreadable: 0,
     unsafe: 0
   };
-  let complete = enumeration.truncated !== true
-    && !enumeration.unreadableDirectories
-    && enumeration.rejectedPaths === 0
-    && enumeration.aliasedPaths === 0
-    && enumeration.collidingPaths === 0;
+  let complete = enumeration.truncated !== true && !enumeration.unreadableDirectories && enumeration.rejectedPaths === 0 && enumeration.aliasedPaths === 0 && enumeration.collidingPaths === 0;
   let candidates = enumeration.files;
   const unknownOmissions = !complete;
   const omissions = [];
   if (candidates.length > options.maxFiles) {
-    omissions.push(...candidates.slice(options.maxFiles).map(file => ({ file, reason: "file-count-limit" })));
+    omissions.push(...candidates.slice(options.maxFiles).map((file) => ({ file, reason: "file-count-limit" })));
     candidates = candidates.slice(0, options.maxFiles);
     complete = false;
   }
@@ -424,12 +393,10 @@ async function buildSnapshot(projectRoot, options) {
       if (["not-file", "oversized", "oversized-symlink", "unreadable", "unsafe"].includes(record.status)) complete = false;
       continue;
     }
-    const identity = record.status === "source"
-      ? { kind: record.file.kind, file: record.file.file, bytes: record.file.bytes, hash: record.file.hash, ...(options.retainOpaque ? { mode: record.file.mode, absolutePath: record.file.absolutePath } : {}) }
-      : record.identity;
+    const identity = record.status === "source" ? { kind: record.file.kind, file: record.file.file, bytes: record.file.bytes, hash: record.file.hash, ...options.retainOpaque ? { mode: record.file.mode, absolutePath: record.file.absolutePath } : {} } : record.identity;
     if (snapshotBytes + identity.bytes > options.maxBytes) {
       complete = false;
-      omissions.push(...candidates.slice(candidates.indexOf(relativePath)).map(file => ({ file, reason: "total-byte-limit" })));
+      omissions.push(...candidates.slice(candidates.indexOf(relativePath)).map((file) => ({ file, reason: "total-byte-limit" })));
       break;
     }
     identities.push(identity);
@@ -463,7 +430,6 @@ async function buildSnapshot(projectRoot, options) {
     fingerprintHash.update("\0");
     if (options.retainOpaque) fingerprintHash.update(`${identity.mode}\0`);
   }
-  // A component's identity is its content alone, computed the same way for the live project and for a retained baseline.
   const sourceFingerprint = options.filter ? contentFingerprint(files) : fingerprintHash.digest("hex");
   const head = enumeration.enumerator !== "git" ? null : shared?.listed ? shared.head : await gitCommit(root, options);
   return {
@@ -481,13 +447,11 @@ async function buildSnapshot(projectRoot, options) {
     diagnostics
   };
 }
-
-/** The SHA-256 of the lines `<path> <sha256>\n` of the given source files, sorted by path in code point order. */
-export function contentFingerprint(files) {
-  const lines = files.map(({ file, hash }) => [file, hash]).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
-  return sha256(lines.map(([file, hash]) => `${file} ${hash}\n`).join(""));
+function contentFingerprint(files) {
+  const lines = files.map(({ file, hash }) => [file, hash]).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+  return sha256(lines.map(([file, hash]) => `${file} ${hash}
+`).join(""));
 }
-
 function scoreFile(file, tokens, task) {
   const lowerPath = file.file.toLowerCase();
   const lowerContent = file.content.toLowerCase();
@@ -502,12 +466,10 @@ function scoreFile(file, tokens, task) {
   if (phrase.length > 3 && lowerContent.includes(phrase)) score += 12;
   return score;
 }
-
 function hintValues(hints, name) {
   return unique(Array.isArray(hints?.[name]) ? hints[name].map(String).filter(Boolean) : []);
 }
-
-export class NativeRepositoryIntelligence {
+class NativeRepositoryIntelligence {
   constructor(projectRoot, options = {}) {
     if (typeof projectRoot !== "string" || !path.isAbsolute(projectRoot)) {
       throw new TypeError("The native repository root must be an absolute path.");
@@ -526,7 +488,6 @@ export class NativeRepositoryIntelligence {
     };
     this.snapshotPromise = null;
   }
-
   snapshot() {
     if (!this.snapshotPromise) {
       this.snapshotPromise = buildSnapshot(this.projectRoot, this.options).catch((error) => {
@@ -536,7 +497,6 @@ export class NativeRepositoryIntelligence {
     }
     return this.snapshotPromise;
   }
-
   async describe() {
     const snapshot = await this.snapshot();
     return {
@@ -557,22 +517,19 @@ export class NativeRepositoryIntelligence {
       }
     };
   }
-
   async search(task, hints = {}, options = {}) {
     if (typeof task !== "string" || !task.trim()) throw new TypeError("The native search task must be a non-empty string.");
     const snapshot = await this.snapshot();
     const topK = Math.min(MAX_SEARCH_RESULTS, positiveInteger(options.topK, 12, "topK"));
     const filters = options.filters;
-    const eligible = file => (!filters?.domains?.length || filters.domains.includes(domainFor(file.file)))
-      && (!filters?.kinds?.length || filters.kinds.includes(nodeFor(file).kind))
-      && (!filters?.paths?.length || filters.paths.some(prefix => file.file === prefix || file.file.startsWith(prefix + "/")));
+    const eligible = (file) => (!filters?.domains?.length || filters.domains.includes(domainFor(file.file))) && (!filters?.kinds?.length || filters.kinds.includes(nodeFor(file).kind)) && (!filters?.paths?.length || filters.paths.some((prefix) => file.file === prefix || file.file.startsWith(prefix + "/")));
     const files = snapshot.files.filter(eligible);
-    const requiredReasons = new Map();
-    const requiredNames = new Map();
+    const requiredReasons = /* @__PURE__ */ new Map();
+    const requiredNames = /* @__PURE__ */ new Map();
     const unresolvedRequired = [];
     const diagnostics = [...snapshot.diagnostics];
     const addRequired = (file, reason, name) => {
-      const reasons = requiredReasons.get(file.file) || new Set();
+      const reasons = requiredReasons.get(file.file) || /* @__PURE__ */ new Set();
       reasons.add(reason);
       requiredReasons.set(file.file, reasons);
       if (name && !requiredNames.has(file.file)) requiredNames.set(file.file, name);
@@ -602,7 +559,7 @@ export class NativeRepositoryIntelligence {
         const available = Math.max(0, topK - requiredReasons.size);
         const newMatches = matches.filter((file) => !requiredReasons.has(file.file));
         for (const file of newMatches.slice(0, available)) addRequired(file, "explicit-design-reference", symbol);
-        for (const file of matches.filter((file) => requiredReasons.has(file.file))) addRequired(file, "explicit-design-reference", symbol);
+        for (const file of matches.filter((file2) => requiredReasons.has(file2.file))) addRequired(file, "explicit-design-reference", symbol);
         if (newMatches.length > available) {
           requiredEvidenceComplete = false;
           diagnostics.push(diagnostic("explicit_symbol_matches_truncated", `The native provider bounded matches for the explicit symbol ${symbol}.`, {
@@ -623,15 +580,12 @@ export class NativeRepositoryIntelligence {
       const score = scored.find((item) => item.file.file === filePath)?.score || 0;
       return {
         node: nodeFor(file, requiredNames.get(filePath)),
-        score: 1000000 + score,
-        reasons: unique([...reasons, ...(score > 0 ? ["lexical-match"] : [])])
+        score: 1e6 + score,
+        reasons: unique([...reasons, ...score > 0 ? ["lexical-match"] : []])
       };
     });
     requiredHits.sort((left, right) => right.score - left.score || left.node.file.localeCompare(right.node.file));
-    const rankedHits = scored
-      .filter(({ file, score }) => score > 0 && !requiredReasons.has(file.file))
-      .slice(0, Math.max(0, topK - requiredHits.length))
-      .map(({ file, score }) => ({ node: nodeFor(file), score, reasons: ["provider-ranked-match", "lexical-match"] }));
+    const rankedHits = scored.filter(({ file, score }) => score > 0 && !requiredReasons.has(file.file)).slice(0, Math.max(0, topK - requiredHits.length)).map(({ file, score }) => ({ node: nodeFor(file), score, reasons: ["provider-ranked-match", "lexical-match"] }));
     const unresolvedConcepts = concepts.filter((concept) => {
       const lower = concept.toLowerCase();
       return !files.some((file) => file.file.toLowerCase().includes(lower) || file.content.toLowerCase().includes(lower));
@@ -659,7 +613,6 @@ export class NativeRepositoryIntelligence {
       }
     };
   }
-
   async neighbors() {
     return {
       neighbors: [],
@@ -668,7 +621,6 @@ export class NativeRepositoryIntelligence {
       diagnostics: [diagnostic("structural_unavailable", "The native provider does not supply structural graph expansion.")]
     };
   }
-
   async read(sourceRange) {
     const snapshot = await this.snapshot();
     const validated = await this.validateSourceRange(sourceRange);
@@ -702,7 +654,6 @@ export class NativeRepositoryIntelligence {
       rangeComplete: endLine >= requestedEndLine
     };
   }
-
   async validateSourceRange(sourceRange) {
     const snapshot = await this.snapshot();
     const validated = normalizeRepositorySourceRange(sourceRange, { projectRoot: snapshot.root });
@@ -711,7 +662,6 @@ export class NativeRepositoryIntelligence {
     }
     return validated;
   }
-
   async verifySnapshot(options = {}) {
     const snapshot = await this.snapshot();
     if (options.requireComplete === true && !snapshot.complete) {
@@ -734,16 +684,22 @@ export class NativeRepositoryIntelligence {
     };
   }
 }
-
-export async function openNativeRepositoryIntelligence(projectRoot, options = {}) {
+async function openNativeRepositoryIntelligence(projectRoot, options = {}) {
   const root = await realpath(projectRoot);
   const metadata = await stat(root);
   if (!metadata.isDirectory()) throw new TypeError("The native repository root must be a directory.");
   return new NativeRepositoryIntelligence(root, options);
 }
-
-export async function withNativeRepositoryIntelligence(projectRoot, action, options = {}) {
+async function withNativeRepositoryIntelligence(projectRoot, action, options = {}) {
   if (typeof action !== "function") throw new TypeError("The native repository action must be a function.");
   const provider = await openNativeRepositoryIntelligence(projectRoot, options);
   return action(provider);
 }
+export {
+  NATIVE_SNAPSHOT_IDENTITY_SCHEME,
+  NativeRepositoryIntelligence,
+  RepositoryScan,
+  contentFingerprint,
+  openNativeRepositoryIntelligence,
+  withNativeRepositoryIntelligence
+};

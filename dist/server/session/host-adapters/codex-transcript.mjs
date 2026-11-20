@@ -1,29 +1,25 @@
+// Generated from src/server/session/host-adapters/codex-transcript.mts by scripts/native-build/compile.mjs.
 import { constants as fileConstants } from "node:fs";
 import * as defaultFileSystem from "node:fs/promises";
 import path from "node:path";
-
 const MAX_SESSION_META_BYTES = 256 * 1024;
 const MAX_TOKEN_COUNT_BYTES = 256 * 1024;
 const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
 const HOST_VALUE_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._:/@\[\]-]{0,255}$/;
-const ROOT_SESSION_SOURCES = new Set(["cli", "vscode", "exec", "mcp"]);
-
-export const CODEX_TRANSCRIPT_REASON = Object.freeze({
+const ROOT_SESSION_SOURCES = /* @__PURE__ */ new Set(["cli", "vscode", "exec", "mcp"]);
+const CODEX_TRANSCRIPT_REASON = Object.freeze({
   NO_TRANSCRIPT: "NO_TRANSCRIPT",
   INVALID_TRANSCRIPT: "INVALID_TRANSCRIPT",
   SESSION_MISMATCH: "SESSION_MISMATCH",
   PROJECT_MISMATCH: "PROJECT_MISMATCH",
   TOKEN_COUNT_UNAVAILABLE: "TOKEN_COUNT_UNAVAILABLE"
 });
-
 function unsupported(reasonCode) {
   return { status: "UNSUPPORTED", reasonCode };
 }
-
 function nonemptyString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
-
 function executionKind(payload) {
   if (["subagent", "subAgent"].includes(payload.thread_source)) {
     return "subagent";
@@ -36,7 +32,6 @@ function executionKind(payload) {
   }
   return ROOT_SESSION_SOURCES.has(payload.source) ? "root" : null;
 }
-
 async function canonicalDirectory(value, fileSystem) {
   const normalized = nonemptyString(value);
   if (!normalized || !path.isAbsolute(normalized)) return null;
@@ -49,20 +44,13 @@ async function canonicalDirectory(value, fileSystem) {
     return null;
   }
 }
-
 function isSameOrDescendant(root, candidate) {
   const relative = path.relative(root, candidate);
-  return relative === "" || (
-    relative !== ".."
-    && !relative.startsWith(`..${path.sep}`)
-    && !path.isAbsolute(relative)
-  );
+  return relative === "" || relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
-
 function noFollowFlags(flags) {
   return Number.isInteger(fileConstants.O_NOFOLLOW) ? flags | fileConstants.O_NOFOLLOW : flags;
 }
-
 async function readSessionMetaLine(transcriptPath, fileSystem) {
   const expected = await fileSystem.lstat(transcriptPath);
   if (!expected.isFile() || expected.isSymbolicLink() || expected.nlink !== 1) {
@@ -71,18 +59,13 @@ async function readSessionMetaLine(transcriptPath, fileSystem) {
   const handle = await fileSystem.open(transcriptPath, noFollowFlags(fileConstants.O_RDONLY));
   try {
     const opened = await handle.stat();
-    if (
-      !opened.isFile()
-      || opened.nlink !== 1
-      || opened.dev !== expected.dev
-      || opened.ino !== expected.ino
-    ) {
+    if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== expected.dev || opened.ino !== expected.ino) {
       throw new Error("The Codex transcript changed during validation.");
     }
     const byteCount = Math.min(opened.size, MAX_SESSION_META_BYTES + 1);
     const buffer = Buffer.alloc(byteCount);
     const { bytesRead } = await handle.read(buffer, 0, byteCount, 0);
-    const newline = buffer.subarray(0, bytesRead).indexOf(0x0a);
+    const newline = buffer.subarray(0, bytesRead).indexOf(10);
     if (newline === -1 && opened.size > MAX_SESSION_META_BYTES) {
       throw new Error("The Codex session metadata exceeds its read limit.");
     }
@@ -102,7 +85,6 @@ async function readSessionMetaLine(transcriptPath, fileSystem) {
     await handle.close();
   }
 }
-
 async function readTranscriptTail(transcriptPath, fileSystem, expectedIdentity) {
   const expected = await fileSystem.lstat(transcriptPath);
   if (!expected.isFile() || expected.isSymbolicLink() || expected.nlink !== 1) {
@@ -111,17 +93,7 @@ async function readTranscriptTail(transcriptPath, fileSystem, expectedIdentity) 
   const handle = await fileSystem.open(transcriptPath, noFollowFlags(fileConstants.O_RDONLY));
   try {
     const opened = await handle.stat();
-    if (
-      !opened.isFile()
-      || opened.nlink !== 1
-      || opened.dev !== expected.dev
-      || opened.ino !== expected.ino
-      || (expectedIdentity && (
-        opened.dev !== expectedIdentity.dev
-        || opened.ino !== expectedIdentity.ino
-        || opened.nlink !== expectedIdentity.nlink
-      ))
-    ) {
+    if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== expected.dev || opened.ino !== expected.ino || expectedIdentity && (opened.dev !== expectedIdentity.dev || opened.ino !== expectedIdentity.ino || opened.nlink !== expectedIdentity.nlink)) {
       throw new Error("The Codex transcript changed during validation.");
     }
     const byteCount = Math.min(opened.size, MAX_TOKEN_COUNT_BYTES);
@@ -133,7 +105,6 @@ async function readTranscriptTail(transcriptPath, fileSystem, expectedIdentity) 
     await handle.close();
   }
 }
-
 function tokenUsage(value) {
   if (!value || typeof value !== "object") return null;
   const usage = {
@@ -141,18 +112,10 @@ function tokenUsage(value) {
     cachedInputTokens: value.cached_input_tokens ?? 0,
     outputTokens: value.output_tokens
   };
-  return Object.values(usage).every((count) => Number.isSafeInteger(count) && count >= 0)
-    && usage.cachedInputTokens <= usage.inputTokens
-    ? usage
-    : null;
+  return Object.values(usage).every((count) => Number.isSafeInteger(count) && count >= 0) && usage.cachedInputTokens <= usage.inputTokens ? usage : null;
 }
-
-// A turn's task_started event carries the context window too, and is the only record of it before the session's first token
-// count, which code-mode models such as gpt-6-luna write only after the tool calls of their first script ran.
-// The later of the two wins, so a turn that switched models reports its own window.
 const TOKEN_COUNT_SOURCE = "transcript.event_msg.token_count.info.model_context_window";
 const TASK_STARTED_SOURCE = "transcript.event_msg.task_started.model_context_window";
-
 function latestTokenCount(text) {
   let latest = null;
   let source = null;
@@ -166,7 +129,7 @@ function latestTokenCount(text) {
       continue;
     }
     if (record?.type !== "event_msg") continue;
-    if (record.payload?.type === "task_started" && record.payload.model_context_window !== undefined) {
+    if (record.payload?.type === "task_started" && record.payload.model_context_window !== void 0) {
       latest = record.payload.model_context_window;
       source = TASK_STARTED_SOURCE;
       continue;
@@ -180,13 +143,12 @@ function latestTokenCount(text) {
   }
   if (latest === null) return { contextWindowTokens: null, totalTokenUsage: null };
   return {
-    contextWindowTokens: Number.isSafeInteger(latest) && latest > 0 ? latest : undefined,
+    contextWindowTokens: Number.isSafeInteger(latest) && latest > 0 ? latest : void 0,
     contextWindowSource: source,
     totalTokenUsage
   };
 }
-
-export async function inspectCodexTranscriptMetadata({
+async function inspectCodexTranscriptMetadata({
   transcriptPath,
   sessionId,
   projectRoot,
@@ -202,7 +164,6 @@ export async function inspectCodexTranscriptMetadata({
   if (!normalizedSession || !canonicalHookDirectory) {
     return unsupported(CODEX_TRANSCRIPT_REASON.INVALID_TRANSCRIPT);
   }
-
   let record;
   let transcriptIdentity;
   try {
@@ -212,9 +173,7 @@ export async function inspectCodexTranscriptMetadata({
   } catch {
     return unsupported(CODEX_TRANSCRIPT_REASON.INVALID_TRANSCRIPT);
   }
-  const payload = record?.type === "session_meta" && record.payload && typeof record.payload === "object"
-    ? record.payload
-    : null;
+  const payload = record?.type === "session_meta" && record.payload && typeof record.payload === "object" ? record.payload : null;
   if (!payload) {
     return unsupported(CODEX_TRANSCRIPT_REASON.INVALID_TRANSCRIPT);
   }
@@ -229,7 +188,6 @@ export async function inspectCodexTranscriptMetadata({
   if (!isSameOrDescendant(transcriptProject, canonicalHookDirectory)) {
     return unsupported(CODEX_TRANSCRIPT_REASON.PROJECT_MISMATCH);
   }
-
   const harnessVersion = nonemptyString(payload.cli_version);
   const provider = nonemptyString(payload.model_provider);
   if (!harnessVersion || !VERSION_PATTERN.test(harnessVersion) || !provider || !HOST_VALUE_PATTERN.test(provider)) {
@@ -239,9 +197,8 @@ export async function inspectCodexTranscriptMetadata({
     };
   }
   const execution = executionKind(payload);
-  // With includeUsage, run statistics also receive this rollout's thread id and its latest cumulative token usage.
   const threadId = nonemptyString(payload.id);
-  const usageFields = (totalTokenUsage = null) => includeUsage ? { threadId, totalTokenUsage } : {};
+  const usageFields = (totalTokenUsage2 = null) => includeUsage ? { threadId, totalTokenUsage: totalTokenUsage2 } : {};
   if (execution === null) {
     return {
       ...unsupported(CODEX_TRANSCRIPT_REASON.INVALID_TRANSCRIPT),
@@ -259,7 +216,7 @@ export async function inspectCodexTranscriptMetadata({
       fileSystem,
       transcriptIdentity
     ));
-    if (tokenCount.contextWindowTokens === undefined) {
+    if (tokenCount.contextWindowTokens === void 0) {
       return {
         ...unsupported(CODEX_TRANSCRIPT_REASON.TOKEN_COUNT_UNAVAILABLE),
         projectRoot: transcriptProject,
@@ -289,11 +246,13 @@ export async function inspectCodexTranscriptMetadata({
     provider,
     projectRoot: transcriptProject,
     ...usageFields(totalTokenUsage),
-    ...(contextWindowTokens === null
-      ? {}
-      : {
-          contextWindowTokens,
-          contextWindowSource
-        })
+    ...contextWindowTokens === null ? {} : {
+      contextWindowTokens,
+      contextWindowSource
+    }
   };
 }
+export {
+  CODEX_TRANSCRIPT_REASON,
+  inspectCodexTranscriptMetadata
+};

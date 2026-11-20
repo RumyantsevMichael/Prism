@@ -1,9 +1,9 @@
+// Generated from src/server/repository-intelligence/codegraph-provider.mts by scripts/native-build/compile.mjs.
 import { spawn } from "node:child_process";
 import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 import { normalizeRepositorySourcePath } from "./repository-source-path.mjs";
-
-const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_TIMEOUT_MS = 3e4;
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DEFAULT_KILL_GRACE_MS = 250;
 const MAX_QUERY_LENGTH = 16384;
@@ -11,13 +11,11 @@ const MAX_HINTS_PER_KIND = 32;
 const MAX_SYMBOL_HINT_MATCHES = 4;
 const CONTEXT_NODES_BY_BUDGET = Object.freeze({ fast: 50, balanced: 100, thorough: 200 });
 const TEST_PATH = /(?:^|\/)(?:test|tests|__tests__)(?:\/|$)|\.(?:test|spec)\.[^/]+$/i;
-
-export const CODEGRAPH_SUPPORTED_VERSION = Object.freeze({
+const CODEGRAPH_SUPPORTED_VERSION = Object.freeze({
   minimum: "1.6.0",
   maximumExclusive: "1.7.0"
 });
-
-export const CODEGRAPH_CAPABILITIES = Object.freeze({
+const CODEGRAPH_CAPABILITIES = Object.freeze({
   lexicalSearch: true,
   semanticSearch: false,
   hybridSearch: false,
@@ -25,7 +23,6 @@ export const CODEGRAPH_CAPABILITIES = Object.freeze({
   verifiedSource: true
 });
 const CAPABILITIES = CODEGRAPH_CAPABILITIES;
-
 const REMEDIATION = Object.freeze({
   "not-installed": "Install CodeGraph 1.6.0 up to but not including 1.7.0, then retry the request.",
   "not-indexed": "Initialize the project with CodeGraph outside Prism, then retry the request.",
@@ -38,41 +35,36 @@ const REMEDIATION = Object.freeze({
   "incompatible-index": "Rebuild the CodeGraph index with the installed CodeGraph version.",
   "snapshot-changed": "Retry repository planning after CodeGraph finishes its index update."
 });
-
-export class CodeGraphAvailabilityError extends Error {
+class CodeGraphAvailabilityError extends Error {
   constructor(code, message, options = {}) {
-    super(message, options.cause ? { cause: options.cause } : undefined);
+    super(message, options.cause ? { cause: options.cause } : void 0);
     this.name = "CodeGraphAvailabilityError";
     this.code = code;
     this.recoverable = true;
     this.remediation = options.remediation || REMEDIATION[code] || "Select another repository-intelligence provider and retry the request.";
-    if (options.details !== undefined) this.details = options.details;
+    if (options.details !== void 0) this.details = options.details;
   }
 }
-
-export class CodeGraphRuntimeError extends Error {
+class CodeGraphRuntimeError extends Error {
   constructor(code, message, options = {}) {
-    super(message, options.cause ? { cause: options.cause } : undefined);
+    super(message, options.cause ? { cause: options.cause } : void 0);
     this.name = "CodeGraphRuntimeError";
     this.code = code;
     this.recoverable = options.recoverable !== false;
     this.remediation = options.remediation || REMEDIATION[code] || null;
-    if (options.details !== undefined) this.details = options.details;
+    if (options.details !== void 0) this.details = options.details;
   }
 }
-
 function byteLength(value) {
   return Buffer.byteLength(value, "utf8");
 }
-
-export function createCodeGraphCommandRunner(options = {}) {
+function createCodeGraphCommandRunner(options = {}) {
   const command = options.command || process.env.PRISM_CODEGRAPH_COMMAND || "codegraph";
   const spawnImpl = options.spawnImpl || spawn;
   const environment = options.env || process.env;
   const defaultTimeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS);
   const defaultMaxOutputBytes = positiveInteger(options.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES);
   const killGraceMs = positiveInteger(options.killGraceMs, DEFAULT_KILL_GRACE_MS);
-
   return async function runCodeGraph(args, invocation = {}) {
     if (!Array.isArray(args) || args.some((value) => typeof value !== "string")) {
       throw new TypeError("CodeGraph command arguments must be strings.");
@@ -93,7 +85,6 @@ export function createCodeGraphCommandRunner(options = {}) {
         reject(new CodeGraphRuntimeError("process-start-failed", "CodeGraph could not start.", { cause: error }));
         return;
       }
-
       let stdout = "";
       let stderr = "";
       let stdoutBytes = 0;
@@ -180,36 +171,30 @@ export function createCodeGraphCommandRunner(options = {}) {
     });
   };
 }
-
 function positiveInteger(value, fallback) {
   return Number.isInteger(value) && value > 0 ? value : fallback;
 }
-
 function nonnegativeInteger(value) {
   return Number.isSafeInteger(value) && value >= 0;
 }
-
 function parseVersion(value) {
   const match = String(value || "").trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/);
   if (!match) return null;
   const parts = match.slice(1).map(Number);
   return parts.every(Number.isSafeInteger) ? parts : null;
 }
-
 function compareVersions(left, right) {
   for (let index = 0; index < 3; index += 1) {
     if (left[index] !== right[index]) return left[index] - right[index];
   }
   return 0;
 }
-
 function supportedVersion(value) {
   const parsed = parseVersion(value);
   const minimum = parseVersion(CODEGRAPH_SUPPORTED_VERSION.minimum);
   const maximum = parseVersion(CODEGRAPH_SUPPORTED_VERSION.maximumExclusive);
   return parsed && compareVersions(parsed, minimum) >= 0 && compareVersions(parsed, maximum) < 0;
 }
-
 async function exactIndexExists(projectRoot) {
   try {
     const metadata = await lstat(path.join(projectRoot, ".codegraph"));
@@ -219,7 +204,6 @@ async function exactIndexExists(projectRoot) {
     throw error;
   }
 }
-
 function unavailable(projectRoot, code, reason, details) {
   return {
     provider: "codegraph",
@@ -228,10 +212,9 @@ function unavailable(projectRoot, code, reason, details) {
     code,
     reason,
     remediation: REMEDIATION[code] || "Select another repository-intelligence provider and retry the request.",
-    ...(details === undefined ? {} : { details })
+    ...details === void 0 ? {} : { details }
   };
 }
-
 function jsonFromCommand(result, label) {
   if (!result || result.exitCode !== 0 || typeof result.stdout !== "string") {
     throw new CodeGraphRuntimeError("invalid-response", `CodeGraph ${label} returned no usable output.`);
@@ -242,7 +225,6 @@ function jsonFromCommand(result, label) {
     throw new CodeGraphRuntimeError("invalid-json", `CodeGraph ${label} returned invalid JSON.`, { cause: error });
   }
 }
-
 function statusShapeIsValid(status) {
   if (!status || typeof status !== "object" || Array.isArray(status)) return false;
   if (typeof status.initialized !== "boolean" || typeof status.version !== "string" || typeof status.projectPath !== "string" || typeof status.indexPath !== "string") return false;
@@ -254,7 +236,6 @@ function statusShapeIsValid(status) {
   if (!nonnegativeInteger(status.index.pendingRefs) || typeof status.index.reindexRecommended !== "boolean") return false;
   return typeof status.index.state === "string" || status.index.state === null;
 }
-
 function snapshotOf(status) {
   return {
     version: status.version,
@@ -268,7 +249,6 @@ function snapshotOf(status) {
     currentExtractionVersion: status.index.currentExtractionVersion ?? null
   };
 }
-
 async function inspectStatus(projectRoot, version, runner) {
   const result = await runner(["status", "--json", projectRoot], { cwd: projectRoot });
   const status = jsonFromCommand(result, "status");
@@ -287,7 +267,7 @@ async function inspectStatus(projectRoot, version, runner) {
   if (path.resolve(status.indexPath) !== path.join(projectRoot, ".codegraph")) {
     return unavailable(projectRoot, "project-mismatch", "CodeGraph resolved an index directory outside the project root.");
   }
-  if (status.worktreeMismatch !== null && status.worktreeMismatch !== undefined) {
+  if (status.worktreeMismatch !== null && status.worktreeMismatch !== void 0) {
     return unavailable(projectRoot, "worktree-mismatch", "CodeGraph reported that the index belongs to another worktree.");
   }
   if (status.index.state !== "complete") return unavailable(projectRoot, "incomplete-index", `CodeGraph index state is ${status.index.state ?? "unknown"}.`);
@@ -298,7 +278,6 @@ async function inspectStatus(projectRoot, version, runner) {
   }
   return { provider: "codegraph", status: "AVAILABLE", projectRoot, version, capabilities: CAPABILITIES, snapshot: snapshotOf(status) };
 }
-
 function asAvailabilityFailure(projectRoot, error) {
   if (error instanceof CodeGraphAvailabilityError) {
     return unavailable(projectRoot, error.code, error.message, error.details);
@@ -311,13 +290,12 @@ function asAvailabilityFailure(projectRoot, error) {
   }
   throw error;
 }
-
-export async function probeCodeGraphAvailability(projectRoot, options = {}) {
+async function probeCodeGraphAvailability(projectRoot, options = {}) {
   if (typeof projectRoot !== "string" || !path.isAbsolute(projectRoot)) {
     throw new TypeError("The CodeGraph project root must be an absolute path.");
   }
   const canonicalRoot = await realpath(projectRoot);
-  if (!(await exactIndexExists(canonicalRoot))) {
+  if (!await exactIndexExists(canonicalRoot)) {
     return unavailable(canonicalRoot, "not-indexed", "CodeGraph has no index at the exact project root.");
   }
   const runner = options.runner || createCodeGraphCommandRunner(options);
@@ -332,7 +310,6 @@ export async function probeCodeGraphAvailability(projectRoot, options = {}) {
     return asAvailabilityFailure(canonicalRoot, error);
   }
 }
-
 function normalizeRelativePath(projectRoot, value) {
   try {
     return normalizeRepositorySourcePath(value, { projectRoot });
@@ -340,7 +317,6 @@ function normalizeRelativePath(projectRoot, value) {
     throw new CodeGraphRuntimeError("invalid-response", "CodeGraph returned an unsafe source path.");
   }
 }
-
 function normalizeNode(projectRoot, value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new CodeGraphRuntimeError("invalid-response", "CodeGraph returned an invalid source node.");
@@ -360,18 +336,16 @@ function normalizeNode(projectRoot, value) {
     kind: value.kind === "type_alias" ? "type" : value.kind,
     name: value.name,
     rangeComplete: true,
-    ...(typeof value.qualifiedName === "string" && value.qualifiedName ? { qualifiedName: value.qualifiedName } : {}),
-    ...(typeof value.signature === "string" && value.signature ? { signature: value.signature } : {})
+    ...typeof value.qualifiedName === "string" && value.qualifiedName ? { qualifiedName: value.qualifiedName } : {},
+    ...typeof value.signature === "string" && value.signature ? { signature: value.signature } : {}
   };
 }
-
 function normalizeEdge(value) {
   if (!value || typeof value !== "object" || typeof value.source !== "string" || !value.source || typeof value.target !== "string" || !value.target || typeof value.kind !== "string" || !value.kind) {
     throw new CodeGraphRuntimeError("invalid-response", "CodeGraph returned an invalid graph edge.");
   }
   return { source: value.source, target: value.target, kind: value.kind };
 }
-
 function normalizeContext(projectRoot, payload, limits) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new CodeGraphRuntimeError("invalid-response", "CodeGraph returned an invalid context response.");
@@ -385,14 +359,14 @@ function normalizeContext(projectRoot, payload, limits) {
   const affirmativelyComplete = payload.truncated === false || payload.complete === true;
   const boundedFields = [];
   const fieldIsBounded = (values, limit, name) => {
-    const bounded = values.length > limit || (values.length === limit && !affirmativelyComplete);
+    const bounded = values.length > limit || values.length === limit && !affirmativelyComplete;
     if (bounded) boundedFields.push({ field: name, returned: values.length, limit });
     return bounded;
   };
   fieldIsBounded(payload.entryPoints, limits.maxEntryPoints, "entryPoints");
   fieldIsBounded(payload.nodes, limits.maxNodes, "nodes");
   fieldIsBounded(payload.edges, limits.maxEdges, "edges");
-  const nodes = new Map();
+  const nodes = /* @__PURE__ */ new Map();
   const entryPoints = [];
   for (const value of payload.entryPoints.slice(0, limits.maxEntryPoints)) {
     const node = normalizeNode(projectRoot, value);
@@ -407,12 +381,9 @@ function normalizeContext(projectRoot, payload, limits) {
   }
   const edges = payload.edges.slice(0, limits.maxEdges).map(normalizeEdge);
   const missingEdgeEndpoints = edges.filter(({ source, target }) => !nodes.has(source) || !nodes.has(target)).length;
-  const diagnostics = boundedFields.length
-    ? [{ code: "context_results_bounded", message: "CodeGraph context results reached or exceeded Prism consumer limits.", details: { fields: boundedFields } }]
-    : [];
+  const diagnostics = boundedFields.length ? [{ code: "context_results_bounded", message: "CodeGraph context results reached or exceeded Prism consumer limits.", details: { fields: boundedFields } }] : [];
   return { entryPoints, nodes, edges, missingEdgeEndpoints, bounded: boundedFields.length > 0, affirmativelyComplete, diagnostics };
 }
-
 function normalizeQueryResults(projectRoot, payload, limit) {
   if (!Array.isArray(payload)) throw new CodeGraphRuntimeError("invalid-response", "CodeGraph query returned an invalid result list.");
   const results = payload.slice(0, limit).map((result) => {
@@ -423,7 +394,6 @@ function normalizeQueryResults(projectRoot, payload, limit) {
   });
   return { results, bounded: payload.length > limit };
 }
-
 function symbolIdentityMatches(candidate, expected) {
   const normalizedCandidate = String(candidate || "").trim().toLowerCase();
   const normalizedExpected = String(expected || "").trim().toLowerCase();
@@ -434,15 +404,13 @@ function symbolIdentityMatches(candidate, expected) {
   if (candidateParts.length > 1 && expectedParts.length > 1) return false;
   return candidateParts.at(-1)?.replace(/\(.*$/, "") === expectedParts.at(-1)?.replace(/\(.*$/, "");
 }
-
 function stringHints(hints, name) {
-  if (hints?.[name] === undefined) return [];
+  if (hints?.[name] === void 0) return [];
   if (!Array.isArray(hints[name]) || hints[name].length > MAX_HINTS_PER_KIND || hints[name].some((value) => typeof value !== "string" || !value.trim())) {
     throw new CodeGraphRuntimeError("invalid-input", `CodeGraph accepts at most ${MAX_HINTS_PER_KIND} nonempty ${name} hints.`);
   }
   return [...new Set(hints[name].map((value) => value.trim()))];
 }
-
 function inputSourcePaths(projectRoot, values) {
   try {
     return values.map((value) => normalizeRepositorySourcePath(value, { projectRoot }));
@@ -450,7 +418,6 @@ function inputSourcePaths(projectRoot, values) {
     throw new CodeGraphRuntimeError("invalid-input", "CodeGraph requires safe project-relative file hints.", { cause: error });
   }
 }
-
 function hintSet(projectRoot, hints) {
   return {
     files: inputSourcePaths(projectRoot, stringHints(hints, "files")),
@@ -459,7 +426,6 @@ function hintSet(projectRoot, hints) {
     expectedModifiedFiles: inputSourcePaths(projectRoot, stringHints(hints, "expectedModifiedFiles"))
   };
 }
-
 function reasonsFor(node, hints) {
   const reasons = [];
   if (hints.files.includes(node.file) || hints.symbols.some((symbol) => symbolIdentityMatches(node.qualifiedName || node.name, symbol))) {
@@ -468,11 +434,9 @@ function reasonsFor(node, hints) {
   if (hints.expectedModifiedFiles.includes(node.file)) reasons.push("expected-modification-target");
   return reasons;
 }
-
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
-
 function addHit(hits, byId, hit) {
   const existing = byId.get(hit.node.id);
   if (existing) {
@@ -483,7 +447,6 @@ function addHit(hits, byId, hit) {
   byId.set(hit.node.id, hit);
   hits.push(hit);
 }
-
 function relationshipFor(edge, anchorIsSource, neighbor) {
   if (edge.kind === "calls") {
     if (!anchorIsSource && TEST_PATH.test(neighbor.file)) return "tests";
@@ -495,12 +458,10 @@ function relationshipFor(edge, anchorIsSource, neighbor) {
   if (["references", "imports", "exports", "decorates"].includes(edge.kind)) return "reference";
   return "related";
 }
-
 function sameSnapshot(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
-
-export class CodeGraphRepositoryIntelligence {
+class CodeGraphRepositoryIntelligence {
   constructor({ projectRoot, sourceProvider, runner, availability }) {
     if (!sourceProvider || typeof sourceProvider.describe !== "function" || typeof sourceProvider.read !== "function") {
       throw new TypeError("CodeGraph requires a native source provider with describe and read methods.");
@@ -512,11 +473,9 @@ export class CodeGraphRepositoryIntelligence {
     this.snapshot = availability.snapshot;
     this.graph = null;
   }
-
   async currentAvailability() {
     return inspectStatus(this.projectRoot, this.version, this.runner);
   }
-
   async assertFreshSnapshot() {
     let current;
     try {
@@ -536,12 +495,10 @@ export class CodeGraphRepositoryIntelligence {
     }
     return current.snapshot;
   }
-
   async verifySnapshot() {
     await this.assertFreshSnapshot();
     return { provider: "codegraph", version: this.version, snapshot: this.snapshot };
   }
-
   async describe() {
     await this.assertFreshSnapshot();
     const source = await this.sourceProvider.describe();
@@ -549,8 +506,8 @@ export class CodeGraphRepositoryIntelligence {
       name: "codegraph",
       version: this.version,
       commit: source?.commit,
-      ...(source?.sourceFingerprint ? { sourceFingerprint: source.sourceFingerprint } : {}),
-      ...(source?.snapshotIdentity ? { snapshotIdentity: { ...source.snapshotIdentity } } : {}),
+      ...source?.sourceFingerprint ? { sourceFingerprint: source.sourceFingerprint } : {},
+      ...source?.snapshotIdentity ? { snapshotIdentity: { ...source.snapshotIdentity } } : {},
       capabilities: { ...CAPABILITIES },
       contributors: [
         { name: String(source?.name || "native"), role: "source" },
@@ -558,7 +515,6 @@ export class CodeGraphRepositoryIntelligence {
       ]
     };
   }
-
   async search(task, hints = {}, options = {}) {
     if (typeof task !== "string" || !task.trim()) throw new CodeGraphRuntimeError("invalid-input", "CodeGraph requires a nonempty task.");
     const normalizedHints = hintSet(this.projectRoot, hints);
@@ -575,7 +531,16 @@ export class CodeGraphRepositoryIntelligence {
     const budget = Object.hasOwn(CONTEXT_NODES_BY_BUDGET, options.budget) ? options.budget : "balanced";
     const maxNodes = Math.max(topK, CONTEXT_NODES_BY_BUDGET[budget]);
     const result = await this.runner([
-      "context", "--path", this.projectRoot, "--format", "json", "--max-nodes", String(maxNodes), "--no-code", "--", query
+      "context",
+      "--path",
+      this.projectRoot,
+      "--format",
+      "json",
+      "--max-nodes",
+      String(maxNodes),
+      "--no-code",
+      "--",
+      query
     ], { cwd: this.projectRoot });
     const normalized = normalizeContext(this.projectRoot, jsonFromCommand(result, "context"), {
       maxEntryPoints: topK,
@@ -583,9 +548,8 @@ export class CodeGraphRepositoryIntelligence {
       maxEdges: Math.min(800, maxNodes * 4)
     });
     this.graph = normalized;
-
     const hits = [];
-    const hitsById = new Map();
+    const hitsById = /* @__PURE__ */ new Map();
     for (const node of normalized.entryPoints.slice(0, topK)) {
       addHit(hits, hitsById, {
         node,
@@ -593,15 +557,13 @@ export class CodeGraphRepositoryIntelligence {
         reasons: [...reasonsFor(node, normalizedHints), "provider-ranked-match", "lexical-match", "graph-expansion"]
       });
     }
-
-    const explicitFiles = new Set([...normalizedHints.files, ...normalizedHints.expectedModifiedFiles]);
+    const explicitFiles = /* @__PURE__ */ new Set([...normalizedHints.files, ...normalizedHints.expectedModifiedFiles]);
     const anchoredFiles = new Set(hits.filter(({ node }) => explicitFiles.has(node.file)).map(({ node }) => node.file));
     for (const node of normalized.nodes.values()) {
       if (!explicitFiles.has(node.file) || anchoredFiles.has(node.file)) continue;
       addHit(hits, hitsById, { node, score: null, reasons: reasonsFor(node, normalizedHints) });
       anchoredFiles.add(node.file);
     }
-
     const unresolvedRequired = [];
     const boundedSymbols = [];
     for (const file of normalizedHints.files) {
@@ -615,16 +577,21 @@ export class CodeGraphRepositoryIntelligence {
     for (const symbol of normalizedHints.symbols) {
       const existing = [...normalized.nodes.values()].filter((node) => symbolIdentityMatches(node.qualifiedName || node.name, symbol));
       let matches = existing.slice(0, MAX_SYMBOL_HINT_MATCHES).map((node) => ({ node, score: null }));
-      let matchesBounded = existing.length > MAX_SYMBOL_HINT_MATCHES
-        || (existing.length === MAX_SYMBOL_HINT_MATCHES && !normalized.affirmativelyComplete);
+      let matchesBounded = existing.length > MAX_SYMBOL_HINT_MATCHES || existing.length === MAX_SYMBOL_HINT_MATCHES && !normalized.affirmativelyComplete;
       if (matches.length === 0) {
         const queryLimit = MAX_SYMBOL_HINT_MATCHES + 1;
         const queryResult = await this.runner([
-          "query", "--path", this.projectRoot, "--limit", String(queryLimit), "--json", "--", symbol
+          "query",
+          "--path",
+          this.projectRoot,
+          "--limit",
+          String(queryLimit),
+          "--json",
+          "--",
+          symbol
         ], { cwd: this.projectRoot });
         const queryMatches = normalizeQueryResults(this.projectRoot, jsonFromCommand(queryResult, "query"), MAX_SYMBOL_HINT_MATCHES);
-        matches = queryMatches.results
-          .filter(({ node }) => symbolIdentityMatches(node.qualifiedName || node.name, symbol));
+        matches = queryMatches.results.filter(({ node }) => symbolIdentityMatches(node.qualifiedName || node.name, symbol));
         matchesBounded = queryMatches.bounded;
       }
       if (matches.length === 0) {
@@ -636,12 +603,8 @@ export class CodeGraphRepositoryIntelligence {
         addHit(hits, hitsById, { node: match.node, score: match.score, reasons: ["explicit-design-reference", "lexical-match"] });
       }
     }
-
     await this.assertFreshSnapshot();
-    const searchable = unique([...normalized.nodes.values(), ...hits.map(({ node }) => node)].map((node) => node.id))
-      .map((id) => hits.find(({ node }) => node.id === id)?.node || normalized.nodes.get(id))
-      .map((node) => [node.name, node.qualifiedName, node.signature, node.file].filter(Boolean).join(" ").toLowerCase())
-      .join("\n");
+    const searchable = unique([...normalized.nodes.values(), ...hits.map(({ node }) => node)].map((node) => node.id)).map((id) => hits.find(({ node }) => node.id === id)?.node || normalized.nodes.get(id)).map((node) => [node.name, node.qualifiedName, node.signature, node.file].filter(Boolean).join(" ").toLowerCase()).join("\n");
     const unresolvedConcepts = normalizedHints.concepts.filter((concept) => !searchable.includes(concept.toLowerCase()));
     const diagnostics = [
       { code: "semantic_unavailable", message: "CodeGraph does not provide embedding retrieval for this context plan." },
@@ -668,14 +631,13 @@ export class CodeGraphRepositoryIntelligence {
       }
     };
   }
-
   async neighbors(nodes, options = {}) {
     if (!this.graph) throw new CodeGraphRuntimeError("search-required", "CodeGraph search must run before graph expansion.");
     await this.assertFreshSnapshot();
     const maxNodes = Math.min(100, positiveInteger(options.maxNodes, 24));
     const relationships = Array.isArray(options.relationships) ? new Set(options.relationships.map(String)) : null;
     const neighbors = [];
-    const seen = new Set();
+    const seen = /* @__PURE__ */ new Set();
     let neighborsBounded = false;
     for (const anchor of Array.isArray(nodes) ? nodes : []) {
       for (const edge of this.graph.edges) {
@@ -704,16 +666,11 @@ export class CodeGraphRepositoryIntelligence {
       estimateEligible: this.graph.missingEdgeEndpoints === 0 && !this.graph.bounded && !neighborsBounded,
       diagnostics: [
         ...this.graph.diagnostics,
-        ...(neighborsBounded
-          ? [{ code: "graph_neighbor_limit", message: `CodeGraph graph expansion exceeded Prism's limit of ${maxNodes} neighbors.` }]
-          : []),
-        ...(this.graph.missingEdgeEndpoints
-          ? [{ code: "graph_edges_bounded", message: `CodeGraph omitted ${this.graph.missingEdgeEndpoints} graph edge endpoints from the bounded context.` }]
-          : [])
+        ...neighborsBounded ? [{ code: "graph_neighbor_limit", message: `CodeGraph graph expansion exceeded Prism's limit of ${maxNodes} neighbors.` }] : [],
+        ...this.graph.missingEdgeEndpoints ? [{ code: "graph_edges_bounded", message: `CodeGraph omitted ${this.graph.missingEdgeEndpoints} graph edge endpoints from the bounded context.` }] : []
       ]
     };
   }
-
   async read(sourceRange) {
     if (!sourceRange || typeof sourceRange !== "object") throw new CodeGraphRuntimeError("invalid-input", "CodeGraph requires a source range.");
     const file = normalizeRelativePath(this.projectRoot, sourceRange.file);
@@ -727,8 +684,7 @@ export class CodeGraphRepositoryIntelligence {
     return result;
   }
 }
-
-export async function openCodeGraphRepositoryIntelligence(projectRoot, sourceProvider, options = {}) {
+async function openCodeGraphRepositoryIntelligence(projectRoot, sourceProvider, options = {}) {
   const runner = options.runner || createCodeGraphCommandRunner(options);
   const availability = await probeCodeGraphAvailability(projectRoot, { ...options, runner });
   if (availability.status !== "AVAILABLE") {
@@ -744,9 +700,19 @@ export async function openCodeGraphRepositoryIntelligence(projectRoot, sourcePro
     availability
   });
 }
-
-export async function withCodeGraphRepositoryIntelligence(projectRoot, sourceProvider, action, options = {}) {
+async function withCodeGraphRepositoryIntelligence(projectRoot, sourceProvider, action, options = {}) {
   if (typeof action !== "function") throw new TypeError("CodeGraph requires an adapter action.");
   const provider = await openCodeGraphRepositoryIntelligence(projectRoot, sourceProvider, options);
   return action(provider);
 }
+export {
+  CODEGRAPH_CAPABILITIES,
+  CODEGRAPH_SUPPORTED_VERSION,
+  CodeGraphAvailabilityError,
+  CodeGraphRepositoryIntelligence,
+  CodeGraphRuntimeError,
+  createCodeGraphCommandRunner,
+  openCodeGraphRepositoryIntelligence,
+  probeCodeGraphAvailability,
+  withCodeGraphRepositoryIntelligence
+};

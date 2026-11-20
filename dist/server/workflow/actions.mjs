@@ -1,3 +1,4 @@
+// Generated from src/server/workflow/actions.mts by scripts/native-build/compile.mjs.
 import { randomBytes } from "node:crypto";
 import os from "node:os";
 import { realpath } from "node:fs/promises";
@@ -10,13 +11,15 @@ import { runGit } from "./record-store-sync.mjs";
 import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { readRoadmap } from "./roadmap.mjs";
 import { shippedActionReason, shippedDecision } from "./shipped-history.mjs";
-import { INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction } from "./state.mjs";
+import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction, validEarlierName } from "./state.mjs";
 import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
 import { confirmLaunch } from "../session/launch-confirmation.mjs";
-import { HOSTS } from "../session/launch-hosts.mjs";
+import { HOSTS, hostDefinition } from "../session/launch-hosts.mjs";
 import { LAUNCH_ID_PATTERN } from "../session/launch-records.mjs";
+import { AUTOMATIC, AUTOMATIC_LABEL, PrismRunsError, readPrismRunsChoice, writePrismRunsChoice } from "../session/prism-runs.mjs";
+import { choiceReasons, nameRuleBreach, NAME_RULE_MESSAGES, readRunOptions, RUN_KINDS, validProvider } from "../session/run-options.mjs";
 import {
   answerLaunchGate,
   hostAvailability,
@@ -30,19 +33,12 @@ import {
   startLaunch,
   stopLaunch
 } from "../session/launched-sessions.mjs";
-
-// The review app's actions: one registry of definitions that lists and applies every change a person makes to Prism records from a page.
-// The module needs no HTTP, so any transport serves the same registry, and a new action joins by adding a definition below.
-
 const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
 const APPROVAL_ID = /^approval-[0-9a-f]{8,32}$/;
-const TEXT_LIMIT = 200;
-const NOTE_LIMIT = 4000;
-// A scope label is workspace, a repository name, or <repository>/<component>, and neither a label nor an artifact path holds a ":".
+const NOTE_LIMIT = 4e3;
 const SCOPE_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
 const LINE_LIMIT = 16;
-
-export class ActionError extends Error {
+class ActionError extends Error {
   constructor(code, message, details = {}) {
     super(message);
     this.name = "ActionError";
@@ -50,24 +46,18 @@ export class ActionError extends Error {
     Object.assign(this, details);
   }
 }
-
 const fail = (code, message, details) => new ActionError(code, message, details);
-const order = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
+const order = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const option = (value, label, consequence = null) => ({ value, label, consequence });
-
 function field(name, kind, label, extra = {}) {
   return { name, kind, label, options: null, required: false, requiredWhen: null, maxLength: null, multiline: null, ...extra };
 }
-
 const choice = (name, label, options, extra = {}) => field(name, "choice", label, { options, ...extra });
 const toggle = (name, label, off, on) => field(name, "toggle", label, { options: [option("off", "Off", off), option("on", "On", on)], required: true });
 const text = (name, label, maxLength, extra = {}) => field(name, "text", label, { maxLength, multiline: false, ...extra });
-
-// ---- Targets ----
-
-/** A target reference read into its parts, or null when it is malformed. */
-export function parseTarget(reference) {
+const MACHINE_TARGETS = ["machine:prism-runs"];
+function parseTarget(reference) {
   if (typeof reference !== "string") return null;
   let match = /^initiative:([^/]+)$/.exec(reference);
   if (match && SLUG_PATTERN.test(match[1])) return { kind: "initiative", reference, initiative: match[1] };
@@ -83,12 +73,10 @@ export function parseTarget(reference) {
   if (match && LAUNCH_ID_PATTERN.test(match[1])) return { kind: "launch", reference, launch: match[1] };
   match = /^index:([^/]+)\/([^/]+)$/.exec(reference);
   if (match && REPOSITORY_NAME.test(match[1]) && REPOSITORY_NAME.test(match[2])) return { kind: "index", reference, identity: `${match[1]}/${match[2]}` };
+  if (MACHINE_TARGETS.includes(reference)) return { kind: "machine", reference, machine: reference.slice("machine:".length) };
   return null;
 }
-
 const unknownTarget = (reference) => fail("unknown_target", `No action target ${JSON.stringify(String(reference ?? ""))} exists on this page.`);
-
-// A checkout's components as index targets: the root component first and the declared ones in declaration order, each with the checkout that indexes it.
 async function checkoutComponents(root) {
   const config = await readWorkflowConfig(root);
   const listed = listComponents(config);
@@ -96,12 +84,9 @@ async function checkoutComponents(root) {
   if (listed.problem || listed.declared.length === 0) return [{ identity: `${repository}/${repository}`, folder: "", root }];
   return listed.declared.map((component) => ({ identity: component.component, folder: component.folder, root }));
 }
-
-// The index targets of a page: the checkout's own components, or, for a workspace's page, given checkouts, the components of every checkout of the workspace on this machine,
-// by repository name and each repository's root component first, so a repository without a checkout here offers no index rebuild.
 async function indexComponents(projectRoot, checkouts = null) {
   if (checkouts === null) return checkoutComponents(projectRoot);
-  const byRepository = new Map();
+  const byRepository = /* @__PURE__ */ new Map();
   for (const root of checkouts) {
     const components = await checkoutComponents(root).catch(() => []);
     const repository = components[0]?.identity.split("/")[0];
@@ -109,28 +94,17 @@ async function indexComponents(projectRoot, checkouts = null) {
   }
   return [...byRepository].sort(([left], [right]) => order(left, right)).flatMap(([, components]) => components);
 }
-
-/**
- * The targets of a kind on a page: { targets }, which only the index kind lists.
- * checkouts, for a workspace's page, lists the roots of the workspace's checkouts on this machine, whose components are its index targets.
- */
-export async function listActionTargets({ projectRoot, kind, checkouts = null }) {
+async function listActionTargets({ projectRoot, kind, checkouts = null }) {
   if (kind !== "index") throw fail("unknown_target", "Only index targets are listed.");
   return { targets: (await indexComponents(projectRoot, checkouts)).map((component) => `index:${component.identity}`) };
 }
-
 async function initiativeExists(projectRoot, initiative, record) {
   if (record) return true;
   const roadmap = await readRoadmap(projectRoot).catch(() => null);
   return Boolean(roadmap?.loaded?.record?.initiatives?.some((item) => item.id === initiative));
 }
-
-// A store that cannot be used refuses an approval target with its own code and message, as an artifact read is refused, and the review app answers it as unavailable.
 const storeRefusal = (error) => fail(error.code, error.message, { unavailable: true });
 const storeRefused = (error) => error?.name === "ArtifactError" && typeof error.code === "string";
-
-// The pending approval gates of the requirements and ADRs that the checkout sees whose id is the given one; a project without a store has none.
-// More than one names no single gate: a copied status record or a move between scopes that stopped halfway leaves such a copy.
 async function pendingApprovals(projectRoot, id) {
   const config = await readWorkflowConfig(projectRoot);
   if ((config.workspace?.store ?? null) === null) return [];
@@ -140,36 +114,32 @@ async function pendingApprovals(projectRoot, id) {
   });
   return gates.filter((gate) => gate.id === id);
 }
-
-// The store artifact that an artifact target names, as { path, scope, kind, version }, or null; a project without a store holds none.
 async function seenArtifact(projectRoot, parsed) {
   return storeArtifactTarget(projectRoot, parsed.scope, parsed.path).catch((error) => {
     throw storeRefused(error) ? storeRefusal(error) : error;
   });
 }
-
-// Reads what a target's actions need: the initiative's coordination state and record, the index component, the approval gate, the store artifact, or the launched session, and refuses a target that does not exist.
-async function readTarget(projectRoot, parsed, indexer, state = undefined, env = process.env, checkouts = null) {
+async function readTarget(projectRoot, parsed, indexer, state = void 0, env = process.env, checkouts = null, readOptions = null) {
   if (parsed.kind === "artifact") {
     const artifact = await seenArtifact(projectRoot, parsed);
     if (!artifact) throw unknownTarget(parsed.reference);
     return { ...parsed, artifact };
   }
   if (parsed.kind === "approval") {
-    // An approval gate lives in its artifact's status record in the store, so an answered or replaced one is no target.
     const gates = await pendingApprovals(projectRoot, parsed.gate);
     if (!gates.length) throw unknownTarget(parsed.reference);
     return { ...parsed, gateRecord: gates[0], ambiguous: gates.length > 1 ? ambiguousApprovalMessage(parsed.gate, gates) : null };
   }
   if (parsed.kind === "launch") {
-    // A launched session is a target while this machine lists it for the page's checkout.
-    const view = (await listLaunches({ projectRoot, env })).launches.find((item) => item.id === parsed.launch);
-    if (!view) throw unknownTarget(parsed.reference);
+    const view2 = (await listLaunches({ projectRoot, env })).launches.find((item) => item.id === parsed.launch);
+    if (!view2) throw unknownTarget(parsed.reference);
     const status = await launchRunStatus({ id: parsed.launch, env });
     const resumeReason = status === "running" ? "The session is running." : await resumeRefusal({ id: parsed.launch, env });
-    // A shipped initiative's state is history, so its sessions cannot resume; they stay stoppable, since orchestrate ships while its host runs.
-    const shipped = await shippedDecision(projectRoot, view.initiative).catch(() => null);
-    return { ...parsed, view, initiative: view.initiative, running: status === "running", resumeReason, shipped };
+    const shipped2 = await shippedDecision(projectRoot, view2.initiative).catch(() => null);
+    return { ...parsed, view: view2, initiative: view2.initiative, running: status === "running", resumeReason, shipped: shipped2 };
+  }
+  if (parsed.kind === "machine") {
+    return { ...parsed, prismRuns: await readPrismRunsChoice(env), hosts: await hostAvailability({ env }), readOptions: readOptions ?? runOptionsReader(projectRoot, env) };
   }
   if (parsed.kind === "index") {
     const component = (await indexComponents(projectRoot, checkouts)).find((item) => item.identity === parsed.identity);
@@ -180,14 +150,14 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined, env =
   const coordination = state ?? await readCoordinationState({ projectRoot, initiative: parsed.initiative }).then((read) => ({ exists: read.exists, revision: read.revision, state: read.state, valid: read.valid }));
   const { loaded } = await readInitiativeWithClaims(projectRoot, parsed.initiative).catch(() => ({ loaded: { exists: false, record: null } }));
   const record = loaded.exists ? loaded.record : null;
-  // A shipped initiative's state is history, so its decision makes every action on it unavailable.
   const shipped = await shippedDecision(projectRoot, parsed.initiative).catch(() => null);
   const context = { ...parsed, coordination, record, shipped, initiativeTarget: `initiative:${parsed.initiative}` };
-  if (parsed.kind === "initiative" && !(await initiativeExists(projectRoot, parsed.initiative, record))) throw unknownTarget(parsed.reference);
-  if (parsed.kind === "initiative") {
+  if (parsed.kind === "initiative" && !await initiativeExists(projectRoot, parsed.initiative, record)) throw unknownTarget(parsed.reference);
+  if (parsed.kind === "initiative" || parsed.kind === "slice") {
     context.hosts = await hostAvailability({ env });
-    context.launchRunning = await initiativeRunning({ projectRoot, initiative: parsed.initiative, env });
+    context.readOptions = readOptions ?? runOptionsReader(projectRoot, env);
   }
+  if (parsed.kind === "initiative") context.launchRunning = await initiativeRunning({ projectRoot, initiative: parsed.initiative, env });
   if (parsed.kind === "slice" && !(record?.slices && Object.hasOwn(record.slices, parsed.slice))) throw unknownTarget(parsed.reference);
   if (parsed.kind === "gate") {
     const gate = (coordination.state?.pending ?? []).find((item) => isRecord(item) && item.id === parsed.gate);
@@ -196,12 +166,8 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined, env =
   }
   return context;
 }
-
-// ---- Definitions ----
-
 const settingsOf = (context) => (context.coordination.valid ? context.coordination.state?.settings : null) ?? {};
-
-function setting({ name, label, fields, effect, confirm = null, value, after = (values) => values.value, ignores = () => [] }) {
+function setting({ name, label, fields, effect, confirm = null, value, stored = null, after = (values) => values.value, ignores = () => [] }) {
   return {
     id: `initiative.${name}`,
     kinds: ["initiative", "slice"],
@@ -209,8 +175,9 @@ function setting({ name, label, fields, effect, confirm = null, value, after = (
     group: "Initiative settings",
     effect,
     target: (context) => context.initiativeTarget,
-    fields: () => fields,
+    fields: typeof fields === "function" ? fields : () => fields,
     value,
+    ...stored ? { stored } : {},
     context: () => null,
     recommended: () => null,
     confirm: () => confirm,
@@ -218,23 +185,130 @@ function setting({ name, label, fields, effect, confirm = null, value, after = (
     unavailable: () => null,
     ignores,
     after,
-    change: (context, after) => ({ setting: { name, value: after } })
+    change: (context, after2) => ({ setting: { name, value: after2 } })
   };
 }
-
-const NEXT_CHILD = "Applies to child sessions started after the change.";
+const NEXT_AGENT = "Applies to agents started after the change.";
 const autonomyOf = (context) => settingsOf(context).autonomy ?? "conservative";
+function hostOptions(context, consequence) {
+  return HOSTS.map(({ host, label }) => {
+    const availability = context.hosts?.find((item) => item.host === host);
+    return { value: host, label, consequence: consequence(label), reason: availability?.available ? null : availability?.reason ?? `${label} was not found.` };
+  });
+}
+const firstFoundHost = (context) => context.hosts?.find((item) => item.available)?.host ?? null;
+const HOST_DEFAULT_CHOICE = Object.freeze({ model: null, effort: null, typed: false });
+function fullEntry(stored) {
+  const entry = isRecord(stored) ? stored : {};
+  const choiceOf = (value) => {
+    if (!isRecord(value)) return { ...HOST_DEFAULT_CHOICE };
+    if (typeof value.earlier === "string") return { ...HOST_DEFAULT_CHOICE, earlier: value.earlier };
+    return { model: value.model ?? null, effort: value.effort ?? null, typed: value.typed === true };
+  };
+  return { provider: typeof entry.provider === "string" ? entry.provider : null, ...Object.fromEntries(RUN_KINDS.map(({ kind }) => [kind, choiceOf(entry[kind])])) };
+}
 const modelsOf = (context) => {
-  const stored = settingsOf(context).models;
-  return stored === undefined || stored === "defaults" ? "host defaults" : stored;
+  const stored = isRecord(settingsOf(context).models) ? settingsOf(context).models : {};
+  return Object.fromEntries(HOSTS.map(({ host }) => [host, fullEntry(stored[host])]));
 };
-const whenCustom = { field: "mode", values: ["custom"] };
-
+function compactModels(value) {
+  const compact = {};
+  for (const [host, entry] of Object.entries(value)) {
+    const kept = {};
+    if (entry.provider !== null) kept.provider = entry.provider;
+    for (const { kind } of RUN_KINDS) {
+      const choice2 = entry[kind];
+      if (typeof choice2.earlier === "string") {
+        kept[kind] = { earlier: choice2.earlier };
+        continue;
+      }
+      const part = { ...choice2.model === null ? {} : { model: choice2.model }, ...choice2.effort === null ? {} : { effort: choice2.effort }, ...choice2.typed ? { typed: true } : {} };
+      if (Object.keys(part).length) kept[kind] = part;
+    }
+    if (Object.keys(kept).length) compact[host] = kept;
+  }
+  return compact;
+}
+function runOptionsReader(projectRoot, env) {
+  const reads = /* @__PURE__ */ new Map();
+  return (selection) => {
+    const key = JSON.stringify(selection);
+    if (!reads.has(key)) reads.set(key, readRunOptions({ ...selection, checkout: projectRoot, env }));
+    return reads.get(key);
+  };
+}
+const optionOf = (report, id) => report.options.find((item) => item.id === id) ?? null;
+const RUN_CHOICE_HINTS = {
+  coordinator: "Only coordinates: it plans the order of work, starts the agents below and asks you at gates. It writes no code.",
+  designImplementation: "Writes each slice's design, tests and code.",
+  codeReview: "Reviews each finished slice.",
+  securityReview: "Reviews slices that touch access, secrets or other trust boundaries.",
+  gateSummary: "Turns the design's tests into the short summaries you read at the design gate."
+};
+const PROVIDER_HINT = "Where the host sends its model requests; only some hosts offer a choice.";
+function modelsFields(context) {
+  return [
+    choice("host", "Host", hostOptions(context, (label) => `Shows and changes the choices kept for ${label}.`), { required: true }),
+    field("provider", "run-option", "Provider", { for: "coordinator", option: "provider", hint: PROVIDER_HINT }),
+    ...RUN_KINDS.map(({ kind, label, purpose }) => field(kind, "run-choice", label, { for: purpose, hint: RUN_CHOICE_HINTS[kind] }))
+  ];
+}
+async function checkHostChoices(context, { host, provider, choices }, refuse) {
+  const { label } = hostDefinition(host);
+  const missing = hostOptions(context, () => "").find((item) => item.value === host)?.reason;
+  if (missing) throw refuse("host", missing);
+  if (provider !== null) {
+    if (!validProvider(provider)) throw refuse("provider", NAME_RULE_MESSAGES.provider);
+    const base = await context.readOptions({ host, purpose: "coordinator" });
+    if (base.state === "unavailable") throw refuse("host", base.reason);
+    if (!optionOf(base, "provider")?.values.some((item) => item.value === provider)) throw refuse("provider", choiceReasons.provider(label, provider));
+  }
+  for (const { name, purpose, choice: choice2 } of choices) {
+    if (choice2.earlier !== void 0) throw refuse(name, earlierReason(label, choice2.earlier));
+    if (choice2.typed && choice2.model === null) throw refuse(name, "Only a model name can be typed.");
+    const breach = nameRuleBreach({ model: choice2.model, effort: choice2.effort });
+    if (breach) throw refuse(name, breach.message);
+    if (choice2.effort === null && (choice2.model === null || choice2.typed)) continue;
+    const report = await context.readOptions({ host, purpose, provider, model: choice2.model, effort: choice2.effort, typed: choice2.typed });
+    if (report.state === "unavailable") throw refuse("host", report.reason);
+    for (const id of ["model", "effort"]) {
+      const chosen = optionOf(report, id)?.chosen;
+      if (chosen?.state === "not-offered") throw refuse(name, chosen.reason);
+    }
+  }
+}
+const refuseChoice = (name, message) => invalid(name, "A value that the host reports, the host default, or a model name typed as such.", message);
+async function checkedModels(values, context) {
+  const { host, provider } = values;
+  const choices = RUN_KINDS.map(({ kind, purpose }) => ({ name: kind, purpose, choice: values[kind] ?? HOST_DEFAULT_CHOICE }));
+  await checkHostChoices(context, { host, provider, choices }, refuseChoice);
+  const after = modelsOf(context);
+  after[host] = { provider, ...Object.fromEntries(RUN_KINDS.map(({ kind }) => [kind, values[kind] ?? { ...HOST_DEFAULT_CHOICE }])) };
+  return after;
+}
 const SETTING_DEFINITIONS = [
+  setting({
+    name: "host",
+    label: "Host",
+    fields: (context) => [choice("value", "Host", hostOptions(context, (label) => `${label} runs the launched session and its agents.`), { required: true })],
+    effect: "Launches started after the change run on this host; a running or resumed session keeps the host it started on.",
+    // With no host stored, the first host this computer finds shows, and choosing it still stores it as the person's.
+    value: (context) => settingsOf(context).host ?? firstFoundHost(context),
+    stored: (context) => settingsOf(context).host ?? null,
+    after: (values, context) => {
+      const chosen = hostOptions(context, () => "").find((item) => item.value === values.value);
+      if (chosen?.reason) throw invalid("value", HOSTS.map(({ host }) => host), chosen.reason);
+      return values.value;
+    }
+  }),
   setting({
     name: "autonomy",
     label: "Autonomy",
-    fields: [choice("value", "Autonomy", [option("conservative", "Conservative"), option("broad", "Broad"), option("full", "Full")], { required: true })],
+    fields: [choice("value", "Autonomy", [
+      option("conservative", "Conservative", "You approve every design and answer every decision."),
+      option("broad", "Broad", "Designs that change no requirement, add no decision record and raise no open question are accepted without you; you answer the rest."),
+      option("full", "Full", "Agents accept every design and settle internal decisions without you; they never turn on Push.")
+    ], { required: true })],
     effect: "Decides which later gates wait for you; a gate already open keeps waiting for you.",
     confirm: { field: "value", values: ["full"], message: "Agents will accept every design and resolve internal decisions without you." },
     value: autonomyOf
@@ -243,7 +317,7 @@ const SETTING_DEFINITIONS = [
     name: "commit",
     label: "Commit",
     fields: [toggle("value", "Commit", "Agents leave their changes uncommitted.", "Agents commit their changes to Git history.")],
-    effect: NEXT_CHILD,
+    effect: NEXT_AGENT,
     confirm: { field: "value", values: ["on"], message: "Agents will commit their changes to Git history." },
     value: (context) => settingsOf(context).commit ?? (autonomyOf(context) === "full" ? "on" : "off")
   }),
@@ -251,48 +325,44 @@ const SETTING_DEFINITIONS = [
     name: "push",
     label: "Push",
     fields: [toggle("value", "Push", "Finished slices stay on this machine.", "Agents push finished slices beyond this machine.")],
-    effect: NEXT_CHILD,
+    effect: NEXT_AGENT,
     confirm: { field: "value", values: ["on"], message: "Agents will push finished slices beyond this machine." },
     value: (context) => settingsOf(context).push ?? "off"
   }),
   setting({
     name: "continuation",
     label: "Continuation",
-    fields: [choice("value", "Continuation", [option("auto", "Automatic"), option("stepwise", "Stepwise")], { required: true })],
-    effect: "Applies when the slice in progress finishes.",
+    fields: [choice("value", "Continuation", [
+      option("auto", "Automatic", "The next slice starts as soon as one finishes."),
+      option("stepwise", "Stepwise", "The run stops after each slice until you continue it.")
+    ], { required: true })],
+    effect: "Whether the next slice starts by itself; applies when the slice in progress finishes.",
     value: (context) => settingsOf(context).continuation ?? "auto"
   }),
   setting({
     name: "review",
     label: "Review",
-    fields: [choice("value", "Review", [option("marked", "Marked slices"), option("recommended", "Recommended slices"), option("all", "All slices")], { required: true })],
-    effect: "Sets the review mark of slices whose design is not yet accepted.",
+    fields: [choice("value", "Review", [
+      option("marked", "Marked slices", "Only slices you mark for review at the design gate."),
+      option("recommended", "Recommended slices", "Slices you mark, plus those the design recommends reviewing."),
+      option("all", "All slices", "Every slice gets a code review.")
+    ], { required: true })],
+    effect: "Which slices get a code review before they count as done; a slice whose design is already accepted keeps its review.",
     value: (context) => settingsOf(context).review ?? "marked"
   }),
-  setting({
-    name: "models",
-    label: "Models",
-    fields: [
-      choice("mode", "Models", [option("host defaults", "Host defaults"), option("custom", "Custom")], { required: true }),
-      text("delivery", "Delivery model", TEXT_LIMIT, { requiredWhen: whenCustom }),
-      text("review", "Review model", TEXT_LIMIT, { requiredWhen: whenCustom }),
-      text("securityReview", "Security review model", TEXT_LIMIT, { requiredWhen: whenCustom }),
-      text("examples", "Examples model", TEXT_LIMIT)
-    ],
-    effect: NEXT_CHILD,
-    value: modelsOf,
-    // Host defaults store no model names, so the text fields are neither checked nor kept.
-    ignores: (values) => values.mode === "host defaults" ? ["delivery", "review", "securityReview", "examples"] : [],
-    after: (values) => values.mode === "host defaults"
-      ? "host defaults"
-      : { delivery: values.delivery, review: values.review, securityReview: values.securityReview, ...(values.examples === null ? {} : { examples: values.examples }) }
-  })
+  {
+    ...setting({
+      name: "models",
+      label: "Models",
+      fields: modelsFields,
+      effect: "The coordinator's model and effort apply to launches started after the change, and each agent's to agents started after it; a running session or agent keeps its own.",
+      value: modelsOf,
+      after: checkedModels
+    }),
+    change: (context, after) => ({ setting: { name: "models", value: compactModels(after) } })
+  }
 ];
-
-// Only the settings that coordination state accepts have actions, so a setting Prism retires loses its action with it.
 const SETTING_ACTIONS = SETTING_DEFINITIONS.filter((definition) => INITIATIVE_SETTINGS.includes(definition.id.slice("initiative.".length)));
-
-// A gate's answer fields follow its kind: a review approves or asks for changes with a reason, a decision picks an option or explains, and assistance is done.
 function gateFields(gate) {
   const note = (extra) => text("note", "Note", NOTE_LIMIT, { multiline: true, ...extra });
   if (gate.kind === "visual-review" || gate.kind === "correctness" || gate.kind === "approval") {
@@ -304,14 +374,11 @@ function gateFields(gate) {
   if (gate.kind === "decision") return [note({ required: true })];
   return [choice("choice", "Answer", [option("done", "Done")], { required: true }), note()];
 }
-
-// A gate's recommendation as the page shows it: the recommended option, or null when it names none, and why.
 function gateRecommendation(gate) {
   const recommended = gate.recommended;
   if (!isRecord(recommended) || typeof recommended.reason !== "string") return null;
   return { value: typeof recommended.option === "string" ? recommended.option : null, reason: recommended.reason };
 }
-
 const GATE_ANSWER = {
   id: "gate.answer",
   kinds: ["gate"],
@@ -329,10 +396,7 @@ const GATE_ANSWER = {
   after: (values) => ({ choice: values.choice ?? null, note: values.note ?? null }),
   change: (context, after) => ({ answer: { id: context.gate, choice: after.choice, note: after.note } })
 };
-
-// A requirement's or ADR's approval gate is answered as a review is, against the artifact's current version, and refused while the artifact differs from the version the gate asked about.
 const APPROVAL_CHANGED = "The file changed since this approval was asked, so approving it would approve a version nobody asked about. The agent asks again for the current version.";
-
 const APPROVAL_ANSWER = {
   ...GATE_ANSWER,
   kinds: ["approval"],
@@ -344,17 +408,13 @@ const APPROVAL_ANSWER = {
   revision: (context) => context.ambiguous ? null : context.gateRecord.current,
   unavailable: (context) => context.ambiguous ?? (context.gateRecord.changed ? APPROVAL_CHANGED : null),
   unavailableCode: (context) => context.ambiguous ? "approval_ambiguous" : "artifact_changed",
-  change: undefined
+  change: void 0
 };
-
-// A comment names a line by its number, so it is refused unless it is decimal digits naming a whole number of at least 1.
 function commentLine(value) {
   const line = /^[0-9]+$/.test(value ?? "") ? Number(value) : NaN;
   if (!Number.isSafeInteger(line) || line < 1) throw invalid("line", "Decimal digits naming a whole number of at least 1.", "Line must be a whole number of at least 1.");
   return line;
 }
-
-// A comment on a store artifact is made against the version the page shows, so a page that read an older version is refused as stale.
 const ARTIFACT_COMMENT = {
   id: "artifact.comment",
   kinds: ["artifact"],
@@ -371,7 +431,6 @@ const ARTIFACT_COMMENT = {
   unavailable: () => null,
   after: (values, context) => ({ version: context.artifact.version, line: commentLine(values.line), text: values.text })
 };
-
 const INDEX_REBUILD = {
   id: "index.rebuild",
   kinds: ["index"],
@@ -388,9 +447,6 @@ const INDEX_REBUILD = {
   unavailable: (context) => context.indexState === "preparing" ? "An index build is already running." : null,
   after: () => "started"
 };
-
-// Launched sessions: a launch per host on an initiative, and stop and resume on each launched session. Each runs through its own step
-// after the common checks, the launch and the person's resume behind the confirmation outside the page, and is recorded only once it took effect.
 const LAUNCH_GROUP = "Launched session";
 const launchBase = {
   group: LAUNCH_GROUP,
@@ -401,28 +457,64 @@ const launchBase = {
   confirm: () => null,
   revision: () => null
 };
-
-const LAUNCH_ACTIONS = HOSTS.map(({ host, label }) => ({
+const hostList = (labels) => labels.length > 2 ? `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)}` : labels.join(" and ");
+const NO_HOST = `No host that Prism supports was found on this computer. Prism supports ${hostList(HOSTS.map(({ label }) => label))}.`;
+const launchHostOf = (context) => settingsOf(context).host ?? firstFoundHost(context);
+const UNREADABLE_STATE = "This initiative's saved settings cannot be read, so Prism cannot tell which host, models, and efforts to launch with.";
+const notOffered = (label, reason) => fail("choice_not_offered", `${label}: ${reason}`);
+async function checkedLaunchChoices(context, host) {
+  const { label } = hostDefinition(host);
+  const entry = modelsOf(context)[host];
+  const { provider } = entry;
+  const report = async (fieldLabel, selection) => {
+    const read = await context.readOptions({ host, ...selection });
+    if (read.state === "unavailable") throw fail("host_unavailable", read.reason);
+    if (read.state === "failed") throw notOffered(fieldLabel, read.reason);
+    return read;
+  };
+  if (provider !== null) {
+    const base = await report("Provider", { purpose: "coordinator" });
+    if (!optionOf(base, "provider")?.values.some((item) => item.value === provider)) throw notOffered("Provider", choiceReasons.provider(label, provider));
+  }
+  for (const { kind, label: kindLabel, purpose } of RUN_KINDS) {
+    const choice2 = entry[kind];
+    if (choice2.earlier !== void 0) throw notOffered(kindLabel, earlierReason(label, choice2.earlier));
+    if (choice2.effort === null && (choice2.model === null || choice2.typed)) continue;
+    const read = await report(kindLabel, { purpose, provider, model: choice2.model, effort: choice2.effort, typed: choice2.typed });
+    for (const id of ["model", "effort"]) {
+      const chosen = optionOf(read, id)?.chosen;
+      if (chosen?.state === "not-offered") throw notOffered(kindLabel, chosen.reason);
+    }
+  }
+  const { model, effort, typed } = entry.coordinator;
+  return { provider, model, effort, typed };
+}
+const LAUNCH_RUN = {
   ...launchBase,
-  id: `launch.${host}`,
+  id: "launch.run",
   kinds: ["initiative"],
-  label: `Launch with ${label}`,
-  effect: `Starts a headless ${label} session on this computer that runs the orchestrate skill for this initiative; you confirm it outside the browser unless you confirmed in the last 30 minutes.`,
+  label: "Launch",
+  effect: "Starts a headless session of this initiative's host on this computer with its settings; you confirm it outside the browser unless you confirmed in the last 30 minutes.",
   target: (context) => context.initiativeTarget,
   unavailable: (context) => {
+    if (!context.hosts.some((item) => item.available)) return NO_HOST;
+    if (context.coordination.exists && !context.coordination.valid) return UNREADABLE_STATE;
+    const host = launchHostOf(context);
     const availability = context.hosts.find((item) => item.host === host);
-    if (!availability?.available) return availability?.reason ?? `${label} was not found.`;
+    if (!availability?.available) return availability?.reason ?? `${hostDefinition(host)?.label ?? host} was not found.`;
     return context.launchRunning ? launchRunningMessage(context.initiative) : null;
   },
   after: () => null,
   async launch({ projectRoot, context, env }) {
+    const host = launchHostOf(context);
+    const coordinator = await checkedLaunchChoices(context, host);
     const checkout = await realpath(projectRoot);
     await confirmLaunch({ initiative: context.initiative, host, checkout, env });
-    const { launch } = await startLaunch({ projectRoot: checkout, initiative: context.initiative, host, env });
-    return { launch, after: { launch: launch.id, host }, initiative: context.initiative, started: launch.id };
+    const { launch } = await startLaunch({ projectRoot: checkout, initiative: context.initiative, host, coordinator, env });
+    const { provider, model, effort } = coordinator;
+    return { launch, after: { launch: launch.id, host, coordinator: { provider, model, effort } }, initiative: context.initiative, started: launch.id };
   }
-}));
-
+};
 const LAUNCH_STOP = {
   ...launchBase,
   id: "launch.stop",
@@ -432,16 +524,14 @@ const LAUNCH_STOP = {
   target: (context) => context.reference,
   // The shipped state never decides a stop.
   ownsShipped: true,
-  unavailable: (context) => (context.running ? null : "The session is not running."),
+  unavailable: (context) => context.running ? null : "The session is not running.",
   after: () => null,
   async launch({ projectRoot, context, env }) {
     const launch = await stopLaunch({ id: context.launch, env });
-    // After the initiative shipped, its state is history: the stop request in the launch folder is the stop's only record.
     const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
     return { launch, after: "stopped", initiative: context.initiative, started: null, record: !shipped };
   }
 };
-
 const LAUNCH_RESUME = {
   ...launchBase,
   id: "launch.resume",
@@ -457,20 +547,56 @@ const LAUNCH_RESUME = {
   after: () => null,
   async launch({ projectRoot, context, env }) {
     await confirmLaunch({ initiative: context.view.initiative, host: context.view.host, checkout: context.view.checkout, env });
-    // The initiative may have shipped while the dialog was open; then nothing starts.
     const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
     if (shipped) throw fail("action_unavailable", shippedActionReason(shipped), { reason: shippedActionReason(shipped) });
     const launch = await resumeLaunch({ id: context.launch, env, cause: "person" });
     return { launch, after: { launch: launch.id, run: launch.runs }, initiative: context.initiative, started: launch.id };
   }
 };
-
-/** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, ...LAUNCH_ACTIONS, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME];
-
-/** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
-export const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
-
+const AUTOMATIC_ONLY_DEFAULTS = "Any available host takes only the host's default model.";
+const UNREADABLE_PRISM_RUNS = "The stored choice could not be read, so each run starts on the first host Prism finds with its default model until you apply a host.";
+const prismRunsValue = (context) => {
+  const { state, choice: choice2 } = context.prismRuns;
+  if (state === "unreadable") return { host: null, provider: null, run: { ...HOST_DEFAULT_CHOICE } };
+  if (state !== "chosen") return { host: AUTOMATIC, provider: null, run: { ...HOST_DEFAULT_CHOICE } };
+  return { host: choice2.host, provider: choice2.provider, run: { model: choice2.model, effort: choice2.effort, typed: choice2.typed } };
+};
+const MACHINE_PRISM_RUNS = {
+  id: "machine.prismRuns",
+  kinds: ["machine"],
+  label: "Prism's own runs",
+  group: "This computer",
+  effect: "Prism's own runs on this computer, such as moving records to a new format, start with this host and model; a run already started keeps its own.",
+  target: (context) => context.reference,
+  fields: (context) => [
+    choice("host", "Host", [
+      { value: AUTOMATIC, label: AUTOMATIC_LABEL, consequence: "Each run starts on the first host Prism finds on this computer, with its default model.", reason: null },
+      ...hostOptions(context, (label) => `${label} runs Prism's own runs.`)
+    ], { required: true, ...context.prismRuns.state === "unreadable" ? { hint: UNREADABLE_PRISM_RUNS } : {} }),
+    field("provider", "run-option", "Provider", { for: "coordinator", option: "provider", hint: PROVIDER_HINT, fixedWhen: { field: "host", values: [AUTOMATIC] } }),
+    field("run", "run-choice", "Model", { for: "coordinator", heading: "Model of Prism's own runs", hint: "The model and effort of each run, from what the host reports.", fixedWhen: { field: "host", values: [AUTOMATIC] } })
+  ],
+  value: prismRunsValue,
+  // A change is compared with the value only while that value is stored or is the default of no choice, never an unreadable one.
+  stored: (context) => context.prismRuns.state === "unreadable" ? null : prismRunsValue(context),
+  context: () => null,
+  recommended: () => null,
+  confirm: () => null,
+  revision: (context) => context.prismRuns.revision,
+  unavailable: () => null,
+  async after(values, context) {
+    const { host, provider, run } = values;
+    if (host === AUTOMATIC) {
+      if (provider !== null) throw refuseChoice("provider", AUTOMATIC_ONLY_DEFAULTS);
+      if (run.model !== null || run.effort !== null || run.typed) throw refuseChoice("run", AUTOMATIC_ONLY_DEFAULTS);
+      return { host, provider: null, run: { ...HOST_DEFAULT_CHOICE } };
+    }
+    await checkHostChoices(context, { host, provider, choices: [{ name: "run", purpose: "coordinator", choice: run }] }, refuseChoice);
+    return { host, provider, run: { model: run.model, effort: run.effort, typed: run.typed } };
+  }
+};
+const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, MACHINE_PRISM_RUNS];
+const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
 function view(definition, context) {
   const reason = context.shipped && !definition.ownsShipped ? shippedActionReason(context.shipped) : definition.unavailable(context);
   return {
@@ -489,22 +615,12 @@ function view(definition, context) {
     revision: definition.revision(context)
   };
 }
-
 const definitionsFor = (kind) => ACTIONS.filter((definition) => definition.kinds.includes(kind));
-
-// ---- The default indexer ----
-
-/** One component's indexing status from a checkout's index status: its own entry with declared components, or the status itself without them. */
-export function componentIndexingStatus(status, component) {
+function componentIndexingStatus(status, component) {
   if (!Array.isArray(status?.components)) return status;
   return { state: status.components.find((entry) => entry.component === component?.identity)?.state ?? "none" };
 }
-
-/**
- * Prism's own indexer, which serves each component's own index: in a repository that declares components, a component's state is its entry in the
- * index status, or none while it has neither an index nor a preparation, and without declared components the root component's state is the status's own.
- */
-export const prismIndexer = Object.freeze({
+const prismIndexer = Object.freeze({
   async status(projectRoot, component) {
     const [{ readIndexingStatus }, { nativeSemanticRuntime }] = await Promise.all([import("../repository-intelligence/index-status.mjs"), import("../repository-intelligence/native-semantic-runtime.mjs")]);
     return componentIndexingStatus(await readIndexingStatus(projectRoot, [nativeSemanticRuntime.directory]), component);
@@ -514,24 +630,14 @@ export const prismIndexer = Object.freeze({
     void startIndexRebuild(projectRoot, { component: { identity: component.identity, folder: component.folder } });
   }
 });
-
-// ---- Listing ----
-
-/** The actions that apply to a target: { target, actions }, available or not. */
-export async function listActions({ projectRoot, target, indexer = prismIndexer, env = process.env, checkouts = null }) {
+async function listActions({ projectRoot, target, indexer = prismIndexer, env = process.env, checkouts = null }) {
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
-  const context = await readTarget(projectRoot, parsed, indexer, undefined, env, checkouts);
+  const context = await readTarget(projectRoot, parsed, indexer, void 0, env, checkouts);
   return { target, actions: definitionsFor(parsed.kind).map((definition) => view(definition, context)) };
 }
-
-// ---- Input ----
-
 const optionValues = (item) => item.options.map((entry) => entry.value);
 const invalid = (name, accepted, message) => fail("invalid_input", message, { field: name, accepted });
-
-// Reads an input against the fields: every value is a listed option, a text within its limit, or empty as null, and every required field is filled.
-// The options are read first, so a field that the chosen options make irrelevant is read as null without a check.
 function readInput(fields, input, ignores = () => []) {
   if (!isRecord(input)) throw invalid(null, `The input maps field names to values: ${fields.map((item) => item.name).join(", ") || "none"}.`, "The input must be an object of field values.");
   const names = new Set(fields.map((item) => item.name));
@@ -543,18 +649,20 @@ function readInput(fields, input, ignores = () => []) {
   let ignored = null;
   for (const item of ordered) {
     const raw = input[item.name];
-    if (item.kind === "text") {
+    if (item.kind === "run-option" || item.kind === "run-choice") {
+      values[item.name] = item.kind === "run-option" ? runOptionInput(item, raw) : runChoiceInput(item, raw);
+    } else if (item.kind === "text") {
       ignored ??= new Set(ignores(values));
       if (ignored.has(item.name)) {
         values[item.name] = null;
         continue;
       }
       const accepted = `Text of at most ${item.maxLength} characters.`;
-      if (raw !== undefined && raw !== null && typeof raw !== "string") throw invalid(item.name, accepted, `${item.label} must be text.`);
+      if (raw !== void 0 && raw !== null && typeof raw !== "string") throw invalid(item.name, accepted, `${item.label} must be text.`);
       if (typeof raw === "string" && raw.length > item.maxLength) throw invalid(item.name, accepted, `${item.label} takes at most ${item.maxLength} characters.`);
       values[item.name] = typeof raw === "string" && raw.trim() ? raw.trim() : null;
     } else {
-      if (raw === undefined || raw === null || raw === "") {
+      if (raw === void 0 || raw === null || raw === "") {
         values[item.name] = null;
       } else if (typeof raw !== "string" || !optionValues(item).includes(raw)) {
         throw invalid(item.name, optionValues(item), `${item.label} must be one of ${optionValues(item).join(", ")}.`);
@@ -565,17 +673,33 @@ function readInput(fields, input, ignores = () => []) {
   }
   for (const item of fields) {
     const when = item.requiredWhen;
-    const required = item.required || (when !== null && when.values.includes(values[when.field] ?? null));
+    const required = item.required || when !== null && when.values.includes(values[when.field] ?? null);
     if (required && values[item.name] === null) {
       throw invalid(item.name, item.kind === "text" ? `Fill in ${item.label}.` : optionValues(item), `Fill in ${item.label}.`);
     }
   }
   return values;
 }
-
-// ---- Applying ----
-
-// Two values are the same when they hold the same data, whatever order an object's keys were stored in.
+function runOptionInput(item, raw) {
+  if (raw === void 0 || raw === null || raw === "") return null;
+  if (typeof raw !== "string") throw invalid(item.name, "A name, or null for the host default.", `${item.label} must be a name or the host default.`);
+  return raw;
+}
+function runChoiceInput(item, raw) {
+  const accepted = "{ model, effort, typed } with model and effort a name or null and typed true or false, or null for the host default.";
+  if (raw === void 0 || raw === null) return { model: null, effort: null, typed: false };
+  const malformed = () => invalid(item.name, accepted, `${item.label} must be a model, an effort, and whether the model was typed.`);
+  const parts = item.for === "agents" ? ["model", "effort", "typed", "earlier"] : ["model", "effort", "typed"];
+  if (!isRecord(raw) || Object.keys(raw).some((key) => !parts.includes(key))) throw malformed();
+  if (raw.earlier !== void 0 && !validEarlierName(raw.earlier)) throw malformed();
+  const part = (value) => {
+    if (value === void 0 || value === null || value === "") return null;
+    if (typeof value !== "string") throw malformed();
+    return value;
+  };
+  if (raw.typed !== void 0 && typeof raw.typed !== "boolean") throw malformed();
+  return { model: part(raw.model), effort: part(raw.effort), typed: raw.typed === true, ...raw.earlier === void 0 ? {} : { earlier: raw.earlier } };
+}
 function sameValue(left, right) {
   if (Array.isArray(left) || Array.isArray(right)) {
     return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((item, index) => sameValue(item, right[index]));
@@ -586,47 +710,37 @@ function sameValue(left, right) {
   }
   return left === right;
 }
-
-// The author is what the applying checkout's Git configuration claims, with the checkout's label on this host; nothing checks it.
-// A comment on a store artifact is the store's change, so its author is what the Git configuration of the store's clone claims, or the checkout's where the clone names no user.
 async function authorOf(projectRoot, { store = false } = {}) {
   const clone = store ? await recordStoreOf(projectRoot).then((found) => found.external ? found.base : null, () => null) : null;
-  const read = async (where, key) => {
-    const result = await runGit(where, ["config", key]);
+  const read = async (where2, key) => {
+    const result = await runGit(where2, ["config", key]);
     const value = result.ok ? result.text.replace(/\s+/g, " ").trim().slice(0, 200) : "";
     return value || null;
   };
   const where = clone && await read(clone, "user.name") ? clone : projectRoot;
-  // A workspace's page without a registered checkout applies its actions in the store's clone, which is the review app's, not a checkout's.
   const checkoutless = await isStoreWithoutCheckout(projectRoot);
   const [name, email, identity] = await Promise.all([read(where, "user.name"), read(where, "user.email"), checkoutless ? { repository: "review app", worktree: null, branch: null, detached: false } : readWorkspaceIdentity(projectRoot)]);
   return { name, email, checkout: checkoutLabel(identity).slice(0, 400) };
 }
-
-// Checks one request against a target read: the action, the revision, availability, the input, and confirmation, in that order.
-// It answers null for an input equal to the current value, and otherwise the definition, its view, and the value to set.
-function check(definition, context, { revision, input, confirmed }) {
+async function check(definition, context, { revision, input, confirmed }) {
   const current = view(definition, context);
   if ((revision ?? null) !== current.revision) throw fail("stale_revision", "The record changed since the page read it.", { current });
   if (!current.available) throw fail(definition.unavailableCode?.(context) ?? "action_unavailable", current.reason, { reason: current.reason, current });
   const values = readInput(current.fields, input, definition.ignores ?? (() => []));
-  const after = definition.after(values, context);
-  if (current.value !== null && sameValue(after, current.value)) return null;
+  const after = await definition.after(values, context);
+  const unchanged = definition.stored ? definition.stored(context) : current.value;
+  if (unchanged !== null && sameValue(after, unchanged)) return null;
   if (current.confirm && current.confirm.values.includes(values[current.confirm.field] ?? null) && confirmed !== true) {
     throw fail("confirmation_required", current.confirm.message, { confirm: current.confirm });
   }
   return { current, after };
 }
-
-/**
- * Applies one action to a target: { applied, actions }, where applied is the history entry or null for an unchanged value, and actions the target's listing after it;
- * an approval's or a comment's result also names its artifact as artifact { path, scope }, since its entry belongs to no initiative, and a comment's result names its stored comment's id as comment.
- */
-export async function applyAction({ projectRoot, target, action, input, revision, confirmed, via = "review-app", indexer = prismIndexer, env = process.env, checkouts = null }) {
+async function applyAction({ projectRoot, target, action, input, revision, confirmed, via = "review-app", indexer = prismIndexer, env = process.env, checkouts = null }) {
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
   const definition = definitionsFor(parsed.kind).find((item) => item.id === action);
-  const read = await readTarget(projectRoot, parsed, indexer, undefined, env, checkouts);
+  const readOptions = runOptionsReader(projectRoot, env);
+  const read = await readTarget(projectRoot, parsed, indexer, void 0, env, checkouts, readOptions);
   if (!definition) throw fail("unknown_action", `The target ${target} has no action ${JSON.stringify(String(action ?? ""))}.`);
   const request = { revision, input, confirmed };
   const entryOf = async (checked, context) => ({
@@ -635,23 +749,19 @@ export async function applyAction({ projectRoot, target, action, input, revision
     target: checked.current.target,
     before: checked.current.value,
     after: checked.after,
-    at: new Date().toISOString(),
+    at: (/* @__PURE__ */ new Date()).toISOString(),
     by: await authorOf(projectRoot, { store: parsed.kind === "artifact" }),
     via: typeof via === "string" && via ? via : "review-app"
   });
   if (definition.launch) return applyLaunchAction({ projectRoot, definition, context: read, request, entryOf, env, target, indexer, checkouts });
   let applied = null;
-  // The comment as stored, whose id names its own file, so the review app hands it to another checkout's tabs by reading that one file.
   let stored = null;
   if (parsed.kind === "approval") {
-    // An ambiguous id is refused before any other check, whatever revision and input the request holds.
     if (read.ambiguous) throw fail("approval_ambiguous", read.ambiguous, { reason: read.ambiguous });
-    const checked = check(definition, read, request);
+    const checked = await check(definition, read, request);
     applied = await entryOf(checked, read);
-    // An approval records who gave it, so a checkout whose Git names no user is refused rather than recording an anonymous one.
     if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the answer cannot record who approved; set one with git config user.name and answer again.");
     const gate = read.gateRecord;
-    // The store update repeats the gate and version checks under the artifact lock, so a change that lands after the read above is refused, never overwritten.
     await answerArtifactApproval(projectRoot, { path: gate.artifact.path, scope: gate.artifact.scope, id: gate.id, choice: checked.after.choice, note: checked.after.note, by: { name: applied.by.name, host: os.hostname() }, entry: applied }).catch((error) => {
       if (error?.code === "unknown_gate" || error?.code === "gate_answered") throw unknownTarget(target);
       if (error?.code === "artifact_changed") throw fail("artifact_changed", APPROVAL_CHANGED);
@@ -660,11 +770,9 @@ export async function applyAction({ projectRoot, target, action, input, revision
       throw storeRefused(error) ? storeRefusal(error) : error;
     });
   } else if (parsed.kind === "artifact") {
-    const checked = check(definition, read, request);
+    const checked = await check(definition, read, request);
     applied = await entryOf(checked, read);
-    // A comment records who wrote it, so a checkout whose Git names no user is refused rather than storing an anonymous one.
     if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the comment cannot record who wrote it; set one with git config user.name and comment again.");
-    // The store write repeats the artifact and version checks under the artifact lock, so a change that lands after the read above is refused as stale.
     const { artifact } = read;
     stored = await commentOnArtifact(projectRoot, { path: artifact.path, location: artifact.location ?? null, label: artifact.scope.label, version: checked.after.version, line: checked.after.line, text: checked.after.text, author: { name: applied.by.name, host: os.hostname().slice(0, 255) }, entry: applied }).catch((error) => {
       if (error?.code === "artifact_not_found") throw unknownTarget(target);
@@ -672,45 +780,49 @@ export async function applyAction({ projectRoot, target, action, input, revision
       if (error?.code === "version_conflict") throw fail("stale_revision", "The file changed since the page read it.", { current: view(definition, { ...read, artifact: { ...artifact, version: error.version ?? null } }) });
       throw storeRefused(error) ? storeRefusal(error) : error;
     });
-  } else if (parsed.kind === "index") {
-    const checked = check(definition, read, request);
+  } else if (parsed.kind === "machine") {
+    const checked = await check(definition, read, request);
     if (checked) {
       applied = await entryOf(checked, read);
-      // The rebuild and its history entry belong to the checkout that indexes the component.
+      const { host, provider, run } = checked.after;
+      await writePrismRunsChoice({ choice: { host, provider, ...run }, by: applied.by.name ?? applied.by.checkout, revision: read.prismRuns.revision, env }).catch(async (error) => {
+        if (error instanceof PrismRunsError && error.code === "not_a_file") throw fail("invalid_input", error.message, { field: null });
+        if (error instanceof PrismRunsError && error.code === "stale_revision") {
+          const current = view(definition, await readTarget(projectRoot, parsed, indexer, void 0, env, checkouts, readOptions));
+          throw fail("stale_revision", "The choice changed since the page read it.", { current });
+        }
+        throw error;
+      });
+    }
+  } else if (parsed.kind === "index") {
+    const checked = await check(definition, read, request);
+    if (checked) {
+      applied = await entryOf(checked, read);
       await indexer.rebuild(read.component.root, read.component);
       await appendIndexHistory(read.component.root, applied);
     }
   } else {
-    // The checks repeat under the state lock on the state it holds, so a change that lands between the read above and the write is never overwritten.
     const written = await recordPersonAction({ projectRoot, initiative: parsed.initiative, prepare: async (coordination) => {
-      const context = await readTarget(projectRoot, parsed, indexer, coordination, env, checkouts);
-      const checked = check(definition, context, request);
+      const context = await readTarget(projectRoot, parsed, indexer, coordination, env, checkouts, readOptions);
+      const checked = await check(definition, context, request);
       if (!checked) return null;
       const entry = await entryOf(checked, context);
       return { entry, ...definition.change(context, checked.after) };
     } });
     applied = written.entry;
   }
-  // An answered approval gate leaves its artifact's pending gates, so its target has no actions left, and the result names the artifact the answer applied to.
   if (parsed.kind === "approval") return { applied, actions: [], artifact: { path: read.gateRecord.artifact.path, scope: read.gateRecord.artifact.scope } };
-  // A comment leaves its artifact unchanged, so the target lists its action again, and the result names the artifact it commented on.
-  if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, ...(read.artifact.path === null ? { location: read.artifact.location } : {}), scope: read.artifact.scope }, comment: stored.id };
+  if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, ...read.artifact.path === null ? { location: read.artifact.location } : {}, scope: read.artifact.scope }, comment: stored.id };
   const actions = (await listActions({ projectRoot, target, indexer, env, checkouts })).actions;
-  // An answer to a gate that a launched session of this machine asked is recorded for that session, which it may resume.
   if (parsed.kind === "gate") {
     const launch = applied ? await answerLaunchGate({ projectRoot, initiative: parsed.initiative, gate: parsed.gate, entry: applied.id, env }).catch(() => null) : null;
     return { applied, actions, launch };
   }
   return { applied, actions };
 }
-
-// A launched session's refusal answers as an action refusal with its own code and message.
-const launchRefusal = (error) => (error instanceof LaunchError ? fail(error.code, error.message) : error);
-
-// Applies a launch, stop, or resume: the common checks, then the action's own step, which confirms outside the page where it starts a
-// session, and only once that took effect the history entry, which names the launch id and never the host session id.
+const launchRefusal = (error) => error instanceof LaunchError ? fail(error.code, error.message) : error;
 async function applyLaunchAction({ projectRoot, definition, context, request, entryOf, env, target, indexer, checkouts = null }) {
-  const checked = check(definition, context, request);
+  const checked = await check(definition, context, request);
   let outcome;
   try {
     outcome = await definition.launch({ projectRoot, context, env });
@@ -722,9 +834,19 @@ async function applyLaunchAction({ projectRoot, definition, context, request, en
   try {
     await recordPersonAction({ projectRoot, initiative: outcome.initiative, prepare: async () => ({ entry }) });
   } catch (error) {
-    // A launch or resume that cannot be recorded does not stay started.
-    if (outcome.started) await stopLaunch({ id: outcome.started, env }).catch(() => {});
+    if (outcome.started) await stopLaunch({ id: outcome.started, env }).catch(() => {
+    });
     throw error;
   }
   return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env, checkouts })).actions, launch: outcome.launch };
 }
+export {
+  ActionError,
+  actionEffect,
+  applyAction,
+  componentIndexingStatus,
+  listActionTargets,
+  listActions,
+  parseTarget,
+  prismIndexer
+};

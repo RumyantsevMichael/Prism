@@ -1,8 +1,8 @@
+// Generated from src/server/session/private-session-store.mts by scripts/native-build/compile.mjs.
 import { randomUUID } from "node:crypto";
 import { constants as fileConstants } from "node:fs";
 import path from "node:path";
-
-export const LOCK_STALE_MS = 30_000;
+const LOCK_STALE_MS = 3e4;
 const LOCK_RETRY_COUNT = 20;
 const LOCK_DIRECTORY_NAME = ".retention.lock";
 const LOCK_OWNER_PREFIX = "owner-";
@@ -11,36 +11,30 @@ const LOCK_OWNER_PATTERN = new RegExp(`^owner-(${TOKEN_PATTERN})$`);
 const PENDING_LOCK_PATTERN = new RegExp(`^\\.retention\\.lock\\.pending\\.(${TOKEN_PATTERN})$`);
 const STALE_LOCK_PATTERN = new RegExp(`^\\.retention\\.lock\\.stale\\.(${TOKEN_PATTERN})$`);
 const RELEASE_LOCK_PATTERN = new RegExp(`^\\.retention\\.lock\\.release\\.(${TOKEN_PATTERN})$`);
-const LOCK_PROTOCOLS = new Set(["direct", "staged"]);
-
+const LOCK_PROTOCOLS = /* @__PURE__ */ new Set(["direct", "staged"]);
 class UnsafeStorePathError extends Error {
   constructor(code, message) {
     super(message);
     this.code = code;
   }
 }
-
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-
 function noFollowFlags(flags) {
   return Number.isInteger(fileConstants.O_NOFOLLOW) ? flags | fileConstants.O_NOFOLLOW : flags;
 }
-
 function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
-
 function lockOwnerName(token) {
   return `${LOCK_OWNER_PREFIX}${token}`;
 }
-
 function lockOwnerText(token, pid) {
-  return `${JSON.stringify({ token, pid })}\n`;
+  return `${JSON.stringify({ token, pid })}
+`;
 }
-
-export function defaultIsProcessAlive(pid) {
+function defaultIsProcessAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
@@ -49,7 +43,6 @@ export function defaultIsProcessAlive(pid) {
     return null;
   }
 }
-
 async function processState(pid, isProcessAlive) {
   try {
     const result = await isProcessAlive(pid);
@@ -58,35 +51,30 @@ async function processState(pid, isProcessAlive) {
     return "unknown";
   }
 }
-
 function unsafe(store, message) {
   return new UnsafeStorePathError(store.unsafePathCode, message);
 }
-
 function isUnsafePath(store, error) {
   return error instanceof UnsafeStorePathError && error.code === store.unsafePathCode;
 }
-
 function assertDirectChild(store, directory, candidate, name) {
   if (path.dirname(candidate) !== directory || path.basename(candidate) === "") {
     throw unsafe(store, `${name} escapes the ${store.subject} directory.`);
   }
 }
-
 async function resolveDirectory(store, dataDirectory, { create, fileSystem }) {
   if (create) {
-    await fileSystem.mkdir(dataDirectory, { recursive: true, mode: 0o700 });
+    await fileSystem.mkdir(dataDirectory, { recursive: true, mode: 448 });
   }
   const dataRoot = await fileSystem.realpath(dataDirectory);
   const rootMetadata = await fileSystem.lstat(dataRoot);
   if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()) {
     throw unsafe(store, "The plugin data directory is not a regular directory.");
   }
-
   const requestedDirectory = path.join(dataRoot, store.directoryName);
   if (create) {
     try {
-      await fileSystem.mkdir(requestedDirectory, { mode: 0o700 });
+      await fileSystem.mkdir(requestedDirectory, { mode: 448 });
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
     }
@@ -113,7 +101,7 @@ async function resolveDirectory(store, dataDirectory, { create, fileSystem }) {
         throw unsafe(store, `The ${store.subject} directory changed during validation.`);
       }
       if (typeof handle.chmod === "function") {
-        await handle.chmod(0o700);
+        await handle.chmod(448);
       }
     } finally {
       await handle.close();
@@ -121,7 +109,6 @@ async function resolveDirectory(store, dataDirectory, { create, fileSystem }) {
   }
   return { dataRoot, directory };
 }
-
 async function assertDirectory(store, location, fileSystem) {
   const metadata = await fileSystem.lstat(location.directory);
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
@@ -133,7 +120,6 @@ async function assertDirectory(store, location, fileSystem) {
   }
   return metadata;
 }
-
 async function inspectRegularFile(store, target, directory, fileSystem, { missing = false } = {}) {
   assertDirectChild(store, directory, target, `The ${store.subject} path`);
   let metadata;
@@ -158,7 +144,6 @@ async function inspectRegularFile(store, target, directory, fileSystem, { missin
   }
   return metadata;
 }
-
 async function openExistingRegularFile(store, target, directory, fileSystem, { missing = false } = {}) {
   const expected = await inspectRegularFile(store, target, directory, fileSystem, { missing });
   if (expected === null) return null;
@@ -170,16 +155,15 @@ async function openExistingRegularFile(store, target, directory, fileSystem, { m
     }
     return { handle, metadata: opened };
   } catch (error) {
-    await handle.close().catch(() => {});
+    await handle.close().catch(() => {
+    });
     throw error;
   }
 }
-
 async function openPrivateFile(store, target, fileSystem) {
   const flags = noFollowFlags(fileConstants.O_WRONLY | fileConstants.O_CREAT | fileConstants.O_EXCL);
-  return fileSystem.open(target, flags, 0o600);
+  return fileSystem.open(target, flags, 384);
 }
-
 async function inspectLockPath(store, lockPath, directory, fileSystem) {
   assertDirectChild(store, directory, lockPath, "The retention lock path");
   const metadata = await fileSystem.lstat(lockPath);
@@ -195,13 +179,10 @@ async function inspectLockPath(store, lockPath, directory, fileSystem) {
   }
   return metadata;
 }
-
-// The direct protocol rejects an invalid owner record, while the store.staged protocol reads it as no owner.
 function invalidOwner(store, message) {
   if (store.staged) return null;
   throw unsafe(store, message);
 }
-
 async function readLockOwner(store, lockPath, directory, fileSystem) {
   const metadata = await inspectLockPath(store, lockPath, directory, fileSystem);
   if (!metadata.isDirectory()) return null;
@@ -227,13 +208,7 @@ async function readLockOwner(store, lockPath, directory, fileSystem) {
       if (store.staged) return null;
       throw error;
     }
-    if (
-      !isObject(owner)
-      || Object.keys(owner).length !== 2
-      || owner.token !== match[1]
-      || !Number.isSafeInteger(owner.pid)
-      || owner.pid < 1
-    ) {
+    if (!isObject(owner) || Object.keys(owner).length !== 2 || owner.token !== match[1] || !Number.isSafeInteger(owner.pid) || owner.pid < 1) {
       return invalidOwner(store, `The ${store.subject} lock owner is invalid.`);
     }
     return { lockPath, ownerName, token: owner.token, pid: owner.pid };
@@ -241,7 +216,6 @@ async function readLockOwner(store, lockPath, directory, fileSystem) {
     await opened.handle.close();
   }
 }
-
 async function ownsLock(store, lock, directory, fileSystem) {
   if (!lock) return false;
   try {
@@ -252,14 +226,12 @@ async function ownsLock(store, lock, directory, fileSystem) {
     throw error;
   }
 }
-
 async function assertOwnedLock(store, lock, directory, fileSystem) {
   if (!await ownsLock(store, lock, directory, fileSystem)) {
     throw new Error(`The ${store.subject} store lock ownership was lost.`);
   }
   return true;
 }
-
 async function writeOwner(store, ownerPath, token, pid, fileSystem) {
   const handle = await openPrivateFile(store, ownerPath, fileSystem);
   try {
@@ -269,25 +241,25 @@ async function writeOwner(store, ownerPath, token, pid, fileSystem) {
     await handle.close();
   }
 }
-
 async function createDirectLock(store, lockPath, token, pid, fileSystem) {
-  await fileSystem.mkdir(lockPath, { mode: 0o700 });
+  await fileSystem.mkdir(lockPath, { mode: 448 });
   const ownerName = lockOwnerName(token);
   const ownerPath = path.join(lockPath, ownerName);
   try {
     await writeOwner(store, ownerPath, token, pid, fileSystem);
     return { lockPath, ownerName, token, pid };
   } catch (error) {
-    await fileSystem.unlink(ownerPath).catch(() => {});
-    await fileSystem.rmdir(lockPath).catch(() => {});
+    await fileSystem.unlink(ownerPath).catch(() => {
+    });
+    await fileSystem.rmdir(lockPath).catch(() => {
+    });
     throw error;
   }
 }
-
 async function createStagedLock(store, lockPath, token, pid, fileSystem) {
   const directory = path.dirname(lockPath);
   const pendingPath = path.join(directory, `${LOCK_DIRECTORY_NAME}.pending.${token}`);
-  await fileSystem.mkdir(pendingPath, { mode: 0o700 });
+  await fileSystem.mkdir(pendingPath, { mode: 448 });
   const ownerName = lockOwnerName(token);
   const ownerPath = path.join(pendingPath, ownerName);
   try {
@@ -313,13 +285,14 @@ async function createStagedLock(store, lockPath, token, pid, fileSystem) {
     }
     return { lockPath, ownerName, token, pid };
   } catch (error) {
-    await fileSystem.unlink(ownerPath).catch(() => {});
-    await fileSystem.rmdir(pendingPath).catch(() => {});
+    await fileSystem.unlink(ownerPath).catch(() => {
+    });
+    await fileSystem.rmdir(pendingPath).catch(() => {
+    });
     if (error?.code === "ENOTEMPTY") error.code = "EEXIST";
     throw error;
   }
 }
-
 async function removeDirectLock(store, lock, directory, fileSystem) {
   if (!await ownsLock(store, lock, directory, fileSystem)) return false;
   await fileSystem.unlink(path.join(lock.lockPath, lock.ownerName));
@@ -330,7 +303,6 @@ async function removeDirectLock(store, lock, directory, fileSystem) {
   }
   return true;
 }
-
 async function removeOwnedLockArtifact(store, lock, directory, fileSystem) {
   const current = await readLockOwner(store, lock.lockPath, directory, fileSystem);
   if (!current || current.token !== lock.token || current.pid !== lock.pid) return false;
@@ -338,7 +310,6 @@ async function removeOwnedLockArtifact(store, lock, directory, fileSystem) {
   await fileSystem.rmdir(lock.lockPath);
   return true;
 }
-
 async function removeEmptyLockArtifact(store, lockPath, directory, fileSystem) {
   const metadata = await inspectLockPath(store, lockPath, directory, fileSystem);
   if (!metadata.isDirectory()) return false;
@@ -346,7 +317,6 @@ async function removeEmptyLockArtifact(store, lockPath, directory, fileSystem) {
   await fileSystem.rmdir(lockPath);
   return true;
 }
-
 async function cleanupAbandonedLockArtifacts(store, directory, fileSystem, isProcessAlive, assertOwnership) {
   for (const entry of await fileSystem.readdir(directory)) {
     const isStale = STALE_LOCK_PATTERN.test(entry);
@@ -370,7 +340,6 @@ async function cleanupAbandonedLockArtifacts(store, directory, fileSystem, isPro
     }
   }
 }
-
 async function releaseStagedLock(store, lock, directory, fileSystem) {
   if (!lock) return false;
   const releasePath = path.join(directory, `${LOCK_DIRECTORY_NAME}.release.${randomUUID()}`);
@@ -380,12 +349,12 @@ async function releaseStagedLock(store, lock, directory, fileSystem) {
     try {
       await fileSystem.rename(lock.lockPath, releasePath);
     } catch (error) {
-      let movedOwner = null;
+      let movedOwner2 = null;
       try {
-        movedOwner = await readLockOwner(store, releasePath, directory, fileSystem);
+        movedOwner2 = await readLockOwner(store, releasePath, directory, fileSystem);
       } catch {
       }
-      if (!movedOwner || movedOwner.token !== lock.token || movedOwner.pid !== lock.pid) {
+      if (!movedOwner2 || movedOwner2.token !== lock.token || movedOwner2.pid !== lock.pid) {
         const publicOwner = await readLockOwner(store, lock.lockPath, directory, fileSystem).catch(() => null);
         if (!publicOwner || publicOwner.token !== lock.token || publicOwner.pid !== lock.pid) throw error;
         await fileSystem.rename(lock.lockPath, releasePath);
@@ -399,14 +368,11 @@ async function releaseStagedLock(store, lock, directory, fileSystem) {
     throw error;
   }
 }
-
-// An aged lock is reclaimed only from a matching owner that is confirmed dead.
 async function reclaimDirectLock(store, lockPath, metadata, directory, fileSystem, isProcessAlive) {
   const owner = metadata.isDirectory() ? await readLockOwner(store, lockPath, directory, fileSystem) : null;
   if (!owner || await processState(owner.pid, isProcessAlive) !== "dead") return false;
   return removeDirectLock(store, owner, directory, fileSystem);
 }
-
 async function reclaimStagedLock(store, lockPath, metadata, directory, fileSystem, isProcessAlive) {
   const owner = await readLockOwner(store, lockPath, directory, fileSystem);
   const empty = !owner && metadata.isDirectory() && (await fileSystem.readdir(lockPath)).length === 0;
@@ -414,10 +380,8 @@ async function reclaimStagedLock(store, lockPath, metadata, directory, fileSyste
   const stalePath = path.join(directory, `${LOCK_DIRECTORY_NAME}.stale.${randomUUID()}`);
   await fileSystem.rename(lockPath, stalePath);
   const movedOwner = await readLockOwner(store, stalePath, directory, fileSystem);
-  return (empty && !movedOwner && (await fileSystem.readdir(stalePath)).length === 0)
-    || Boolean(movedOwner && movedOwner.token === owner.token && movedOwner.pid === owner.pid);
+  return empty && !movedOwner && (await fileSystem.readdir(stalePath)).length === 0 || Boolean(movedOwner && movedOwner.token === owner.token && movedOwner.pid === owner.pid);
 }
-
 async function publishLock(store, lockPath, token, pid, directory, fileSystem, isProcessAlive) {
   if (!store.staged) return createDirectLock(store, lockPath, token, pid, fileSystem);
   const lock = await createStagedLock(store, lockPath, token, pid, fileSystem);
@@ -427,12 +391,12 @@ async function publishLock(store, lockPath, token, pid, directory, fileSystem, i
     await cleanupAbandonedLockArtifacts(store, directory, fileSystem, isProcessAlive, assertOwnership);
     await assertOwnership();
   } catch (error) {
-    await releaseStagedLock(store, lock, directory, fileSystem).catch(() => {});
+    await releaseStagedLock(store, lock, directory, fileSystem).catch(() => {
+    });
     throw error;
   }
   return lock;
 }
-
 async function acquireLock(store, directory, fileSystem, isProcessAlive) {
   const lockPath = path.join(directory, LOCK_DIRECTORY_NAME);
   const token = randomUUID();
@@ -461,24 +425,16 @@ async function acquireLock(store, directory, fileSystem, isProcessAlive) {
   }
   return null;
 }
-
 async function releaseLock(store, lock, directory, fileSystem) {
   return store.staged ? releaseStagedLock(store, lock, directory, fileSystem) : removeDirectLock(store, lock, directory, fileSystem);
 }
-
-/**
- * Creates the path checks, private file creation, and retention lock for one plugin-local store.
- * The direct lock protocol rejects an invalid owner record as an unsafe path.
- * The staged lock protocol treats an invalid owner record as an absent owner.
- */
-export function createPrivateSessionStore({ directoryName, subject, unsafePathCode, maxLockOwnerBytes, lockProtocol }) {
+function createPrivateSessionStore({ directoryName, subject, unsafePathCode, maxLockOwnerBytes, lockProtocol }) {
   if (!LOCK_PROTOCOLS.has(lockProtocol)) {
     throw new Error(`Unknown session store lock protocol: ${lockProtocol}.`);
   }
   if (!Number.isSafeInteger(maxLockOwnerBytes) || maxLockOwnerBytes < 1) {
     throw new Error("The session store lock owner limit must be a positive integer.");
   }
-
   const store = { directoryName, subject, unsafePathCode, maxLockOwnerBytes, staged: lockProtocol === "staged" };
   return {
     isUnsafePath: (...args) => isUnsafePath(store, ...args),
@@ -494,3 +450,8 @@ export function createPrivateSessionStore({ directoryName, subject, unsafePathCo
     releaseLock: (...args) => releaseLock(store, ...args)
   };
 }
+export {
+  LOCK_STALE_MS,
+  createPrivateSessionStore,
+  defaultIsProcessAlive
+};

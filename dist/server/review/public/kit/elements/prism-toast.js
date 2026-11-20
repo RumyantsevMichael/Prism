@@ -1,12 +1,9 @@
-// prism-toast: the page's one polite live region; show(message, { tone }) replaces any shown message on frosted glass and hides it after a fixed time.
+// Generated from src/server/review/public/kit/elements/prism-toast.ts by scripts/native-build/compile.mjs.
 import { Base, make, setAttribute } from "./base.js";
-
-/** How long a message shows, the same under reduced motion. */
-export const TOAST_DURATION = 5000;
+const TOAST_DURATION = 5e3;
 const TONES = ["neutral", "info", "success", "warning", "danger"];
 const ICONS = { info: "info", success: "check", warning: "warning", danger: "warning" };
-
-export class PrismToast extends Base {
+class PrismToast extends Base {
   static tag = "prism-toast";
   static catalog = {
     purpose: "The page's one polite live region: it shows a short message on frosted glass at the bottom of the window for five seconds, replacing any shown message.",
@@ -17,12 +14,10 @@ export class PrismToast extends Base {
     states: ["hidden", "shown"],
     keyboard: []
   };
-
   connectedCallback() {
     setAttribute(this, "role", "status");
     setAttribute(this, "aria-live", "polite");
   }
-
   /** Shows `message`, replacing any shown message, and hides it after TOAST_DURATION. */
   show(message, { tone = "neutral" } = {}) {
     clearTimeout(this.timer);
@@ -37,10 +32,13 @@ export class PrismToast extends Base {
     this.toggleAttribute("shown", true);
     this.timer = setTimeout(() => this.hide(), TOAST_DURATION);
   }
-
   hide() {
     clearTimeout(this.timer);
     this.replaceChildren();
     this.toggleAttribute("shown", false);
   }
 }
+export {
+  PrismToast,
+  TOAST_DURATION
+};

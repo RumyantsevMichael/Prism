@@ -1,39 +1,35 @@
+// Generated from src/server/workflow/initiative-graph.mts by scripts/native-build/compile.mjs.
 import { parseStoreJson } from "./store-json.mjs";
-// Slice-graph invariants for initiative records, ported from the former write-map validator so the server enforces them on every write.
-export const LEAF_STATUSES = Object.freeze(["not-started", "in-progress", "blocked", "deferred", "done"]);
-export const SLICE_STATUSES = Object.freeze([...LEAF_STATUSES, "split"]);
-export const SLUG_PATTERN = /^[A-Za-z0-9_-]+$/;
-export const REQUIREMENT_PATTERN = /^[^\s#]+#[^\s#]+$/;
-
-export class InitiativeGraphError extends Error {
+const LEAF_STATUSES = Object.freeze(["not-started", "in-progress", "blocked", "deferred", "done"]);
+const SLICE_STATUSES = Object.freeze([...LEAF_STATUSES, "split"]);
+const SLUG_PATTERN = /^[A-Za-z0-9_-]+$/;
+const REQUIREMENT_PATTERN = /^[^\s#]+#[^\s#]+$/;
+class InitiativeGraphError extends Error {
   constructor(message) {
     super(message);
     this.name = "InitiativeGraphError";
     this.code = "invalid_initiative";
   }
 }
-
 function requireCondition(condition, message) {
   if (!condition) throw new InitiativeGraphError(message);
 }
-
 function copySlices(input) {
-  const slices = Object.create(null);
+  const slices = /* @__PURE__ */ Object.create(null);
   for (const [slug, slice] of Object.entries(input ?? {})) {
     slices[slug] = {
       title: slice.title,
-      ...(slice.outcome === undefined ? {} : { outcome: slice.outcome }),
+      ...slice.outcome === void 0 ? {} : { outcome: slice.outcome },
       status: slice.status,
       parent: slice.parent ?? null,
-      requirements: [...(slice.requirements ?? [])],
-      dependencies: [...(slice.dependencies ?? [])],
-      ...(slice.fixes === undefined ? {} : { fixes: { slice: slice.fixes?.slice, defects: Array.isArray(slice.fixes?.defects) ? [...slice.fixes.defects] : slice.fixes?.defects } })
+      requirements: [...slice.requirements ?? []],
+      dependencies: [...slice.dependencies ?? []],
+      ...slice.fixes === void 0 ? {} : { fixes: { slice: slice.fixes?.slice, defects: Array.isArray(slice.fixes?.defects) ? [...slice.fixes.defects] : slice.fixes?.defects } }
     };
   }
   return slices;
 }
-
-export function analyzeInitiative(input) {
+function analyzeInitiative(input) {
   const slices = copySlices(input);
   const slugs = Object.keys(slices);
   requireCondition(slugs.length > 0, "Expected exactly one root");
@@ -41,12 +37,11 @@ export function analyzeInitiative(input) {
     const slice = slices[slug];
     requireCondition(SLUG_PATTERN.test(slug), "Invalid slice slug");
     requireCondition(typeof slice.title === "string" && slice.title.trim().length > 0 && !/[\r\n]/.test(slice.title), "Invalid slice title");
-    requireCondition(slice.outcome === undefined || (typeof slice.outcome === "string" && !/[\r\n]/.test(slice.outcome)), "Invalid slice outcome");
+    requireCondition(slice.outcome === void 0 || typeof slice.outcome === "string" && !/[\r\n]/.test(slice.outcome), "Invalid slice outcome");
     requireCondition(SLICE_STATUSES.includes(slice.status), "Invalid slice status");
     requireCondition(slice.parent === null || Object.hasOwn(slices, slice.parent), "Unknown parent slice");
     requireCondition(slice.parent !== slug, "A slice cannot be its own parent");
-    // A fix slice sits below the done slice it fixes and names that slice and the defects it fixes.
-    if (slice.fixes !== undefined) {
+    if (slice.fixes !== void 0) {
       requireCondition(slice.parent !== null && slice.fixes.slice === slice.parent, "A fix slice must sit below the slice it fixes");
       requireCondition(Array.isArray(slice.fixes.defects) && slice.fixes.defects.length > 0 && slice.fixes.defects.every((id) => typeof id === "string" && id.length > 0), "A fix slice must name the defects it fixes");
       requireCondition(slice.status !== "split", "A fix slice cannot split");
@@ -62,27 +57,25 @@ export function analyzeInitiative(input) {
     requireCondition(new Set(slice.dependencies).size === slice.dependencies.length, "Duplicate dependency");
     for (const target of slice.dependencies) requireCondition(typeof target === "string" && Object.hasOwn(slices, target), "Unknown dependency target");
   }
-  // A slice's parts split it, while its fix slices sit beside it as leaves of its ancestors and never split it.
-  const childrenOf = Object.create(null);
-  const fixesOf = Object.create(null);
+  const childrenOf = /* @__PURE__ */ Object.create(null);
+  const fixesOf = /* @__PURE__ */ Object.create(null);
   for (const slug of slugs) {
     childrenOf[slug] = [];
     fixesOf[slug] = [];
   }
   for (const slug of slugs) if (slices[slug].parent !== null) (slices[slug].fixes ? fixesOf : childrenOf)[slices[slug].parent].push(slug);
-  // A parent chain that never reaches the root is a cycle, which a single-root check alone cannot see.
   for (const slug of slugs) {
-    const seen = new Set();
+    const seen = /* @__PURE__ */ new Set();
     for (let owner = slug; owner !== null; owner = slices[owner].parent) {
       requireCondition(!seen.has(owner), "Parent cycle");
       seen.add(owner);
     }
   }
-  const leaves = (slug) => [...(childrenOf[slug].length ? childrenOf[slug].flatMap(leaves) : [slug]), ...fixesOf[slug].flatMap(leaves)];
+  const leaves = (slug) => [...childrenOf[slug].length ? childrenOf[slug].flatMap(leaves) : [slug], ...fixesOf[slug].flatMap(leaves)];
   for (const slug of slugs) {
     const slice = slices[slug];
     const children = childrenOf[slug];
-    requireCondition((slice.status === "split") === (children.length > 0), "Split status must match children");
+    requireCondition(slice.status === "split" === children.length > 0, "Split status must match children");
     if (children.length) {
       const assigned = new Set(children.flatMap((child) => slices[child].requirements));
       requireCondition(assigned.size === slice.requirements.length && slice.requirements.every((reference) => assigned.has(reference)), "Incomplete child coverage");
@@ -91,7 +84,7 @@ export function analyzeInitiative(input) {
   const root = roots[0];
   const effectiveDependencies = {};
   for (const slug of leaves(root)) {
-    const targets = new Set();
+    const targets = /* @__PURE__ */ new Set();
     for (let owner = slug; owner !== null; owner = slices[owner].parent) {
       for (const dependency of slices[owner].dependencies) {
         for (const target of leaves(dependency)) targets.add(target);
@@ -100,8 +93,8 @@ export function analyzeInitiative(input) {
     requireCondition(!targets.has(slug), "Expanded self-dependency");
     effectiveDependencies[slug] = [...targets].sort();
   }
-  const visited = new Set();
-  const active = new Set();
+  const visited = /* @__PURE__ */ new Set();
+  const active = /* @__PURE__ */ new Set();
   const visit = (slug) => {
     requireCondition(!active.has(slug), "Expanded dependency cycle");
     if (visited.has(slug)) return;
@@ -127,30 +120,26 @@ export function analyzeInitiative(input) {
     fixes: Object.fromEntries(slugs.filter((slug) => fixesOf[slug].length).sort().map((slug) => [slug, [...fixesOf[slug]].sort()]))
   };
 }
-
 const quoted = '"(?:[^"\\\\]|\\\\.)*"';
-const declaration = new RegExp('^state (' + quoted + ') as (s_[0-9a-f]+) <<([a-z-]+)>>( \\{)?$');
-const requirementLine = new RegExp('^(s_[0-9a-f]+) : requires (' + quoted + ')$');
-
+const declaration = new RegExp("^state (" + quoted + ") as (s_[0-9a-f]+) <<([a-z-]+)>>( \\{)?$");
+const requirementLine = new RegExp("^(s_[0-9a-f]+) : requires (" + quoted + ")$");
 function slugFor(alias) {
   const hex = alias.slice(2);
   const slug = Buffer.from(hex, "hex").toString("utf8");
   requireCondition(SLUG_PATTERN.test(slug) && Buffer.from(slug).toString("hex") === hex, "Invalid slice alias");
   return slug;
 }
-
-// Reads the retired map.puml grammar exactly, so legacy maps import deterministically.
-export function parseLegacyMap(source) {
+function parseLegacyMap(source) {
   const lines = source.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   requireCondition(lines.shift() === "@startuml" && lines.pop() === "@enduml", "Expected one PlantUML diagram");
   const title = /^title Initiative: ([A-Za-z0-9_-]+)$/.exec(lines.shift() ?? "");
   requireCondition(title, "Invalid initiative title");
   requireCondition(lines.shift() === "hide empty description", "Missing map header");
-  const slices = Object.create(null);
+  const slices = /* @__PURE__ */ Object.create(null);
   const stack = [];
   for (const line of lines) {
     let match;
-    if ((match = declaration.exec(line))) {
+    if (match = declaration.exec(line)) {
       const [, titleJson, alias, status, opens] = match;
       const slug = slugFor(alias);
       requireCondition(!Object.hasOwn(slices, slug), "Duplicate slice");
@@ -159,12 +148,12 @@ export function parseLegacyMap(source) {
     } else if (line === "}") {
       requireCondition(stack.length > 0, "Unexpected closing brace");
       stack.pop();
-    } else if ((match = requirementLine.exec(line))) {
+    } else if (match = requirementLine.exec(line)) {
       requireCondition(stack.length === 0, "Requirements must follow state declarations");
       const slug = slugFor(match[1]);
       requireCondition(Object.hasOwn(slices, slug), "Unknown requirement owner");
       slices[slug].requirements.push(parseStoreJson(match[2]));
-    } else if ((match = /^(s_[0-9a-f]+) --> (s_[0-9a-f]+) : depends on$/.exec(line))) {
+    } else if (match = /^(s_[0-9a-f]+) --> (s_[0-9a-f]+) : depends on$/.exec(line)) {
       requireCondition(stack.length === 0, "Dependencies must follow state declarations");
       const from = slugFor(match[1]);
       requireCondition(Object.hasOwn(slices, from), "Unknown dependency target");
@@ -176,3 +165,12 @@ export function parseLegacyMap(source) {
   requireCondition(stack.length === 0, "Unclosed state");
   return { id: title[1], slices: { ...analyzeInitiative(slices).slices } };
 }
+export {
+  InitiativeGraphError,
+  LEAF_STATUSES,
+  REQUIREMENT_PATTERN,
+  SLICE_STATUSES,
+  SLUG_PATTERN,
+  analyzeInitiative,
+  parseLegacyMap
+};

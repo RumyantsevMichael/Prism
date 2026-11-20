@@ -1,23 +1,20 @@
+// Generated from src/server/review/public/views/side-panel.ts by scripts/native-build/compile.mjs.
 import { highlight, highlightLines, languageOf } from "./highlight.js";
 import { anchorTarget, decorateFolds, HEADING_PREFIX, LINE_RANGE, revealInDocument } from "./markdown.js";
 import { escapeHtml } from "./util.js";
 import { bindViewLinks, viewKind, viewNoteHtml } from "./design-views.js";
 import { onPreferencesChange, preference, setPreference } from "../kit/preferences.js";
-
-// The panel's width is the person's preference, kept by the review app for every port; the width an older page kept in this browser moves there once.
 const LEGACY_WIDTH_KEY = "prism.sidePanelWidth";
 const MIN_WIDTH = 320;
 const MAX_SHARE = 0.42;
-
 function storedWidth() {
   const value = preference("sidePanel.width");
   return Number.isFinite(value) && value >= MIN_WIDTH ? value : null;
 }
-
 function storeWidth(value) {
-  void setPreference("sidePanel.width", Math.round(value)).catch(() => {});
+  void setPreference("sidePanel.width", Math.round(value)).catch(() => {
+  });
 }
-
 function legacyWidth() {
   try {
     const value = Number(localStorage.getItem(LEGACY_WIDTH_KEY));
@@ -27,8 +24,6 @@ function legacyWidth() {
     return null;
   }
 }
-
-// The panel shows a file the way its tab shows it: Markdown rendered with its diagrams drawn, code highlighted with line numbers, a diagram drawn, and a record as highlighted source.
 function fileBody(data, { renderMarkdown }) {
   if (data.kind === "source") {
     const lines = highlightLines(data.content.replace(/\r\n/g, "\n").replace(/\n$/, ""), languageOf(data.path));
@@ -41,15 +36,8 @@ function fileBody(data, { renderMarkdown }) {
   const note = data.kind ? '<p class="side-panel-note">Open it as a page to see it as a structured view.</p>' : "";
   return `${note}<prism-code language="${escapeHtml(languageOf(data.path) ?? "")}"><pre><code>${highlight(data.content, languageOf(data.path))}</code></pre></prism-code>`;
 }
-
 const NARROW = "(max-width: 720px)";
-
-/**
- * One island beside the main island that shows a single item at a time: a file opened from a link preview or link, or other context such as a review finding.
- * Opening another item replaces the current one. At 720px and below the island opens in `sheet`, a prism-dialog that rises from the bottom edge.
- * `describe(path)` names a file: { label, kind, code }, where code marks a repository file whose path is the subject.
- */
-export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mountDiagram = null, onOpenTab, onOpenClause = null, onChange, describe = (path) => ({ label: path.split("/").pop() || path, kind: "File", code: true }) }) {
+function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mountDiagram = null, onOpenTab, onOpenClause = null, onChange, describe = (path) => ({ label: path.split("/").pop() || path, kind: "File", code: true }) }) {
   const root = document.getElementById("side-panel");
   const home = { parent: root.parentElement, next: root.nextSibling };
   const source = document.getElementById("side-panel-source");
@@ -59,9 +47,7 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
   const resizer = document.getElementById("side-panel-resizer");
   let current = null;
   let request = 0;
-
   const applyWidth = (value) => {
-    // The workspace keeps most of the window; the stylesheet applies the same cap when the window shrinks later.
     const limit = Math.max(MIN_WIDTH, window.innerWidth * MAX_SHARE);
     const width = Math.min(Math.max(value, MIN_WIDTH), limit);
     shell.style.setProperty("--side-panel-width", `${width}px`);
@@ -71,18 +57,14 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
   if (legacy && storedWidth() === null) storeWidth(legacy);
   const saved = storedWidth();
   if (saved) applyWidth(saved);
-  // The review app's stored width may arrive after the panel started, and applies when it does.
   onPreferencesChange((keys) => {
     const width = keys.includes("sidePanel.width") ? storedWidth() : null;
     if (width) applyWidth(width);
   });
-
   const inSheet = () => Boolean(sheet) && root.parentElement !== home.parent;
-
   function goHome() {
     if (inSheet()) home.parent.insertBefore(root, home.next?.parentNode === home.parent ? home.next : null);
   }
-
   function setOpen(open) {
     const narrow = open && sheet && (globalThis.matchMedia?.(NARROW).matches ?? false);
     root.hidden = !open;
@@ -96,7 +78,6 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
     shell.classList.toggle("side-panel-open", open && !narrow);
     onChange?.(open);
   }
-
   function header({ eyebrow, name, detail, ref, code = false }) {
     root.setAttribute("eyebrow", eyebrow);
     root.setAttribute("heading", name);
@@ -106,7 +87,6 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
     source.toggleAttribute("data-code-subject", code);
     openButton.hidden = !ref;
   }
-
   function scrollTo(anchor) {
     body.querySelectorAll(".source-lines li.in-range").forEach((line) => line.classList.remove("in-range"));
     if (!anchor) {
@@ -123,8 +103,6 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
     }
     body.scrollTop += target.getBoundingClientRect().top - body.getBoundingClientRect().top - 24;
   }
-
-  // A diagram file and the diagrams a document links are drawn after the text, as its tab draws them.
   async function drawDiagrams(data, ticket) {
     if (!mountDiagram || data.kind) return;
     const diagrams = data.diagrams?.length ? data.diagrams : data.path.toLowerCase().endsWith(".puml") ? [{ path: data.path, source: data.content }] : [];
@@ -138,13 +116,10 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
       });
     }
   }
-
-  // A declared design view is named by its question and kind, as its page names it, with the same note above its drawing.
   function viewHeader(data) {
     if (!data.view) return;
     header({ eyebrow: viewKind(data.view), name: data.view.question, detail: null, ref: current.ref });
   }
-
   function render(data, anchor, { keepScroll = false } = {}) {
     const top = body.scrollTop;
     viewHeader(data);
@@ -156,20 +131,19 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
     if (keepScroll) body.scrollTop = top;
     else scrollTo(anchor);
   }
-
   async function showFile(path, anchor = null) {
     const ticket = ++request;
     const same = current?.ref === path;
-    current = { ref: path, anchor, content: same ? current.content : null, diagrams: same ? current.diagrams : null, folds: same ? current.folds : new Set() };
+    current = { ref: path, anchor, content: same ? current.content : null, diagrams: same ? current.diagrams : null, folds: same ? current.folds : /* @__PURE__ */ new Set() };
     const named = describe(path);
-    const where = anchor ? (anchor.match(LINE_RANGE) ? `lines ${anchor.slice(1).replace("-", "–")}` : `#${anchor}`) : "";
-    header({ eyebrow: named.kind, name: named.label, detail: named.code ? [path, where].filter(Boolean).join(" · ") : where, ref: path, code: named.code });
+    const where = anchor ? anchor.match(LINE_RANGE) ? `lines ${anchor.slice(1).replace("-", "\u2013")}` : `#${anchor}` : "";
+    header({ eyebrow: named.kind, name: named.label, detail: named.code ? [path, where].filter(Boolean).join(" \xB7 ") : where, ref: path, code: named.code });
     setOpen(true);
     if (same && current.content !== null) {
       scrollTo(anchor);
       return;
     }
-    body.innerHTML = '<p class="muted side-panel-loading">Loading…</p>';
+    body.innerHTML = '<p class="muted side-panel-loading">Loading\u2026</p>';
     try {
       const data = await fetchJson(`./api/artifact?path=${encodeURIComponent(path)}`);
       if (ticket !== request) return;
@@ -181,52 +155,42 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
       body.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
     }
   }
-
-  // Shows prepared content, such as a review finding, with an optional tab to open for the whole record.
   function showContent({ eyebrow, name, detail = null, html, ref = null }) {
     ++request;
-    current = { ref, anchor: null, content: null, folds: new Set(), custom: true };
+    current = { ref, anchor: null, content: null, folds: /* @__PURE__ */ new Set(), custom: true };
     header({ eyebrow, name, detail, ref });
     body.innerHTML = html;
     for (const content of body.querySelectorAll(".document-content")) decorateFolds(content, current.folds);
     body.scrollTop = 0;
     setOpen(true);
   }
-
   function close() {
     ++request;
     current = null;
     body.replaceChildren();
     setOpen(false);
   }
-
-  // The bottom sheet closes with Escape, its Close button, or a click on the scrim, which closes the panel too.
   sheet?.addEventListener("prism-close", () => {
     if (inSheet() && !root.hidden) close();
   });
-
-  // A changed file or linked diagram re-renders in place and keeps the reader's scroll position; an unchanged one is left alone.
   async function refresh() {
     if (!current?.ref || current.custom || current.content === null) return;
     const ticket = request;
     try {
       const data = await fetchJson(`./api/artifact?path=${encodeURIComponent(current.ref)}`);
       const diagrams = JSON.stringify(data.diagrams ?? []);
-      if (ticket !== request || !current || (data.content === current.content && diagrams === current.diagrams)) return;
+      if (ticket !== request || !current || data.content === current.content && diagrams === current.diagrams) return;
       current.content = data.content;
       current.diagrams = diagrams;
       render(data, current.anchor, { keepScroll: true });
     } catch {
     }
   }
-
   if (onOpenClause) bindViewLinks(body, onOpenClause);
   openButton.addEventListener("click", () => {
     if (current?.ref) onOpenTab(current.ref, current.anchor);
   });
   closeButton.addEventListener("click", close);
-
-  // Dragging the panel's edge, or moving it with the arrow keys, sets its width, which the review app keeps as the person's preference; a double click returns to the default.
   resizer.addEventListener("prism-resize", (event) => {
     const width = applyWidth(event.detail.width);
     resizer.setAttribute("value", String(width));
@@ -235,8 +199,11 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
   resizer.addEventListener("prism-resize-reset", () => {
     shell.style.removeProperty("--side-panel-width");
     resizer.removeAttribute("value");
-    void setPreference("sidePanel.width", null).catch(() => {});
+    void setPreference("sidePanel.width", null).catch(() => {
+    });
   });
-
   return { showFile, showContent, close, refresh, isOpen: () => !root.hidden, body, current: () => current };
 }
+export {
+  createSidePanel
+};

@@ -1,3 +1,4 @@
+// Generated from src/server/session/session-trace-store.mts by scripts/native-build/compile.mjs.
 import { randomBytes, randomUUID } from "node:crypto";
 import * as defaultFileSystem from "node:fs/promises";
 import path from "node:path";
@@ -12,15 +13,14 @@ import { attributeRunCost, splitRuns, summarizeRunMeasures, totalRunSegments } f
 import { recordFinishedRuns } from "./run-records.mjs";
 import { readSessionRunTotals } from "./run-totals.mjs";
 import { readWorkflowConfig, runStatisticsCollection } from "../workflow/workflow-config.mjs";
-
 const TRACE_DIRECTORY = "session-traces";
 const MAX_TRACE_BYTES = 4 * 1024 * 1024;
 const MAX_EVENT_BYTES = 16 * 1024;
 const MAX_TRACE_EVENTS = 4096;
-export const SESSION_TRACE_MAX_DIRECTORY_BYTES = 64 * 1024 * 1024;
-export const SESSION_TRACE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const SESSION_TRACE_MAX_DIRECTORY_BYTES = 64 * 1024 * 1024;
+const SESSION_TRACE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 const STATE_KEYS = ["schemaVersion", "sessionDigest", "projectDigest", "limitReached", "events"];
-const EVENT_TYPE_ORDER = new Map([
+const EVENT_TYPE_ORDER = /* @__PURE__ */ new Map([
   ["run_start", -1],
   ["session_start", 0],
   ["subagent_start", 1],
@@ -41,8 +41,7 @@ const EVENT_TYPE_ORDER = new Map([
   ["session_end", 7],
   ["run_end", 8]
 ]);
-
-export const SESSION_TRACE_REASON = Object.freeze({
+const SESSION_TRACE_REASON = Object.freeze({
   NO_DATA_DIRECTORY: "NO_DATA_DIRECTORY",
   NO_CORRELATION_KEY: "NO_CORRELATION_KEY",
   INVALID_CORRELATION_KEY: "INVALID_CORRELATION_KEY",
@@ -61,8 +60,7 @@ export const SESSION_TRACE_REASON = Object.freeze({
   DIRECT_FIRST_EDIT: "DIRECT_FIRST_EDIT",
   RUN_SEALED: "RUN_SEALED"
 });
-
-export const SESSION_TRACE_COVERAGE_REASON = Object.freeze({
+const SESSION_TRACE_COVERAGE_REASON = Object.freeze({
   NO_SESSION_START: "NO_SESSION_START",
   INITIAL_COVERAGE_PARTIAL: "INITIAL_COVERAGE_PARTIAL",
   INITIAL_COVERAGE_UNAVAILABLE: "INITIAL_COVERAGE_UNAVAILABLE",
@@ -71,7 +69,6 @@ export const SESSION_TRACE_COVERAGE_REASON = Object.freeze({
   OVERLAPPING_TOKEN_COUNTS: "OVERLAPPING_TOKEN_COUNTS",
   TRACE_LIMIT_REACHED: "TRACE_LIMIT_REACHED"
 });
-
 const REASON_MESSAGES = Object.freeze({
   [SESSION_TRACE_REASON.NO_DATA_DIRECTORY]: "The plugin data directory is unavailable.",
   [SESSION_TRACE_REASON.NO_CORRELATION_KEY]: "The active host session correlation key is unavailable.",
@@ -91,14 +88,12 @@ const REASON_MESSAGES = Object.freeze({
   [SESSION_TRACE_REASON.DIRECT_FIRST_EDIT]: "The trace store creates first_edit events from successful edit events.",
   [SESSION_TRACE_REASON.RUN_SEALED]: "The event belongs to a run that is already recorded."
 });
-
 class LostSessionTraceLockError extends Error {
   constructor(message) {
     super(message);
     this.code = "LOST_SESSION_TRACE_LOCK";
   }
 }
-
 const traceStore = createPrivateSessionStore({
   directoryName: TRACE_DIRECTORY,
   subject: "session trace",
@@ -106,34 +101,21 @@ const traceStore = createPrivateSessionStore({
   maxLockOwnerBytes: 256,
   lockProtocol: "direct"
 });
-
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-
 function exactKeys(value, keys) {
-  return isObject(value)
-    && Object.keys(value).every((key) => keys.includes(key))
-    && keys.every((key) => Object.hasOwn(value, key));
+  return isObject(value) && Object.keys(value).every((key) => keys.includes(key)) && keys.every((key) => Object.hasOwn(value, key));
 }
-
 function ignored(reasonCode) {
   return { status: "ignored", reasonCode, reason: REASON_MESSAGES[reasonCode] };
 }
-
-// A refusal by the trace's own limit reports `limitReached`; a full shared directory refuses without it.
 function traceLimitRefused() {
   return { ...ignored(SESSION_TRACE_REASON.TRACE_LIMIT_REACHED), limitReached: true };
 }
-
-/**
- * Whether a run counts as sealed by its trace's own limit: the trace's persisted `limitReached` is set and the run closed.
- * The finalizer and `clearRunsPending` both use this predicate, so a full shared directory never seals a run.
- */
-export function runSealedByTraceLimit(trace, run) {
+function runSealedByTraceLimit(trace, run) {
   return trace?.limitReached === true && run.closed !== null;
 }
-
 function unsupported(reasonCode) {
   return {
     status: "UNSUPPORTED",
@@ -142,31 +124,20 @@ function unsupported(reasonCode) {
     reason: REASON_MESSAGES[reasonCode]
   };
 }
-
 function validDataDirectory(value) {
   return typeof value === "string" && path.isAbsolute(value);
 }
-
 function tracePath(directory, sessionDigest) {
   return path.join(directory, `${sessionDigest}.json`);
 }
-
-// A loss marker is an empty file named "<trace digest>.<project digest>.loss[.<linked execution digest>]".
-// It is created without the directory lock, so a writer whose append was refused can still record the loss.
 const LOSS_MARKER_PATTERN = /^([a-f0-9]{64})\.([a-f0-9]{64})\.loss(?:\.([a-f0-9]{64}))?$/;
-// A pending marker "<session digest>.<project digest>.pending" names a session with an unrecorded run; its modification time
-// is the session's latest event time. A finalizer renames it to "<marker>.claim" while it clears the session.
 const PENDING_MARKER_PATTERN = /^([a-f0-9]{64})\.([a-f0-9]{64})\.pending(\.claim)?$/;
-
 function rootTraceDigest(sessionDigest) {
   return hashSessionTraceValue(`${sessionDigest}\0root`, "executionKey");
 }
-
 function isRunStatisticsEvent(event) {
   return Object.hasOwn(event.hashes, "execution") || event.eventType === "run_start" || event.eventType === "run_end";
 }
-
-// The run_start that opens a run at `event`'s time, with a random identifier from 32 random bytes.
 function runStartFor(event) {
   const runId = hashSessionTraceValue(randomBytes(32).toString("hex"), "run");
   const start = {
@@ -186,9 +157,6 @@ function runStartFor(event) {
   validateSessionTraceEvent(start);
   return start;
 }
-
-// A run-statistics event either joins the latest open run, opens a new run with its own run_start, or is refused when it
-// would sort before the trace's latest run_end, so a late event never vanishes into a recorded run.
 function placeRunEvent(events, event) {
   if (!isRunStatisticsEvent(event)) return { events: [...events, event] };
   if (event.eventType === "run_start") return { events: [...events, event] };
@@ -198,42 +166,30 @@ function placeRunEvent(events, event) {
   const host = RUN_MEASURE_HOSTS.get(event.provenance.collector) ?? null;
   const runs = splitRuns(events, { host, traceDigest: event.sessionDigest, at: Date.parse(event.occurredAt) });
   const latest = runs.at(-1);
-  const opens = !latest || latest.runId === null || (latest.closed !== null
-    && (latest.events.length === 0 || compareTraceEvents(event, latest.events.at(-1)) >= 0));
+  const opens = !latest || latest.runId === null || latest.closed !== null && (latest.events.length === 0 || compareTraceEvents(event, latest.events.at(-1)) >= 0);
   return opens ? { events: [...events, runStartFor(event), event], opened: true } : { events: [...events, event] };
 }
-
 function eventBytes(event) {
   return Buffer.byteLength(JSON.stringify(event), "utf8");
 }
-
 function stateBytes(state) {
-  return Buffer.byteLength(`${JSON.stringify(state)}\n`, "utf8");
+  return Buffer.byteLength(`${JSON.stringify(state)}
+`, "utf8");
 }
-
 function clone(value) {
   return structuredClone(value);
 }
-
 function compareTraceEvents(left, right) {
-  return left.occurredAt.localeCompare(right.occurredAt)
-    || (EVENT_TYPE_ORDER.get(left.eventType) ?? Number.MAX_SAFE_INTEGER)
-      - (EVENT_TYPE_ORDER.get(right.eventType) ?? Number.MAX_SAFE_INTEGER)
-    || left.eventIdDigest.localeCompare(right.eventIdDigest);
+  return left.occurredAt.localeCompare(right.occurredAt) || (EVENT_TYPE_ORDER.get(left.eventType) ?? Number.MAX_SAFE_INTEGER) - (EVENT_TYPE_ORDER.get(right.eventType) ?? Number.MAX_SAFE_INTEGER) || left.eventIdDigest.localeCompare(right.eventIdDigest);
 }
-
 function orderTraceEvents(events) {
-  const observed = events
-    .filter((event) => event.eventType !== "first_edit")
-    .map(clone)
-    .sort(compareTraceEvents);
+  const observed = events.filter((event) => event.eventType !== "first_edit").map(clone).sort(compareTraceEvents);
   const firstEditIndex = observed.findIndex((event) => event.eventType === "edit");
   if (firstEditIndex !== -1) {
     observed.splice(firstEditIndex + 1, 0, firstEditFrom(observed[firstEditIndex]));
   }
   return observed;
 }
-
 function validateTraceState(state) {
   if (!exactKeys(state, STATE_KEYS)) {
     throw new Error("The session trace has invalid properties.");
@@ -253,8 +209,7 @@ function validateTraceState(state) {
   if (state.events.length > MAX_TRACE_EVENTS) {
     throw new Error("The session trace contains too many events.");
   }
-
-  const eventIds = new Set();
+  const eventIds = /* @__PURE__ */ new Set();
   let firstEditIndex = -1;
   for (const [index, event] of state.events.entries()) {
     validateSessionTraceEvent(event);
@@ -277,15 +232,11 @@ function validateTraceState(state) {
     }
   }
   const ordered = orderTraceEvents(state.events);
-  if (
-    ordered.length !== state.events.length
-    || ordered.some((event, index) => event.eventIdDigest !== state.events[index].eventIdDigest)
-  ) {
+  if (ordered.length !== state.events.length || ordered.some((event, index) => event.eventIdDigest !== state.events[index].eventIdDigest)) {
     throw new Error("The session trace events are not in canonical occurrence order.");
   }
   return true;
 }
-
 async function writeState(target, directory, state, fileSystem, { assertOwnership = async () => true } = {}) {
   validateTraceState(state);
   if (stateBytes(state) > MAX_TRACE_BYTES) {
@@ -296,7 +247,8 @@ async function writeState(target, directory, state, fileSystem, { assertOwnershi
   let handle;
   try {
     handle = await traceStore.openPrivateFile(temporary, fileSystem);
-    await handle.writeFile(`${JSON.stringify(state)}\n`, "utf8");
+    await handle.writeFile(`${JSON.stringify(state)}
+`, "utf8");
     if (typeof handle.sync === "function") {
       await handle.sync();
     }
@@ -309,15 +261,16 @@ async function writeState(target, directory, state, fileSystem, { assertOwnershi
     await fileSystem.rename(temporary, target);
   } catch (error) {
     if (handle) {
-      await handle.close().catch(() => {});
+      await handle.close().catch(() => {
+      });
     }
     if (typeof fileSystem.unlink === "function") {
-      await fileSystem.unlink(temporary).catch(() => {});
+      await fileSystem.unlink(temporary).catch(() => {
+      });
     }
     throw error;
   }
 }
-
 async function readState(target, directory, fileSystem, { missing = false } = {}) {
   const opened = await traceStore.openExistingRegularFile(target, directory, fileSystem, { missing });
   if (opened === null) return null;
@@ -333,11 +286,9 @@ async function readState(target, directory, fileSystem, { missing = false } = {}
     await opened.handle.close();
   }
 }
-
 function positiveSafeInteger(value, fallback) {
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
-
 function clockMilliseconds(now) {
   try {
     const value = now();
@@ -347,15 +298,13 @@ function clockMilliseconds(now) {
     return Date.now();
   }
 }
-
 async function traceFileRecords(directory, target, nowMs, fileSystem, assertOwnership) {
   const records = [];
   const staleTemporaryCutoff = nowMs - LOCK_STALE_MS;
   for (const entry of await fileSystem.readdir(directory, { withFileTypes: true })) {
     const traceRecord = /^[a-f0-9]{64}\.json$/.test(entry.name);
     const pendingOwner = PENDING_MARKER_PATTERN.exec(entry.name)?.[1];
-    // A pending marker belongs to its session's root trace, so it leaves with that trace or ages out like a loss marker.
-    const markerOwner = LOSS_MARKER_PATTERN.exec(entry.name)?.[1] ?? (pendingOwner ? rootTraceDigest(pendingOwner) : undefined);
+    const markerOwner = LOSS_MARKER_PATTERN.exec(entry.name)?.[1] ?? (pendingOwner ? rootTraceDigest(pendingOwner) : void 0);
     const temporaryRecord = /^[a-f0-9]{64}\.json\..+\.tmp$/.test(entry.name);
     if (!traceRecord && !markerOwner && !temporaryRecord) {
       continue;
@@ -377,7 +326,7 @@ async function traceFileRecords(directory, target, nowMs, fileSystem, assertOwne
         size: metadata.size,
         mtimeMs: metadata.mtimeMs,
         evictable: traceRecord,
-        ...(markerOwner ? { markerOwner } : {})
+        ...markerOwner ? { markerOwner } : {}
       });
     } catch (error) {
       if (error?.code !== "ENOENT") {
@@ -387,7 +336,6 @@ async function traceFileRecords(directory, target, nowMs, fileSystem, assertOwne
   }
   return records;
 }
-
 async function enforceDirectoryLimits({
   directory,
   target,
@@ -401,9 +349,8 @@ async function enforceDirectoryLimits({
   const nowMs = clockMilliseconds(now);
   const cutoff = nowMs - maxTraceAgeMs;
   const records = await traceFileRecords(directory, target, nowMs, fileSystem, assertOwnership);
-  // A loss marker is never evicted on its own: it leaves with its trace, or ages out once that trace is gone.
   const markers = records.filter((record) => record.markerOwner);
-  const traceDigests = new Set([path.basename(target, ".json")]);
+  const traceDigests = /* @__PURE__ */ new Set([path.basename(target, ".json")]);
   const removeTrace = async (record) => {
     await assertOwnership();
     await fileSystem.unlink(record.path);
@@ -450,7 +397,6 @@ async function enforceDirectoryLimits({
   }
   return aggregateBytes <= maxDirectoryBytes;
 }
-
 function firstEditFrom(editEvent) {
   const event = {
     ...clone(editEvent),
@@ -462,14 +408,13 @@ function firstEditFrom(editEvent) {
   validateSessionTraceEvent(event);
   return event;
 }
-
-export async function appendSessionTraceEvent(event, {
+async function appendSessionTraceEvent(event, {
   dataDirectory,
   fileSystem = defaultFileSystem,
   isProcessAlive = defaultIsProcessAlive,
   maxDirectoryBytes = SESSION_TRACE_MAX_DIRECTORY_BYTES,
   maxTraceAgeMs = SESSION_TRACE_MAX_AGE_MS,
-  now = () => new Date()
+  now = () => /* @__PURE__ */ new Date()
 } = {}) {
   try {
     validateSessionTraceEvent(event);
@@ -485,14 +430,12 @@ export async function appendSessionTraceEvent(event, {
   if (!validDataDirectory(dataDirectory)) {
     return ignored(SESSION_TRACE_REASON.NO_DATA_DIRECTORY);
   }
-
   let store;
   try {
     store = await traceStore.resolveDirectory(dataDirectory, { create: true, fileSystem });
   } catch {
     return ignored(SESSION_TRACE_REASON.TRACE_UNAVAILABLE);
   }
-
   const target = tracePath(store.directory, event.sessionDigest);
   const directoryByteLimit = positiveSafeInteger(maxDirectoryBytes, SESSION_TRACE_MAX_DIRECTORY_BYTES);
   const traceAgeLimit = positiveSafeInteger(maxTraceAgeMs, SESSION_TRACE_MAX_AGE_MS);
@@ -538,9 +481,6 @@ export async function appendSessionTraceEvent(event, {
     if (state.events.some((stored) => stored.eventIdDigest === event.eventIdDigest)) {
       return { status: "duplicate", appendedEventTypes: [] };
     }
-
-    // A run-statistics trace that reached its own limit accepts no later event, so nothing lands inside a run sealed by
-    // that limit; the root pre-edit trace keeps accepting a later event that fits.
     const runStatistics = isRunStatisticsEvent(event);
     if (state.limitReached && runStatistics) {
       return traceLimitRefused();
@@ -595,17 +535,12 @@ export async function appendSessionTraceEvent(event, {
     return ignored(SESSION_TRACE_REASON.TRACE_UNAVAILABLE);
   } finally {
     if (directoryLock) {
-      await traceStore.releaseLock(directoryLock, store.directory, fileSystem).catch(() => {});
+      await traceStore.releaseLock(directoryLock, store.directory, fileSystem).catch(() => {
+      });
     }
   }
 }
-
-/**
- * Durably records that an event of the trace `event.sessionDigest` was not stored, without taking the directory lock.
- * A refused link event also names the execution it links, so a reader can still find that execution's trace.
- * The marker is idempotent per trace and linked execution, holds no content, and stays while its trace stays.
- */
-export async function recordSessionTraceLoss(event, { dataDirectory, fileSystem = defaultFileSystem } = {}) {
+async function recordSessionTraceLoss(event, { dataDirectory, fileSystem = defaultFileSystem } = {}) {
   const digestPattern = /^[a-f0-9]{64}$/;
   if (!isObject(event) || !digestPattern.test(event.sessionDigest ?? "") || !digestPattern.test(event.projectDigest ?? "")) {
     return ignored(SESSION_TRACE_REASON.INVALID_EVENT);
@@ -613,9 +548,7 @@ export async function recordSessionTraceLoss(event, { dataDirectory, fileSystem 
   if (!validDataDirectory(dataDirectory)) {
     return ignored(SESSION_TRACE_REASON.NO_DATA_DIRECTORY);
   }
-  const linked = ["subagent_start", "subagent_stop"].includes(event.eventType) && digestPattern.test(event.hashes?.execution ?? "")
-    ? `.${event.hashes.execution}`
-    : "";
+  const linked = ["subagent_start", "subagent_stop"].includes(event.eventType) && digestPattern.test(event.hashes?.execution ?? "") ? `.${event.hashes.execution}` : "";
   try {
     const store = await traceStore.resolveDirectory(dataDirectory, { create: true, fileSystem });
     const target = path.join(store.directory, `${event.sessionDigest}.${event.projectDigest}.loss${linked}`);
@@ -627,11 +560,9 @@ export async function recordSessionTraceLoss(event, { dataDirectory, fileSystem 
     return error?.code === "EEXIST" ? { status: "duplicate" } : ignored(SESSION_TRACE_REASON.TRACE_UNAVAILABLE);
   }
 }
-
-// Reads the loss markers of one project: the traces that lost an event and the executions named by lost links.
 async function readSessionTraceLosses({ dataDirectory, projectDigest, fileSystem = defaultFileSystem }) {
-  const lost = new Set();
-  const linked = new Map();
+  const lost = /* @__PURE__ */ new Set();
+  const linked = /* @__PURE__ */ new Map();
   try {
     const store = await traceStore.resolveDirectory(dataDirectory, { create: false, fileSystem });
     await traceStore.assertDirectory(store, fileSystem);
@@ -640,19 +571,17 @@ async function readSessionTraceLosses({ dataDirectory, projectDigest, fileSystem
       if (!match || match[2] !== projectDigest) continue;
       lost.add(match[1]);
       if (match[3]) {
-        if (!linked.has(match[1])) linked.set(match[1], new Set());
+        if (!linked.has(match[1])) linked.set(match[1], /* @__PURE__ */ new Set());
         linked.get(match[1]).add(match[3]);
       }
     }
   } catch {
-    // An unreadable directory leaves the trace reads to report their own status.
   }
   return { lost, linked };
 }
-
 function identityResult({ sessionId, correlationKey, correlationProvided, projectRoot }) {
   if (correlationProvided) {
-    if (correlationKey === undefined || correlationKey === null || correlationKey === "") {
+    if (correlationKey === void 0 || correlationKey === null || correlationKey === "") {
       return { error: SESSION_TRACE_REASON.NO_CORRELATION_KEY };
     }
     if (typeof correlationKey !== "string" || !/^[a-f0-9]{64}$/.test(correlationKey)) {
@@ -678,15 +607,14 @@ function identityResult({ sessionId, correlationKey, correlationProvided, projec
     return {
       identity: {
         ...identity,
-        ...(correlationProvided ? { sessionDigest: correlationKey } : {})
+        ...correlationProvided ? { sessionDigest: correlationKey } : {}
       }
     };
   } catch {
     return { error: SESSION_TRACE_REASON.INVALID_PROJECT_ROOT };
   }
 }
-
-export async function readSessionTraceEvents(options = {}) {
+async function readSessionTraceEvents(options = {}) {
   const {
     dataDirectory,
     sessionId,
@@ -711,9 +639,7 @@ export async function readSessionTraceEvents(options = {}) {
     store = await traceStore.resolveDirectory(dataDirectory, { create: false, fileSystem });
     await traceStore.assertDirectory(store, fileSystem);
   } catch (error) {
-    return unsupported(error?.code === "ENOENT"
-      ? SESSION_TRACE_REASON.NO_SESSION_TRACE
-      : SESSION_TRACE_REASON.INVALID_SESSION_TRACE);
+    return unsupported(error?.code === "ENOENT" ? SESSION_TRACE_REASON.NO_SESSION_TRACE : SESSION_TRACE_REASON.INVALID_SESSION_TRACE);
   }
   const target = tracePath(store.directory, resolved.identity.sessionDigest);
   let state;
@@ -737,15 +663,12 @@ export async function readSessionTraceEvents(options = {}) {
     limitReached: state.limitReached
   };
 }
-
 function lineStart(location) {
   return location.startLine ?? 1;
 }
-
 function lineEnd(location) {
   return location.endLine ?? Number.POSITIVE_INFINITY;
 }
-
 function outputLocation(range) {
   return {
     path: range.path,
@@ -754,7 +677,6 @@ function outputLocation(range) {
     renderedTokens: range.renderedTokens
   };
 }
-
 function deduplicateSourceReads(events) {
   const inputs = events.map((event) => ({
     path: event.sourceLocation.path,
@@ -762,12 +684,7 @@ function deduplicateSourceReads(events) {
     end: lineEnd(event.sourceLocation),
     wholeFile: event.sourceLocation.startLine === null,
     renderedTokens: event.counts.renderedTokens ?? null
-  })).sort((left, right) => (
-    left.path.localeCompare(right.path)
-    || left.start - right.start
-    || right.end - left.end
-  ));
-
+  })).sort((left, right) => left.path.localeCompare(right.path) || left.start - right.start || right.end - left.end);
   const ranges = [];
   let ambiguousTokens = false;
   for (const input of inputs) {
@@ -776,7 +693,6 @@ function deduplicateSourceReads(events) {
       ranges.push({ ...input });
       continue;
     }
-
     const sameRange = current.start === input.start && current.end === input.end;
     if (sameRange) {
       if (current.renderedTokens === null) {
@@ -788,7 +704,6 @@ function deduplicateSourceReads(events) {
       current.wholeFile ||= input.wholeFile;
       continue;
     }
-
     if (current.end >= input.end) {
       if (current.renderedTokens === null) {
         ambiguousTokens = true;
@@ -796,7 +711,6 @@ function deduplicateSourceReads(events) {
       current.wholeFile ||= input.wholeFile;
       continue;
     }
-
     const sameStart = current.start === input.start;
     current.end = input.end;
     current.wholeFile ||= input.wholeFile;
@@ -809,28 +723,20 @@ function deduplicateSourceReads(events) {
   }
   return { ranges: ranges.map(outputLocation), ambiguousTokens };
 }
-
 function lowerCoverage(current, next) {
   const rank = { exact: 2, partial: 1, unavailable: 0 };
   return rank[next] < rank[current] ? next : current;
 }
-
 function addReason(reasons, reason) {
   if (!reasons.includes(reason)) {
     reasons.push(reason);
   }
 }
-
-// An execution without readable events reports every measure as unavailable, with the idle threshold it would use.
 const { idleThresholdMs: IDLE_THRESHOLD_MS, ...UNAVAILABLE_MEASURES } = summarizeRunMeasures([], {});
-const RUN_MEASURE_HOSTS = new Map([["claude-code-hook", "claude-code"], ["codex-hook", "codex"]]);
-// Without readable executions, attribution reports no targets and an unavailable unattributed bucket.
+const RUN_MEASURE_HOSTS = /* @__PURE__ */ new Map([["claude-code-hook", "claude-code"], ["codex-hook", "codex"]]);
 function unavailableAttribution() {
   return attributeRunCost([], {});
 }
-
-// Replays every execution's events, or each `{ executions, counted }` replay, through attribution; a replay failure leaves
-// the execution rows as they are.
 function runAttribution(executions, host, sessionDigest) {
   try {
     return attributeRunCost(executions, { host, sessionDigest });
@@ -838,7 +744,6 @@ function runAttribution(executions, host, sessionDigest) {
     return unavailableAttribution();
   }
 }
-
 function attributionInput(kind, digest, trace, lost) {
   return {
     kind,
@@ -847,12 +752,9 @@ function attributionInput(kind, digest, trace, lost) {
     ceiling: trace?.status === "SUPPORTED" && !trace.limitReached && !lost.has(digest) ? "exact" : "partial"
   };
 }
-
 function sessionDigestFor(options) {
   if (Object.hasOwn(options, "correlationKey")) {
-    return typeof options.correlationKey === "string" && /^[a-f0-9]{64}$/.test(options.correlationKey)
-      ? options.correlationKey
-      : null;
+    return typeof options.correlationKey === "string" && /^[a-f0-9]{64}$/.test(options.correlationKey) ? options.correlationKey : null;
   }
   try {
     return hashSessionTraceValue(options.sessionId, "sessionId");
@@ -860,7 +762,6 @@ function sessionDigestFor(options) {
     return null;
   }
 }
-
 function readExecutionTrace(options, executionDigest) {
   return readSessionTraceEvents({
     dataDirectory: options.dataDirectory,
@@ -869,7 +770,6 @@ function readExecutionTrace(options, executionDigest) {
     fileSystem: options.fileSystem
   });
 }
-
 function runMeasureRow(execution, executionDigest, host, events, { ended, limitReached, lost }) {
   const measures = summarizeRunMeasures(events, { host, ended, limitReached: limitReached || lost.has(executionDigest) });
   const { idleThresholdMs, ...fields } = measures;
@@ -878,25 +778,15 @@ function runMeasureRow(execution, executionDigest, host, events, { ended, limitR
     executionDigest,
     host,
     ...fields,
-    ...(host === "codex" ? { belowSession: "partial" } : {})
+    ...host === "codex" ? { belowSession: "partial" } : {}
   };
 }
-
 function projectDigestFor(projectRoot) {
   return createSessionTraceIdentity({ sessionId: "run-statistics-loss", projectRoot }).projectDigest;
 }
-
-/**
- * Reads one session's run-statistics traces: the root execution's trace and each Claude subagent trace it links,
- * found by stored link events and by the loss markers of refused links.
- * Returns null without a session digest, else `{ host, sessionDigest, rootDigest, lost, executions }`, where each execution is
- * `{ kind, digest, trace, ceiling }` and `ceiling` is "partial" after a trace limit or a recorded loss.
- * `host` is null when the root trace is absent, unreadable, or has no run-statistics collector.
- */
-export async function readRunStatisticsSession(options) {
+async function readRunStatisticsSession(options) {
   const sessionDigest = sessionDigestFor(options);
   if (!sessionDigest) return null;
-  // Run-statistics traces are keyed by the digest of "<session digest>\0root" or "<session digest>\0agent:<id>".
   const rootDigest = rootTraceDigest(sessionDigest);
   const { lost, linked } = await readSessionTraceLosses({
     dataDirectory: options.dataDirectory,
@@ -910,36 +800,27 @@ export async function readRunStatisticsSession(options) {
   const collector = root.events.find((event) => RUN_MEASURE_HOSTS.has(event.provenance.collector))?.provenance.collector;
   session.host = RUN_MEASURE_HOSTS.get(collector) ?? null;
   if (session.host !== "claude-code") return session;
-  const subagentDigests = [...new Set([
-    ...root.events
-      .filter((event) => ["subagent_start", "subagent_stop"].includes(event.eventType) && event.hashes.execution)
-      .map((event) => event.hashes.execution),
-    ...(linked.get(rootDigest) ?? [])
+  const subagentDigests = [.../* @__PURE__ */ new Set([
+    ...root.events.filter((event) => ["subagent_start", "subagent_stop"].includes(event.eventType) && event.hashes.execution).map((event) => event.hashes.execution),
+    ...linked.get(rootDigest) ?? []
   ])];
   for (const digest of subagentDigests) {
     session.executions.push(execution("subagent", digest, await readExecutionTrace(options, digest)));
   }
   return session;
 }
-
 async function pendingStore(dataDirectory, fileSystem, create) {
   if (!validDataDirectory(dataDirectory)) return null;
   const store = await traceStore.resolveDirectory(dataDirectory, { create, fileSystem });
   await traceStore.assertDirectory(store, fileSystem);
   return store;
 }
-
 function pendingMarkerPath(store, sessionDigest, projectRoot) {
   const target = path.join(store.directory, `${sessionDigest}.${projectDigestFor(projectRoot)}.pending`);
   traceStore.assertDirectChild(store.directory, target, "The pending run marker path");
   return target;
 }
-
-/**
- * Marks a session as holding an unrecorded run, without the directory lock, and sets the marker's modification time to
- * `at`, the latest event time of the invocation; an existing marker only moves forward.
- */
-export async function markRunsPending({ dataDirectory, projectRoot, sessionDigest, at, fileSystem = defaultFileSystem } = {}) {
+async function markRunsPending({ dataDirectory, projectRoot, sessionDigest, at, fileSystem = defaultFileSystem } = {}) {
   try {
     if (!/^[a-f0-9]{64}$/.test(sessionDigest ?? "") || !Number.isFinite(at)) return ignored(SESSION_TRACE_REASON.INVALID_EVENT);
     const store = await pendingStore(dataDirectory, fileSystem, true);
@@ -968,13 +849,8 @@ export async function markRunsPending({ dataDirectory, projectRoot, sessionDiges
     return ignored(SESSION_TRACE_REASON.TRACE_UNAVAILABLE);
   }
 }
-
-/**
- * Returns the session digests of one project whose pending marker or claim is older than `before`, in digest order.
- * A marker or claim whose root trace is absent is removed.
- */
-export async function listRunsPending({ dataDirectory, projectRoot, before, fileSystem = defaultFileSystem } = {}) {
-  const sessions = new Set();
+async function listRunsPending({ dataDirectory, projectRoot, before, fileSystem = defaultFileSystem } = {}) {
+  const sessions = /* @__PURE__ */ new Set();
   try {
     const store = await pendingStore(dataDirectory, fileSystem, false);
     if (!store) return [];
@@ -992,7 +868,6 @@ export async function listRunsPending({ dataDirectory, projectRoot, before, file
         }
         if (metadata.mtimeMs < before) sessions.add(match[1]);
       } catch {
-        // An unreadable marker is skipped; directory cleanup ages it out.
       }
     }
   } catch {
@@ -1000,14 +875,7 @@ export async function listRunsPending({ dataDirectory, projectRoot, before, file
   }
   return [...sessions].sort();
 }
-
-/**
- * Clears a session's pending state after every run is recorded: renames the marker to a claim, re-reads the session,
- * marks it pending again when a run is open or unsealed, and then removes the claim.
- * A closed run in a trace at its own limit counts as sealed by that limit, with closures evaluated at `at` as the finalizer did.
- * A finalizer killed between the rename and the removal leaves a claim that later sweeps treat as pending.
- */
-export async function clearRunsPending({ dataDirectory, projectRoot, sessionDigest, at = null, fileSystem = defaultFileSystem } = {}) {
+async function clearRunsPending({ dataDirectory, projectRoot, sessionDigest, at = null, fileSystem = defaultFileSystem } = {}) {
   try {
     const store = await pendingStore(dataDirectory, fileSystem, false);
     if (!store) return ignored(SESSION_TRACE_REASON.NO_DATA_DIRECTORY);
@@ -1022,8 +890,7 @@ export async function clearRunsPending({ dataDirectory, projectRoot, sessionDige
       if (execution.trace.status !== "SUPPORTED") continue;
       const events = execution.trace.events;
       if (events.length > 0) latest = Math.max(latest ?? 0, Date.parse(events.at(-1).occurredAt));
-      unsettled ||= splitRuns(events, { host: session.host, traceDigest: execution.digest, at })
-        .some((run) => run.runId !== null && run.closed !== "sealed" && !runSealedByTraceLimit(execution.trace, run));
+      unsettled ||= splitRuns(events, { host: session.host, traceDigest: execution.digest, at }).some((run) => run.runId !== null && run.closed !== "sealed" && !runSealedByTraceLimit(execution.trace, run));
     }
     if (unsettled && latest !== null) {
       await markRunsPending({ dataDirectory, projectRoot, sessionDigest, at: latest, fileSystem });
@@ -1036,14 +903,9 @@ export async function clearRunsPending({ dataDirectory, projectRoot, sessionDige
     return ignored(SESSION_TRACE_REASON.TRACE_UNAVAILABLE);
   }
 }
-
-// Recorded totals with every measure unavailable, including runs, when collection is off or unknown or finalization failed.
 function unavailableRecorded() {
   return totalRunSegments([{ unavailable: true }]);
 }
-
-// Session totals and attribution read only run-statistics traces; finished runs are recorded first, the calling session's
-// recorded runs are totaled from their run records, and its unrecorded runs are reported in progress.
 async function summarizeRunStatistics(options) {
   let collection = "unknown";
   try {
@@ -1081,7 +943,6 @@ async function summarizeRunStatistics(options) {
   const session = await readRunStatisticsSession(options);
   const [root, ...subagents] = session.executions;
   if (root.trace.status !== "SUPPORTED") {
-    // A root trace whose every append was refused still reports a row, so the loss is not silent.
     if (root.trace.reasonCode !== SESSION_TRACE_REASON.NO_SESSION_TRACE || session.lost.has(root.digest)) {
       result.executions.push({ execution: "root", executionDigest: root.digest, host: null, ...UNAVAILABLE_MEASURES });
     }
@@ -1096,9 +957,7 @@ async function summarizeRunStatistics(options) {
     lost
   }));
   for (const subagent of subagents) {
-    result.executions.push(subagent.trace.status === "SUPPORTED"
-      ? runMeasureRow("subagent", subagent.digest, host, subagent.trace.events, { ended: "subagent_stop", limitReached: subagent.trace.limitReached, lost })
-      : { execution: "subagent", executionDigest: subagent.digest, host, ...UNAVAILABLE_MEASURES });
+    result.executions.push(subagent.trace.status === "SUPPORTED" ? runMeasureRow("subagent", subagent.digest, host, subagent.trace.events, { ended: "subagent_stop", limitReached: subagent.trace.limitReached, lost }) : { execution: "subagent", executionDigest: subagent.digest, host, ...UNAVAILABLE_MEASURES });
   }
   result.attribution = publicAttribution(runAttribution(attributionInputs, host, sessionDigest));
   if (finalized !== null && finalized.host === host) {
@@ -1106,16 +965,13 @@ async function summarizeRunStatistics(options) {
   }
   return result;
 }
-
-// The destination project root and active intervals stay local, so no path reaches MCP output.
 function publicAttribution(attribution) {
   return {
     targets: attribution.targets.map(({ projectRoot, activeIntervals, ...entry }) => entry),
     unattributed: attribution.unattributed
   };
 }
-
-export async function summarizeSessionConsumption(options = {}) {
+async function summarizeSessionConsumption(options = {}) {
   const [summary, runMeasures] = await Promise.all([
     summarizePreEditConsumption(options),
     summarizeRunStatistics(options).catch(() => ({
@@ -1129,8 +985,6 @@ export async function summarizeSessionConsumption(options = {}) {
   ]);
   return { ...summary, runMeasures };
 }
-
-// The pre-edit summary reads only the root session trace, so run-statistics events never enter it.
 async function summarizePreEditConsumption(options) {
   const trace = await readSessionTraceEvents(options);
   if (trace.status !== "SUPPORTED") {
@@ -1152,7 +1006,6 @@ async function summarizePreEditConsumption(options) {
       }
     };
   }
-
   const orderedEvents = orderTraceEvents(trace.events);
   const firstEditIndex = orderedEvents.findIndex((event) => event.eventType === "first_edit");
   const preEditEvents = firstEditIndex === -1 ? orderedEvents : orderedEvents.slice(0, firstEditIndex);
@@ -1167,7 +1020,6 @@ async function summarizePreEditConsumption(options) {
   } else if (sessionStart.coverage === "unavailable") {
     addReason(reasons, SESSION_TRACE_COVERAGE_REASON.INITIAL_COVERAGE_UNAVAILABLE);
   }
-
   for (const event of preEditEvents) {
     if (event.eventType === "coverage_gap") {
       coverage = lowerCoverage(coverage, event.coverage);
@@ -1178,33 +1030,29 @@ async function summarizePreEditConsumption(options) {
     coverage = lowerCoverage(coverage, "partial");
     addReason(reasons, SESSION_TRACE_COVERAGE_REASON.TRACE_LIMIT_REACHED);
   }
-
   const sourceReads = preEditEvents.filter((event) => event.eventType === "source_read" && event.sourceLocation);
   const searches = preEditEvents.filter((event) => event.eventType === "search");
-  const missingSourceTokens = sourceReads.some((event) => event.counts.renderedTokens === undefined);
-  const missingSearchTokens = searches.some((event) => event.counts.renderedTokens === undefined);
+  const missingSourceTokens = sourceReads.some((event) => event.counts.renderedTokens === void 0);
+  const missingSearchTokens = searches.some((event) => event.counts.renderedTokens === void 0);
   if (missingSourceTokens || missingSearchTokens) {
     coverage = lowerCoverage(coverage, "partial");
     addReason(reasons, SESSION_TRACE_COVERAGE_REASON.MISSING_RENDERED_TOKEN_COUNT);
   }
-
   const deduplicated = deduplicateSourceReads(sourceReads);
   if (deduplicated.ambiguousTokens) {
     coverage = lowerCoverage(coverage, "partial");
     addReason(reasons, SESSION_TRACE_COVERAGE_REASON.OVERLAPPING_TOKEN_COUNTS);
   }
   const rangeTokensKnown = deduplicated.ranges.every((range) => range.renderedTokens !== null);
-  const searchTokensKnown = searches.every((event) => event.counts.renderedTokens !== undefined);
+  const searchTokensKnown = searches.every((event) => event.counts.renderedTokens !== void 0);
   const observedContext = sourceReads.length > 0 || searches.length > 0;
   let renderedTokens = null;
   if (rangeTokensKnown && searchTokensKnown && (observedContext || coverage === "exact")) {
-    renderedTokens = deduplicated.ranges.reduce((total, range) => total + range.renderedTokens, 0)
-      + searches.reduce((total, event) => total + event.counts.renderedTokens, 0);
+    renderedTokens = deduplicated.ranges.reduce((total, range) => total + range.renderedTokens, 0) + searches.reduce((total, event) => total + event.counts.renderedTokens, 0);
   }
   if (coverage === "unavailable") {
     renderedTokens = null;
   }
-
   const compactions = orderedEvents.filter((event) => event.eventType === "compaction");
   const preEditCompactions = preEditEvents.filter((event) => event.eventType === "compaction");
   return {
@@ -1232,3 +1080,18 @@ async function summarizePreEditConsumption(options) {
     }
   };
 }
+export {
+  SESSION_TRACE_COVERAGE_REASON,
+  SESSION_TRACE_MAX_AGE_MS,
+  SESSION_TRACE_MAX_DIRECTORY_BYTES,
+  SESSION_TRACE_REASON,
+  appendSessionTraceEvent,
+  clearRunsPending,
+  listRunsPending,
+  markRunsPending,
+  readRunStatisticsSession,
+  readSessionTraceEvents,
+  recordSessionTraceLoss,
+  runSealedByTraceLimit,
+  summarizeSessionConsumption
+};

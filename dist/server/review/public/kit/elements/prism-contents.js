@@ -1,11 +1,6 @@
-// prism-contents: a document's contents, a list of links to its sections, with the current section marked.
-// It renders in light DOM: an <ol> child becomes the list, and children with slot="tools", such as a prism-maximize, go to its header.
-// Placed as a child of a box that also holds the document, kit.css lays them out side by side: the contents run the box's full height,
-// and their header and list stay in view while the page scrolls the document, the list scrolling on its own only when it is longer than the visible part.
-// At 1100px and below the contents sit above the document and the header folds them.
+// Generated from src/server/review/public/kit/elements/prism-contents.ts by scripts/native-build/compile.mjs.
 import { Base, distribute, make, setAttribute, toggleAttribute } from "./base.js";
-
-export class PrismContents extends Base {
+class PrismContents extends Base {
   static tag = "prism-contents";
   static observedAttributes = ["heading", "open", "pinned"];
   static catalog = {
@@ -13,7 +8,7 @@ export class PrismContents extends Base {
     options: [
       { name: "heading", values: ["text"], default: "Contents", description: "The header's title, which also names the navigation region." },
       { name: "open", values: ["boolean"], default: "false", description: "Above the document, the list is unfolded." },
-      { name: "children", values: ["HTML"], default: "", description: "An <ol> of <li> links, each <li> with depth-1 or depth-2 for a nested section; children with slot=\"tools\" go to the header." },
+      { name: "children", values: ["HTML"], default: "", description: 'An <ol> of <li> links, each <li> with depth-1 or depth-2 for a nested section; children with slot="tools" go to the header.' },
       { name: "pinned", values: ["boolean"], default: "false", description: "Above the document, the contents header also stays at the top while the document scrolls, as in a maximized view." },
       { name: "--prism-contents-inset", values: ["length"], default: "0", description: "Set on the box that holds the contents: its padding, so the contents rule reaches the box's top and bottom edges." },
       { name: "--prism-contents-top", values: ["length"], default: "0", description: "Where the contents stick, from the scrolling element's content edge; a box that scrolls itself sets it to minus its padding." },
@@ -23,16 +18,13 @@ export class PrismContents extends Base {
     states: ["default", "current", "with-tools", "folded", "long-text", "unbroken-name", "many-items"],
     keyboard: ["Tab reaches each link in order.", "Above the document, Enter and Space on the header fold and unfold the list."]
   };
-
   connectedCallback() {
     if (!this.body) this.build();
     this.sync();
   }
-
   attributeChangedCallback() {
     if (this.body) this.sync();
   }
-
   build() {
     setAttribute(this, "role", "navigation");
     this.body = make(this, "div", "prism-contents-body");
@@ -40,7 +32,6 @@ export class PrismContents extends Base {
     this.titleElement = make(this, "span", "prism-contents-title");
     this.toggle = make(this, "prism-button", "prism-contents-toggle", { variant: "ghost", size: "sm" });
     this.toggleIcon = make(this, "prism-icon", null, { size: "xs" });
-    // The label is a text node, so the button's own content box ends a long title with an ellipsis.
     this.toggleLabel = this.ownerDocument.createTextNode("");
     this.toggle.append(this.toggleIcon, this.toggleLabel);
     this.toggle.addEventListener("click", () => toggleAttribute(this, "open", !this.hasAttribute("open")));
@@ -51,7 +42,6 @@ export class PrismContents extends Base {
     this.append(this.body);
     this.children$ = distribute(this, { tools: this.tools, default: this.list }, [this.body]);
   }
-
   sync() {
     const heading = this.getAttribute("heading") || "Contents";
     const open = this.hasAttribute("open");
@@ -61,12 +51,10 @@ export class PrismContents extends Base {
     setAttribute(this.toggle, "aria-expanded", String(open));
     setAttribute(this.toggleIcon, "name", open ? "chevron-down" : "chevron-right");
   }
-
   /** The list's links. */
   get links() {
     return [...this.list.querySelectorAll("a")];
   }
-
   /** Marks one link as the current section, and scrolls the list, and only the list, so it is in view. */
   markCurrent(current) {
     for (const link of this.links) {
@@ -81,7 +69,6 @@ export class PrismContents extends Base {
     if (entry.top < frame.top) list.scrollTop -= frame.top - entry.top;
     else if (entry.bottom > frame.bottom) list.scrollTop += entry.bottom - frame.bottom;
   }
-
   /** Fits the contents into the part of the scrolling element that shows them. */
   fit(scroller) {
     if (!scroller || !this.body) return;
@@ -91,7 +78,6 @@ export class PrismContents extends Base {
     const style = getComputedStyle(this.body);
     let height;
     if (style.position === "sticky") {
-      // Beside the document the body sticks at the scroller's content edge, moved by its own top offset, and ends with the contents column.
       const column = this.getBoundingClientRect();
       const stuck = visibleTop + Number.parseFloat(getComputedStyle(scroller).paddingTop) + Number.parseFloat(style.top);
       height = Math.min(visibleBottom, column.bottom) - Math.max(column.top, stuck);
@@ -101,3 +87,6 @@ export class PrismContents extends Base {
     this.body.style.setProperty("--prism-contents-fit", `${Math.max(Math.floor(height), 0)}px`);
   }
 }
+export {
+  PrismContents
+};

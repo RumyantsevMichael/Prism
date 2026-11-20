@@ -1,36 +1,33 @@
+// Generated from src/server/repository-intelligence/codenib-provider.mts by scripts/native-build/compile.mjs.
 import { spawn } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { commandLaunch } from "../command-launch.mjs";
 import { readCodeNibCommand } from "./repository-intelligence-config.mjs";
 import { normalizeRepositorySourcePath, normalizeRepositorySourceRange } from "./repository-source-path.mjs";
-
-const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_TIMEOUT_MS = 3e4;
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_SEARCH_RESULTS = 100;
 const MAX_DEFINITION_RESULTS = 4;
 const MAX_REGEX_RESULTS = 8;
-export const CODENIB_SUPPORTED_VERSION = "0.2.3";
-
-export const CODENIB_CAPABILITIES = Object.freeze({
+const CODENIB_SUPPORTED_VERSION = "0.2.3";
+const CODENIB_CAPABILITIES = Object.freeze({
   lexicalSearch: true,
   semanticSearch: true,
   hybridSearch: true,
   symbolGraph: true,
   verifiedSource: true
 });
-
-export class CodeNibRuntimeError extends Error {
+class CodeNibRuntimeError extends Error {
   constructor(code, message, options = {}) {
-    super(message, options.cause ? { cause: options.cause } : undefined);
+    super(message, options.cause ? { cause: options.cause } : void 0);
     this.name = "CodeNibRuntimeError";
     this.provider = "codenib";
     this.code = code;
     this.recoverable = options.recoverable !== false;
-    if (options.version !== undefined) this.version = String(options.version);
+    if (options.version !== void 0) this.version = String(options.version);
   }
 }
-
 function supportedServerInfo(value) {
   if (!value || typeof value !== "object" || String(value.name || "").toLowerCase() !== "codenib") {
     throw new CodeNibRuntimeError("invalid-server-identity", "The MCP server did not identify itself as CodeNib.");
@@ -41,15 +38,13 @@ function supportedServerInfo(value) {
   }
   return { name: "codenib", version };
 }
-
 function positiveInteger(value, fallback, name) {
-  if (value === undefined) return fallback;
+  if (value === void 0) return fallback;
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new TypeError(`${name} must be a positive safe integer.`);
   }
   return value;
 }
-
 function payloadOf(result) {
   if (result?.structuredContent && typeof result.structuredContent === "object") {
     return result.structuredContent;
@@ -64,7 +59,6 @@ function payloadOf(result) {
   }
   return result ?? {};
 }
-
 function sourceNode(value, { compact = false, projectRoot } = {}) {
   if (typeof value?.file !== "string" || !value.file) {
     return null;
@@ -75,7 +69,7 @@ function sourceNode(value, { compact = false, projectRoot } = {}) {
   } catch (error) {
     throw new CodeNibRuntimeError("invalid-response", "CodeNib returned an unsafe source path.", { cause: error });
   }
-  const validStartLine = (Number.isInteger(value.start_line) && value.start_line > 0) || (Number.isInteger(value.line) && value.line > 0);
+  const validStartLine = Number.isInteger(value.start_line) && value.start_line > 0 || Number.isInteger(value.line) && value.line > 0;
   const startLine = Number.isInteger(value.start_line) && value.start_line > 0 ? value.start_line : Number.isInteger(value.line) && value.line > 0 ? value.line : 1;
   const validEndLine = Number.isInteger(value.end_line) && value.end_line >= startLine;
   const endLine = validEndLine ? value.end_line : startLine;
@@ -87,11 +81,10 @@ function sourceNode(value, { compact = false, projectRoot } = {}) {
     kind: String(value.type || value.kind || "symbol"),
     name,
     rangeComplete: validStartLine && validEndLine,
-    ...(value.qualified_name ? { qualifiedName: String(value.qualified_name) } : {}),
-    ...(value.signature ? { signature: String(value.signature) } : {})
+    ...value.qualified_name ? { qualifiedName: String(value.qualified_name) } : {},
+    ...value.signature ? { signature: String(value.signature) } : {}
   };
 }
-
 function hintReasons(node, hints) {
   const files = Array.isArray(hints?.files) ? hints.files : [];
   const symbols = Array.isArray(hints?.symbols) ? hints.symbols : [];
@@ -103,7 +96,6 @@ function hintReasons(node, hints) {
   if (expectedModifiedFiles.includes(node.file)) reasons.push("expected-modification-target");
   return reasons;
 }
-
 function searchReasons(plan) {
   const engines = new Set((plan?.stages || []).map(({ engine }) => engine));
   const reasons = ["provider-ranked-match"];
@@ -113,12 +105,10 @@ function searchReasons(plan) {
   if (plan?.graph) reasons.push("graph-expansion");
   return reasons;
 }
-
 function unresolvedConcepts(concepts, results) {
   const searchable = results.map((result) => [result.node_name, result.name, result.file, result.content].filter(Boolean).join(" ").toLowerCase()).join("\n");
   return (Array.isArray(concepts) ? concepts : []).map(String).filter((concept) => !searchable.includes(concept.toLowerCase()));
 }
-
 function symbolIdentityMatches(candidate, expected) {
   const normalizedCandidate = String(candidate || "").trim().toLowerCase();
   const normalizedExpected = String(expected || "").trim().toLowerCase();
@@ -131,15 +121,12 @@ function symbolIdentityMatches(candidate, expected) {
   const terminalExpected = expectedParts.at(-1)?.replace(/\(.*$/, "");
   return terminalCandidate === terminalExpected;
 }
-
 function escapedRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-
 function concreteCommit(value) {
   return typeof value === "string" && /^[a-f0-9]{40,64}$/i.test(value);
 }
-
 function normalizedSnapshotIdentity(value) {
   if (!value || typeof value !== "object") return null;
   if (typeof value.scheme !== "string" || !value.scheme || typeof value.commit !== "string" || !value.commit || typeof value.fingerprint !== "string" || !value.fingerprint) {
@@ -147,32 +134,29 @@ function normalizedSnapshotIdentity(value) {
   }
   return { scheme: value.scheme, commit: value.commit, fingerprint: value.fingerprint };
 }
-
 function sameSnapshotIdentity(left, right) {
   return left?.scheme === right?.scheme && left?.commit === right?.commit && left?.fingerprint === right?.fingerprint;
 }
-
-export class McpStdioClient {
+class McpStdioClient {
   constructor(child, { timeoutMs = DEFAULT_TIMEOUT_MS, maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES } = {}) {
     this.child = child;
     this.timeoutMs = positiveInteger(timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs");
     this.maxResponseBytes = positiveInteger(maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES, "maxResponseBytes");
     this.nextId = 1;
-    this.pending = new Map();
+    this.pending = /* @__PURE__ */ new Map();
     this.stderr = "";
     this.responseBuffer = "";
     this.responseBytes = 0;
     this.transportError = null;
     child.stderr?.setEncoding("utf8");
     child.stderr?.on("data", (chunk) => {
-      this.stderr = `${this.stderr}${chunk}`.slice(-8000);
+      this.stderr = `${this.stderr}${chunk}`.slice(-8e3);
     });
     child.stdout?.setEncoding("utf8");
     child.stdout?.on("data", (chunk) => this.receiveChunk(chunk));
     child.once("error", (error) => this.failTransport(new CodeNibRuntimeError("process-start-failed", "CodeNib MCP could not start.", { cause: error })));
     child.once("exit", (code, signal) => this.failTransport(new CodeNibRuntimeError("process-exited", `CodeNib MCP exited with code ${code ?? "none"} and signal ${signal ?? "none"}.`)));
   }
-
   receiveChunk(chunk) {
     if (this.transportError) return;
     const text = String(chunk);
@@ -196,7 +180,6 @@ export class McpStdioClient {
       cursor = newline + 1;
     }
   }
-
   receive(line) {
     let message;
     try {
@@ -214,7 +197,6 @@ export class McpStdioClient {
       pending.resolve(message.result);
     }
   }
-
   failTransport(error, terminate = false) {
     if (!this.transportError) this.transportError = error;
     this.failAll(this.transportError);
@@ -225,7 +207,6 @@ export class McpStdioClient {
       }
     }
   }
-
   failAll(error) {
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
@@ -233,7 +214,6 @@ export class McpStdioClient {
     }
     this.pending.clear();
   }
-
   request(method, params = {}) {
     if (this.transportError) return Promise.reject(this.transportError);
     const id = this.nextId++;
@@ -243,14 +223,14 @@ export class McpStdioClient {
         reject(new CodeNibRuntimeError("request-timeout", `CodeNib MCP request timed out after ${this.timeoutMs}ms.`));
       }, this.timeoutMs);
       this.pending.set(id, { resolve, reject, timeout });
-      this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+      this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}
+`);
     });
   }
-
   notify(method, params = {}) {
-    this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+    this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}
+`);
   }
-
   async initialize() {
     const result = await this.request("initialize", {
       protocolVersion: "2025-06-18",
@@ -261,7 +241,6 @@ export class McpStdioClient {
     this.notify("notifications/initialized");
     return this.serverInfo;
   }
-
   async callTool(name, args = {}) {
     const result = await this.request("tools/call", { name, arguments: args });
     if (result?.isError) {
@@ -270,7 +249,6 @@ export class McpStdioClient {
     }
     return { payload: payloadOf(result), rendered: JSON.stringify(result) };
   }
-
   async close() {
     if (this.child.exitCode !== null) return;
     this.child.stdin.end();
@@ -278,7 +256,7 @@ export class McpStdioClient {
       const timeout = setTimeout(() => {
         this.child.kill();
         resolve();
-      }, 1000);
+      }, 1e3);
       this.child.once("exit", () => {
         clearTimeout(timeout);
         resolve();
@@ -286,8 +264,7 @@ export class McpStdioClient {
     });
   }
 }
-
-export async function openCodeNibClient(projectRoot, options = {}) {
+async function openCodeNibClient(projectRoot, options = {}) {
   const canonicalRoot = await realpath(projectRoot);
   const configuredCommand = options.command || process.env.PRISM_CODENIB_COMMAND || await readCodeNibCommand(canonicalRoot);
   const command = configuredCommand || "codenib";
@@ -312,8 +289,7 @@ export async function openCodeNibClient(projectRoot, options = {}) {
     throw error;
   }
 }
-
-export class CodeNibRepositoryIntelligence {
+class CodeNibRepositoryIntelligence {
   constructor(client, { projectRoot = null, sourceProvider = null, sourceDescription = null } = {}) {
     this.client = client;
     this.projectRoot = projectRoot;
@@ -325,11 +301,9 @@ export class CodeNibRepositoryIntelligence {
     this.manifestRoot = null;
     this.manifestSchemaVersion = null;
   }
-
   snapshotFailure(code, message, cause) {
     return new CodeNibRuntimeError(code, message, { cause });
   }
-
   async manifestValues(payload, { requireRoot = Boolean(this.projectRoot || this.sourceProvider) } = {}) {
     const commit = payload?.repo?.commit;
     const fingerprint = payload?.repo?.source_fingerprint || null;
@@ -349,7 +323,6 @@ export class CodeNibRepositoryIntelligence {
     }
     return { commit, fingerprint, root };
   }
-
   async bindNativeSnapshot(source, payload, manifest, code = "snapshot-mismatch", { verifyNative = true } = {}) {
     const identity = normalizedSnapshotIdentity(source?.snapshotIdentity);
     const nativeRoot = this.sourceProvider?.projectRoot;
@@ -387,7 +360,6 @@ export class CodeNibRepositoryIntelligence {
     }
     return identity;
   }
-
   async describe() {
     const serverInfo = supportedServerInfo(this.client?.serverInfo);
     const { payload } = await this.client.callTool("get_manifest");
@@ -405,7 +377,7 @@ export class CodeNibRepositoryIntelligence {
     this.manifestCommit = manifest.commit;
     this.manifestFingerprint = manifest.fingerprint;
     this.manifestRoot = manifest.root;
-    this.manifestSchemaVersion = payload?.version === undefined ? null : String(payload.version);
+    this.manifestSchemaVersion = payload?.version === void 0 ? null : String(payload.version);
     const source = this.sourceDescription || (this.sourceProvider ? await this.sourceProvider.describe() : null);
     const boundIdentity = source ? await this.bindNativeSnapshot(source, payload, manifest) : null;
     if (boundIdentity) this.sourceDescription = source;
@@ -415,7 +387,7 @@ export class CodeNibRepositoryIntelligence {
       version: serverInfo.version,
       commit: source?.commit || this.manifestCommit,
       sourceFingerprint: source?.sourceFingerprint || this.manifestFingerprint,
-      ...(boundIdentity ? { snapshotIdentity: { ...boundIdentity } } : {}),
+      ...boundIdentity ? { snapshotIdentity: { ...boundIdentity } } : {},
       capabilities: {
         lexicalSearch: loaded.has("bm25"),
         semanticSearch: loaded.has("vector"),
@@ -425,7 +397,6 @@ export class CodeNibRepositoryIntelligence {
       }
     };
   }
-
   async verifySnapshot() {
     if (!this.manifestCommit || !this.manifestFingerprint) {
       throw this.snapshotFailure("snapshot-changed", "CodeNib has no source snapshot to verify.");
@@ -447,7 +418,6 @@ export class CodeNibRepositoryIntelligence {
     const snapshotIdentity = await this.bindNativeSnapshot(this.sourceDescription, payload, current, "snapshot-changed", { verifyNative: false });
     return { provider: "codenib", snapshotIdentity };
   }
-
   async completeNodeRange(node) {
     if (node.rangeComplete) return node;
     const { payload } = await this.client.callTool("search_regex", {
@@ -460,7 +430,7 @@ export class CodeNibRepositoryIntelligence {
     const matches = Array.isArray(payload) ? payload.slice(0, MAX_REGEX_RESULTS) : [];
     const candidates = matches.map((value) => sourceNode(value, { projectRoot: this.projectRoot })).filter((candidate) => candidate && candidate.file === node.file && candidate.rangeComplete && symbolIdentityMatches(candidate.qualifiedName || candidate.name, node.qualifiedName || node.name));
     const containing = candidates.filter((candidate) => candidate.range.startLine <= node.range.startLine && node.range.startLine <= candidate.range.endLine);
-    containing.sort((left, right) => (left.range.endLine - left.range.startLine) - (right.range.endLine - right.range.startLine));
+    containing.sort((left, right) => left.range.endLine - left.range.startLine - (right.range.endLine - right.range.startLine));
     const match = containing[0];
     if (!match) return node;
     return {
@@ -468,11 +438,10 @@ export class CodeNibRepositoryIntelligence {
       id: match.id,
       range: match.range,
       rangeComplete: true,
-      ...(node.qualifiedName || !match.qualifiedName ? {} : { qualifiedName: match.qualifiedName }),
-      ...(node.signature || !match.signature ? {} : { signature: match.signature })
+      ...node.qualifiedName || !match.qualifiedName ? {} : { qualifiedName: match.qualifiedName },
+      ...node.signature || !match.signature ? {} : { signature: match.signature }
     };
   }
-
   async search(task, hints = {}, options = {}) {
     let normalizedHints;
     try {
@@ -533,12 +502,12 @@ export class CodeNibRepositoryIntelligence {
         unresolvedRequired.push({ kind: "symbol", value: symbol });
       }
     }
-    const fileHints = new Map();
+    const fileHints = /* @__PURE__ */ new Map();
     for (const file of normalizedHints.files) {
-      fileHints.set(String(file), [...(fileHints.get(String(file)) || []), "explicit-design-reference"]);
+      fileHints.set(String(file), [...fileHints.get(String(file)) || [], "explicit-design-reference"]);
     }
     for (const file of normalizedHints.expectedModifiedFiles) {
-      fileHints.set(String(file), [...(fileHints.get(String(file)) || []), "expected-modification-target"]);
+      fileHints.set(String(file), [...fileHints.get(String(file)) || [], "expected-modification-target"]);
     }
     for (const [file, reasons] of fileHints) {
       if (hits.some(({ node }) => node.file === file)) continue;
@@ -573,7 +542,6 @@ export class CodeNibRepositoryIntelligence {
       }
     };
   }
-
   async neighbors(nodes, options) {
     const neighbors = [];
     const diagnostics = [];
@@ -635,7 +603,6 @@ export class CodeNibRepositoryIntelligence {
       diagnostics
     };
   }
-
   async read(sourceRange) {
     let validatedRange;
     try {
@@ -661,7 +628,7 @@ export class CodeNibRepositoryIntelligence {
       if (typeof result.payload?.content !== "string" || result.payload.content.length === 0) {
         throw new Error(`CodeNib returned no source content for ${validatedRange.file}.`);
       }
-      const responseFiles = [result.payload?.file, result.payload?.file_path].filter((value) => value !== undefined);
+      const responseFiles = [result.payload?.file, result.payload?.file_path].filter((value) => value !== void 0);
       let normalizedResponseFiles;
       try {
         normalizedResponseFiles = responseFiles.map((value) => normalizeRepositorySourcePath(value, { projectRoot: this.projectRoot }));
@@ -708,8 +675,7 @@ export class CodeNibRepositoryIntelligence {
     };
   }
 }
-
-export async function withCodeNibRepositoryIntelligence(projectRoot, action, options = {}) {
+async function withCodeNibRepositoryIntelligence(projectRoot, action, options = {}) {
   const client = await openCodeNibClient(projectRoot, options);
   try {
     return await action(new CodeNibRepositoryIntelligence(client, { projectRoot: client.projectRoot }));
@@ -717,3 +683,12 @@ export async function withCodeNibRepositoryIntelligence(projectRoot, action, opt
     await client.close();
   }
 }
+export {
+  CODENIB_CAPABILITIES,
+  CODENIB_SUPPORTED_VERSION,
+  CodeNibRepositoryIntelligence,
+  CodeNibRuntimeError,
+  McpStdioClient,
+  openCodeNibClient,
+  withCodeNibRepositoryIntelligence
+};

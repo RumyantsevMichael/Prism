@@ -1,18 +1,29 @@
+// Generated from src/server/session/launch-hosts.mts by scripts/native-build/compile.mjs.
 import { createHash, randomUUID } from "node:crypto";
 import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { isAgentModel } from "./agent-models.mjs";
-
-// The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
-// Nothing here takes a value from the review page except the initiative identifier, checked by the caller, and the host.
-
-export const HOSTS = Object.freeze([
-  Object.freeze({ host: "claude-code", label: "Claude Code", executable: "claude" }),
-  Object.freeze({ host: "codex", label: "Codex", executable: "codex" })
+const HOSTS = Object.freeze([
+  Object.freeze({
+    host: "claude-code",
+    label: "Claude Code",
+    executable: "claude",
+    optionsRead: Object.freeze({
+      args: Object.freeze(["-p", "--verbose", "--no-session-persistence", "--settings", '{"disableAllHooks":true}', "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--input-format", "stream-json", "--output-format", "stream-json"]),
+      request: Object.freeze({ type: "control_request", request_id: "prism-options", request: Object.freeze({ subtype: "initialize" }) })
+    })
+  }),
+  Object.freeze({
+    host: "codex",
+    label: "Codex",
+    executable: "codex",
+    optionsRead: Object.freeze({
+      args: Object.freeze(["app-server"]),
+      client: Object.freeze({ clientInfo: Object.freeze({ name: "prism-options", version: "1" }), capabilities: Object.freeze({ experimentalApi: true }) })
+    })
+  })
 ]);
-
-// The host session variables that a review app started by an agent session inherits; a launched host sees none of them.
-export const STRIPPED_VARIABLES = Object.freeze([
+const STRIPPED_VARIABLES = Object.freeze([
   "CLAUDECODE",
   "CLAUDE_CODE_SESSION_ID",
   "CLAUDE_CODE_ENTRYPOINT",
@@ -23,45 +34,30 @@ export const STRIPPED_VARIABLES = Object.freeze([
   "CLAUDE_PLUGIN_DATA",
   "CODEX_THREAD_ID"
 ]);
-
 const CLAUDE_FLAGS = Object.freeze(["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "none"]);
-// The permission policy of every Codex thread that Prism starts or resumes: the host's automatic review decides, and Prism grants nothing.
 const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" });
 const CODEX_CLIENT = Object.freeze({ clientInfo: { name: "prism-launch", version: "1" }, capabilities: { experimentalApi: true } });
-// The answer to every request that a Codex app-server sends Prism, such as an approval or a question.
-export const HOST_REQUEST_REFUSAL = Object.freeze({ code: -32601, message: "Prism answers no host requests." });
-export const MAX_LINE_BYTES = 1024 * 1024;
-// What a run keeps of host text: each refusal reason and host error is cut to REFUSAL_REASON_MAX characters, a run records its
-// first RECORDED_REFUSALS refusals with the number of all of them, and a Claude Code run holds the cut text of only its
-// KEPT_TOOL_RESULTS most recent error tool results, so a long run's memory and record stay bounded.
-// A refusal's tool name is cut to TOOL_NAME_MAX characters, so `<tool> was refused.` and the blocked reason stay short; a Codex
-// run keeps only the KEPT_EARLY_COMPLETIONS most recent turn completions that arrive before the turn/start answer, with their cut
-// error text; and a Claude Code run tracks at most TRACKED_TASKS running background tasks by a fixed-size digest of their ids.
+const HOST_REQUEST_REFUSAL = Object.freeze({ code: -32601, message: "Prism answers no host requests." });
+const MAX_LINE_BYTES = 1024 * 1024;
 const REFUSAL_REASON_MAX = 500;
-export const RECORDED_REFUSALS = 20;
+const RECORDED_REFUSALS = 20;
 const KEPT_TOOL_RESULTS = 100;
-export const TOOL_NAME_MAX = 100;
-export const KEPT_EARLY_COMPLETIONS = 8;
-export const TRACKED_TASKS = 1000;
-export const HOST_ERROR_FALLBACK = "The turn failed without a message.";
-// A host session id that may reach a command line: letters, digits, `_`, and `-`, never first, so no host reads it as an option and no shell splits it.
-export const HOST_SESSION_ID_PATTERN = /^[0-9A-Za-z_][0-9A-Za-z_-]*$/;
-export const SESSION_ID_PLACEHOLDER = "<host session id>";
-
-export function validHostSessionId(value) {
+const TOOL_NAME_MAX = 100;
+const KEPT_EARLY_COMPLETIONS = 8;
+const TRACKED_TASKS = 1e3;
+const HOST_ERROR_FALLBACK = "The turn failed without a message.";
+const HOST_SESSION_ID_PATTERN = /^[0-9A-Za-z_][0-9A-Za-z_-]*$/;
+const SESSION_ID_PLACEHOLDER = "<host session id>";
+function validHostSessionId(value) {
   return typeof value === "string" && HOST_SESSION_ID_PATTERN.test(value);
 }
-
-/** The text with every occurrence of the host session id, in any letter case, replaced by a placeholder; the pattern keeps the id free of regular expression syntax. */
-export function redactSessionId(text, hostSessionId) {
-  if (typeof text !== "string" || !validHostSessionId(hostSessionId)) return text;
-  return text.replace(new RegExp(hostSessionId, "gi"), SESSION_ID_PLACEHOLDER);
+function redactSessionId(text2, hostSessionId) {
+  if (typeof text2 !== "string" || !validHostSessionId(hostSessionId)) return text2;
+  return text2.replace(new RegExp(hostSessionId, "gi"), SESSION_ID_PLACEHOLDER);
 }
-
-export function hostDefinition(host) {
+function hostDefinition(host) {
   return HOSTS.find((definition) => definition.host === host) ?? null;
 }
-
 async function executableFile(file) {
   try {
     if (!(await stat(file)).isFile()) return false;
@@ -71,28 +67,24 @@ async function executableFile(file) {
     return false;
   }
 }
-
 function pathEntries(env) {
   const value = env.PATH ?? env.Path ?? "";
   return value.split(path.delimiter).filter((entry) => entry && path.isAbsolute(entry));
 }
-
-// npm's command shims run Node with a script beside the shim, named as "%dp0%\<relative script>".
 async function npmShimScript(file) {
-  let text;
-  try { text = await readFile(file, "utf8"); } catch { return null; }
-  if (!/node/i.test(text)) return null;
-  const match = /"%~?dp0%?\\([^"%]+\.(?:c|m)?js)"/i.exec(text);
+  let text2;
+  try {
+    text2 = await readFile(file, "utf8");
+  } catch {
+    return null;
+  }
+  if (!/node/i.test(text2)) return null;
+  const match = /"%~?dp0%?\\([^"%]+\.(?:c|m)?js)"/i.exec(text2);
   if (!match) return null;
   const script = path.resolve(path.dirname(file), match[1]);
-  return (await executableFile(script)) ? script : null;
+  return await executableFile(script) ? script : null;
 }
-
-/**
- * How a host is run on this machine: { ...definition, available, executable, command, prefix, reason },
- * where command and prefix are what the supervisor spawns before the host arguments.
- */
-export async function resolveHost(host, env = process.env) {
+async function resolveHost(host, env = process.env) {
   const definition = hostDefinition(host);
   if (!definition) return null;
   const missing = { ...definition, available: false, executable: null, command: null, prefix: [], reason: `${definition.label} was not found: no ${definition.executable} executable on PATH.` };
@@ -107,7 +99,7 @@ export async function resolveHost(host, env = process.env) {
   for (const extension of [".exe", ".cmd"]) {
     for (const entry of entries) {
       const file = path.join(entry, `${definition.executable}${extension}`);
-      if (!(await executableFile(file))) continue;
+      if (!await executableFile(file)) continue;
       if (extension === ".exe") return { ...definition, available: true, executable: file, command: file, prefix: [], reason: null };
       const script = await npmShimScript(file);
       if (!script) return { ...definition, available: false, executable: file, command: null, prefix: [], reason: `Prism cannot run ${file} safely: it is not an npm command shim.` };
@@ -116,73 +108,80 @@ export async function resolveHost(host, env = process.env) {
   }
   return missing;
 }
-
-/** One entry per host in order: { host, label, available, executable, reason }. */
-export async function hostAvailability({ env = process.env } = {}) {
+async function hostAvailability({ env = process.env } = {}) {
   return Promise.all(HOSTS.map(async ({ host }) => {
     const { label, available, executable, reason } = await resolveHost(host, env);
     return { host, label, available, executable, reason };
   }));
 }
-
-/** The arguments of a run: Claude Code's launch or resume form with its session id, or Codex's app server. */
-export function hostArguments({ host, hostSessionId, resume }) {
+const HOST_DEFAULT_COORDINATOR = Object.freeze({ provider: null, model: null, effort: null, typed: false });
+const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@\[\]+-]{0,199}$/;
+const PROVIDER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const EFFORT_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;
+const CHOICE_PARTS = Object.freeze(["provider", "model", "effort", "typed"]);
+function checkedCoordinator(value) {
+  if (value === void 0 || value === null) return { ...HOST_DEFAULT_COORDINATOR };
+  if (typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !CHOICE_PARTS.includes(key))) return null;
+  const part = (name, pattern) => {
+    const item = value[name] ?? null;
+    return item === null ? null : typeof item === "string" && pattern.test(item) ? item : void 0;
+  };
+  const choice = { provider: part("provider", PROVIDER_PATTERN), model: part("model", MODEL_PATTERN), effort: part("effort", EFFORT_PATTERN), typed: value.typed ?? false };
+  if (choice.provider === void 0 || choice.model === void 0 || choice.effort === void 0 || typeof choice.typed !== "boolean") return null;
+  return { ...choice, typed: choice.typed && choice.model !== null };
+}
+function coordinatorOf(coordinator) {
+  const checked = checkedCoordinator(coordinator);
+  if (!checked) throw new Error("The coordinator's choice is not one Prism can pass to a host.");
+  return checked;
+}
+function hostArguments({ host, hostSessionId, resume, coordinator = null }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
-    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS];
+    const { model, effort } = coordinatorOf(coordinator);
+    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS, ...model === null ? [] : ["--model", model], ...effort === null ? [] : ["--effort", effort]];
   }
   if (host === "codex") return ["app-server"];
   throw new Error(`Unknown host ${host}.`);
 }
-
-/** The stream-json user message that gives a Claude Code run its prompt. */
-export function claudePrompt(initiative) {
+function claudePrompt(initiative) {
   return { type: "user", message: { role: "user", content: `/prism:orchestrate ${initiative}` } };
 }
-
-/** The Codex request that opens the run's thread: thread/start for a launch, thread/resume with the kept thread id for a resume. */
-export function codexThreadRequest({ checkout, hostSessionId, resume }) {
-  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY } };
+function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null }) {
+  const { model, provider } = coordinatorOf(coordinator);
+  const chosen = { ...model === null ? {} : { model }, ...provider === null ? {} : { modelProvider: provider } };
+  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY, ...chosen } };
   if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
-  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY } };
+  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY, ...chosen } };
 }
-
-/** The Codex request that starts the run's one orchestrate turn. */
-export function codexTurnRequest({ threadId, initiative }) {
-  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}` }] } };
+function codexTurnRequest({ threadId, initiative, coordinator = null }) {
+  const { effort } = coordinatorOf(coordinator);
+  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}` }], ...effort === null ? {} : { effort } } };
 }
-
-/** The stream-json line that Claude Code's own Stop button sends: an interrupt control request with a request id that Prism chooses. */
-export function claudeInterrupt(requestId) {
+function claudeInterrupt(requestId) {
   return { type: "control_request", request_id: requestId, request: { subtype: "interrupt" } };
 }
-
-/** The Codex request that interrupts the run's turn, as the app's own Stop button does. */
-export function codexInterruptRequest({ threadId, turnId }) {
+function codexInterruptRequest({ threadId, turnId }) {
   return { method: "turn/interrupt", params: { threadId, turnId } };
 }
-
-/** The command that continues a host session in a terminal, or null for an id that breaks HOST_SESSION_ID_PATTERN. */
-export function resumeCommandOf(host, hostSessionId) {
+function resumeCommandOf(host, hostSessionId) {
   if (!validHostSessionId(hostSessionId)) return null;
   return host === "claude-code" ? `claude --resume ${hostSessionId}` : `codex resume ${hostSessionId}`;
 }
-
-/** The environment of a run: the starter's own, without the host session variables, and with PRISM_LAUNCH naming the launch. */
-export function hostEnvironment(env, launchId) {
+function strippedEnvironment(env) {
   const result = { ...env };
   for (const name of STRIPPED_VARIABLES) delete result[name];
-  result.PRISM_LAUNCH = launchId;
   return result;
 }
-
-/** Splits a byte stream into lines, dropping every line longer than MAX_LINE_BYTES. */
-export function lineSplitter(onLine) {
+function hostEnvironment(env, launchId) {
+  return { ...strippedEnvironment(env), PRISM_LAUNCH: launchId };
+}
+function lineSplitter(onLine, maxBytes = MAX_LINE_BYTES) {
   let pending = [];
   let pendingBytes = 0;
   let discarding = false;
   const emit = (buffer) => {
-    if (!discarding && buffer.length <= MAX_LINE_BYTES) onLine(buffer.toString("utf8").replace(/\r$/, ""));
+    if (!discarding && buffer.length <= maxBytes) onLine(buffer.toString("utf8").replace(/\r$/, ""));
   };
   return {
     push(chunk) {
@@ -200,7 +199,7 @@ export function lineSplitter(onLine) {
       if (start < chunk.length && !discarding) {
         const rest = chunk.subarray(start);
         pendingBytes += rest.length;
-        if (pendingBytes > MAX_LINE_BYTES) {
+        if (pendingBytes > maxBytes) {
           pending = [];
           pendingBytes = 0;
           discarding = true;
@@ -217,7 +216,6 @@ export function lineSplitter(onLine) {
     }
   };
 }
-
 function parseObject(line) {
   try {
     const value = JSON.parse(line);
@@ -226,41 +224,20 @@ function parseObject(line) {
     return null;
   }
 }
-
 function blockText(content) {
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((block) => (typeof block === "string" ? block : typeof block?.text === "string" ? block.text : "")).join("");
+  if (Array.isArray(content)) return content.map((block) => typeof block === "string" ? block : typeof block?.text === "string" ? block.text : "").join("");
   return "";
 }
-
-
-const text = (value) => (typeof value === "string" ? value : "");
-// A Claude Code error result's text: its `result` when that is a non-empty string, and otherwise its `errors` strings joined.
-const claudeErrorText = (event) => (text(event.result) || (Array.isArray(event.errors) ? event.errors.filter((entry) => typeof entry === "string").join("; ") : ""));
-
-// A slice of a long string can keep the whole string alive, so kept host text is copied into a string of its own; the UTF-16
-// round trip keeps every code unit, a lone surrogate at the cut included.
-const detached = (text) => Buffer.from(text, "utf16le").toString("utf16le");
-// Host ids are kept by a fixed-size digest of every UTF-16 code unit, so a long id costs no more than a short one and ids that
-// differ only in a lone surrogate stay apart.
+const text = (value) => typeof value === "string" ? value : "";
+const claudeErrorText = (event) => text(event.result) || (Array.isArray(event.errors) ? event.errors.filter((entry) => typeof entry === "string").join("; ") : "");
+const detached = (text2) => Buffer.from(text2, "utf16le").toString("utf16le");
 const digestKey = (id) => createHash("sha256").update(Buffer.from(id, "utf16le")).digest("base64");
-
-/**
- * One run's conversation with its host over the host's standard input and output.
- * `send(message)` writes one JSON line to the host's input and `closeInput()` ends that input; the conversation calls neither
- * after it closed the input, and closes it once the host's work is over, so the host exits by itself.
- * `facts` collects { hostSessionId, turnId, model, refusals, refusalCount, hostError }: model is the one that Claude Code's first
- * `system` `init` event or Codex's thread/start or thread/resume result names, or null when that is no model a claim may record;
- * refusals holds the first RECORDED_REFUSALS of the refusalCount refusals, and host text in them has the host session id, the
- * known one or the one the run names, replaced before it is cut. onModel is called once with the model as soon as the host names
- * one, and onSessionId is called once when a Codex launch names its thread with an id that is safe to keep.
- * `interrupt()` stops the run the way the host's own Stop button does: it sends the host's interrupt while the input is open and
- * closes the input once the host has answered it, or at once for a Codex run that has not sent turn/start yet.
- */
-export function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {}, onModel = () => {} }) {
+function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {
+}, onModel = () => {
+} }) {
   const facts = { hostSessionId: null, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null };
   let modelSeen = false;
-  // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
   const named = (value) => {
     if (modelSeen) return;
     modelSeen = true;
@@ -270,10 +247,9 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
   };
   let inputOpen = true;
   const redact = (value) => redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId);
-  // The id is replaced before the text is cut, so no cut leaves part of it behind.
   const cut = (value) => detached(redact(value).slice(0, REFUSAL_REASON_MAX));
   const hostError = (value) => cut(value || HOST_ERROR_FALLBACK);
-  const toolName = (value, fallback) => (typeof value === "string" && value ? detached(redact(value).slice(0, TOOL_NAME_MAX)) : fallback);
+  const toolName = (value, fallback) => typeof value === "string" && value ? detached(redact(value).slice(0, TOOL_NAME_MAX)) : fallback;
   const write = (message) => {
     if (inputOpen) send(message);
   };
@@ -283,14 +259,9 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
     closeInput();
   };
   const handle = host === "claude-code" ? claudeHandler() : codexHandler();
-
-  // Claude Code: the prompt is one stream-json user message, and the input closes at a result event once every background task
-  // that the host reported as started has been reported as ended.
-  // Running tasks are held by digest, at most TRACKED_TASKS of them; a start past that is only counted, and a notification of a
-  // task that is not held ends one counted task, so the input never closes while the host still reports more starts than ends.
   function claudeHandler() {
-    const toolResults = new Map();
-    const tasks = new Set();
+    const toolResults = /* @__PURE__ */ new Map();
+    const tasks = /* @__PURE__ */ new Set();
     let untrackedTasks = 0;
     const taskKey = digestKey;
     let interruptId = null;
@@ -321,7 +292,6 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           return;
         }
         if (event.type === "user" && Array.isArray(event.message?.content)) {
-          // Only error tool results can be refusal reasons; the oldest kept one goes once more than KEPT_TOOL_RESULTS are held.
           for (const block of event.message.content) {
             if (block?.type !== "tool_result" || block.is_error !== true || typeof block.tool_use_id !== "string") continue;
             const key = digestKey(block.tool_use_id);
@@ -332,12 +302,11 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           return;
         }
         if (event.type !== "result") return;
-        // The last result event decides the run's refusals and host error.
         const denials = (Array.isArray(event.permission_denials) ? event.permission_denials : []).filter((denial) => denial && typeof denial === "object");
         facts.refusalCount = denials.length;
         facts.refusals = denials.slice(0, RECORDED_REFUSALS).map((denial) => {
           const tool = toolName(denial.tool_name, "a tool");
-          const reason = typeof denial.tool_use_id === "string" ? toolResults.get(digestKey(denial.tool_use_id))?.trim() : undefined;
+          const reason = typeof denial.tool_use_id === "string" ? toolResults.get(digestKey(denial.tool_use_id))?.trim() : void 0;
           return { tool, reason: reason || cut(`${tool} was refused.`) };
         });
         facts.hostError = event.is_error === true ? hostError(claudeErrorText(event)) : null;
@@ -345,13 +314,9 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
       }
     };
   }
-
-  // Codex: JSON-RPC 2.0 with `codex app-server`, through initialize, the thread start or resume, and one turn; every request
-  // that the host sends is answered with HOST_REQUEST_REFUSAL, and the input closes when the run's turn completes or the host
-  // answers one of Prism's requests with an error.
   function codexHandler() {
-    const pending = new Map();
-    const completed = new Map();
+    const pending = /* @__PURE__ */ new Map();
+    const completed = /* @__PURE__ */ new Map();
     let nextId = 1;
     let threadId = null;
     let turnRequested = false;
@@ -368,7 +333,6 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
       if (turn?.status === "failed") facts.hostError = hostError(text(turn.error?.message));
       close();
     };
-    // The interrupt goes out once turn/start has named the run's turn and only while that turn has not completed.
     const sendInterrupt = () => {
       if (interruptSent || turnDone || facts.turnId === null) return;
       interruptSent = true;
@@ -378,7 +342,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
     const answered = (method, result) => {
       if (method === "initialize") {
         write({ jsonrpc: "2.0", method: "initialized", params: {} });
-        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume });
+        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, coordinator });
         request(open, params);
         return;
       }
@@ -394,7 +358,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           close();
           return;
         }
-        const { method: turn, params } = codexTurnRequest({ threadId, initiative });
+        const { method: turn, params } = codexTurnRequest({ threadId, initiative, coordinator });
         turnRequested = true;
         request(turn, params);
         return;
@@ -427,12 +391,11 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           const method = pending.get(message.id);
           if (!method) return;
           pending.delete(message.id);
-          // The host answered the interrupt, with a result or an error, so the input closes and the app-server exits by itself.
           if (method === "turn/interrupt") {
             close();
             return;
           }
-          if (message.error !== undefined && message.error !== null) {
+          if (message.error !== void 0 && message.error !== null) {
             facts.hostError = hostError(text(message.error?.message));
             close();
             return;
@@ -450,8 +413,6 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           return;
         }
         if (message.method === "turn/completed" && typeof params.turn?.id === "string") {
-          // A completion that arrives before the turn/start answer is kept, as its status and cut error text, until the answer
-          // names the run's turn; only the KEPT_EARLY_COMPLETIONS most recent ones are kept, the oldest going first.
           if (facts.turnId === null) {
             const { status, error } = params.turn;
             const kept = status === "failed" ? { status, error: { message: hostError(text(error?.message)) } } : {};
@@ -459,28 +420,68 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
             completed.delete(key);
             completed.set(key, kept);
             if (completed.size > KEPT_EARLY_COMPLETIONS) completed.delete(completed.keys().next().value);
-          }
-          else if (params.turn.id === facts.turnId) turnEnded(params.turn);
+          } else if (params.turn.id === facts.turnId) turnEnded(params.turn);
         }
       }
     };
   }
-
   const splitter = lineSplitter((line) => {
     const event = parseObject(line);
     if (event) handle.event(event);
   });
   return {
     facts,
-    get inputOpen() { return inputOpen; },
+    get inputOpen() {
+      return inputOpen;
+    },
     /** Writes the run's opening message: the prompt, or Codex's initialize request. */
     start: () => handle.start(),
     push: (chunk) => splitter.push(chunk),
     end: () => splitter.end(),
     /** Writes one more message to the host while its input is open, such as a stop's interrupt; answers whether it was written. */
-    send: (message) => { if (!inputOpen) return false; send(message); return true; },
+    send: (message) => {
+      if (!inputOpen) return false;
+      send(message);
+      return true;
+    },
     closeInput: close,
     /** Sends the host's interrupt for a stop; a run whose input is already closed gets none. */
-    interrupt: () => { if (inputOpen) handle.interrupt(); }
+    interrupt: () => {
+      if (inputOpen) handle.interrupt();
+    }
   };
 }
+export {
+  EFFORT_PATTERN,
+  HOSTS,
+  HOST_DEFAULT_COORDINATOR,
+  HOST_ERROR_FALLBACK,
+  HOST_REQUEST_REFUSAL,
+  HOST_SESSION_ID_PATTERN,
+  KEPT_EARLY_COMPLETIONS,
+  MAX_LINE_BYTES,
+  MODEL_PATTERN,
+  PROVIDER_PATTERN,
+  RECORDED_REFUSALS,
+  SESSION_ID_PLACEHOLDER,
+  STRIPPED_VARIABLES,
+  TOOL_NAME_MAX,
+  TRACKED_TASKS,
+  checkedCoordinator,
+  claudeInterrupt,
+  claudePrompt,
+  codexInterruptRequest,
+  codexThreadRequest,
+  codexTurnRequest,
+  hostArguments,
+  hostAvailability,
+  hostConversation,
+  hostDefinition,
+  hostEnvironment,
+  lineSplitter,
+  redactSessionId,
+  resolveHost,
+  resumeCommandOf,
+  strippedEnvironment,
+  validHostSessionId
+};

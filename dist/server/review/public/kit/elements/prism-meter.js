@@ -1,7 +1,6 @@
-// prism-meter: a thin progress bar from 0 to 100 with the role progressbar.
+// Generated from src/server/review/public/kit/elements/prism-meter.ts by scripts/native-build/compile.mjs.
 import { Base, setAttribute, shadow } from "./base.js";
-
-export class PrismMeter extends Base {
+class PrismMeter extends Base {
   static tag = "prism-meter";
   static styles = ["prism-meter.css"];
   static observedAttributes = ["value", "label", "tone"];
@@ -15,21 +14,17 @@ export class PrismMeter extends Base {
     states: ["empty", "partial", "full", "unknown"],
     keyboard: []
   };
-
   constructor() {
     super();
     this.root = shadow(this, PrismMeter.styles, `<span class="track" part="track"><span class="fill" part="fill"></span></span>`);
   }
-
   connectedCallback() {
     setAttribute(this, "role", "progressbar");
     this.sync();
   }
-
   attributeChangedCallback() {
     if (this.isConnected) this.sync();
   }
-
   sync() {
     const raw = this.getAttribute("value");
     const number = raw === null || raw === "" ? NaN : Number(raw);
@@ -42,3 +37,6 @@ export class PrismMeter extends Base {
     this.root.querySelector(".fill").style.setProperty("--meter-value", `${value}%`);
   }
 }
+export {
+  PrismMeter
+};

@@ -1,21 +1,17 @@
-// prism-popover: a non-modal dialog on frosted glass that the kit button named by `for` opens, anchored to that button and kept inside the window,
-// spanning the window's width at 720px and below. It renders in light DOM: its heading first, then every child in its body.
+// Generated from src/server/review/public/kit/elements/prism-popover.ts by scripts/native-build/compile.mjs.
 import { Base, deepActiveElement, distribute, emit, focusables, make, setAttribute, uniqueId } from "./base.js";
-
-const open = new Set();
+const open = /* @__PURE__ */ new Set();
 const NARROW = "(max-width: 720px)";
-
 function pixels(element, name) {
   return parseFloat(getComputedStyle(element).getPropertyValue(name)) || 0;
 }
-
-export class PrismPopover extends Base {
+class PrismPopover extends Base {
   static tag = "prism-popover";
   static observedAttributes = ["for", "heading", "open"];
   static catalog = {
     purpose: "A non-modal panel on frosted glass that a kit button opens, such as the agents menu; it stays inside the window and spans its width on narrow windows.",
     options: [
-      { name: "for", values: ["id"], default: "", description: "The id of the kit button that opens it; the popover sets aria-haspopup=\"dialog\" and aria-expanded on it." },
+      { name: "for", values: ["id"], default: "", description: 'The id of the kit button that opens it; the popover sets aria-haspopup="dialog" and aria-expanded on it.' },
       { name: "heading", values: ["text"], default: "", description: "The heading, which names the popover." },
       { name: "open", values: ["boolean"], default: "false", description: "Whether the popover shows." }
     ],
@@ -25,13 +21,12 @@ export class PrismPopover extends Base {
       "Escape closes it and returns focus to its button; a click outside or focus leaving it closes it."
     ]
   };
-
   constructor() {
     super();
-    this.onTriggerClick = () => (this.isOpen ? this.close({ focus: true }) : this.show());
+    this.onTriggerClick = () => this.isOpen ? this.close({ focus: true }) : this.show();
     this.onOutside = (event) => {
       const path = event.composedPath();
-      if (path.includes(this) || (this.trigger && path.includes(this.trigger))) return;
+      if (path.includes(this) || this.trigger && path.includes(this.trigger)) return;
       this.close();
     };
     this.onViewport = () => this.place();
@@ -45,11 +40,10 @@ export class PrismPopover extends Base {
     this.addEventListener("focusout", (event) => {
       const next = event.relatedTarget;
       if (!this.isOpen || !next) return;
-      if (this.contains(next) || (this.trigger && (next === this.trigger || this.trigger.contains(next)))) return;
+      if (this.contains(next) || this.trigger && (next === this.trigger || this.trigger.contains(next))) return;
       this.close();
     });
   }
-
   connectedCallback() {
     if (!this.body) this.build();
     setAttribute(this, "role", "dialog");
@@ -59,13 +53,11 @@ export class PrismPopover extends Base {
     this.bind();
     if (!this.trigger && this.hasAttribute("for")) requestAnimationFrame(() => this.bind());
   }
-
   disconnectedCallback() {
     this.unbind();
     this.stopListening();
     open.delete(this);
   }
-
   attributeChangedCallback(name) {
     if (!this.body) return;
     if (name === "for") this.bind();
@@ -74,7 +66,6 @@ export class PrismPopover extends Base {
       else this.close();
     } else this.sync();
   }
-
   build() {
     const id = uniqueId("prism-popover");
     this.headingElement = make(this, "h2", "prism-popover-heading", { id: `${id}-heading` });
@@ -84,17 +75,14 @@ export class PrismPopover extends Base {
     setAttribute(this, "aria-labelledby", this.headingElement.id);
     this.children$ = distribute(this, { default: this.body }, [this.headingElement, this.body]);
   }
-
   sync() {
     const heading = this.getAttribute("heading") ?? "";
     this.headingElement.textContent = heading;
     this.headingElement.hidden = !heading;
   }
-
   get isOpen() {
     return this.matches(":popover-open");
   }
-
   bind() {
     const id = this.getAttribute("for");
     const trigger = id ? this.getRootNode().getElementById?.(id) ?? this.ownerDocument.getElementById(id) : null;
@@ -107,19 +95,16 @@ export class PrismPopover extends Base {
     trigger.addEventListener("click", this.onTriggerClick);
     if (this.hasAttribute("open")) this.show({ focus: false });
   }
-
   unbind() {
     if (!this.trigger) return;
     this.trigger.removeEventListener("click", this.onTriggerClick);
     this.trigger = null;
   }
-
   setOpenAttribute(on) {
     this.changing = true;
     this.toggleAttribute("open", on);
     this.changing = false;
   }
-
   /** Opens the popover, closing any other open popover, and moves focus into it unless `focus` is false. */
   show({ focus = true } = {}) {
     for (const other of [...open]) if (other !== this) other.close();
@@ -138,7 +123,6 @@ export class PrismPopover extends Base {
     if (focus) (focusables(this.body)[0] ?? this).focus();
     emit(this, "prism-open", {});
   }
-
   /** Closes the popover, returning focus to its button when `focus` is set. */
   close({ focus = false } = {}) {
     const wasOpen = this.isOpen;
@@ -146,7 +130,6 @@ export class PrismPopover extends Base {
       try {
         this.hidePopover();
       } catch {
-        // A popover that left the document is already hidden.
       }
     }
     open.delete(this);
@@ -157,7 +140,6 @@ export class PrismPopover extends Base {
     if (focus || inside) this.trigger?.focus();
     if (wasOpen) emit(this, "prism-close", {});
   }
-
   listen() {
     if (this.listening) return;
     this.listening = true;
@@ -165,7 +147,6 @@ export class PrismPopover extends Base {
     globalThis.addEventListener("resize", this.onViewport);
     globalThis.addEventListener("scroll", this.onViewport, true);
   }
-
   stopListening() {
     if (!this.listening) return;
     this.listening = false;
@@ -173,7 +154,6 @@ export class PrismPopover extends Base {
     globalThis.removeEventListener("resize", this.onViewport);
     globalThis.removeEventListener("scroll", this.onViewport, true);
   }
-
   // Below its button, or above it when there is more room there, aligned to the button's end and inside the window; full width when the window is narrow.
   place() {
     if (!this.isOpen) return;
@@ -196,3 +176,6 @@ export class PrismPopover extends Base {
     this.style.setProperty("left", `${left}px`);
   }
 }
+export {
+  PrismPopover
+};

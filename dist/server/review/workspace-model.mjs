@@ -1,3 +1,4 @@
+// Generated from src/server/review/workspace-model.mts by scripts/native-build/compile.mjs.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
@@ -8,7 +9,7 @@ import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { historyOrder, readCoordinationState } from "../workflow/state.mjs";
 import { readIndexHistory } from "../workflow/index-history.mjs";
-import { inArtifactStore, isStoreWithoutCheckout, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
+import { inArtifactStore, isStoreWithoutCheckout, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig as readCheckoutConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
@@ -20,31 +21,21 @@ import { parseStoreJson } from "../workflow/store-json.mjs";
 import { recordChanges } from "./record-changes.mjs";
 import { relativeLinkTargets } from "./artifact-links.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
-
-// A workspace read through its store's clone alone has no checkout and so no configuration of its own: its defaults are no setting to warn about.
 async function readWorkflowConfig(projectRoot) {
   const config = await readCheckoutConfig(projectRoot);
   return await isStoreWithoutCheckout(projectRoot) ? { ...config, diagnostics: [] } : config;
 }
-
 const LIBRARY_LIMIT = 500;
 const RECENT_CHANGES_LIMIT = 20;
 const SLICE_FILE_LIMIT = 200;
-const UNRESOLVED = new Set(["OPEN", "IN PROGRESS", "REOPENED"]);
-// Each open page polls every 1.5 s, and one poll reads every record several times, so results are shared for a second.
-// The review server clears the cache after its own writes; writes from agents show up within the window.
-const MEMO_MS = 1000;
-const memo = new Map();
-
-// A workspace's page reads every scope's store artifacts; a checkout's own page reads its own paths, so the memo keeps the two apart.
+const UNRESOLVED = /* @__PURE__ */ new Set(["OPEN", "IN PROGRESS", "REOPENED"]);
+const MEMO_MS = 1e3;
+const memo = /* @__PURE__ */ new Map();
 const workspaceView = new AsyncLocalStorage();
 const inWorkspaceView = () => workspaceView.getStore() === true;
-
-/** Run reads as a workspace's page makes them, listing every scope's store artifacts by store location. */
-export function asWorkspaceView(run) {
+function asWorkspaceView(run) {
   return workspaceView.run(true, run);
 }
-
 function remember(raw, compute) {
   const key = `${inWorkspaceView() ? "workspace" : "checkout"}|${raw}`;
   const hit = memo.get(key);
@@ -54,49 +45,32 @@ function remember(raw, compute) {
   value.catch(() => memo.delete(key));
   return value;
 }
-
-export function forgetWorkspace() {
+function forgetWorkspace() {
   memo.clear();
 }
-
-export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "code", "agents"]);
+const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "code", "agents"]);
 const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", code: "Code", agents: "Agents" });
-// The Agents page's Show choices that an address can make: agents:<group>.
-export const AGENT_GROUP_PAGES = Object.freeze(["needs-you", "this-computer", "other", "expired"]);
-
-// A record is read where it lives: under .prism, or beside its Markdown until the first write moves it there.
+const AGENT_GROUP_PAGES = Object.freeze(["needs-you", "this-computer", "other", "expired"]);
 async function recordFile(root, key) {
   const located = await locateRecord(root, key);
-  // A record not yet moved is shown where it lies; any other keeps its .prism address, also when a record store holds its file.
   return located.legacy ?? located.path;
 }
-
-// With a record store, a descriptive artifact such as a requirement, an ADR, the glossary, or a plan file is read from the store, and a record where it lives.
 async function readText(root, relative) {
   try {
     if (relative.startsWith(STORE_REF)) {
       const held = await readStoreArtifactAt(root, relative.slice(STORE_REF.length));
       return held ? textOf(held.bytes) : null;
     }
-    // An unavailable store or a refused repository name shows the artifact as missing, never the checkout's file in its place.
     if (await inArtifactStore(root, relative)) return await readArtifactText(root, relative);
     return await readFile((await resolveRecordFile(root, relative)).target, "utf8");
   } catch (error) {
-    // An unavailable store, or a store artifact that cannot be read, shows as missing.
     if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code) || recordsUnavailable(error) || error?.name === "ArtifactError") return null;
     throw error;
   }
 }
-
-// A workspace's pages name each store artifact by its store location, store:<location>, and read the artifacts of every scope the store holds.
 const STORE_REF = "store:";
 const storeRef = (location) => `${STORE_REF}${location}`;
 const textOf = (bytes) => Buffer.isBuffer(bytes) ? bytes.toString("utf8") : String(bytes ?? "");
-
-/**
- * Every scope's artifacts that the project's store holds, as workspaceArtifacts lists them, or null outside a workspace's page, when the project reads no store, its store cannot be read,
- * or the store holds no artifacts folder yet, so that the checkout's own files list as before.
- */
 function workspaceListing(projectRoot) {
   if (!inWorkspaceView()) return Promise.resolve(null);
   return remember(`workspace-listing:${projectRoot}`, () => workspaceArtifacts(projectRoot).then((listed) => listed.held ? listed : null, (error) => {
@@ -104,29 +78,18 @@ function workspaceListing(projectRoot) {
     throw error;
   }));
 }
-
-/**
- * The artifacts of one store kind (requirements, adrs, plans, or glossary) of every scope whose file name passes accept, at most the library limit,
- * each as { ref, location, path, scope, label, rest, status }, with own, a test of whether a scope is the workspace or one of the checkout's repository; or null without a listing.
- */
 async function scopedArtifacts(projectRoot, kind, accept) {
   const listed = await workspaceListing(projectRoot);
   if (!listed) return null;
-  const entries = listed.entries.filter((entry) => entry.kind === kind && accept(path.posix.basename(entry.location)))
-    .slice(0, LIBRARY_LIMIT)
-    .map((entry) => ({ ...entry, ref: storeRef(entry.location), label: entry.scope.label }));
-  const own = (scope) => scope.kind === "workspace" || (listed.repository !== null && scope.repository === listed.repository);
+  const entries = listed.entries.filter((entry) => entry.kind === kind && accept(path.posix.basename(entry.location))).slice(0, LIBRARY_LIMIT).map((entry) => ({ ...entry, ref: storeRef(entry.location), label: entry.scope.label }));
+  const own = (scope) => scope.kind === "workspace" || listed.repository !== null && scope.repository === listed.repository;
   return { entries, own };
 }
-
-// The store ref of the artifact at a checkout path, among entries: the one in the given scope, else in the checkout's own scopes, else the workspace's, else the first; or null.
 function refAt(entries, own, file, label = null) {
   const holding = entries.filter((entry) => entry.path === file);
   if (!holding.length) return null;
   return (holding.find((entry) => entry.label === label) ?? holding.find((entry) => entry.scope.kind !== "workspace" && own(entry.scope)) ?? holding.find((entry) => entry.scope.kind === "workspace") ?? holding[0]).ref;
 }
-
-// Counts of entries by scope label.
 function countByScope(entries, labelOf = (entry) => entry.scope ?? entry.label) {
   const counts = {};
   for (const entry of entries) {
@@ -135,11 +98,11 @@ function countByScope(entries, labelOf = (entry) => entry.scope ?? entry.label) 
   }
   return counts;
 }
-
-// The store artifacts below a folder, up to depth folders down, in the order a walk of the folder lists them, or null when the project names no store.
 async function storeWalk(root, relative, depth, accept, limit) {
-  // An unavailable store or a refused repository name lists no artifact, and never the checkout's documents in their place.
-  const stored = await listStoreArtifacts(root, relative).catch((error) => { if (recordsUnavailable(error) || error?.name === "ArtifactError") return []; throw error; });
+  const stored = await listStoreArtifacts(root, relative).catch((error) => {
+    if (recordsUnavailable(error) || error?.name === "ArtifactError") return [];
+    throw error;
+  });
   if (stored === null) return null;
   const prefix = relative ? `${relative}/` : "";
   const files = [...new Set(stored.map((entry) => entry.path))].filter((file) => {
@@ -153,17 +116,18 @@ async function storeWalk(root, relative, depth, accept, limit) {
     return a.length - b.length;
   }).slice(0, limit);
 }
-
 async function walk(root, relative, depth, accept, results, limit) {
   if (await inArtifactStore(root, `${relative}/x`).catch(() => false)) {
     const stored = await storeWalk(root, relative, depth, accept, limit - results.length);
-    if (stored !== null) { results.push(...stored); return; }
+    if (stored !== null) {
+      results.push(...stored);
+      return;
+    }
   }
   let entries;
   try {
     entries = await readdir((await resolveRecordFile(root, relative)).target, { withFileTypes: true });
   } catch (error) {
-    // An unavailable record store or a refused repository name hides only the records, so human documents still list.
     if (["ENOENT", "ENOTDIR"].includes(error.code) || recordsUnavailable(error)) return;
     throw error;
   }
@@ -174,13 +138,11 @@ async function walk(root, relative, depth, accept, results, limit) {
     else if (entry.isFile() && accept(entry.name)) results.push(child);
   }
 }
-
 function headerFields(source) {
   const title = source.match(/^#\s+(.+?)\s*$/m)?.[1] ?? null;
   const field = (name) => source.match(new RegExp(`^${name}:\\s*(.+?)\\s*$`, "m"))?.[1] ?? null;
   return { title, status: field("Status"), created: field("Created"), approved: field("Approved") };
 }
-
 function reviewSummary(review) {
   const findings = Array.isArray(review?.findings) ? review.findings : [];
   const unresolved = findings.filter((finding) => UNRESOLVED.has(finding.status));
@@ -198,14 +160,10 @@ function reviewSummary(review) {
     currentWave: waves.at(-1) ? { id: waves.at(-1).id, mode: waves.at(-1).mode, accepted: Boolean(waves.at(-1).accepted) } : null
   };
 }
-
-const COORDINATION_FILES = new Set(["initiative.md"]);
-
-// A slice's human documents sit in its plans folder; its review and change map are records under .prism.
+const COORDINATION_FILES = /* @__PURE__ */ new Set(["initiative.md"]);
 async function sliceArtifacts(root, directory, slices, slug, id) {
   const folder = sliceFolder(directory, slices, slug);
   const files = [];
-  // The root slice shares the initiative directory, so it lists only its own top-level files.
   if (folder === directory) await walk(root, folder, 0, (name) => !COORDINATION_FILES.has(name), files, SLICE_FILE_LIMIT);
   else await walk(root, folder, 3, () => true, files, SLICE_FILE_LIMIT);
   const reviewPath = await recordFile(root, { kind: "review", initiative: id, slice: slug });
@@ -223,22 +181,21 @@ async function sliceArtifacts(root, directory, slices, slug, id) {
     folder,
     files,
     narrative: files.includes(`${folder}/slice.md`) ? `${folder}/slice.md` : null,
-    changeMap: (await isFile(root, changeMap)) ? changeMap : null,
+    changeMap: await isFile(root, changeMap) ? changeMap : null,
     review
   };
 }
-
-// An unavailable record store or a refused repository name lists no initiatives, so the pages still show human documents; the roadmap view reports the store error.
 function storedInitiatives(root) {
-  return listInitiatives(root).catch((error) => { if (recordsUnavailable(error)) return []; throw error; });
+  return listInitiatives(root).catch((error) => {
+    if (recordsUnavailable(error)) return [];
+    throw error;
+  });
 }
-
 async function initiativeFolders(root) {
   const ids = [];
-  for (const id of await storedInitiatives(root)) if ((await readText(root, await recordFile(root, { kind: "initiative", initiative: id }))) !== null) ids.push(id);
+  for (const id of await storedInitiatives(root)) if (await readText(root, await recordFile(root, { kind: "initiative", initiative: id })) !== null) ids.push(id);
   return ids;
 }
-
 async function initiativeFindings(root, config, id) {
   const totals = { unresolved: 0, blocking: 0 };
   const ledgers = await Promise.all((await listSliceRecords(root, id)).map((slice) => recordFile(root, { kind: "review", initiative: id, slice })));
@@ -250,16 +207,13 @@ async function initiativeFindings(root, config, id) {
       totals.unresolved += summary.unresolved;
       totals.blocking += summary.blocking;
     } catch {
-      // An unreadable review ledger is reported on the slice page, not counted here.
     }
   }
   return totals;
 }
-
-export function loadRoadmapView(projectRoot) {
+function loadRoadmapView(projectRoot) {
   return remember(`roadmap:${projectRoot}`, () => computeRoadmapView(projectRoot));
 }
-
 async function computeRoadmapView(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   let roadmap;
@@ -312,34 +266,24 @@ async function computeRoadmapView(projectRoot) {
     unlisted: (await initiativeFolders(projectRoot)).filter((id) => !listed.has(id))
   };
 }
-
-// Every live and lapsed claim of the roadmap's initiatives and of the unlisted ones, in one read, for the page's claim index, which names no holder.
-export function loadClaims(projectRoot) {
+function loadClaims(projectRoot) {
   return remember(`claims:${projectRoot}`, async () => ({ claims: (await loadHeldClaims(projectRoot)).claims.map(({ holder, ...claim }) => claim) }));
 }
-
-/** The same claims with each one's holder, for the agents list, which matches a launched session to the claims it holds and never shows the holder. */
-export function loadHeldClaims(projectRoot) {
+function loadHeldClaims(projectRoot) {
   return remember(`held-claims:${projectRoot}`, () => computeClaims(projectRoot));
 }
-
 async function computeClaims(projectRoot) {
   const roadmap = await loadRoadmapView(projectRoot);
   const listed = [...roadmap.items.map((item) => ({ id: item.id, title: item.title ?? item.id })), ...roadmap.unlisted.map((id) => ({ id, title: id }))];
   const initiatives = await Promise.all(listed.map(async ({ id, title }) => ({ id, title, claims: sliceClaims(await claimedSlices(projectRoot, id), { holders: true }) })));
   return { claims: initiatives.flatMap(({ id, title, claims }) => claims.map((claim) => ({ ref: `slice:${id}/${claim.slug}`, initiative: id, initiativeTitle: title, ...claim }))) };
 }
-
-export function loadInitiativeView(projectRoot, id) {
+function loadInitiativeView(projectRoot, id) {
   return remember(`initiative:${id}:${projectRoot}`, () => computeInitiativeView(projectRoot, id));
 }
-
-// Only initiative and slice pages read run records; loadInitiativeView stays free of them for navigation polls.
 function loadInitiativeRunTotals(projectRoot, initiative) {
   return remember(`run-totals:${initiative.id}:${projectRoot}`, () => readInitiativeRecordRunTotals(projectRoot, initiative.id, initiative));
 }
-
-// Initiative reads keep only live claims; the browser also shows a claim that lapsed without a release, as expiredClaim, until someone claims or releases the slice.
 async function withExpiredClaims(projectRoot, id, read) {
   const slices = read.loaded.record?.slices;
   if (!slices || typeof slices !== "object") return read;
@@ -350,35 +294,27 @@ async function withExpiredClaims(projectRoot, id, read) {
     const { claim } = parseClaim(slice, bytes);
     if (!claim || isLive(claim, now) || !Object.hasOwn(slices, slice) || slices[slice].claim) continue;
     copy ??= { ...slices };
-    copy[slice] = { ...slices[slice], expiredClaim: { holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
+    copy[slice] = { ...slices[slice], expiredClaim: { holder: claim.holder, label: claim.label, ...claim.host ? { host: claim.host } : {}, ...claim.model ? { model: claim.model } : {}, activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
   }
   return copy ? { ...read, loaded: { ...read.loaded, record: { ...read.loaded.record, slices: copy } } } : read;
 }
-
-// The claims of an initiative's slices: each slice's live claim, or the claim that lapsed without a release, with the slice's title, and with holders each claim's holder.
 function sliceClaims(slices, { holders = false } = {}) {
   const claims = [];
   for (const [slug, slice] of Object.entries(slices ?? {})) {
     const claim = slice?.claim ?? slice?.expiredClaim;
     if (!claim || typeof claim.label !== "string") continue;
-    claims.push({ slug, sliceTitle: slice.title ?? slug, ...(holders ? { holder: typeof claim.holder === "string" ? claim.holder : null } : {}), label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
+    claims.push({ slug, sliceTitle: slice.title ?? slug, ...holders ? { holder: typeof claim.holder === "string" ? claim.holder : null } : {}, label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
   }
   return claims;
 }
-
-// Where a slice stands for the lifecycle the review app draws: its status, whether it has an accepted design, and whether that design requires a review.
 function slicePhase(slice) {
   return { status: slice?.status ?? "not-started", designed: Boolean(slice?.design), review: slice?.design?.review ?? null };
 }
-
-// A roadmap card's claims and the phase facts of each leaf slice, in record order, for its per-slice progress bar.
 function sliceFacts(slices) {
   const entries = Object.entries(slices ?? {});
   const parents = new Set(entries.map(([, slice]) => slice?.parent).filter((parent) => typeof parent === "string"));
   return { claims: sliceClaims(slices), slices: entries.filter(([slug]) => !parents.has(slug)).map(([slug, slice]) => ({ slug, ...slicePhase(slice) })) };
 }
-
-// The slices of an initiative with their live and lapsed claims, or null when the record cannot be read.
 async function claimedSlices(projectRoot, id) {
   try {
     return (await withExpiredClaims(projectRoot, id, await readInitiativeWithClaims(projectRoot, id))).loaded.record?.slices ?? null;
@@ -386,21 +322,17 @@ async function claimedSlices(projectRoot, id) {
     return null;
   }
 }
-
-// The live claim whose holder resumes when a gate on a slice is answered: the slice's own, or a design claim on a scope above it.
 function holdingClaim(slices, slug) {
-  for (let owner = slug; owner !== null && owner !== undefined && slices && Object.hasOwn(slices, owner); owner = slices[owner].parent ?? null) {
+  for (let owner = slug; owner !== null && owner !== void 0 && slices && Object.hasOwn(slices, owner); owner = slices[owner].parent ?? null) {
     const claim = slices[owner].claim;
     if (claim && typeof claim.label === "string" && (owner === slug || claim.activity === "design")) return { label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null };
   }
   return null;
 }
-
 async function computeInitiativeView(projectRoot, id) {
   if (!SLUG_PATTERN.test(id ?? "")) throw new Error("The initiative identifier is invalid.");
   const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
-  // Each claimed slice carries its live claim, so initiative and slice pages can show who works on it.
   const { resolved, loaded } = await withExpiredClaims(projectRoot, id, await readInitiativeWithClaims(projectRoot, id));
   let state = null;
   try {
@@ -413,7 +345,6 @@ async function computeInitiativeView(projectRoot, id) {
     for (const slug of Object.keys(loaded.record.slices)) slices[slug] = await sliceArtifacts(projectRoot, resolved.directory, loaded.record.slices, slug, id);
   }
   const analysis = loaded.analysis;
-  // A design waits at its gate until the orchestrator accepts it, while the record still says not-started, so the browser shows that wait instead.
   const designReview = {};
   for (const gate of state?.pending ?? []) {
     if (gate && typeof gate === "object" && gate.kind === "visual-review" && gate.slice && loaded.record?.slices?.[gate.slice]?.status === "not-started") designReview[gate.slice] = gate.answer ? "answered" : "waiting";
@@ -442,21 +373,21 @@ async function computeInitiativeView(projectRoot, id) {
     config: { paths: config.paths }
   };
 }
-
 function supersedingItem(roadmap, id) {
   const decision = roadmap.items.find((item) => item.id === id)?.decision;
   if (decision?.kind !== "superseded" || !decision.by) return null;
   const by = roadmap.items.find((item) => item.id === decision.by);
   return { id: decision.by, title: by?.title ?? decision.by };
 }
-
-// A designed slice's change map is derived from its verified result; opening the slice starts a derivation the server has not finished yet.
 async function derivedChangeMapState(projectRoot, id, slug, design, verification) {
   if (!design?.baselineId || !verification?.passed || !verification.snapshotId || verification.designAcceptedAt !== design.acceptedAt) return null;
   const source = await readText(projectRoot, await recordFile(projectRoot, { kind: "change-map", initiative: id, slice: slug }));
   let document = null;
-  try { document = source === null ? null : parseStoreJson(source); }
-  catch { return { derived: false }; }
+  try {
+    document = source === null ? null : parseStoreJson(source);
+  } catch {
+    return { derived: false };
+  }
   if (document && !document.derived) return { derived: false };
   if (document?.derived?.runId === verification.id) return { derived: true, runId: verification.id, document };
   const key = { projectRoot, initiative: id, slice: slug };
@@ -466,23 +397,13 @@ async function derivedChangeMapState(projectRoot, id, slug, design, verification
   startChangeMapDerivation(key);
   return { derived: true, pending: true, runId: verification.id };
 }
-
-// A design claim on a scope covers every slice below it, while only the scope carries the claim.
 function coveringClaim(slices, slug) {
   for (let owner = slices[slug]?.parent ?? null; owner !== null && Object.hasOwn(slices, owner); owner = slices[owner].parent ?? null) {
     if (slices[owner].claim?.activity === "design") return { slug: owner, title: slices[owner].title, claim: slices[owner].claim };
   }
   return null;
 }
-
-// A view's source is shown in the page, so a source past this size is left out and the page says the view is too large to show.
 const VIEW_SOURCE_LIMIT = 256 * 1024;
-
-/**
- * The views that a slice folder's slice.md declares, in their declared order, each as { path, file, kind, question, clauses, source, contract },
- * where contract is { path, slice, title } of the governing contract, the slice that holds it, and that slice's title, or null when no slice.md above the folder has a Contract.
- * A declaration of an unknown kind is left out, since the design check refuses it.
- */
 async function folderViews(projectRoot, initiative, slug, plans) {
   const artifacts = initiative.slices[slug];
   if (!artifacts?.narrative) return [];
@@ -507,11 +428,6 @@ async function folderViews(projectRoot, initiative, slug, plans) {
     };
   }));
 }
-
-/**
- * The Views tab of a slice: the views of its own folder, and for a scope whose design planned slices, each planned slice with its title and views;
- * a planned slice that declares no views is listed in without by its title.
- */
 async function loadSliceViews(projectRoot, initiative, slug) {
   const plans = (await readCheckoutConfig(projectRoot).catch(() => null))?.paths?.plans?.replace(/\/+$/, "") ?? null;
   const own = await folderViews(projectRoot, initiative, slug, plans);
@@ -525,12 +441,7 @@ async function loadSliceViews(projectRoot, initiative, slug) {
   }
   return { own, slices, without };
 }
-
-/**
- * The view that a plan file's folder declares for it, as get_artifact returns it, with contract the governing contract as { path, slice, title, ref },
- * where ref is the page of the slice that holds the contract; or null for a file that its folder does not declare.
- */
-export async function loadDeclaredView(projectRoot, file) {
+async function loadDeclaredView(projectRoot, file) {
   const plans = (await readCheckoutConfig(projectRoot).catch(() => null))?.paths?.plans?.replace(/\/+$/, "") ?? null;
   if (!plans || typeof file !== "string") return null;
   const view = await declaredView(projectRoot, file, { plans }).catch(() => null);
@@ -541,9 +452,7 @@ export async function loadDeclaredView(projectRoot, file) {
   const title = slice ? initiative.record.slices[slice]?.title ?? slice : null;
   return { ...view, contract: { path: view.contract, slice, title, ref: slice ? `slice:${id}/${slice}` : null } };
 }
-
-// The published code index, when there is one, places each planned change in the code; the view never starts a build.
-export async function loadSliceView(projectRoot, id, slug, { intelligenceDirectories } = {}) {
+async function loadSliceView(projectRoot, id, slug, { intelligenceDirectories } = {}) {
   const initiative = await loadInitiativeView(projectRoot, id);
   if (!initiative.record || !Object.hasOwn(initiative.record.slices, slug)) throw new Error(`The initiative ${id} has no slice ${slug}.`);
   const slice = initiative.record.slices[slug];
@@ -551,9 +460,7 @@ export async function loadSliceView(projectRoot, id, slug, { intelligenceDirecto
   const verification = await latestVerification(projectRoot, id, slug).catch(() => null);
   const { document: changeMapDocument, ...changeMap } = await derivedChangeMapState(projectRoot, id, slug, slice.design, verification) ?? {};
   const totals = await loadInitiativeRunTotals(projectRoot, initiative);
-  // A failed read has no slice entries, and its initiative total is every measure unavailable.
-  const runTotals = totals === null ? null
-    : totals.slices[slug] ?? { slice: totals.initiative, waves: [], designRuns: [], withDescendants: totals.initiative };
+  const runTotals = totals === null ? null : totals.slices[slug] ?? { slice: totals.initiative, waves: [], designRuns: [], withDescendants: totals.initiative };
   return {
     id,
     initiativeTitle: initiative.roadmapItem?.title ?? initiative.record.slices[derived?.root]?.title ?? id,
@@ -570,26 +477,16 @@ export async function loadSliceView(projectRoot, id, slug, { intelligenceDirecto
     verification,
     code: await verifiedCode(projectRoot, id, slug).catch(() => null),
     changeMap: Object.keys(changeMap).length ? changeMap : null,
-    designView: await loadDesignView(projectRoot, id, slug, { changeMap: changeMapDocument ?? null, units: await readPublishedUnits(projectRoot, ...(intelligenceDirectories ? [intelligenceDirectories] : [])).catch(() => null) }).catch(() => null),
+    designView: await loadDesignView(projectRoot, id, slug, { changeMap: changeMapDocument ?? null, units: await readPublishedUnits(projectRoot, ...intelligenceDirectories ? [intelligenceDirectories] : []).catch(() => null) }).catch(() => null),
     titles: Object.fromEntries(Object.entries(initiative.record.slices).map(([key, value]) => [key, value.title])),
     views: await loadSliceViews(projectRoot, initiative, slug).catch(() => ({ own: [], slices: [], without: [] })),
     runTotals
   };
 }
-
-// A slice's presence line, such as "in progress in feature-x on vm, not pushed", which names where work is without showing any of it.
 function presenceText(where, branch, host, suffix) {
   return `in progress${branch ? ` in ${branch}` : ""}${where ?? (host ? ` on ${host}` : "")}${suffix}`;
 }
-
-/**
- * Work on a slice that exists only on the machine that holds it, as { source, branch, host, text } entries:
- * the latest verification run when no branch of the repository's code clone holds its verified commit or its checkout was dirty,
- * and the live implementation claim, which names its holder and host.
- * reachable(repository, commit) answers whether a branch of the repository's code clone holds a commit, or null where no clone says;
- * a run whose files the commit recorded at ship holds, which a branch holds, is pushed work and shows no presence.
- */
-export async function slicePresence(projectRoot, id, slug, { reachable = async () => null, shipped = null } = {}) {
+async function slicePresence(projectRoot, id, slug, { reachable = async () => null, shipped = null } = {}) {
   const presence = [];
   const run = await latestVerification(projectRoot, id, slug).catch(() => null);
   const checkout = run?.checkout;
@@ -606,17 +503,14 @@ export async function slicePresence(projectRoot, id, slug, { reachable = async (
   if (claim && typeof claim.label === "string" && claim.activity !== "design") presence.push({ source: "claim", branch: null, host: null, text: presenceText(` on ${claim.label}`, null, null, "") });
   return presence;
 }
-
-// What the initiatives say about the library: the leaf slices that cite each requirements file, and the initiatives whose slice designs link each decision.
 async function initiativeReferences(projectRoot, config) {
-  const references = new Map();
-  const decisions = new Map();
+  const references = /* @__PURE__ */ new Map();
+  const decisions = /* @__PURE__ */ new Map();
   const roadmap = await loadRoadmapView(projectRoot).catch(() => null);
   for (const id of await initiativeFolders(projectRoot)) {
     const { resolved, loaded } = await readInitiative(projectRoot, id).catch(() => ({ loaded: {} }));
     const slices = loaded.record?.slices ?? {};
     const initiativeTitle = roadmap?.items.find((item) => item.id === id)?.title ?? slices[loaded.analysis?.root]?.title ?? id;
-    // Split parents repeat their children's references, so only leaves count as assignments.
     const leaves = new Set(loaded.analysis?.leaves ?? []);
     for (const [slug, slice] of Object.entries(slices)) {
       if (leaves.has(slug)) {
@@ -637,11 +531,9 @@ async function initiativeReferences(projectRoot, config) {
   }
   return { references, decisions };
 }
-
-// The requirements files that a decision's Requirements section links, each with the sections it names, in the order the section names them.
 function decisionRequirements(source, file, directory) {
   const section = /^## Requirements\s*$([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(source ?? "")?.[1] ?? "";
-  const byFile = new Map();
+  const byFile = /* @__PURE__ */ new Map();
   for (const match of section.matchAll(/\[[^\]]*\]\(\s*<?([^)\s>]+)>?\s*\)/g)) {
     const [target] = relativeLinkTargets(`[x](${match[1]})`, file);
     if (!target || !directory || !target.startsWith(`${directory}/`)) continue;
@@ -649,13 +541,11 @@ function decisionRequirements(source, file, directory) {
     const anchor = match[1].split("#")[1];
     if (anchor && !byFile.get(target).includes(anchor)) byFile.get(target).push(anchor);
   }
-  return [...byFile].map(([path, anchors]) => ({ path, anchors }));
+  return [...byFile].map(([path2, anchors]) => ({ path: path2, anchors }));
 }
-
-export function loadLibrary(projectRoot, kind) {
+function loadLibrary(projectRoot, kind) {
   return remember(`library:${kind}:${projectRoot}`, () => computeLibrary(projectRoot, kind));
 }
-
 async function computeLibrary(projectRoot, kind) {
   const config = await readWorkflowConfig(projectRoot);
   const directory = kind === "requirements" ? config.paths.requirements : config.paths.adrs;
@@ -681,7 +571,6 @@ async function computeLibrary(projectRoot, kind) {
       topic: relative.includes("/") ? relative.split("/")[0] : null
     };
     if (kind === "requirements") {
-      // Each numbered section of a requirements file holds one requirement.
       entry.requirements = (source ?? "").match(/^## \d+\b/gm)?.length ?? 0;
       entry.assignedTo = references.get(file) ?? [];
     } else {
@@ -692,21 +581,14 @@ async function computeLibrary(projectRoot, kind) {
     }
     entries.push(entry);
   }
-  // A decision that another one supersedes names it, so the list can say what replaced it.
   if (kind === "decisions") {
     for (const entry of entries) entry.supersededBy = entries.filter((other) => other.supersedes.includes(entry.path)).map((other) => other.path);
   }
   return { kind, directory, entries };
 }
-
-/**
- * A workspace's library of every scope's requirements or decisions, each entry named by its store ref with its scope's label, and its links named by store refs:
- * an initiative's reference to a checkout path, and a decision's link to one, names the copy in the linking artifact's own scope, else the checkout's own scopes', else the workspace's.
- */
 async function scopedLibrary(projectRoot, kind, directory, config, { entries: listed, own }) {
   const { references, decisions } = await initiativeReferences(projectRoot, config);
   const requirements = kind === "decisions" ? (await scopedArtifacts(projectRoot, "requirements", (name) => name.endsWith(".md")))?.entries ?? [] : [];
-  // An initiative names a checkout path, so of several scopes holding that path only the one a read of the path from this checkout finds takes its references.
   const takes = (entry) => entry.path !== null && refAt(listed, own, entry.path) === entry.ref;
   const entries = [];
   for (const item of listed) {
@@ -738,30 +620,23 @@ async function scopedLibrary(projectRoot, kind, directory, config, { entries: li
   }
   return { kind, directory, entries, byScope: countByScope(entries) };
 }
-
-// The recorded statuses of a store's requirements or ADRs by path, or null when the project names no store or the store cannot be read.
 async function recordedStatuses(projectRoot, directory) {
-  if (!(await inArtifactStore(projectRoot, `${directory}/x.md`).catch(() => false))) return null;
+  if (!await inArtifactStore(projectRoot, `${directory}/x.md`).catch(() => false)) return null;
   const statuses = await storeArtifactStatuses(projectRoot, directory).catch(() => null);
   if (statuses === null) return null;
-  const byPath = new Map();
+  const byPath = /* @__PURE__ */ new Map();
   for (const entry of statuses) if (!byPath.has(entry.path)) byPath.set(entry.path, entry.status);
   return byPath;
 }
-
-/**
- * The glossary: path, the configured path; exists and content, of the glossary this checkout reads; and in a workspace, glossaries,
- * each scope's glossary as { ref, scope, terms }, terms being { term, text } in the order the file defines them.
- */
-export async function loadGlossary(projectRoot) {
+async function loadGlossary(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const glossaryPath = config.paths.glossary;
   const scoped = await scopedArtifacts(projectRoot, "glossary", () => true);
   if (scoped) {
     const glossaries = [];
     for (const item of scoped.entries) {
-      const content = await readText(projectRoot, item.ref);
-      if (content !== null) glossaries.push({ ref: item.ref, scope: item.label, terms: glossaryEntries(content).map(({ term, text }) => ({ term, text: text.replace(/\s+/g, " ").trim() })) });
+      const content2 = await readText(projectRoot, item.ref);
+      if (content2 !== null) glossaries.push({ ref: item.ref, scope: item.label, terms: glossaryEntries(content2).map(({ term, text }) => ({ term, text: text.replace(/\s+/g, " ").trim() })) });
     }
     const mine = glossaryPath ? await readText(projectRoot, glossaryPath) : null;
     return { path: glossaryPath, exists: glossaries.length > 0, content: mine, glossaries };
@@ -769,17 +644,14 @@ export async function loadGlossary(projectRoot) {
   const content = glossaryPath ? await readText(projectRoot, glossaryPath) : null;
   return { path: glossaryPath, exists: content !== null, content };
 }
-
-
 async function isFile(root, relative) {
   try {
-    if (await inArtifactStore(root, relative)) return (await readArtifactText(root, relative)) !== null;
+    if (await inArtifactStore(root, relative)) return await readArtifactText(root, relative) !== null;
     return (await stat((await resolveRecordFile(root, relative)).target)).isFile();
   } catch {
     return false;
   }
 }
-
 async function initiativeSnapshot(projectRoot, config, id, roadmapItem) {
   const directory = initiativeDirectory(config, id);
   const { loaded } = await readInitiative(projectRoot, id).catch(() => ({ loaded: { exists: false, valid: false, errors: [] } }));
@@ -796,11 +668,9 @@ async function initiativeSnapshot(projectRoot, config, id, roadmapItem) {
     title: roadmapItem?.title ?? slices[loaded.analysis?.root]?.title ?? id,
     record: loaded,
     state,
-    sliceTitle: (slug) => (slug && Object.hasOwn(slices, slug) ? slices[slug].title : slug ?? null)
+    sliceTitle: (slug) => slug && Object.hasOwn(slices, slug) ? slices[slug].title : slug ?? null
   };
 }
-
-// The newest question comes first, so the one just asked is on top; an unreadable time sorts last.
 function newestFirst(left, right) {
   const time = (value) => {
     const parsed = Date.parse(value ?? "");
@@ -808,55 +678,41 @@ function newestFirst(left, right) {
   };
   return time(right) - time(left) || 0;
 }
-
 function gateOrder(left, right) {
   return newestFirst(left.askedAt, right.askedAt);
 }
-
-export function loadAttention(projectRoot) {
+function loadAttention(projectRoot) {
   return remember(`attention:${projectRoot}`, () => computeAttention(projectRoot));
 }
-
-/**
- * Attention as its page shows it, with recentChanges: the shared Attention above, and the applied actions on store artifacts read again at each request,
- * because a store sync changes or removes their files at any time, so a file that a reader now leaves out never lingers in the list for the cache window.
- */
-export async function loadAttentionView(projectRoot) {
+async function loadAttentionView(projectRoot) {
   const { changes, ...attention } = await loadAttention(projectRoot);
   const recentChanges = [...changes, ...await artifactChanges(projectRoot)].sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
   return { ...attention, recentChanges };
 }
-
 async function computeAttention(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
   const items = new Map(roadmap.items.map((item) => [item.id, item]));
-  const ids = [...new Set([...roadmap.items.map((item) => item.id), ...(await storedInitiatives(projectRoot))])];
+  const ids = [.../* @__PURE__ */ new Set([...roadmap.items.map((item) => item.id), ...await storedInitiatives(projectRoot)])];
   const needsYou = [];
-  // Open questions of a shipped initiative can no longer be answered, so they list apart and never wait on the person.
   const shippedGates = [];
   const answered = [];
   const earlier = [];
   const watch = [];
   const claims = [];
-  // The person's applied actions: every initiative history of these records, this checkout's own index history, which no other checkout shares,
-  // and the status records and comment files of the store artifacts the checkout sees, read below.
   const changes = (await readIndexHistory(projectRoot).catch(() => ({ history: [] }))).history.map((entry) => ({ ...entry, initiative: null }));
-  const titles = new Map();
+  const titles = /* @__PURE__ */ new Map();
   for (const id of ids) {
     const snapshot = await initiativeSnapshot(projectRoot, config, id, items.get(id));
     const initiative = { id, title: snapshot.title };
     titles.set(id, snapshot.title);
     const state = snapshot.state;
-    // A shipped initiative's state is history, so its open questions can no longer be answered and no longer wait on the person.
     const shipped = await shippedDecision(projectRoot, id).catch(() => null);
-    // The Watch group lists every live and expired claim, read-only, beside the agent-side signals.
     const claimed = await claimedSlices(projectRoot, id);
     for (const claim of sliceClaims(claimed)) claims.push({ ...claim, initiative });
     if (state?.valid) {
-      // An answer in Recent changes names the question it answered, so the list can be reviewed on its own.
-      const questions = new Map([...(state.state?.pending ?? []), ...(state.state?.closed ?? [])].filter((gate) => gate && typeof gate === "object" && typeof gate.question === "string").map((gate) => [`gate:${id}/${gate.id}`, gate.question]));
-      for (const entry of state.state?.history ?? []) changes.push({ ...entry, initiative: id, ...(entry.action === "gate.answer" && questions.has(entry.target) ? { question: questions.get(entry.target) } : {}) });
+      const questions = new Map([...state.state?.pending ?? [], ...state.state?.closed ?? []].filter((gate) => gate && typeof gate === "object" && typeof gate.question === "string").map((gate) => [`gate:${id}/${gate.id}`, gate.question]));
+      for (const entry of state.state?.history ?? []) changes.push({ ...entry, initiative: id, ...entry.action === "gate.answer" && questions.has(entry.target) ? { question: questions.get(entry.target) } : {} });
     }
     if (state?.exists && !state.valid) {
       watch.push({ type: "record-problem", initiative, path: await recordFile(projectRoot, { kind: "state", initiative: id }), message: state.errors.join(" ") });
@@ -865,14 +721,12 @@ async function computeAttention(projectRoot) {
       if (entry && typeof entry === "object") {
         const artifacts = [];
         for (const artifact of entry.artifacts ?? []) {
-          // A gate asked before the records moved to .prism names a record by its old path.
           const key = await keyOfPath(projectRoot, artifact).catch(() => null);
           const current = key ? await recordFile(projectRoot, key).catch(() => artifact) : artifact;
           const available = await isFile(projectRoot, current);
-          artifacts.push({ path: current, available, ...(available ? { record: await describeRecord(projectRoot, config, current, key, snapshot) } : {}) });
+          artifacts.push({ path: current, available, ...available ? { record: await describeRecord(projectRoot, config, current, key, snapshot) } : {} });
         }
         const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, context: entry.context ?? null, options: entry.options ?? null, recommended: entry.recommended ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, phase: entry.slice && claimed && Object.hasOwn(claimed, entry.slice) ? slicePhase(claimed[entry.slice]) : null, claim: entry.slice ? holdingClaim(claimed, entry.slice) : null, artifacts, unavailable: shipped ? shippedActionReason(shipped) : null };
-        // A question whose every attached file is gone was likely overtaken by later work, so the page says it may no longer apply.
         if (!gate.answer && artifacts.length && artifacts.every((artifact) => !artifact.available)) gate.stale = true;
         (gate.answer ? answered : gate.unavailable ? shippedGates : needsYou).push(gate);
       } else if (typeof entry === "string") {
@@ -912,7 +766,7 @@ async function computeAttention(projectRoot) {
     if (item?.readyToShip && item.state !== "shipped") watch.push({ type: "ready-to-ship", initiative });
   }
   needsYou.push(...await approvalGates(projectRoot));
-  needsYou.sort((left, right) => (left.type === "gate") === (right.type === "gate") ? gateOrder(left, right) : left.type === "gate" ? -1 : 1);
+  needsYou.sort((left, right) => left.type === "gate" === (right.type === "gate") ? gateOrder(left, right) : left.type === "gate" ? -1 : 1);
   if (roadmap.error) needsYou.push({ type: "roadmap-problem", path: config.paths.roadmap, message: roadmap.error });
   else if (!roadmap.exists && config.paths.roadmap) needsYou.push({ type: "roadmap-missing", path: roadmap.recordPath });
   else if (roadmap.exists && !roadmap.valid) needsYou.push({ type: "roadmap-problem", path: roadmap.recordPath, message: roadmap.errors.join(" ") });
@@ -922,53 +776,51 @@ async function computeAttention(projectRoot) {
   const blockingOrder = (entry) => ({ "record-problem": 0, blocked: 1, "failed-verification": 2, findings: entry.blocking ? 3 : 4, "ready-to-ship": 5, active: 6 })[entry.type] ?? 7;
   watch.sort((left, right) => blockingOrder(left) - blockingOrder(right));
   answered.sort((left, right) => newestFirst(left.answer.answeredAt, right.answer.answeredAt));
-  // The newest closed questions come first, across initiatives, so the list stays short.
   earlier.sort((left, right) => newestFirst(left.closedAt, right.closedAt));
   const answeredThisWeek = recentlyAnswered(answered, earlier);
-  // The shared part keeps the newest changes of initiatives and the index; loadAttentionView adds the store artifacts' applied actions to them.
   const recent = changes.sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
-  // Live claims lapse first first, then expired ones, the most recently lapsed first.
   const ends = (claim) => Date.parse(claim.expiresAt ?? "") || 0;
   claims.sort((left, right) => Number(left.expired) - Number(right.expired) || (left.expired ? ends(right) - ends(left) : ends(left) - ends(right)));
   shippedGates.sort(gateOrder);
   return { needsYou, shippedGates, answered, earlier: earlier.slice(0, 20), watch, claims, changes: recent, gateCount: needsYou.filter((item) => item.type === "gate").length, answeredThisWeek };
 }
-
-/**
- * The pending approval gates of the requirements and ADRs the checkout sees, as Attention items of kind approval with the artifact's path and scope,
- * or none when the project names no store or the store cannot be read.
- */
 async function approvalGates(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   if ((config.workspace?.store ?? null) === null) return [];
   const gates = await pendingApprovalGates(projectRoot).catch(() => []);
-  // An id that another pending gate holds too names no single gate, so the card says why its answer is refused.
-  const holders = new Map();
+  const holders = /* @__PURE__ */ new Map();
   for (const gate of gates) holders.set(gate.id, (holders.get(gate.id) ?? 0) + 1);
   return gates.map((gate) => ({
-    type: "gate", id: gate.id, kind: "approval", status: gate.status, recorded: gate.recorded, question: gate.question, context: gate.context ?? null, options: null, recommended: null,
-    askedAt: gate.askedAt, answer: null, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope }, changed: gate.changed,
-    ...(holders.get(gate.id) > 1 ? { ambiguous: true } : {})
+    type: "gate",
+    id: gate.id,
+    kind: "approval",
+    status: gate.status,
+    recorded: gate.recorded,
+    question: gate.question,
+    context: gate.context ?? null,
+    options: null,
+    recommended: null,
+    askedAt: gate.askedAt,
+    answer: null,
+    initiative: null,
+    slice: null,
+    artifacts: [],
+    artifact: { path: gate.artifact.path, scope: gate.artifact.scope },
+    changed: gate.changed,
+    ...holders.get(gate.id) > 1 ? { ambiguous: true } : {}
   }));
 }
-
-// The applied actions on the store artifacts the checkout sees, approvals from their status records and comments from their own files, which belong to no initiative's history.
 async function artifactChanges(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   if ((config.workspace?.store ?? null) === null) return [];
   return appliedArtifactActions(projectRoot, { latest: RECENT_CHANGES_LIMIT }).catch(() => []);
 }
-
-// A slice's latest verification run when it failed, so Attention lists it until a later run passes or the slice is done.
 async function failedVerification(projectRoot, id, slug) {
   const run = await latestVerification(projectRoot, id, slug).catch(() => null);
   if (!run || run.passed !== false) return null;
   return { reason: run.reason ?? null, failingCount: Number.isInteger(run.failingCount) ? run.failingCount : null, finishedAt: run.finishedAt ?? null };
 }
-
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
-// The questions answered or closed in the last 7 days that the records keep, newest first by the time of the answer or the closing.
+const WEEK_MS = 7 * 24 * 60 * 60 * 1e3;
 function recentlyAnswered(answered, closed) {
   const since = Date.now() - WEEK_MS;
   const entries = [
@@ -978,27 +830,29 @@ function recentlyAnswered(answered, closed) {
   entries.sort((left, right) => newestFirst(left.at, right.at));
   return entries.map(({ gate, at }) => ({ id: gate.id ?? null, kind: gate.kind ?? null, question: gate.question, initiative: gate.initiative, slice: gate.slice ?? null, answer: gate.answer ?? null, reason: gate.reason ?? null, at }));
 }
-
-// Attention's kinds in the sidebar's order, each item of the page under one kind; a claim, an agent at work, and an answered question are none of them.
-export const ATTENTION_KINDS = Object.freeze(["questions", "findings", "failed", "blocked", "ready", "problems"]);
+const ATTENTION_KINDS = Object.freeze(["questions", "findings", "failed", "blocked", "ready", "problems"]);
 const ATTENTION_KIND_OF = Object.freeze({
-  gate: "questions", "pending-note": "questions",
-  findings: "findings", "failed-verification": "failed", blocked: "blocked", "ready-to-ship": "ready",
-  "record-problem": "problems", "roadmap-problem": "problems", "roadmap-missing": "problems", unlisted: "problems", "open-question": "problems", config: "problems"
+  gate: "questions",
+  "pending-note": "questions",
+  findings: "findings",
+  "failed-verification": "failed",
+  blocked: "blocked",
+  "ready-to-ship": "ready",
+  "record-problem": "problems",
+  "roadmap-problem": "problems",
+  "roadmap-missing": "problems",
+  unlisted: "problems",
+  "open-question": "problems",
+  config: "problems"
 });
-// Attention's work entries listed before the row that shows the rest.
 const ATTENTION_WORK_SHOWN = 3;
-
-/** Every item of Attention with its kind, in the page's order: what needs the person, then what to watch. */
-export function attentionItems(attention) {
+function attentionItems(attention) {
   return [...attention.needsYou, ...attention.watch].flatMap((item) => ATTENTION_KIND_OF[item.type] ? [{ kind: ATTENTION_KIND_OF[item.type], item }] : []);
 }
-
-// Attention's sidebar: the count of every kind, the initiatives with items, most first and ties by title, and this week's answered questions.
 function attentionPlace(attention) {
   const items = attentionItems(attention);
   const kinds = Object.fromEntries(ATTENTION_KINDS.map((kind) => [kind, items.filter((entry) => entry.kind === kind).length]));
-  const work = new Map();
+  const work = /* @__PURE__ */ new Map();
   for (const { item } of items) {
     if (!item.initiative?.id) continue;
     const entry = work.get(item.initiative.id) ?? { id: item.initiative.id, title: item.initiative.title ?? item.initiative.id, count: 0 };
@@ -1008,27 +862,23 @@ function attentionPlace(attention) {
   const ordered = [...work.values()].sort((left, right) => right.count - left.count || left.title.localeCompare(right.title) || left.id.localeCompare(right.id));
   return { everything: items.length, questions: attention.gateCount, kinds, work: ordered, shown: ATTENTION_WORK_SHOWN, answered: attention.answeredThisWeek.length };
 }
-
-// A filtered page of Attention: the items of one kind, of one initiative, or the roadmap's open questions, with the filter's name and the total it is part of.
 async function attentionPage(projectRoot, page) {
   const attention = await loadAttention(projectRoot);
   if (page === "answered") return { answered: attention.answeredThisWeek };
   const items = attentionItems(attention);
   const work = /^work\/(.+)$/.exec(page);
-  // The roadmap's open questions are problems of the roadmap, which the Roadmap page's header counts and leads here.
-  const shown = work
-    ? items.filter(({ item }) => item.initiative?.id === work[1])
-    : page === "roadmap-questions" ? items.filter(({ item }) => item.type === "open-question") : items.filter((entry) => entry.kind === page);
+  const shown = work ? items.filter(({ item }) => item.initiative?.id === work[1]) : page === "roadmap-questions" ? items.filter(({ item }) => item.type === "open-question") : items.filter((entry) => entry.kind === page);
   let label = PLACE_PAGE_LABELS.attention[page];
   if (work) label = shown[0]?.item.initiative.title ?? (await loadRoadmapView(projectRoot).catch(() => ({ items: [] }))).items.find((item) => item.id === work[1])?.title ?? work[1];
   return { filter: { key: page, label, total: items.length, items: shown } };
 }
-
-// What a gate's attached record is, so the page names it by title and kind with the counts that matter for the answer.
 async function describeRecord(projectRoot, config, artifactPath, key, snapshot) {
   const json = async () => {
-    try { return parseStoreJson(await readText(projectRoot, artifactPath) ?? "null"); }
-    catch { return null; }
+    try {
+      return parseStoreJson(await readText(projectRoot, artifactPath) ?? "null");
+    } catch {
+      return null;
+    }
   };
   if (key?.kind === "change-map") {
     const document = await json();
@@ -1040,7 +890,6 @@ async function describeRecord(projectRoot, config, artifactPath, key, snapshot) 
   if (artifactPath.endsWith("/slice.md")) {
     const slug = Object.keys(slices).find((name) => `${sliceFolder(snapshot.directory, slices, name)}/slice.md` === artifactPath);
     if (slug) {
-      // A slice of a split scope counts the scope's clauses its Changes serve, as its page lists them.
       const view = await loadDesignView(projectRoot, snapshot.id, slug).catch(() => null);
       const clauses = view ? view.clauses.length : contractClauses(await readText(projectRoot, artifactPath) ?? "").length;
       return { kind: "design", title: slices[slug].title, clauses, frozenTests: slices[slug].design?.frozenTests?.length ?? 0 };
@@ -1053,10 +902,8 @@ async function describeRecord(projectRoot, config, artifactPath, key, snapshot) 
   }
   return null;
 }
-
-// The glossary's terms with the text that defines each: a heading's term owns the lines up to the next heading, a table row's term the row's other cells.
-export function glossaryEntries(content) {
-  const entries = new Map();
+function glossaryEntries(content) {
+  const entries = /* @__PURE__ */ new Map();
   let open = null;
   for (const line of (content ?? "").split("\n")) {
     const heading = /^#{2,4}\s+(.+?)\s*$/.exec(line);
@@ -1076,14 +923,10 @@ export function glossaryEntries(content) {
   }
   return [...entries.values()].slice(0, LIBRARY_LIMIT);
 }
-
 function glossaryTerms(content) {
   return glossaryEntries(content).map((entry) => entry.term);
 }
-
 const DIAGRAM_DEPTH = 6;
-
-// What a diagram draws, read from its source: Prism's code view of a slice, or the PlantUML kind that its opening line or its statements name.
 const DIAGRAM_OPENINGS = Object.freeze({ mindmap: "Mind map", wbs: "Work breakdown", gantt: "Gantt chart", salt: "Wireframe", json: "Data", yaml: "Data" });
 const DIAGRAM_STATEMENTS = Object.freeze([
   ["C4", /^\s*(?:!include\S*\s+<?C4|(?:Person|System|Container|Component)(?:_Ext)?\s*\()/m],
@@ -1100,21 +943,13 @@ function diagramKind(file, source) {
   if (opening && DIAGRAM_OPENINGS[opening]) return DIAGRAM_OPENINGS[opening];
   return DIAGRAM_STATEMENTS.find(([, pattern]) => pattern.test(source ?? ""))?.[0] ?? "Diagram";
 }
-
-// A diagram's name: the name after @startuml, or else its file name without .puml.
 function diagramName(file, source) {
   const named = /^\s*@startuml[ \t]+([^\r\n]+?)\s*$/m.exec(source ?? "")?.[1]?.replace(/^"(.*)"$/, "$1").trim();
   return named && !named.startsWith("(") ? named : path.posix.basename(file, ".puml");
 }
-
-/**
- * Every PlantUML file of the plans folder and the decisions folder, by name and owner, ordered by owner and then name:
- * a slice's folder belongs to `<initiative> · <slice>`, an initiative's folder to the initiative, and a decisions folder file to the decision beside it.
- */
-export function loadDiagrams(projectRoot) {
+function loadDiagrams(projectRoot) {
   return remember(`diagrams:${projectRoot}`, () => computeDiagrams(projectRoot));
 }
-
 async function computeDiagrams(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const isDiagram = (name) => name.toLowerCase().endsWith(".puml");
@@ -1124,7 +959,7 @@ async function computeDiagrams(projectRoot) {
   if (plans) {
     const files = [];
     await walk(projectRoot, plans, DIAGRAM_DEPTH, isDiagram, files, LIBRARY_LIMIT);
-    const owners = new Map();
+    const owners = /* @__PURE__ */ new Map();
     for (const file of files) {
       const [id, segment] = file.slice(plans.length + 1).split("/");
       const folder = path.posix.dirname(file);
@@ -1133,13 +968,13 @@ async function computeDiagrams(projectRoot) {
         continue;
       }
       if (!owners.has(id)) {
-        const known = SLUG_PATTERN.test(id) && await knownInitiative(projectRoot, id).catch(() => false);
-        owners.set(id, known ? await initiativeTree(projectRoot, id).then(({ scope, view }) => ({ title: scope.title, slices: view.record?.slices ?? {}, known: true })).catch(() => ({ title: id, slices: {} })) : { title: id, slices: {} });
+        const known2 = SLUG_PATTERN.test(id) && await knownInitiative(projectRoot, id).catch(() => false);
+        owners.set(id, known2 ? await initiativeTree(projectRoot, id).then(({ scope, view }) => ({ title: scope.title, slices: view.record?.slices ?? {}, known: true })).catch(() => ({ title: id, slices: {} })) : { title: id, slices: {} });
       }
       const owner = owners.get(id);
       const slice = file.split("/").length > plans.split("/").length + 2 && owner.slices[segment] && owner.slices[segment].parent !== null ? owner.slices[segment] : null;
       const known = owner.known === true;
-      diagrams.push({ file, owner: slice ? { kind: "slice", title: `${owner.title} · ${slice.title}` } : { kind: "initiative", title: owner.title }, ownerRef: known ? (slice ? `slice:${id}/${segment}` : `initiative:${id}`) : null });
+      diagrams.push({ file, owner: slice ? { kind: "slice", title: `${owner.title} \xB7 ${slice.title}` } : { kind: "initiative", title: owner.title }, ownerRef: known ? slice ? `slice:${id}/${segment}` : `initiative:${id}` : null });
     }
   }
   const adrs = config.paths.adrs;
@@ -1160,16 +995,11 @@ async function computeDiagrams(projectRoot) {
   named.sort((left, right) => left.owner.title.localeCompare(right.owner.title) || left.name.localeCompare(right.name) || left.path.localeCompare(right.path));
   return named;
 }
-
-/**
- * A workspace's diagrams of every scope's plans and decisions folders, each named by its store ref with its scope's label;
- * a plan's diagram belongs to its initiative or slice when this checkout knows the initiative, and a decision's to the decision beside it in its scope.
- */
 async function scopedDiagrams(projectRoot, config, isDiagram) {
   const plans = (await scopedArtifacts(projectRoot, "plans", isDiagram))?.entries ?? [];
   const adrs = (await scopedArtifacts(projectRoot, "adrs", isDiagram))?.entries ?? [];
   const decisions = new Map((await loadLibrary(projectRoot, "decisions")).entries.map((entry) => [entry.path, entry.title]));
-  const owners = new Map();
+  const owners = /* @__PURE__ */ new Map();
   const diagrams = [];
   for (const item of plans) {
     const [id, segment] = item.rest.split("/");
@@ -1178,13 +1008,13 @@ async function scopedDiagrams(projectRoot, config, isDiagram) {
       continue;
     }
     if (!owners.has(id)) {
-      const known = SLUG_PATTERN.test(id) && await knownInitiative(projectRoot, id).catch(() => false);
-      owners.set(id, known ? await initiativeTree(projectRoot, id).then(({ scope, view }) => ({ title: scope.title, slices: view.record?.slices ?? {}, known: true })).catch(() => ({ title: id, slices: {} })) : { title: id, slices: {} });
+      const known2 = SLUG_PATTERN.test(id) && await knownInitiative(projectRoot, id).catch(() => false);
+      owners.set(id, known2 ? await initiativeTree(projectRoot, id).then(({ scope, view }) => ({ title: scope.title, slices: view.record?.slices ?? {}, known: true })).catch(() => ({ title: id, slices: {} })) : { title: id, slices: {} });
     }
     const owner = owners.get(id);
     const slice = item.rest.split("/").length > 2 && owner.slices[segment] && owner.slices[segment].parent !== null ? owner.slices[segment] : null;
     const known = owner.known === true;
-    diagrams.push({ item, owner: slice ? { kind: "slice", title: `${owner.title} · ${slice.title}` } : { kind: "initiative", title: owner.title }, ownerRef: known ? (slice ? `slice:${id}/${segment}` : `initiative:${id}`) : null });
+    diagrams.push({ item, owner: slice ? { kind: "slice", title: `${owner.title} \xB7 ${slice.title}` } : { kind: "initiative", title: owner.title }, ownerRef: known ? slice ? `slice:${id}/${segment}` : `initiative:${id}` : null });
   }
   for (const item of adrs) {
     const decision = storeRef(item.location.replace(/\.puml$/i, ".md"));
@@ -1197,12 +1027,9 @@ async function scopedDiagrams(projectRoot, config, isDiagram) {
   named.sort((left, right) => left.owner.title.localeCompare(right.owner.title) || left.name.localeCompare(right.name) || left.path.localeCompare(right.path));
   return named;
 }
-
 const SEARCH_KINDS = Object.freeze(["requirement", "decision", "glossary-term", "diagram"]);
 const SEARCH_MINIMUM = 2;
 const SEARCH_LIMIT = 20;
-
-// Every record the Knowledge search reads, by kind, with the text it matches against.
 async function searchableRecords(projectRoot) {
   const records = Object.fromEntries(SEARCH_KINDS.map((kind) => [kind, []]));
   for (const [kind, library] of [["requirement", "requirements"], ["decision", "decisions"]]) {
@@ -1214,12 +1041,7 @@ async function searchableRecords(projectRoot) {
   for (const diagram of await loadDiagrams(projectRoot)) records.diagram.push({ title: diagram.name, ref: diagram.path, text: diagram.text });
   return records;
 }
-
-/**
- * The Knowledge search: the records whose title or text holds every word of `query`, ignoring case, grouped by kind in a fixed order,
- * at most 20 per group with the titles that hold the whole text first, and no group for a kind without a match or for text shorter than two characters.
- */
-export async function searchRecords(projectRoot, query) {
+async function searchRecords(projectRoot, query) {
   const text = String(query ?? "").trim();
   if (text.length < SEARCH_MINIMUM) return { query: text, groups: [] };
   const words = text.toLowerCase().split(/\s+/).filter(Boolean);
@@ -1228,7 +1050,8 @@ export async function searchRecords(projectRoot, query) {
   const groups = [];
   for (const kind of SEARCH_KINDS) {
     const matches = records[kind].filter((record) => {
-      const haystack = `${record.title}\n${record.text}`.toLowerCase();
+      const haystack = `${record.title}
+${record.text}`.toLowerCase();
       return words.every((word) => haystack.includes(word));
     });
     if (!matches.length) continue;
@@ -1238,16 +1061,14 @@ export async function searchRecords(projectRoot, query) {
   }
   return { query: text, groups };
 }
-
-// `libraries` may hold the requirements and decisions libraries already read, each as { value } or the { error } reading it failed with.
 async function searchIndex(projectRoot, config, roadmap, glossary, libraries = {}) {
   const entries = [];
   const titles = new Map(roadmap.items.map((item) => [item.id, item.title]));
-  for (const item of roadmap.items) entries.push({ ref: `initiative:${item.id}`, label: item.title, kind: "initiative", detail: `${item.band} · ${item.state}` });
+  for (const item of roadmap.items) entries.push({ ref: `initiative:${item.id}`, label: item.title, kind: "initiative", detail: `${item.band} \xB7 ${item.state}` });
   for (const id of await initiativeFolders(projectRoot)) {
     if (!titles.has(id)) entries.push({ ref: `initiative:${id}`, label: id, kind: "initiative", detail: "not on the roadmap" });
     const { loaded } = await readInitiative(projectRoot, id).catch(() => ({ loaded: {} }));
-    for (const [slug, slice] of Object.entries(loaded.record?.slices ?? {})) entries.push({ ref: `slice:${id}/${slug}`, label: slice.title, kind: "slice", detail: `${titles.get(id) ?? id} · ${slice.status}` });
+    for (const [slug, slice] of Object.entries(loaded.record?.slices ?? {})) entries.push({ ref: `slice:${id}/${slug}`, label: slice.title, kind: "slice", detail: `${titles.get(id) ?? id} \xB7 ${slice.status}` });
   }
   for (const kind of ["requirements", "decisions"]) {
     const library = libraries[kind];
@@ -1257,13 +1078,7 @@ async function searchIndex(projectRoot, config, roadmap, glossary, libraries = {
   for (const term of glossaryTerms(glossary.content)) entries.push({ ref: "glossary", label: term, kind: "term", detail: "Glossary" });
   return entries;
 }
-
-/**
- * Every record file by kind, title, and project-relative path: each requirements file, each decision, the glossary file when it exists, and each diagram,
- * with the folders and files that hold them for reading their history.
- * `loaded` may hold the workflow config, the glossary, the diagrams, and the requirements and decisions libraries a caller already read, which are not read again.
- */
-export async function recordFiles(projectRoot, loaded = {}) {
+async function recordFiles(projectRoot, loaded = {}) {
   const config = loaded.config ?? await readWorkflowConfig(projectRoot);
   const records = [];
   for (const [kind, library] of [["requirement", "requirements"], ["decision", "decisions"]]) {
@@ -1276,20 +1091,14 @@ export async function recordFiles(projectRoot, loaded = {}) {
   const pathspecs = [...new Set([config.paths.requirements, config.paths.adrs, config.paths.glossary, config.paths.plans].filter(Boolean))];
   return { records, pathspecs };
 }
-
-/** Changed this week: the record files changed in the last 7 days, read from Git on each call, or why Git cannot tell. */
-export async function loadRecordChanges(projectRoot, loaded = {}) {
+async function loadRecordChanges(projectRoot, loaded = {}) {
   const { records, pathspecs } = await recordFiles(projectRoot, loaded);
   return recordChanges(projectRoot, records.map(({ kind, title, ref }) => ({ kind, title, ref })), pathspecs);
 }
-
-// Knowledge's entry points: the count of Changed this week only while Git can date the records; Touched by my work depends on the slice the page has open.
 async function knowledgeEntries(projectRoot, loaded) {
   const changes = await loadRecordChanges(projectRoot, loaded).catch(() => null);
   return changes?.available ? { changed: changes.records.length } : {};
 }
-
-// Every leaf slice in progress, by initiative, for Touched by my work when no slice is open.
 async function slicesInProgress(projectRoot) {
   const roadmap = await loadRoadmapView(projectRoot);
   const ids = [...roadmap.items.map((item) => item.id), ...roadmap.unlisted];
@@ -1305,11 +1114,9 @@ async function slicesInProgress(projectRoot) {
   }
   return slices;
 }
-
-export function loadNavigation(projectRoot) {
+function loadNavigation(projectRoot) {
   return remember(`navigation:${projectRoot}`, () => computeNavigation(projectRoot));
 }
-
 async function computeNavigation(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
@@ -1320,7 +1127,6 @@ async function computeNavigation(projectRoot) {
     ...roadmap.unlisted.map((id) => ({ id, title: id, band: null, state: "unlisted" }))
   ].map(async (item) => ({ ...item, place: await initiativePlace(projectRoot, item.id) })));
   const listedInitiatives = await Promise.all(placed.map(withSliceTree(projectRoot)));
-  // The libraries and diagrams are read once for their counts, the search index, and Changed this week; a library that cannot be read still fails the search index.
   const settled = (promise) => promise.then((value) => ({ value }), (error) => ({ error }));
   const read = Object.fromEntries(await Promise.all(["requirements", "decisions"].map(async (kind) => [kind, await settled(loadLibrary(projectRoot, kind))])));
   const readable = Object.fromEntries(Object.entries(read).map(([kind, result]) => [kind, result.value ?? { entries: [] }]));
@@ -1335,12 +1141,12 @@ async function computeNavigation(projectRoot) {
       terms: glossary.glossaries ? glossary.glossaries.reduce((sum, one) => sum + one.terms.length, 0) : glossaryTerms(glossary.content).length,
       diagrams: diagrams.length,
       // In a workspace, each kind's count by scope label, which the scope filter sums.
-      ...(glossary.glossaries ? { byScope: {
+      ...glossary.glossaries ? { byScope: {
         requirements: readable.requirements.byScope ?? {},
         decisions: readable.decisions.byScope ?? {},
         terms: Object.fromEntries(glossary.glossaries.map((one) => [one.scope, one.terms.length])),
         diagrams: countByScope(diagrams)
-      } } : {})
+      } } : {}
     },
     diagnostics: config.diagnostics,
     index: await searchIndex(projectRoot, config, roadmap, glossary, read),
@@ -1348,30 +1154,20 @@ async function computeNavigation(projectRoot) {
     places: { attention: attentionPlace(attention), work: await workGroups(projectRoot, listedInitiatives), history: historyEntries(roadmap), knowledge: await knowledgeEntries(projectRoot, { config, glossary, diagrams, ...readable }) }
   };
 }
-
-// History's entries: every initiative with a shipped or superseded decision, newest decision first, with what superseded it when the decision names it.
 function historyEntries(roadmap) {
   const settled = (roadmap.items ?? []).filter((item) => item.decision?.kind === "shipped" || item.decision?.kind === "superseded");
   const time = (item) => {
     const value = Date.parse(item.decision.at ?? "");
     return Number.isFinite(value) ? value : -Infinity;
   };
-  return settled
-    .map((item, order) => ({ item, order }))
-    .sort((left, right) => time(right.item) - time(left.item) || left.order - right.order)
-    .map(({ item }) => ({ id: item.id, title: item.title, decision: item.decision.kind, at: item.decision.at ?? null, by: item.decision.kind === "superseded" ? item.decision.by ?? null : null }));
+  return settled.map((item, order) => ({ item, order })).sort((left, right) => time(right.item) - time(left.item) || left.order - right.order).map(({ item }) => ({ id: item.id, title: item.title, decision: item.decision.kind, at: item.decision.at ?? null, by: item.decision.kind === "superseded" ? item.decision.by ?? null : null }));
 }
-
-// Work's groups in their order, each initiative once and an empty group left out: work not on the roadmap, then blocked work that nobody is
-// working on, then the roadmap's in-progress work, and every other designed, unshipped initiative; groups keep the roadmap's order, and
-// initiatives not on the roadmap go by title.
 const WORK_GROUPS = Object.freeze([
   { key: "in-progress", label: "In progress" },
   { key: "blocked", label: "Blocked" },
   { key: "designed", label: "Designed, not started" },
   { key: "unlisted", label: "Not on the roadmap" }
 ]);
-
 async function workGroups(projectRoot, initiatives) {
   const live = new Set((await loadClaims(projectRoot).catch(() => ({ claims: [] }))).claims.filter((claim) => !claim.expired).map((claim) => claim.ref));
   const members = new Map(WORK_GROUPS.map((group) => [group.key, []]));
@@ -1387,9 +1183,6 @@ async function workGroups(projectRoot, initiatives) {
   members.get("unlisted").sort((left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id));
   return { groups: WORK_GROUPS.filter((group) => members.get(group.key).length).map((group) => ({ ...group, initiatives: members.get(group.key) })) };
 }
-
-// The place an initiative's pages belong to: History once it has a shipped or superseded decision, Work while it has an initiative record,
-// and the Roadmap while it has neither.
 async function initiativePlace(projectRoot, id) {
   const view = await loadInitiativeView(projectRoot, id).catch(() => null);
   const roadmap = view ? null : await loadRoadmapView(projectRoot);
@@ -1397,10 +1190,7 @@ async function initiativePlace(projectRoot, id) {
   if (decision === "shipped" || decision === "superseded") return "history";
   return view?.exists ? "work" : "roadmap";
 }
-
-// The sidebar nests the slices of each initiative that is being worked on, so a planned, in-progress, or unlisted initiative and every initiative of Work carries its slice tree.
-const NAVIGATION_TREE_STATES = new Set(["planned", "in-progress", "unlisted"]);
-
+const NAVIGATION_TREE_STATES = /* @__PURE__ */ new Set(["planned", "in-progress", "unlisted"]);
 function withSliceTree(projectRoot) {
   return async (item) => {
     if (!NAVIGATION_TREE_STATES.has(item.state) && item.place !== "work") return item;
@@ -1408,11 +1198,9 @@ function withSliceTree(projectRoot) {
     return scope ? { ...item, title: item.state === "unlisted" ? scope.title : item.title, tree: scope.tree } : item;
   };
 }
-
 function under(directory, file) {
   return Boolean(directory) && file.startsWith(`${directory}/`);
 }
-
 async function initiativeTree(projectRoot, id) {
   const view = await loadInitiativeView(projectRoot, id);
   const title = view.roadmapItem?.title ?? view.record?.slices?.[view.derived?.root]?.title ?? id;
@@ -1428,33 +1216,24 @@ async function initiativeTree(projectRoot, id) {
   visit(view.derived.root, 0);
   return { scope, view };
 }
-
 function sliceTrail(view, slug, id) {
   const trail = [];
-  // The root slice is the initiative itself, so the initiative crumb already stands for it.
   for (let owner = view.record.slices[slug]?.parent ?? null; owner !== null && owner !== view.derived?.root; owner = view.record.slices[owner].parent) trail.unshift({ ref: `slice:${id}/${owner}`, label: view.record.slices[owner].title });
   trail.push({ ref: `slice:${id}/${slug}`, label: view.record.slices[slug].title });
   return trail;
 }
-
 async function libraryScope(projectRoot, section) {
   const library = await loadLibrary(projectRoot, section);
-  return { kind: "library", section, entries: library.entries.map((entry) => ({ path: entry.path, title: entry.title, status: entry.status, topic: entry.topic, ...(entry.scope ? { scope: entry.scope } : {}) })) };
+  return { kind: "library", section, entries: library.entries.map((entry) => ({ path: entry.path, title: entry.title, status: entry.status, topic: entry.topic, ...entry.scope ? { scope: entry.scope } : {} })) };
 }
-
 const PLACE_LABELS = Object.freeze({ attention: "Attention", work: "Work", roadmap: "Roadmap", knowledge: "Knowledge", history: "History" });
-// The pages of Attention's and Knowledge's own addresses, by the part after their place's prefix.
 const PLACE_PAGE_LABELS = Object.freeze({
   attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", answered: "Answered in the last 7 days", "roadmap-questions": "Roadmap questions" },
   knowledge: { touched: "Touched by my work", changed: "Changed this week", diagrams: "Diagrams" }
 });
-
-// The crumb that starts the trail of a page of a place: the place's name, carrying the place, and the page itself for the place's own entry page.
 function placeCrumb(place, ref = null) {
   return { ref, label: PLACE_LABELS[place], place };
 }
-
-// The page of an initiative or a slice, a file of its plans folder, or one of its Prism records, with the trail from its place through its slices.
 async function initiativeContext(projectRoot, id, { slug = null, file = null } = {}) {
   const { scope, view } = await initiativeTree(projectRoot, id);
   const place = await initiativePlace(projectRoot, id);
@@ -1464,20 +1243,15 @@ async function initiativeContext(projectRoot, id, { slug = null, file = null } =
   if (file) trail.push(file);
   return { trail, scope: { ...scope, current: known }, place };
 }
-
 async function knownInitiative(projectRoot, id) {
-  if ((await readText(projectRoot, await recordFile(projectRoot, { kind: "initiative", initiative: id }))) !== null) return true;
+  if (await readText(projectRoot, await recordFile(projectRoot, { kind: "initiative", initiative: id })) !== null) return true;
   const roadmap = await loadRoadmapView(projectRoot).catch(() => null);
   return Boolean(roadmap?.items?.some((item) => item.id === id));
 }
-
-// A page of a shipped initiative carries its shipped history with the label the page shows, or null when the initiative has not shipped.
 async function pageHistory(projectRoot, initiative) {
   const history = await shippedHistory(projectRoot, initiative).catch(() => null);
   return history ? { ...history, label: shippedHistoryLabel(initiative, { at: history.shippedAt }) } : null;
 }
-
-// A slice document of a shipped initiative carries the page's shipped history, with changedAfterShip saying whether this document changed after ship.
 async function documentHistory(projectRoot, plans, ref) {
   if (!under(plans, ref) || path.posix.basename(ref) !== "slice.md") return null;
   const id = ref.slice(plans.length + 1).split("/")[0];
@@ -1488,17 +1262,12 @@ async function documentHistory(projectRoot, plans, ref) {
   if (!changed && !history.documents.includes(ref)) return null;
   return { ...history, changedAfterShip: changed };
 }
-
-// Context gives every tab, including plain files, a breadcrumb trail, the sidebar scope it belongs to, and the place it belongs to:
-// the trail of a page of a place starts with the place's crumb, and a page of no place keeps its trail from Files.
-export async function entityContext(projectRoot, ref) {
+async function entityContext(projectRoot, ref) {
   const parsed = parseEntityRef(ref);
   if (ref === "attention" || ref === "roadmap") return { trail: [placeCrumb(ref, ref)], scope: { kind: "global" }, place: ref };
   if (parsed?.kind === "requirements" || parsed?.kind === "decisions") return { trail: [placeCrumb("knowledge"), { ref, label: SECTION_LABELS[parsed.kind] }], scope: await libraryScope(projectRoot, parsed.kind), place: "knowledge" };
   if (parsed?.kind === "glossary") return { trail: [placeCrumb("knowledge"), { ref, label: "Glossary" }], scope: { kind: "global" }, place: "knowledge" };
-  // A workspace's code content belongs with its records in Knowledge.
   if (parsed?.kind === "code") return { trail: [placeCrumb("knowledge"), { ref, label: "Code" }], scope: { kind: "global" }, place: "knowledge" };
-  // The Agents page belongs to no place of the rail, so its trail is its own name, whichever group its address shows.
   if (parsed?.kind === "agents") return { trail: [{ ref, label: SECTION_LABELS.agents }], scope: { kind: "global" }, place: null };
   if (parsed?.kind === "initiative" || parsed?.kind === "slice") return initiativeContext(projectRoot, parsed.id, { slug: parsed.kind === "slice" ? parsed.slug : null });
   if (typeof ref !== "string" || !ref) throw new Error("A tab reference is required.");
@@ -1511,11 +1280,9 @@ export async function entityContext(projectRoot, ref) {
   }
   const config = await readWorkflowConfig(projectRoot);
   const history = await documentHistory(projectRoot, config.paths.plans, ref);
-  if (history) return { ...(await fileContext(projectRoot, config, ref)), shippedHistory: history };
+  if (history) return { ...await fileContext(projectRoot, config, ref), shippedHistory: history };
   return fileContext(projectRoot, config, ref);
 }
-
-// The trail and scope of a file tab.
 async function fileContext(projectRoot, config, ref) {
   const roadmapCrumb = { ref: "roadmap", label: "Roadmap" };
   const libraryCrumb = { ref: null, label: "Library" };
@@ -1525,7 +1292,6 @@ async function fileContext(projectRoot, config, ref) {
   if (record?.initiative && ref.startsWith(".prism/")) return initiativeContext(projectRoot, record.initiative, { slug: record.slice ?? null, file: fileCrumb });
   if (under(plans, ref)) {
     const [id, segment] = ref.slice(plans.length + 1).split("/");
-    // A plans folder is an initiative's when the initiative has a record or stands on the roadmap; its record and decision then choose the place.
     if (SLUG_PATTERN.test(id ?? "") && await knownInitiative(projectRoot, id)) {
       return initiativeContext(projectRoot, id, { slug: segment && ref !== `${plans}/${id}/${segment}` ? segment : null, file: fileCrumb });
     }
@@ -1543,32 +1309,24 @@ async function fileContext(projectRoot, config, ref) {
   if (roadmapPaths.includes(ref)) return { trail: [placeCrumb("roadmap"), fileCrumb], scope: { kind: "global" }, place: "roadmap" };
   return { trail: [{ ref: null, label: "Files" }, { ref, label: ref }], scope: { kind: "global" }, place: null };
 }
-
 function relatedTitles(roadmap, id) {
   const item = roadmap.items.find((entry) => entry.id === id);
-  const related = new Set([...(item?.requires ?? []), ...(item?.requiredBy ?? [])]);
+  const related = /* @__PURE__ */ new Set([...item?.requires ?? [], ...item?.requiredBy ?? []]);
   return Object.fromEntries(roadmap.items.filter((entry) => related.has(entry.id)).map((entry) => [entry.id, entry.title]));
 }
-
 function bandRank(roadmap, id) {
   const item = roadmap.items.find((entry) => entry.id === id);
   if (!item || item.state === "shipped" || item.state === "superseded") return null;
   const rank = roadmap.items.filter((entry) => entry.band === item.band && entry.state !== "shipped" && entry.state !== "superseded").findIndex((entry) => entry.id === id);
   return rank < 0 ? null : rank + 1;
 }
-
-// Entity tabs name Prism concepts rather than files, so they never collide with artifact paths, which always carry an extension.
-export function parseEntityRef(ref) {
+function parseEntityRef(ref) {
   if (SECTION_REFS.includes(ref)) return { kind: ref };
-  // The Launched sessions address, as a restored tab or an old link, opens the Agents page that replaced it.
   if (ref === "launches") return { kind: "agents" };
-  // The Agents page with one Show choice made.
   const group = /^agents:([a-z-]+)$/.exec(ref ?? "");
   if (group && AGENT_GROUP_PAGES.includes(group[1])) return { kind: "agents", page: group[1] };
-  // Attention's filtered pages: one kind, one initiative's items, the roadmap's open questions, or the questions answered this week.
   let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "attention", page: match[1] };
-  // Knowledge's own pages: the diagrams, the records behind the open slice, and this week's record changes.
   match = /^knowledge:(diagrams|touched|changed)$/.exec(ref ?? "");
   if (match) return { kind: "knowledge", page: match[1] };
   match = /^initiative:([A-Za-z0-9_-]+)$/.exec(ref ?? "");
@@ -1577,8 +1335,7 @@ export function parseEntityRef(ref) {
   if (match) return { kind: "slice", id: match[1], slug: match[2] };
   return null;
 }
-
-export async function entityExists(projectRoot, ref) {
+async function entityExists(projectRoot, ref) {
   const parsed = parseEntityRef(ref);
   if (!parsed) return false;
   if (SECTION_REFS.includes(parsed.kind) || parsed.kind === "knowledge") return true;
@@ -1590,8 +1347,6 @@ export async function entityExists(projectRoot, ref) {
   const { loaded } = await readInitiative(projectRoot, parsed.id).catch(() => ({ loaded: {} }));
   return Boolean(loaded.record?.slices && Object.hasOwn(loaded.record.slices, parsed.slug));
 }
-
-// The code location of each slice's latest passing verification run, by slice; only the initiative page reads run records for it.
 async function initiativeCode(projectRoot, view) {
   const code = {};
   for (const slug of Object.keys(view.record?.slices ?? {})) {
@@ -1600,21 +1355,17 @@ async function initiativeCode(projectRoot, view) {
   }
   return code;
 }
-
-export async function loadEntity(projectRoot, ref, options = {}) {
+async function loadEntity(projectRoot, ref, options = {}) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
   if (parsed.kind === "attention") return { ref, kind: "attention", data: parsed.page ? await attentionPage(projectRoot, parsed.page) : await loadAttentionView(projectRoot) };
   if (parsed.kind === "roadmap") return { ref, kind: "roadmap", data: await loadRoadmapView(projectRoot) };
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
-  // A workspace's page lists its code repositories itself; a checkout's own page has none.
   if (parsed.kind === "code") return { ref, kind: "code", data: { repositories: [] } };
-  // The page reads its agents from api/agents itself and carries only the group its address shows, so a running time never redraws it.
   if (parsed.kind === "agents") return { ref, kind: "agents", data: { show: parsed.page ?? "all" } };
   if (parsed.kind === "knowledge" && parsed.page === "diagrams") {
     const diagrams = await loadDiagrams(projectRoot);
-    // Each diagram's kind and the page of what it belongs to, by path, beside the list that clause 51 of the places contract fixes.
     const about = Object.fromEntries(diagrams.map(({ path: file, kind, ownerRef }) => [file, { kind, owner: ownerRef }]));
     return { ref, kind: "diagrams", data: { diagrams: diagrams.map(({ path: file, name, owner }) => ({ path: file, name, owner })), about } };
   }
@@ -1622,10 +1373,39 @@ export async function loadEntity(projectRoot, ref, options = {}) {
   if (parsed.kind === "knowledge") return { ref, kind: "changed", data: await loadRecordChanges(projectRoot) };
   if (parsed.kind === "initiative") {
     const view = await loadInitiativeView(projectRoot, parsed.id);
-    const history = await pageHistory(projectRoot, parsed.id);
-    return { ref, kind: "initiative", data: { ...view, runTotals: await loadInitiativeRunTotals(projectRoot, view), code: await initiativeCode(projectRoot, view), ...(history ? { shippedHistory: history } : {}) } };
+    const history2 = await pageHistory(projectRoot, parsed.id);
+    return { ref, kind: "initiative", data: { ...view, runTotals: await loadInitiativeRunTotals(projectRoot, view), code: await initiativeCode(projectRoot, view), ...history2 ? { shippedHistory: history2 } : {} } };
   }
   const history = await pageHistory(projectRoot, parsed.id);
   const slice = await loadSliceView(projectRoot, parsed.id, parsed.slug, options);
   return { ref, kind: "slice", data: history ? { ...slice, shippedHistory: history } : slice };
 }
+export {
+  AGENT_GROUP_PAGES,
+  ATTENTION_KINDS,
+  SECTION_REFS,
+  asWorkspaceView,
+  attentionItems,
+  entityContext,
+  entityExists,
+  forgetWorkspace,
+  glossaryEntries,
+  loadAttention,
+  loadAttentionView,
+  loadClaims,
+  loadDeclaredView,
+  loadDiagrams,
+  loadEntity,
+  loadGlossary,
+  loadHeldClaims,
+  loadInitiativeView,
+  loadLibrary,
+  loadNavigation,
+  loadRecordChanges,
+  loadRoadmapView,
+  loadSliceView,
+  parseEntityRef,
+  recordFiles,
+  searchRecords,
+  slicePresence
+};

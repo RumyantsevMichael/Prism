@@ -1,8 +1,6 @@
-// prism-segmented: a named choice of a few options drawn as one segmented switch in light DOM, each option a native button with the radio role.
-// Each child with a value attribute becomes one segment that keeps the child's content; the chosen segment stands on the surface.
+// Generated from src/server/review/public/kit/elements/prism-segmented.ts by scripts/native-build/compile.mjs.
 import { Base, emit, setAttribute, uniqueId } from "./base.js";
-
-export class PrismSegmented extends Base {
+class PrismSegmented extends Base {
   static tag = "prism-segmented";
   static observedAttributes = ["label", "value"];
   static catalog = {
@@ -16,7 +14,6 @@ export class PrismSegmented extends Base {
     states: ["default", "chosen", "wrap", "long-text", "unbroken-name"],
     keyboard: ["Tab reaches the chosen segment.", "ArrowLeft and ArrowRight, or ArrowUp and ArrowDown, choose the previous or next segment, wrapping at the ends.", "Enter, Space, or a click chooses a segment and sends change with detail.value."]
   };
-
   connectedCallback() {
     setAttribute(this, "role", "radiogroup");
     this.build();
@@ -30,23 +27,18 @@ export class PrismSegmented extends Base {
       this.addEventListener("keydown", (event) => this.move(event));
     }
   }
-
   attributeChangedCallback() {
     this.sync();
   }
-
   get segments() {
     return [...this.querySelectorAll(":scope > .prism-segment")];
   }
-
   get value() {
     return this.getAttribute("value") ?? "";
   }
-
   set value(value) {
     this.setAttribute("value", String(value));
   }
-
   // Turns each child with a value attribute into a segment button that holds the child's content.
   build() {
     for (const child of [...this.children]) {
@@ -64,7 +56,6 @@ export class PrismSegmented extends Base {
       child.replaceWith(button);
     }
   }
-
   sync() {
     setAttribute(this, "aria-label", this.getAttribute("label") || null);
     const segments = this.segments;
@@ -72,17 +63,14 @@ export class PrismSegmented extends Base {
     for (const segment of segments) {
       const on = segment === chosen;
       setAttribute(segment, "aria-checked", String(on));
-      // One segment is in the tab order: the chosen one, or the first when none is.
-      segment.tabIndex = on || (!chosen && segment === segments[0]) ? 0 : -1;
+      segment.tabIndex = on || !chosen && segment === segments[0] ? 0 : -1;
     }
   }
-
   choose(value) {
-    if (value === undefined || value === this.value) return;
+    if (value === void 0 || value === this.value) return;
     this.value = value;
     emit(this, "change", { value });
   }
-
   move(event) {
     const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
     if (!step) return;
@@ -95,3 +83,6 @@ export class PrismSegmented extends Base {
     next.focus();
   }
 }
+export {
+  PrismSegmented
+};

@@ -1,7 +1,6 @@
-// prism-kbd: a key or a key combination drawn as a keycap, such as the shortcut hint of a button, a menu, or a dialog.
+// Generated from src/server/review/public/kit/elements/prism-kbd.ts by scripts/native-build/compile.mjs.
 import { Base, shadow } from "./base.js";
-
-export class PrismKbd extends Base {
+class PrismKbd extends Base {
   static tag = "prism-kbd";
   static styles = ["prism-kbd.css"];
   static catalog = {
@@ -12,24 +11,22 @@ export class PrismKbd extends Base {
     states: ["key", "combination"],
     keyboard: ["A keycap only names a key; the control it describes takes the key."]
   };
-
   static observedAttributes = ["keys"];
-
   constructor() {
     super();
     this.root = shadow(this, PrismKbd.styles, `<kbd part="key"><slot></slot></kbd>`);
   }
-
   connectedCallback() {
     this.sync();
   }
-
   attributeChangedCallback() {
     this.sync();
   }
-
   sync() {
     const keys = this.getAttribute("keys");
     if (keys !== null && this.textContent !== keys) this.textContent = keys;
   }
 }
+export {
+  PrismKbd
+};

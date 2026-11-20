@@ -1,8 +1,6 @@
-// prism-code: holds a code block (<pre><code>) in light DOM, with line numbers from `start` in a gutter when `numbers` is set,
-// and tok-<name> spans colored by --prism-color-syntax-<name>, or by the ink color for a name the theme does not define.
+// Generated from src/server/review/public/kit/elements/prism-code.ts by scripts/native-build/compile.mjs.
 import { Base, make, setAttribute } from "./base.js";
-
-export class PrismCode extends Base {
+class PrismCode extends Base {
   static tag = "prism-code";
   static observedAttributes = ["numbers", "start", "language"];
   static catalog = {
@@ -15,22 +13,18 @@ export class PrismCode extends Base {
     states: ["default", "numbers", "syntax"],
     keyboard: ["A block wider than its container scrolls sideways inside itself."]
   };
-
   connectedCallback() {
     if (!this.observer) {
       this.observer = new MutationObserver(() => this.render());
     }
     this.render();
   }
-
   disconnectedCallback() {
     this.observer?.disconnect();
   }
-
   attributeChangedCallback() {
     if (this.observer) this.render();
   }
-
   render() {
     this.observer.disconnect();
     const pre = this.querySelector(":scope > pre");
@@ -48,3 +42,6 @@ export class PrismCode extends Base {
     this.observer.observe(this, { childList: true, subtree: true, characterData: true });
   }
 }
+export {
+  PrismCode
+};

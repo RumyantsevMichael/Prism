@@ -1,10 +1,9 @@
+// Generated from src/server/repository-intelligence/repository-source-path.mts by scripts/native-build/compile.mjs.
 import path from "node:path";
-
 function unsafePathError() {
   return new TypeError("The source range must use a safe project-relative path.");
 }
-
-export function normalizeRepositorySourcePath(value, options = {}) {
+function normalizeRepositorySourcePath(value, options = {}) {
   if (typeof value !== "string" || !value || value.includes("\0")) throw unsafePathError();
   const portable = value.replaceAll("\\", "/");
   if (path.posix.isAbsolute(portable) || /^[a-z]:/i.test(portable)) throw unsafePathError();
@@ -20,8 +19,7 @@ export function normalizeRepositorySourcePath(value, options = {}) {
   }
   return normalized;
 }
-
-export function normalizeRepositorySourceRange(sourceRange, options = {}) {
+function normalizeRepositorySourceRange(sourceRange, options = {}) {
   const file = normalizeRepositorySourcePath(sourceRange?.file, options);
   const startLine = sourceRange?.range?.startLine;
   const endLine = sourceRange?.range?.endLine;
@@ -30,3 +28,7 @@ export function normalizeRepositorySourceRange(sourceRange, options = {}) {
   }
   return { file, range: { startLine, endLine } };
 }
+export {
+  normalizeRepositorySourcePath,
+  normalizeRepositorySourceRange
+};

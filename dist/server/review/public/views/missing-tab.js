@@ -1,8 +1,5 @@
-// A tab keeps the path or entity it named, so when that file is moved or deleted, or that entity stops resolving,
-// the tab is dimmed and its page says so instead of showing the server's error.
-
-/** The words for a tab whose target is gone: a file by its path, an entity by its label. */
-export function missingNotice(ref, { entity = false, label = ref } = {}) {
+// Generated from src/server/review/public/views/missing-tab.ts by scripts/native-build/compile.mjs.
+function missingNotice(ref, { entity = false, label = ref } = {}) {
   if (entity) {
     return {
       title: "This item no longer exists",
@@ -16,16 +13,12 @@ export function missingNotice(ref, { entity = false, label = ref } = {}) {
     detail: "It was moved or deleted. The page returns to normal if the file comes back, for example after a checkout."
   };
 }
-
-/** The set of missing tabs a snapshot reports, and whether it differs from the set the tab strip shows. */
-export function nextMissingTabs(current, reported) {
+function nextMissingTabs(current, reported) {
   const next = new Set(Array.isArray(reported) ? reported.filter((tab) => typeof tab === "string") : []);
   const changed = next.size !== current.size || [...next].some((tab) => !current.has(tab));
   return { next, changed };
 }
-
-/** Render the page of a missing tab into container; onClose closes the tab. */
-export function renderMissing(container, ref, { entity = false, label = ref, onClose } = {}) {
+function renderMissing(container, ref, { entity = false, label = ref, onClose } = {}) {
   const notice = missingNotice(ref, { entity, label });
   const state = document.createElement("prism-empty-state");
   state.className = "missing-page";
@@ -44,3 +37,8 @@ export function renderMissing(container, ref, { entity = false, label = ref, onC
   state.append(where, detail, close);
   container.replaceChildren(state);
 }
+export {
+  missingNotice,
+  nextMissingTabs,
+  renderMissing
+};

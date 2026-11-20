@@ -1,7 +1,6 @@
-// prism-tabs: a named tablist of prism-tab elements with one selected tab, roving focus, and a strip that scrolls.
+// Generated from src/server/review/public/kit/elements/prism-tabs.ts by scripts/native-build/compile.mjs.
 import { Base, emit, setAttribute } from "./base.js";
-
-export class PrismTabs extends Base {
+class PrismTabs extends Base {
   static tag = "prism-tabs";
   static observedAttributes = ["label"];
   static catalog = {
@@ -13,7 +12,6 @@ export class PrismTabs extends Base {
     states: ["default", "second-selected", "disabled-tab"],
     keyboard: ["Tab enters the strip at the selected tab and leaves it at the next control.", "ArrowLeft and ArrowRight move focus between tabs and wrap at the ends.", "Home and End move to the first and last tab.", "Enter, Space, or a click selects the focused tab and sends prism-select."]
   };
-
   constructor() {
     super();
     this.addEventListener("keydown", (event) => this.onKey(event));
@@ -25,7 +23,6 @@ export class PrismTabs extends Base {
       if (!this.contains(event.relatedTarget)) this.rove(this.selectedTab());
     });
   }
-
   connectedCallback() {
     setAttribute(this, "role", "tablist");
     this.attributeChangedCallback();
@@ -33,32 +30,25 @@ export class PrismTabs extends Base {
     this.observer ??= new MutationObserver(() => this.sync());
     this.observer.observe(this, { childList: true, subtree: true, attributeFilter: ["selected", "disabled"] });
   }
-
   disconnectedCallback() {
     this.observer?.disconnect();
   }
-
   attributeChangedCallback() {
     setAttribute(this, "aria-label", this.getAttribute("label") || null);
   }
-
   get tabs() {
     return [...this.querySelectorAll("prism-tab")].filter((tab) => tab.closest("prism-tabs") === this);
   }
-
   get value() {
     return this.selectedTab()?.getAttribute("value") ?? "";
   }
-
   set value(value) {
     const tab = this.tabs.find((item) => item.getAttribute("value") === String(value));
     if (tab) this.select(tab);
   }
-
   selectedTab() {
     return this.tabs.find((tab) => tab.hasAttribute("selected")) ?? null;
   }
-
   // Keeps exactly one tab selected and only one tab in the Tab order.
   sync() {
     if (this.syncing) return;
@@ -73,28 +63,25 @@ export class PrismTabs extends Base {
     if (keep && !keep.hasAttribute("selected")) keep.setAttribute("selected", "");
     const focused = tabs.find((tab) => tab === this.ownerDocument.activeElement);
     this.rove(focused ?? keep);
-    queueMicrotask(() => { this.syncing = false; });
+    queueMicrotask(() => {
+      this.syncing = false;
+    });
   }
-
   rove(target) {
     for (const tab of this.tabs) setAttribute(tab, "tabindex", tab === target ? "0" : "-1");
   }
-
   tabFrom(event) {
     const tab = event.composedPath().find((node) => node.tagName === "PRISM-TAB");
     return tab && tab.closest("prism-tabs") === this && !tab.hasAttribute("disabled") ? tab : null;
   }
-
   select(tab) {
     for (const item of this.tabs) item.toggleAttribute("selected", item === tab);
     this.rove(tab);
   }
-
   choose(tab) {
     this.select(tab);
     emit(this, "prism-select", { value: tab.getAttribute("value") ?? "" });
   }
-
   onKey(event) {
     const current = this.tabFrom(event);
     if (!current) return;
@@ -116,3 +103,6 @@ export class PrismTabs extends Base {
     next.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
 }
+export {
+  PrismTabs
+};

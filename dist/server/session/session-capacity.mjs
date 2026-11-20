@@ -1,3 +1,4 @@
+// Generated from src/server/session/session-capacity.mts by scripts/native-build/compile.mjs.
 import { readFileSync } from "node:fs";
 import { HOST_FACT_REASON, readHostSessionFacts } from "./host-session-facts.mjs";
 import { CLAUDE_CODE_ESTIMATE_POLICY } from "./host-adapters/claude-code.mjs";
@@ -6,28 +7,22 @@ import {
   isComparableHarnessVersion,
   selectVersionedProfile
 } from "./harness-version.mjs";
-
 const canonicalRegistry = JSON.parse(readFileSync(new URL("./session-capacity-registry.json", import.meta.url), "utf8"));
 const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
-
-export const ACTIVE_CAPACITY_REASON = Object.freeze({
+const ACTIVE_CAPACITY_REASON = Object.freeze({
   NO_EXACT_CAPACITY_PROFILE: "NO_EXACT_CAPACITY_PROFILE",
   UNATTESTED_ACTIVE_CAPACITY: "UNATTESTED_ACTIVE_CAPACITY",
   TOTAL_COMPACTION_SCOPE_REQUIRED: "TOTAL_COMPACTION_SCOPE_REQUIRED"
 });
-
 const CORRELATION_KEY_PATTERN = /^[a-f0-9]{64}$/;
-
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-
 function assertObject(value, name) {
   if (!isObject(value)) {
     throw new Error(`${name} must be an object.`);
   }
 }
-
 function assertExactKeys(value, allowed, required, name) {
   assertObject(value, name);
   for (const key of Object.keys(value)) {
@@ -41,13 +36,11 @@ function assertExactKeys(value, allowed, required, name) {
     }
   }
 }
-
 function assertNonemptyString(value, name) {
   if (typeof value !== "string" || value.trim() === "") {
     throw new Error(`${name} must be a nonempty string.`);
   }
 }
-
 function assertTokenCount(value, name, { positive = false } = {}) {
   const valid = Number.isSafeInteger(value) && value >= (positive ? 1 : 0) && value <= MAX_SAFE_INTEGER;
   if (!valid) {
@@ -55,7 +48,6 @@ function assertTokenCount(value, name, { positive = false } = {}) {
     throw new Error(`${name} must be a ${qualifier} integer within the safe range.`);
   }
 }
-
 function assertProvenance(value, name, threshold = false) {
   const required = ["source", "sourceVersion", "verifiedAt", "field"];
   if (threshold) {
@@ -66,15 +58,12 @@ function assertProvenance(value, name, threshold = false) {
     assertNonemptyString(value[key], `${name}.${key}`);
   }
 }
-
 function acceptedModels(profile) {
   return [...profile.match.models, ...Object.keys(profile.match.aliases)];
 }
-
 function tupleKey(match, model) {
   return JSON.stringify([match.harness, match.harnessVersion, match.provider, model]);
 }
-
 function validateProfile(profile, index, tupleOwners, profileIds) {
   const name = `registry.profiles[${index}]`;
   assertExactKeys(profile, ["id", "match", "capacity", "provenance"], ["id", "match", "capacity", "provenance"], name);
@@ -83,7 +72,6 @@ function validateProfile(profile, index, tupleOwners, profileIds) {
     throw new Error(`Duplicate capacity profile id: ${profile.id}.`);
   }
   profileIds.add(profile.id);
-
   const matchKeys = ["harness", "harnessVersion", "harnessVersionPolicy", "provider", "models", "aliases"];
   assertExactKeys(profile.match, matchKeys, matchKeys, `${name}.match`);
   for (const key of ["harness", "harnessVersion", "provider"]) {
@@ -98,7 +86,7 @@ function validateProfile(profile, index, tupleOwners, profileIds) {
   if (!Array.isArray(profile.match.models) || profile.match.models.length === 0) {
     throw new Error(`${name}.match.models must be a nonempty array.`);
   }
-  const models = new Set();
+  const models = /* @__PURE__ */ new Set();
   for (const model of profile.match.models) {
     assertNonemptyString(model, `${name}.match.models[]`);
     if (models.has(model)) {
@@ -117,7 +105,6 @@ function validateProfile(profile, index, tupleOwners, profileIds) {
       throw new Error(`${name}.match.aliases.${alias} must reference a canonical model in the same profile.`);
     }
   }
-
   assertExactKeys(profile.capacity, ["contextWindowTokens", "effectiveContextWindowPercent", "autoCompactionPercent", "compactionThresholdTokens", "implementationReserveTokens"], ["contextWindowTokens", "effectiveContextWindowPercent", "autoCompactionPercent", "compactionThresholdTokens", "implementationReserveTokens"], `${name}.capacity`);
   assertTokenCount(profile.capacity.contextWindowTokens, `${name}.capacity.contextWindowTokens`, { positive: true });
   assertTokenCount(profile.capacity.effectiveContextWindowPercent, `${name}.capacity.effectiveContextWindowPercent`, { positive: true });
@@ -131,9 +118,7 @@ function validateProfile(profile, index, tupleOwners, profileIds) {
   assertTokenCount(profile.capacity.compactionThresholdTokens, `${name}.capacity.compactionThresholdTokens`, { positive: true });
   assertTokenCount(profile.capacity.implementationReserveTokens, `${name}.capacity.implementationReserveTokens`);
   const expectedThreshold = Number(
-    BigInt(profile.capacity.contextWindowTokens)
-      * BigInt(profile.capacity.autoCompactionPercent)
-      / 100n
+    BigInt(profile.capacity.contextWindowTokens) * BigInt(profile.capacity.autoCompactionPercent) / 100n
   );
   if (profile.capacity.compactionThresholdTokens !== expectedThreshold) {
     throw new Error(`${name}.capacity.compactionThresholdTokens is inconsistent with its documented derivation.`);
@@ -141,12 +126,10 @@ function validateProfile(profile, index, tupleOwners, profileIds) {
   if (profile.capacity.compactionThresholdTokens > profile.capacity.contextWindowTokens) {
     throw new Error(`${name}.capacity.compactionThresholdTokens cannot exceed the context window.`);
   }
-
   assertExactKeys(profile.provenance, ["contextWindow", "compactionThreshold", "implementationReserve"], ["contextWindow", "compactionThreshold", "implementationReserve"], `${name}.provenance`);
   assertProvenance(profile.provenance.contextWindow, `${name}.provenance.contextWindow`);
   assertProvenance(profile.provenance.compactionThreshold, `${name}.provenance.compactionThreshold`, true);
   assertProvenance(profile.provenance.implementationReserve, `${name}.provenance.implementationReserve`);
-
   for (const model of acceptedModels(profile)) {
     const key = tupleKey(profile.match, model);
     if (tupleOwners.has(key)) {
@@ -155,8 +138,7 @@ function validateProfile(profile, index, tupleOwners, profileIds) {
     tupleOwners.set(key, profile.id);
   }
 }
-
-export function validateCapacityRegistry(registry = canonicalRegistry) {
+function validateCapacityRegistry(registry = canonicalRegistry) {
   assertExactKeys(registry, ["schemaVersion", "profiles"], ["schemaVersion", "profiles"], "registry");
   if (registry.schemaVersion !== 1) {
     throw new Error(`Unsupported capacity registry schema version: ${registry.schemaVersion}.`);
@@ -164,12 +146,11 @@ export function validateCapacityRegistry(registry = canonicalRegistry) {
   if (!Array.isArray(registry.profiles) || registry.profiles.length === 0) {
     throw new Error("registry.profiles must be a nonempty array.");
   }
-  const tupleOwners = new Map();
-  const profileIds = new Set();
+  const tupleOwners = /* @__PURE__ */ new Map();
+  const profileIds = /* @__PURE__ */ new Set();
   registry.profiles.forEach((profile, index) => validateProfile(profile, index, tupleOwners, profileIds));
   return true;
 }
-
 function validateSession(session) {
   assertExactKeys(session, ["harness", "harnessVersion", "provider", "model", "capacityOverrides"], ["harness", "harnessVersion", "provider", "model"], "session");
   for (const key of ["harness", "harnessVersion", "provider", "model"]) {
@@ -184,7 +165,6 @@ function validateSession(session) {
     }
   }
 }
-
 function registryValueProvenance(profile, key) {
   const source = profile.provenance[key];
   return {
@@ -194,27 +174,21 @@ function registryValueProvenance(profile, key) {
     sourceVersion: source.sourceVersion,
     verifiedAt: source.verifiedAt,
     field: source.field,
-    ...(source.derivation ? { derivation: source.derivation } : {})
+    ...source.derivation ? { derivation: source.derivation } : {}
   };
 }
-
 function explicitProvenance(input) {
   return { source: "explicit-input", input };
 }
-
 function findProfile(session, registry) {
-  const candidates = registry.profiles.filter((profile) => (
-    profile.match.harness === session.harness
-    && profile.match.provider === session.provider
-  ));
+  const candidates = registry.profiles.filter((profile) => profile.match.harness === session.harness && profile.match.provider === session.provider);
   return selectVersionedProfile(
     candidates,
     session.harnessVersion,
     (profile) => acceptedModels(profile).includes(session.model)
   );
 }
-
-export function resolveRegisteredCapacityPolicy(session, { registry = canonicalRegistry } = {}) {
+function resolveRegisteredCapacityPolicy(session, { registry = canonicalRegistry } = {}) {
   validateSession(session);
   validateCapacityRegistry(registry);
   const profile = findProfile(session, registry);
@@ -227,28 +201,24 @@ export function resolveRegisteredCapacityPolicy(session, { registry = canonicalR
     compactionThresholdTokens: profile.capacity.compactionThresholdTokens
   };
 }
-
-export function resolveSessionCapacity(session, { registry = canonicalRegistry } = {}) {
+function resolveSessionCapacity(session, { registry = canonicalRegistry } = {}) {
   validateSession(session);
   validateCapacityRegistry(registry);
   const profile = findProfile(session, registry);
   const overrides = session.capacityOverrides ?? {};
   const hasContextOverride = Object.hasOwn(overrides, "contextWindowTokens");
   const hasThresholdOverride = Object.hasOwn(overrides, "compactionThresholdTokens");
-
   if (!profile && !(hasContextOverride && hasThresholdOverride)) {
     return {
       status: "UNSUPPORTED",
       reason: "No exact capacity profile or complete explicit capacity was supplied."
     };
   }
-
   const contextWindowTokens = hasContextOverride ? overrides.contextWindowTokens : profile.capacity.contextWindowTokens;
   const compactionThresholdTokens = hasThresholdOverride ? overrides.compactionThresholdTokens : profile.capacity.compactionThresholdTokens;
   if (compactionThresholdTokens > contextWindowTokens) {
     throw new Error("The compaction threshold cannot exceed the context window.");
   }
-
   const canonicalModel = profile?.match.aliases[session.model] ?? session.model;
   return {
     status: "SUPPORTED",
@@ -260,21 +230,16 @@ export function resolveSessionCapacity(session, { registry = canonicalRegistry }
       implementationReserveTokens: profile?.capacity.implementationReserveTokens ?? null
     },
     provenance: {
-      contextWindow: hasContextOverride
-        ? explicitProvenance("session.capacityOverrides.contextWindowTokens")
-        : registryValueProvenance(profile, "contextWindow"),
-      compactionThreshold: hasThresholdOverride
-        ? explicitProvenance("session.capacityOverrides.compactionThresholdTokens")
-        : registryValueProvenance(profile, "compactionThreshold"),
+      contextWindow: hasContextOverride ? explicitProvenance("session.capacityOverrides.contextWindowTokens") : registryValueProvenance(profile, "contextWindow"),
+      compactionThreshold: hasThresholdOverride ? explicitProvenance("session.capacityOverrides.compactionThresholdTokens") : registryValueProvenance(profile, "compactionThreshold"),
       implementationReserve: profile ? registryValueProvenance(profile, "implementationReserve") : null
     }
   };
 }
-
 function validateActiveSessionRequest(value) {
   assertExactKeys(value, ["dataDirectory", "correlationKey", "projectRoot", "capacityOverrides", "compactionScope"], ["correlationKey", "projectRoot"], "activeSession");
   assertNonemptyString(value.projectRoot, "activeSession.projectRoot");
-  if (value.dataDirectory !== undefined) {
+  if (value.dataDirectory !== void 0) {
     assertNonemptyString(value.dataDirectory, "activeSession.dataDirectory");
   }
   if (typeof value.correlationKey !== "string" || !CORRELATION_KEY_PATTERN.test(value.correlationKey)) {
@@ -295,8 +260,7 @@ function validateActiveSessionRequest(value) {
     }
   }
 }
-
-export function createActiveSessionCapacityRequest(session, { dataDirectory, projectRoot } = {}) {
+function createActiveSessionCapacityRequest(session, { dataDirectory, projectRoot } = {}) {
   assertExactKeys(
     session,
     ["mode", "correlationKey", "dataDirectory", "capacityOverrides", "compactionScope"],
@@ -310,13 +274,12 @@ export function createActiveSessionCapacityRequest(session, { dataDirectory, pro
     dataDirectory: session.dataDirectory ?? dataDirectory,
     correlationKey: session.correlationKey,
     projectRoot,
-    ...(Object.hasOwn(session, "capacityOverrides") ? { capacityOverrides: session.capacityOverrides } : {}),
-    ...(Object.hasOwn(session, "compactionScope") ? { compactionScope: session.compactionScope } : {})
+    ...Object.hasOwn(session, "capacityOverrides") ? { capacityOverrides: session.capacityOverrides } : {},
+    ...Object.hasOwn(session, "compactionScope") ? { compactionScope: session.compactionScope } : {}
   };
   validateActiveSessionRequest(request);
   return request;
 }
-
 function activeFactProvenance(facts, field) {
   return {
     source: "active-host-session",
@@ -324,8 +287,7 @@ function activeFactProvenance(facts, field) {
     field: facts.provenance.fields[field]
   };
 }
-
-export async function resolveActiveSessionCapacity(activeSession, {
+async function resolveActiveSessionCapacity(activeSession, {
   registry = canonicalRegistry,
   readFacts = readHostSessionFacts,
   now,
@@ -336,12 +298,11 @@ export async function resolveActiveSessionCapacity(activeSession, {
     dataDirectory: activeSession.dataDirectory,
     correlationKey: activeSession.correlationKey,
     projectRoot: activeSession.projectRoot,
-    ...(now ? { now } : {}),
-    ...(maxAgeMs !== undefined ? { maxAgeMs } : {})
+    ...now ? { now } : {},
+    ...maxAgeMs !== void 0 ? { maxAgeMs } : {}
   });
   const callerOverrides = activeSession.capacityOverrides || {};
-  const callerHasCompleteCapacity = ["contextWindowTokens", "compactionThresholdTokens"]
-    .every((key) => Object.hasOwn(callerOverrides, key));
+  const callerHasCompleteCapacity = ["contextWindowTokens", "compactionThresholdTokens"].every((key) => Object.hasOwn(callerOverrides, key));
   let scopeProvenance;
   if (facts.status !== "SUPPORTED") {
     if (facts.reasonCode !== HOST_FACT_REASON.HOST_CAPACITY_UNAVAILABLE || !facts.session || !callerHasCompleteCapacity) {
@@ -371,18 +332,11 @@ export async function resolveActiveSessionCapacity(activeSession, {
     }
     scopeProvenance = activeFactProvenance(facts, "compactionScope");
   }
-
   const hostOverrides = facts.session.capacityOverrides || {};
-  const hostHasCompleteCapacity = ["contextWindowTokens", "compactionThresholdTokens"]
-    .every((key) => Object.hasOwn(hostOverrides, key));
-  const registryThresholdProven = facts.provenance?.fields?.compactionThresholdTokens
-    === "config.absent.model_auto_compact_token_limit";
+  const hostHasCompleteCapacity = ["contextWindowTokens", "compactionThresholdTokens"].every((key) => Object.hasOwn(hostOverrides, key));
+  const registryThresholdProven = facts.provenance?.fields?.compactionThresholdTokens === "config.absent.model_auto_compact_token_limit";
   const hostHasRuntimeContext = Object.hasOwn(hostOverrides, "contextWindowTokens");
-  if (
-    !hostHasCompleteCapacity
-    && !callerHasCompleteCapacity
-    && !(hostHasRuntimeContext && registryThresholdProven)
-  ) {
+  if (!hostHasCompleteCapacity && !callerHasCompleteCapacity && !(hostHasRuntimeContext && registryThresholdProven)) {
     return {
       status: "UNSUPPORTED",
       reasonCode: ACTIVE_CAPACITY_REASON.UNATTESTED_ACTIVE_CAPACITY,
@@ -397,21 +351,13 @@ export async function resolveActiveSessionCapacity(activeSession, {
     harnessVersion: facts.session.harnessVersion,
     provider: facts.session.provider,
     model: facts.session.model,
-    ...(Object.keys(mergedOverrides).length ? { capacityOverrides: mergedOverrides } : {})
+    ...Object.keys(mergedOverrides).length ? { capacityOverrides: mergedOverrides } : {}
   };
-  if (
-    registryThresholdProven
-    && !callerHasCompleteCapacity
-    && !Object.hasOwn(hostOverrides, "compactionThresholdTokens")
-  ) {
+  if (registryThresholdProven && !callerHasCompleteCapacity && !Object.hasOwn(hostOverrides, "compactionThresholdTokens")) {
     const policy = resolveRegisteredCapacityPolicy(session, { registry });
-    const expectedEffectiveContext = policy === null
-      ? null
-      : Number(
-          BigInt(policy.contextWindowTokens)
-          * BigInt(policy.effectiveContextWindowPercent)
-          / 100n
-        );
+    const expectedEffectiveContext = policy === null ? null : Number(
+      BigInt(policy.contextWindowTokens) * BigInt(policy.effectiveContextWindowPercent) / 100n
+    );
     if (expectedEffectiveContext === null || hostOverrides.contextWindowTokens !== expectedEffectiveContext) {
       return {
         status: "UNSUPPORTED",
@@ -431,10 +377,8 @@ export async function resolveActiveSessionCapacity(activeSession, {
       sessionProvenance: facts.provenance
     };
   }
-
   const provenance = { ...resolution.provenance };
-  const estimated = !callerHasCompleteCapacity && ["contextWindowTokens", "compactionThresholdTokens"]
-    .some((key) => facts.provenance?.fields?.[key]?.startsWith("estimate."));
+  const estimated = !callerHasCompleteCapacity && ["contextWindowTokens", "compactionThresholdTokens"].some((key) => facts.provenance?.fields?.[key]?.startsWith("estimate."));
   let capacity = resolution.capacity;
   if (estimated && capacity.implementationReserveTokens === null) {
     capacity = { ...capacity, implementationReserveTokens: CLAUDE_CODE_ESTIMATE_POLICY.implementationReserveTokens };
@@ -471,7 +415,6 @@ export async function resolveActiveSessionCapacity(activeSession, {
     provenance
   };
 }
-
 function validateCosts(costs) {
   assertExactKeys(costs, ["baseSessionContextTokens", "featureDesignContextTokens", "implementationReserveTokens"], ["baseSessionContextTokens", "featureDesignContextTokens"], "costs");
   for (const key of ["baseSessionContextTokens", "featureDesignContextTokens", "implementationReserveTokens"]) {
@@ -480,7 +423,6 @@ function validateCosts(costs) {
     }
   }
 }
-
 function validateTokenEstimate(tokenEstimate) {
   const keys = ["lower", "expected", "upper"];
   assertExactKeys(tokenEstimate, keys, keys, "tokenEstimate");
@@ -497,22 +439,16 @@ function validateTokenEstimate(tokenEstimate) {
     throw new Error("tokenEstimate bounds must satisfy lower <= expected <= upper.");
   }
 }
-
 function evaluateResolvedRepositoryFit({ costs, tokenEstimate }, resolution) {
   if (resolution.status === "UNSUPPORTED") {
     return { ...resolution, fit: null, repositoryReadBudgetTokens: null };
   }
-
   const reserveIsExplicit = Object.hasOwn(costs, "implementationReserveTokens");
-  const implementationReserveTokens = reserveIsExplicit
-    ? costs.implementationReserveTokens
-    : resolution.capacity.implementationReserveTokens;
+  const implementationReserveTokens = reserveIsExplicit ? costs.implementationReserveTokens : resolution.capacity.implementationReserveTokens;
   if (implementationReserveTokens === null) {
     throw new Error("costs.implementationReserveTokens is required when no registry reserve is available.");
   }
-  const consumed = costs.baseSessionContextTokens
-    + costs.featureDesignContextTokens
-    + implementationReserveTokens;
+  const consumed = costs.baseSessionContextTokens + costs.featureDesignContextTokens + implementationReserveTokens;
   if (!Number.isSafeInteger(consumed)) {
     throw new Error("The combined session costs exceed the safe integer range.");
   }
@@ -520,7 +456,6 @@ function evaluateResolvedRepositoryFit({ costs, tokenEstimate }, resolution) {
   if (!Number.isSafeInteger(repositoryReadBudgetTokens)) {
     throw new Error("The repository read budget exceeds the safe integer range.");
   }
-
   let fit = "UNCERTAIN";
   if (tokenEstimate.upper !== null) {
     if (tokenEstimate.upper <= repositoryReadBudgetTokens) {
@@ -529,7 +464,6 @@ function evaluateResolvedRepositoryFit({ costs, tokenEstimate }, resolution) {
       fit = "SPLIT";
     }
   }
-
   return {
     ...resolution,
     capacity: { ...resolution.capacity, implementationReserveTokens },
@@ -541,27 +475,33 @@ function evaluateResolvedRepositoryFit({ costs, tokenEstimate }, resolution) {
     tokenEstimate: { ...tokenEstimate },
     provenance: {
       ...resolution.provenance,
-      implementationReserve: reserveIsExplicit
-        ? explicitProvenance("costs.implementationReserveTokens")
-        : resolution.provenance.implementationReserve
+      implementationReserve: reserveIsExplicit ? explicitProvenance("costs.implementationReserveTokens") : resolution.provenance.implementationReserve
     },
     repositoryReadBudgetTokens,
     fit
   };
 }
-
-export function evaluateRepositoryFit(input, options = {}) {
+function evaluateRepositoryFit(input, options = {}) {
   assertExactKeys(input, ["session", "costs", "tokenEstimate"], ["session", "costs", "tokenEstimate"], "input");
   validateCosts(input.costs);
   validateTokenEstimate(input.tokenEstimate);
   const resolution = resolveSessionCapacity(input.session, options);
   return evaluateResolvedRepositoryFit(input, resolution);
 }
-
-export async function evaluateActiveRepositoryFit(input, activeSession, options = {}) {
+async function evaluateActiveRepositoryFit(input, activeSession, options = {}) {
   assertExactKeys(input, ["costs", "tokenEstimate"], ["costs", "tokenEstimate"], "input");
   validateCosts(input.costs);
   validateTokenEstimate(input.tokenEstimate);
   const resolution = await resolveActiveSessionCapacity(activeSession, options);
   return evaluateResolvedRepositoryFit(input, resolution);
 }
+export {
+  ACTIVE_CAPACITY_REASON,
+  createActiveSessionCapacityRequest,
+  evaluateActiveRepositoryFit,
+  evaluateRepositoryFit,
+  resolveActiveSessionCapacity,
+  resolveRegisteredCapacityPolicy,
+  resolveSessionCapacity,
+  validateCapacityRegistry
+};

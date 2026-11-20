@@ -1,6 +1,4 @@
-// The review app's kit: one prism-* custom element per kind of control, defined from KIT_ELEMENTS.
-// The module imports without a DOM, so tests and the catalog can read KIT_ELEMENTS; in a page it loads the shadow stylesheets once, defines every element,
-// adds the page's one tooltip, and keeps the appearance in step with the system. appearance.js then applies the review app's stored choice.
+// Generated from src/server/review/public/kit/kit.ts by scripts/native-build/compile.mjs.
 import { startPreferences } from "./preferences.js";
 import { loadStyles } from "./elements/base.js";
 import { PrismButton } from "./elements/prism-button.js";
@@ -36,6 +34,7 @@ import { PrismListbox } from "./elements/prism-listbox.js";
 import { PrismListItem } from "./elements/prism-list-item.js";
 import { PrismDialog } from "./elements/prism-dialog.js";
 import { PrismPopover } from "./elements/prism-popover.js";
+import { PrismPicker } from "./elements/prism-picker.js";
 import { PrismDisclosure } from "./elements/prism-disclosure.js";
 import { PrismEmptyState } from "./elements/prism-empty-state.js";
 import { PrismBanner } from "./elements/prism-banner.js";
@@ -63,13 +62,7 @@ import { PrismKbd } from "./elements/prism-kbd.js";
 import { PrismTable } from "./elements/prism-table.js";
 import { PrismMaximize } from "./elements/prism-maximize.js";
 import { PrismContents } from "./elements/prism-contents.js";
-
-/**
- * Every kit element class; each carries a static `tag` and a static `catalog` of
- * `{ purpose, options: [{ name, values, default, description }], states: [<state name>], keyboard: [<sentence>] }`.
- * A class with a static `styles` list renders in shadow DOM and adopts those stylesheets from elements/; the others render in light DOM, styled by kit.css.
- */
-export const KIT_ELEMENTS = [
+const KIT_ELEMENTS = [
   PrismButton,
   PrismIcon,
   PrismChip,
@@ -105,6 +98,7 @@ export const KIT_ELEMENTS = [
   PrismListItem,
   PrismDialog,
   PrismPopover,
+  PrismPicker,
   PrismDisclosure,
   PrismEmptyState,
   PrismBanner,
@@ -131,21 +125,20 @@ export const KIT_ELEMENTS = [
   PrismStatus,
   PrismResizer
 ];
-
-/** Defines each kit element once; a second call, or an element that is already defined, changes nothing. */
-export function defineKit(registry = globalThis.customElements) {
+function defineKit(registry = globalThis.customElements) {
   if (!registry) return;
   for (const element of KIT_ELEMENTS) {
     if (!registry.get(element.tag)) registry.define(element.tag, element);
   }
 }
-
 if (globalThis.document) {
   startPreferences();
-  // Every shadow stylesheet is loaded before the elements are defined, so an element never draws unstyled.
-  // The module does not wait for them, so a page that imports it, such as the catalog, draws its own markup before the load event.
   loadStyles(KIT_ELEMENTS.flatMap((element) => element.styles ?? [])).then(() => {
     defineKit();
     installTooltip(globalThis.document);
   });
 }
+export {
+  KIT_ELEMENTS,
+  defineKit
+};

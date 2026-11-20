@@ -1,9 +1,9 @@
+// Generated from src/server/session/session-trace.mts by scripts/native-build/compile.mjs.
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
-
-export const SESSION_TRACE_SCHEMA_VERSION = 1;
-export const SESSION_TRACE_EVENT_TYPES = Object.freeze([
+const SESSION_TRACE_SCHEMA_VERSION = 1;
+const SESSION_TRACE_EVENT_TYPES = Object.freeze([
   "session_start",
   "model_switch",
   "search",
@@ -24,8 +24,8 @@ export const SESSION_TRACE_EVENT_TYPES = Object.freeze([
   "run_start",
   "run_end"
 ]);
-export const SESSION_TRACE_COVERAGE = Object.freeze(["exact", "partial", "unavailable"]);
-export const SESSION_TRACE_GAP_REASONS = Object.freeze([
+const SESSION_TRACE_COVERAGE = Object.freeze(["exact", "partial", "unavailable"]);
+const SESSION_TRACE_GAP_REASONS = Object.freeze([
   "unsupported-event",
   "unsupported-read-path",
   "unsupported-mutation-path",
@@ -37,14 +37,14 @@ export const SESSION_TRACE_GAP_REASONS = Object.freeze([
   "observation-incomplete",
   "usage-unavailable"
 ]);
-export const SESSION_TRACE_PROVENANCE = Object.freeze([
+const SESSION_TRACE_PROVENANCE = Object.freeze([
   "codex-hook",
   "claude-code-hook",
   "host-hook",
   "prism-mcp",
   "test"
 ]);
-export const SESSION_TRACE_HOST_EVENTS = Object.freeze([
+const SESSION_TRACE_HOST_EVENTS = Object.freeze([
   "SessionStart",
   "PostModelSwitch",
   "ModelSwitch",
@@ -59,7 +59,6 @@ export const SESSION_TRACE_HOST_EVENTS = Object.freeze([
   "Custom",
   "Unknown"
 ]);
-
 const EVENT_KEYS = [
   "schemaVersion",
   "sessionDigest",
@@ -74,15 +73,12 @@ const EVENT_KEYS = [
   "gapReason",
   "provenance"
 ];
-// prismCall is an optional event field, present exactly on prism_call events, so stored schema-version-1 traces stay valid.
-// A null prismCall records a call whose target could not be collected.
 const OPTIONAL_EVENT_KEYS = ["prismCall"];
 const PRISM_CALL_KEYS = ["initiative", "slice", "role", "namesSlice", "openWave", "designRun", "activeSlices", "facts"];
-// The canonical project root whose records the call read stays in the local trace and never enters a record or output.
 const OPTIONAL_PRISM_CALL_KEYS = ["projectRoot"];
 const MAX_PRISM_PROJECT_ROOT_BYTES = 4096;
-const PRISM_CALL_ROLES = new Set(["coordinator", "delivery", "reviewer"]);
-const PRISM_CALL_FACTS = new Set(["exact", "partial"]);
+const PRISM_CALL_ROLES = /* @__PURE__ */ new Set(["coordinator", "delivery", "reviewer"]);
+const PRISM_CALL_FACTS = /* @__PURE__ */ new Set(["exact", "partial"]);
 const MAX_PRISM_SLUG_LENGTH = 120;
 const MAX_PRISM_ACTIVE_SLICES = 32;
 const PRISM_WAVE_ID_PATTERN = /^[A-Za-z0-9._-]{1,120}$/;
@@ -109,12 +105,10 @@ const HOST_EVENT_SET = new Set(SESSION_TRACE_HOST_EVENTS);
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_IDENTIFIER_BYTES = 1024;
 const MAX_RELATIVE_PATH_BYTES = 4096;
-const MAX_LINE_NUMBER = 100_000_000;
-
+const MAX_LINE_NUMBER = 1e8;
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-
 function assertExactKeys(value, allowed, required, name) {
   if (!isObject(value)) {
     throw new TypeError(`${name} must be an object.`);
@@ -130,13 +124,11 @@ function assertExactKeys(value, allowed, required, name) {
     }
   }
 }
-
 function assertDigest(value, name) {
   if (typeof value !== "string" || !DIGEST_PATTERN.test(value)) {
     throw new Error(`${name} must be a SHA-256 digest.`);
   }
 }
-
 function assertIsoDate(value, name) {
   if (typeof value !== "string") {
     throw new Error(`${name} must be an ISO date string.`);
@@ -146,13 +138,11 @@ function assertIsoDate(value, name) {
     throw new Error(`${name} must be an ISO date string.`);
   }
 }
-
 function assertNullableLine(value, name) {
   if (value !== null && (!Number.isSafeInteger(value) || value < 1 || value > MAX_LINE_NUMBER)) {
     throw new Error(`${name} must be null or a positive line number.`);
   }
 }
-
 function assertCount(value, name) {
   if (!Number.isSafeInteger(value)) {
     throw new Error(`${name} must be a safe integer.`);
@@ -167,7 +157,6 @@ function assertCount(value, name) {
     throw new Error(`${name} must not be negative.`);
   }
 }
-
 function normalizedIdentifier(value, name) {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(`${name} is required.`);
@@ -178,7 +167,6 @@ function normalizedIdentifier(value, name) {
   }
   return normalized;
 }
-
 function normalizedProjectRoot(value) {
   const normalized = normalizedIdentifier(value, "projectRoot");
   if (!path.isAbsolute(normalized)) {
@@ -186,36 +174,25 @@ function normalizedProjectRoot(value) {
   }
   return path.normalize(normalized);
 }
-
 function digest(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
-
-export function hashSessionTraceValue(value, name = "value") {
+function hashSessionTraceValue(value, name = "value") {
   return digest(normalizedIdentifier(value, name));
 }
-
-export function createSessionTraceIdentity({ sessionId, projectRoot }) {
+function createSessionTraceIdentity({ sessionId, projectRoot }) {
   return {
     sessionDigest: digest(normalizedIdentifier(sessionId, "sessionId")),
     projectDigest: digest(normalizedProjectRoot(projectRoot))
   };
 }
-
-export function normalizeTraceSourcePath(value, projectRoot) {
+function normalizeTraceSourcePath(value, projectRoot) {
   const root = normalizedProjectRoot(projectRoot);
   const input = normalizedIdentifier(value, "sourceLocation.path");
   const relative = path.isAbsolute(input) ? path.relative(root, path.normalize(input)) : input;
   const portable = relative.split(path.sep).join("/");
   const normalized = path.posix.normalize(portable);
-  if (
-    !normalized
-    || normalized === "."
-    || path.posix.isAbsolute(normalized)
-    || normalized === ".."
-    || normalized.startsWith("../")
-    || normalized.includes("\0")
-  ) {
+  if (!normalized || normalized === "." || path.posix.isAbsolute(normalized) || normalized === ".." || normalized.startsWith("../") || normalized.includes("\0")) {
     throw new Error("sourceLocation.path must stay inside the project root.");
   }
   if (Buffer.byteLength(normalized, "utf8") > MAX_RELATIVE_PATH_BYTES) {
@@ -223,9 +200,8 @@ export function normalizeTraceSourcePath(value, projectRoot) {
   }
   return normalized;
 }
-
 function normalizeSourceLocation(value, projectRoot) {
-  if (value === null || value === undefined) {
+  if (value === null || value === void 0) {
     return null;
   }
   assertExactKeys(value, SOURCE_LOCATION_KEYS, ["path"], "sourceLocation");
@@ -245,7 +221,6 @@ function normalizeSourceLocation(value, projectRoot) {
     endLine
   };
 }
-
 function normalizeCounts(value = {}) {
   assertExactKeys(value, COUNT_KEYS, [], "counts");
   const counts = {};
@@ -257,7 +232,6 @@ function normalizeCounts(value = {}) {
   }
   return counts;
 }
-
 function normalizeHashes(value = {}) {
   assertExactKeys(value, HASH_KEYS, [], "hashValues");
   const hashes = {};
@@ -268,7 +242,6 @@ function normalizeHashes(value = {}) {
   }
   return hashes;
 }
-
 function normalizeProvenance(value = {}) {
   assertExactKeys(value, PROVENANCE_KEYS, ["collector", "hostEvent"], "provenance");
   if (!PROVENANCE_SET.has(value.collector)) {
@@ -279,22 +252,14 @@ function normalizeProvenance(value = {}) {
   }
   return { collector: value.collector, hostEvent: value.hostEvent };
 }
-
 function assertPrismSlug(value, name) {
   if (typeof value !== "string" || value.length > MAX_PRISM_SLUG_LENGTH || !SLUG_PATTERN.test(value)) {
     throw new Error(`${name} must be a slug.`);
   }
 }
-
-// A prism_call event stores only target identifiers, a role enum, numbers, and a bounded slug list.
 function assertPrismCall(value) {
   assertExactKeys(value, [...PRISM_CALL_KEYS, ...OPTIONAL_PRISM_CALL_KEYS], PRISM_CALL_KEYS, "sessionTraceEvent.prismCall");
-  if (Object.hasOwn(value, "projectRoot") && (
-    typeof value.projectRoot !== "string"
-    || !path.isAbsolute(value.projectRoot)
-    || path.normalize(value.projectRoot) !== value.projectRoot
-    || Buffer.byteLength(value.projectRoot, "utf8") > MAX_PRISM_PROJECT_ROOT_BYTES
-  )) {
+  if (Object.hasOwn(value, "projectRoot") && (typeof value.projectRoot !== "string" || !path.isAbsolute(value.projectRoot) || path.normalize(value.projectRoot) !== value.projectRoot || Buffer.byteLength(value.projectRoot, "utf8") > MAX_PRISM_PROJECT_ROOT_BYTES)) {
     throw new Error("sessionTraceEvent.prismCall.projectRoot must be an absolute normalized path.");
   }
   assertPrismSlug(value.initiative, "sessionTraceEvent.prismCall.initiative");
@@ -321,7 +286,6 @@ function assertPrismCall(value) {
     throw new Error("sessionTraceEvent.prismCall.facts is invalid.");
   }
 }
-
 function normalizePrismCall(value) {
   if (value === null) return null;
   if (!isObject(value)) {
@@ -329,7 +293,7 @@ function normalizePrismCall(value) {
   }
   assertExactKeys(value, [...PRISM_CALL_KEYS, ...OPTIONAL_PRISM_CALL_KEYS], PRISM_CALL_KEYS, "prismCall");
   return {
-    ...(Object.hasOwn(value, "projectRoot") ? { projectRoot: value.projectRoot } : {}),
+    ...Object.hasOwn(value, "projectRoot") ? { projectRoot: value.projectRoot } : {},
     initiative: value.initiative,
     slice: value.slice,
     role: value.role,
@@ -340,8 +304,7 @@ function normalizePrismCall(value) {
     facts: value.facts
   };
 }
-
-export function validateSessionTraceEvent(event) {
+function validateSessionTraceEvent(event) {
   assertExactKeys(event, [...EVENT_KEYS, ...OPTIONAL_EVENT_KEYS], EVENT_KEYS, "sessionTraceEvent");
   if (event.schemaVersion !== SESSION_TRACE_SCHEMA_VERSION) {
     throw new Error(`Unsupported session trace schema version: ${event.schemaVersion}.`);
@@ -353,18 +316,9 @@ export function validateSessionTraceEvent(event) {
     throw new Error("sessionTraceEvent.eventType is invalid.");
   }
   assertIsoDate(event.occurredAt, "sessionTraceEvent.occurredAt");
-
   if (event.sourceLocation !== null) {
     assertExactKeys(event.sourceLocation, SOURCE_LOCATION_KEYS, SOURCE_LOCATION_KEYS, "sessionTraceEvent.sourceLocation");
-    if (
-      typeof event.sourceLocation.path !== "string"
-      || !event.sourceLocation.path
-      || path.posix.isAbsolute(event.sourceLocation.path)
-      || event.sourceLocation.path === ".."
-      || event.sourceLocation.path.startsWith("../")
-      || path.posix.normalize(event.sourceLocation.path) !== event.sourceLocation.path
-      || Buffer.byteLength(event.sourceLocation.path, "utf8") > MAX_RELATIVE_PATH_BYTES
-    ) {
+    if (typeof event.sourceLocation.path !== "string" || !event.sourceLocation.path || path.posix.isAbsolute(event.sourceLocation.path) || event.sourceLocation.path === ".." || event.sourceLocation.path.startsWith("../") || path.posix.normalize(event.sourceLocation.path) !== event.sourceLocation.path || Buffer.byteLength(event.sourceLocation.path, "utf8") > MAX_RELATIVE_PATH_BYTES) {
       throw new Error("sessionTraceEvent.sourceLocation.path is invalid.");
     }
     assertNullableLine(event.sourceLocation.startLine, "sessionTraceEvent.sourceLocation.startLine");
@@ -372,15 +326,10 @@ export function validateSessionTraceEvent(event) {
     if (event.sourceLocation.startLine === null && event.sourceLocation.endLine !== null) {
       throw new Error("The trace source end line requires a start line.");
     }
-    if (
-      event.sourceLocation.startLine !== null
-      && event.sourceLocation.endLine !== null
-      && event.sourceLocation.endLine < event.sourceLocation.startLine
-    ) {
+    if (event.sourceLocation.startLine !== null && event.sourceLocation.endLine !== null && event.sourceLocation.endLine < event.sourceLocation.startLine) {
       throw new Error("The trace source end line must not precede the start line.");
     }
   }
-
   assertExactKeys(event.counts, COUNT_KEYS, [], "sessionTraceEvent.counts");
   for (const [key, value] of Object.entries(event.counts)) {
     assertCount(value, `sessionTraceEvent.counts.${key}`);
@@ -402,7 +351,6 @@ export function validateSessionTraceEvent(event) {
   if (event.provenance.hostEvent !== null && !HOST_EVENT_SET.has(event.provenance.hostEvent)) {
     throw new Error("sessionTraceEvent.provenance.hostEvent is invalid.");
   }
-
   if (event.eventType === "prism_call") {
     if (!Object.hasOwn(event, "prismCall")) {
       throw new Error("A prism_call event requires prismCall.");
@@ -411,7 +359,6 @@ export function validateSessionTraceEvent(event) {
   } else if (Object.hasOwn(event, "prismCall")) {
     throw new Error("Only prism_call events can contain prismCall.");
   }
-
   if (event.eventType === "session_start") {
     if (event.coverage === null) {
       throw new Error("A session_start event requires coverage.");
@@ -431,8 +378,7 @@ export function validateSessionTraceEvent(event) {
   }
   return true;
 }
-
-export function createSessionTraceEvent({
+function createSessionTraceEvent({
   sessionId,
   projectRoot,
   eventId,
@@ -455,9 +401,7 @@ export function createSessionTraceEvent({
   const identity = createSessionTraceIdentity({ sessionId, projectRoot: normalizedRoot });
   const event = {
     schemaVersion: SESSION_TRACE_SCHEMA_VERSION,
-    sessionDigest: executionKey === null
-      ? identity.sessionDigest
-      : hashSessionTraceValue(executionKey, "executionKey"),
+    sessionDigest: executionKey === null ? identity.sessionDigest : hashSessionTraceValue(executionKey, "executionKey"),
     projectDigest: identity.projectDigest,
     eventIdDigest: digest(`${eventType}\0${normalizedEventId}`),
     eventType,
@@ -468,8 +412,21 @@ export function createSessionTraceEvent({
     coverage,
     gapReason,
     provenance: normalizeProvenance(provenance),
-    ...(eventType === "prism_call" ? { prismCall: normalizePrismCall(prismCall) } : {})
+    ...eventType === "prism_call" ? { prismCall: normalizePrismCall(prismCall) } : {}
   };
   validateSessionTraceEvent(event);
   return event;
 }
+export {
+  SESSION_TRACE_COVERAGE,
+  SESSION_TRACE_EVENT_TYPES,
+  SESSION_TRACE_GAP_REASONS,
+  SESSION_TRACE_HOST_EVENTS,
+  SESSION_TRACE_PROVENANCE,
+  SESSION_TRACE_SCHEMA_VERSION,
+  createSessionTraceEvent,
+  createSessionTraceIdentity,
+  hashSessionTraceValue,
+  normalizeTraceSourcePath,
+  validateSessionTraceEvent
+};

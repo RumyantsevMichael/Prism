@@ -1,31 +1,22 @@
-// prism-doc-tabs: the strip of open documents, a tablist of prism-doc-tab elements with one selected tab, roving focus, and a strip that scrolls.
-// The strip only reports what the person did; the page decides which tabs exist and gives them back with setTabs.
-// Tabs may sit in named groups: a prism-doc-tab-group head comes before a group's tabs, which carry the group's name, and a collapsed group shows only
-// its head and its selected tab. Dragging a tab or a group head, or Ctrl+Shift+ArrowLeft and ArrowRight on a focused one, moves it, in or out of a group;
-// the strip shows the new place at once and reports it with prism-tab-move.
+// Generated from src/server/review/public/kit/elements/prism-doc-tabs.ts by scripts/native-build/compile.mjs.
 import { Base, deepActiveElement, emit, setAttribute } from "./base.js";
 import { groupToneOf, GROUP_TONES } from "./prism-doc-tab-group.js";
-
-// How far a pressed tab moves along the strip before the press becomes a drag.
 const DRAG_THRESHOLD = 5;
-// How far past a group's last tab a dragged tab still joins that group; further on, it lands after the group.
 const GROUP_EDGE = 24;
-
 const isTab = (node) => node?.tagName === "PRISM-DOC-TAB";
 const isHead = (node) => node?.tagName === "PRISM-DOC-TAB-GROUP";
 const middle = (node) => {
   const box = node.getBoundingClientRect();
   return box.left + box.width / 2;
 };
-
-export class PrismDocTabs extends Base {
+class PrismDocTabs extends Base {
   static tag = "prism-doc-tabs";
   static observedAttributes = ["label"];
   static catalog = {
     purpose: "The strip of open documents above a page: one tab per open page with one selected, named groups of tabs that collapse, tabs that do not fit scroll inside the strip, and the selected tab stays in view.",
     options: [
       { name: "label", values: ["text"], default: "", description: "The tablist's accessible name." },
-      { name: "setTabs(tabs, { groups })", values: ["method"], default: "", description: "Gives the strip its tabs as [{ value, label, text, tip, selected, preview, agent, missing, code, group }] in order, with a group's tabs side by side, and its groups as [{ name, collapsed, tone }], where a group without a tone takes its name's tone unless an earlier group has it, and then the next free one, keeping the element and the focus of each tab that stays." },
+      { name: "setTabs(tabs, { groups })", values: ["method"], default: "", description: "Gives the strip its tabs as [{ value, label, text, tip, selected, preview, agent, missing, code, group }] in order, with a group's tabs side by side, and its groups as [{ name, collapsed, tone, opener }], where opener { text, element } names who opened the group and gives the small avatar its head shows before the name, and where a group without a tone takes its name's tone unless an earlier group has it, and then the next free one, keeping the element and the focus of each tab that stays." },
       { name: "prism-select", values: ["event"], default: "", description: "A click, Enter, or Space on a tab; detail.value names its page." },
       { name: "prism-tab-keep", values: ["event"], default: "", description: "A double click on a tab, or Ctrl+Enter or Cmd+Enter on the focused tab; detail.value names its page." },
       { name: "prism-tab-close", values: ["event"], default: "", description: "The close button or a middle click on a tab; detail.value names its page." },
@@ -36,14 +27,11 @@ export class PrismDocTabs extends Base {
     states: ["default", "many-tabs", "dragging", "groups", "collapsed-group"],
     keyboard: ["Tab enters the strip at the selected tab, then reaches that tab's close button, and leaves at the next control.", "ArrowLeft and ArrowRight move focus between tabs and group heads and wrap at the ends.", "Home and End move to the first and last of them.", "Enter or Space opens the focused tab, or collapses or expands the focused group, and Ctrl+Enter or Cmd+Enter keeps the focused tab open.", "Ctrl+Shift+ArrowLeft and Ctrl+Shift+ArrowRight, or Cmd+Shift on a Mac, move the focused tab one place, into or out of a group at its ends, or the focused group past its neighbor; Escape during a drag puts the tab or group back."]
   };
-
   constructor() {
     super();
     this.addEventListener("keydown", (event) => this.onKey(event));
     this.addEventListener("pointerdown", (event) => this.dragStart(event));
     this.addEventListener("click", (event) => {
-      // The click that ends a drag only drops the tab; it does not open it.
-      // That click comes from the pointer, so it has a click count; a click from the keyboard or a script has none and acts as usual.
       if (this.dropped && event.detail > 0) {
         this.dropped = false;
         event.stopPropagation();
@@ -60,7 +48,6 @@ export class PrismDocTabs extends Base {
       const [item, part] = this.hit(event);
       if (isTab(item) && part === "select") emit(this, "prism-tab-keep", { value: item.value });
     });
-    // A middle click closes a tab or a group, and its press does not start the browser's scrolling mode.
     this.addEventListener("mousedown", (event) => {
       if (event.button === 1 && this.hit(event)[0]) event.preventDefault();
     });
@@ -80,25 +67,21 @@ export class PrismDocTabs extends Base {
     });
     this.addEventListener("scroll", () => this.fade(), { passive: true });
   }
-
   connectedCallback() {
     setAttribute(this, "role", "tablist");
     setAttribute(this, "aria-orientation", "horizontal");
     this.attributeChangedCallback();
     this.resizes ??= globalThis.ResizeObserver ? new ResizeObserver(() => this.reveal()) : null;
     this.resizes?.observe(this);
-    // Every change of order, group, or what a collapse hides moves where a group ends, so the strip marks the ends whenever its tabs change.
     this.ends ??= new MutationObserver(() => this.markGroupEnds());
     this.ends.observe(this, { childList: true, subtree: true, attributes: true, attributeFilter: ["group", "hidden"] });
     this.markGroupEnds();
     this.sync();
   }
-
   disconnectedCallback() {
     this.resizes?.disconnect();
     this.ends?.disconnect();
   }
-
   // Marks the last shown tab of each group with group-end, which draws the separator that closes the group.
   markGroupEnds() {
     const shown = this.tabs.filter((tab) => !tab.hidden);
@@ -108,52 +91,41 @@ export class PrismDocTabs extends Base {
       if (tab.hasAttribute("group-end") !== end) tab.toggleAttribute("group-end", end);
     });
   }
-
   attributeChangedCallback() {
     setAttribute(this, "aria-label", this.getAttribute("label") || null);
   }
-
   get tabs() {
     return [...this.children].filter(isTab);
   }
-
   get heads() {
     return [...this.children].filter(isHead);
   }
-
   // The tabs and group heads the arrow keys reach, in order: every head, and every tab a collapsed group does not hide.
   get stops() {
     return [...this.children].filter((node) => (isTab(node) || isHead(node)) && !node.hidden);
   }
-
   get value() {
     return this.selectedTab()?.value ?? "";
   }
-
   selectedTab() {
     return this.tabs.find((tab) => tab.hasAttribute("selected")) ?? null;
   }
-
   // Whether a node is this strip or inside it, also inside a tab's shadow root.
   holds(node) {
     for (let at = node; at; at = at.parentNode ?? at.host) if (at === this) return true;
     return false;
   }
-
   hit(event) {
     const item = event.composedPath().find((node) => (isTab(node) || isHead(node)) && node.parentElement === this);
     return item ? [item, item.partOf(event)] : [null, null];
   }
-
   headOf(name) {
     return this.heads.find((head) => head.name === name) ?? null;
   }
-
   // A group's tabs, in the strip's order.
   membersOf(head) {
     return this.tabs.filter((tab) => tab.getAttribute("group") === head.name);
   }
-
   // The groups as the strip shows them now: each name with its tabs in order.
   layout() {
     return {
@@ -161,7 +133,6 @@ export class PrismDocTabs extends Base {
       groups: this.heads.map((head) => ({ name: head.name, tabs: this.membersOf(head).map((tab) => tab.value) }))
     };
   }
-
   /**
    * Replaces the strip's tabs, in order, with one prism-doc-tab per entry, and puts a group head before the first tab of each group;
    * a tab that stays keeps its element, so a tab with the focus keeps it.
@@ -173,12 +144,11 @@ export class PrismDocTabs extends Base {
     const existing = new Map(this.tabs.map((tab) => [tab.value, tab]));
     const existingHeads = new Map(this.heads.map((head) => [head.name, head]));
     const known = new Map(groups.map((group) => [group.name, group]));
-    const counts = new Map();
+    const counts = /* @__PURE__ */ new Map();
     for (const entry of entries) if (entry.group) counts.set(entry.group, (counts.get(entry.group) ?? 0) + 1);
     const next = [];
-    const placed = new Set();
-    // A group without a tone of its own takes its name's tone unless an earlier group of the strip has it, and then the next free one, so groups side by side read apart.
-    const taken = new Set();
+    const placed = /* @__PURE__ */ new Set();
+    const taken = /* @__PURE__ */ new Set();
     const toneOf = (group) => {
       if (GROUP_TONES.includes(String(group.tone))) return String(group.tone);
       const own = groupToneOf(group.name);
@@ -199,8 +169,23 @@ export class PrismDocTabs extends Base {
         setAttribute(head, "tone", tone);
         setAttribute(head, "count", String(counts.get(name)));
         head.toggleAttribute("collapsed", Boolean(group.collapsed));
-        setAttribute(head, "tip", `${name}, ${counts.get(name)} ${counts.get(name) === 1 ? "tab" : "tabs"}`);
-        if (head.textContent !== name) head.textContent = name;
+        const opener = typeof group.opener?.text === "string" && group.opener.text.trim() ? group.opener : null;
+        setAttribute(head, "opener", opener?.text.trim() ?? null);
+        setAttribute(head, "tip", `${name}, ${counts.get(name)} ${counts.get(name) === 1 ? "tab" : "tabs"}${opener ? `, opened by ${opener.text.trim()}` : ""}`);
+        const words = [...head.childNodes].filter((node) => node.nodeType === 3);
+        if (words.map((node) => node.textContent).join("") !== name) {
+          for (const node of words) node.remove();
+          head.append(name);
+        }
+        const shown = [...head.children].find((node) => node.slot === "opener") ?? null;
+        const avatar = opener?.element?.nodeType === 1 ? opener.element : null;
+        if (shown !== avatar) {
+          shown?.remove();
+          if (avatar) {
+            avatar.slot = "opener";
+            head.prepend(avatar);
+          }
+        }
         next.push(head);
       }
       const tab = existing.get(entry.value) ?? this.ownerDocument.createElement("prism-doc-tab");
@@ -209,11 +194,9 @@ export class PrismDocTabs extends Base {
       setAttribute(tab, "label", entry.label);
       setAttribute(tab, "tip", entry.tip || null);
       for (const flag of ["selected", "preview", "agent", "missing"]) tab.toggleAttribute(flag, Boolean(entry[flag]));
-      // A repository file's tab names it by its path, since code is its subject.
       tab.toggleAttribute("data-code-subject", Boolean(entry.code));
       setAttribute(tab, "group", name);
       setAttribute(tab, "group-tone", group ? next.findLast(isHead).getAttribute("tone") : null);
-      // A collapsed group hides its tabs, except the selected one, so the page that shows always has its tab.
       tab.hidden = Boolean(group?.collapsed) && !entry.selected;
       const text = entry.text ?? entry.label;
       if (tab.textContent !== text) tab.textContent = text;
@@ -225,41 +208,32 @@ export class PrismDocTabs extends Base {
     });
     this.toggleAttribute("empty", next.length === 0);
     this.sync();
-    // A tab closed from the keyboard takes the focus with it, so the focus moves to the selected tab.
     if (hadFocus && !this.holds(deepActiveElement(this.ownerDocument))) this.current()?.focus({ preventScroll: true });
     this.reveal();
   }
-
   current() {
     return this.stops.find((item) => item.hasAttribute("current")) ?? null;
   }
-
   // Keeps one tab or head in the Tab order: the focused one, or else the selected tab.
   sync() {
     const focused = this.stops.find((item) => item.shadowRoot?.activeElement);
     this.rove(focused ?? this.selectedTab() ?? this.stops[0] ?? null);
   }
-
   rove(target) {
     for (const item of [...this.tabs, ...this.heads]) item.toggleAttribute("current", item === target);
   }
-
   choose(tab) {
     emit(this, "prism-select", { value: tab.value });
   }
-
   toggle(head) {
     emit(this, "prism-group-toggle", { group: head.name, collapsed: !head.collapsed });
   }
-
   closeGroup(head) {
     emit(this, "prism-group-close", { group: head.name, tabs: this.membersOf(head).map((tab) => tab.value) });
   }
-
   // Scrolls the strip, and only the strip, so the selected tab shows whole.
   reveal(item = this.selectedTab()) {
     if (item && this.clientWidth > 0) {
-      // The strip is the tabs' offset parent, so a tab's offset is its place in the strip's scrolled content.
       const start = item.offsetLeft;
       const end = start + item.offsetWidth;
       if (start < this.scrollLeft) this.scrollLeft = start;
@@ -267,13 +241,11 @@ export class PrismDocTabs extends Base {
     }
     this.fade();
   }
-
   // The strip fades at an end where more tabs wait beyond it.
   fade() {
     this.toggleAttribute("fade-start", this.scrollLeft > 1);
     this.toggleAttribute("fade-end", this.scrollLeft + this.clientWidth < this.scrollWidth - 1);
   }
-
   // The strip's units: each ungrouped tab, and each group as its head with its tabs, in order.
   units() {
     const units = [];
@@ -286,7 +258,6 @@ export class PrismDocTabs extends Base {
     }
     return units;
   }
-
   // Puts the tab or group under the pointer in its new place: a group moves past whole units, and a tab moves between tabs, joining an expanded
   // group when it lands among the group's tabs, right after its head, or just past its last tab.
   place(item, x) {
@@ -305,10 +276,8 @@ export class PrismDocTabs extends Base {
       return head?.collapsed ? head : null;
     };
     let before = this.stops.filter((node) => node !== item).find((node) => x < middle(node)) ?? null;
-    // A collapsed group takes no tab, so a tab that would land among it lands before its head instead.
     if (isTab(before) && collapsedHead(before)) before = collapsedHead(before);
     if (item.nextElementSibling !== before) this.insertBefore(item, before);
-    // Its group now follows from where it sits.
     const previous = item.previousElementSibling;
     const following = item.nextElementSibling;
     let group = null;
@@ -319,7 +288,6 @@ export class PrismDocTabs extends Base {
     }
     this.assign(item, group);
   }
-
   // Gives a tab the group it now sits in, with that group's tone, and recounts both groups.
   assign(tab, name) {
     const head = name ? this.headOf(name) : null;
@@ -327,13 +295,11 @@ export class PrismDocTabs extends Base {
     setAttribute(tab, "group-tone", head ? head.getAttribute("tone") : null);
     for (const each of this.heads) setAttribute(each, "count", String(this.membersOf(each).length));
   }
-
   // A press on a tab's title or a group's head becomes a drag once the pointer moves a few pixels along the strip; until then it is a click.
   dragStart(event) {
-    // A new press starts a new gesture, so the click of an earlier drop that the browser never sent cannot swallow this one.
     this.dropped = false;
     const [item, part] = this.hit(event);
-    if (!item || (part !== "select" && part !== "toggle") || event.button !== 0 || this.stops.length < 2) return;
+    if (!item || part !== "select" && part !== "toggle" || event.button !== 0 || this.stops.length < 2) return;
     const startX = event.clientX;
     const before = this.snapshot();
     let dragging = false;
@@ -353,7 +319,6 @@ export class PrismDocTabs extends Base {
         item.setAttribute("dragging", "");
         this.setAttribute("dragging", "");
       }
-      // The strip scrolls when the pointer passes one of its ends, so a tab can be dragged to a place that is out of view.
       const bounds = this.getBoundingClientRect();
       if (next.clientX < bounds.left) this.scrollLeft -= bounds.left - next.clientX;
       else if (next.clientX > bounds.right) this.scrollLeft += next.clientX - bounds.right;
@@ -362,7 +327,6 @@ export class PrismDocTabs extends Base {
     const drop = () => {
       cleanup();
       if (!dragging) return;
-      // Some browsers follow the drop with a click and some do not, so the flag lasts until that click or the next press, never for a span of time.
       this.dropped = true;
       this.report(item, before);
     };
@@ -383,12 +347,10 @@ export class PrismDocTabs extends Base {
     this.addEventListener("pointercancel", cancel);
     this.ownerDocument.addEventListener("keydown", escape, true);
   }
-
   // The order and groups of the strip's tabs and heads, so a cancelled drag can put them back.
   snapshot() {
     return [...this.children].map((node) => [node, node.getAttribute("group"), node.getAttribute("group-tone")]);
   }
-
   restore(snapshot) {
     for (const [node, group, tone] of snapshot) {
       if (node.parentElement !== this) continue;
@@ -401,7 +363,6 @@ export class PrismDocTabs extends Base {
     for (const head of this.heads) setAttribute(head, "count", String(this.membersOf(head).length));
     this.reveal();
   }
-
   // Reports a moved tab or group with the strip's new order and groups, unless it ended where it started.
   report(item, snapshot) {
     const { order, groups } = this.layout();
@@ -410,7 +371,6 @@ export class PrismDocTabs extends Base {
     this.reveal(item);
     emit(this, "prism-tab-move", isHead(item) ? { value: "", group: item.name, order, groups } : { value: item.value, group: null, order, groups });
   }
-
   // Ctrl+Shift+arrows, or Cmd+Shift on a Mac, move the focused tab one place, without wrapping, and keep the focus on it.
   // At a group's end the tab first leaves the group, and next to an expanded group it first joins it; a group moves past its neighbor whole.
   moveByKey(item, step) {
@@ -429,7 +389,6 @@ export class PrismDocTabs extends Base {
       const members = head ? this.membersOf(head) : [];
       const neighbor = step < 0 ? item.previousElementSibling : item.nextElementSibling;
       if (head && (step < 0 ? members[0] === item : members.at(-1) === item)) {
-        // Leaving a group: to the left the tab steps out before the head, to the right it stays where it is.
         if (step < 0) this.insertBefore(item, head);
         this.assign(item, null);
       } else if (!neighbor) {
@@ -451,10 +410,9 @@ export class PrismDocTabs extends Base {
     item.focus({ preventScroll: true });
     this.report(item, before);
   }
-
   onKey(event) {
     const [current, part] = this.hit(event);
-    if (!current || (part !== "select" && part !== "toggle")) return;
+    if (!current || part !== "select" && part !== "toggle") return;
     if ((event.ctrlKey || event.metaKey) && event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       event.preventDefault();
       this.moveByKey(current, event.key === "ArrowLeft" ? -1 : 1);
@@ -480,3 +438,6 @@ export class PrismDocTabs extends Base {
     this.reveal(next);
   }
 }
+export {
+  PrismDocTabs
+};

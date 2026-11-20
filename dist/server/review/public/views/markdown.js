@@ -1,35 +1,18 @@
+// Generated from src/server/review/public/views/markdown.ts by scripts/native-build/compile.mjs.
 import { highlight, languageOf } from "./highlight.js";
 import { escapeHtml } from "./util.js";
-
-// Heading ids carry a prefix so a heading such as "Tabs" never collides with an id the page itself uses.
-export const HEADING_PREFIX = "md-";
-
-// A source anchor names one line, `L12`, or a range, `L12-39`.
-export const LINE_RANGE = /^L(\d+)(?:-(\d+))?$/;
-
-// GitHub-style slugs, so an anchor written for the repository host also lands here.
-// A Markdown file can name a section with an explicit anchor line, such as `<a id="1"></a>` above a requirement heading.
+const HEADING_PREFIX = "md-";
+const LINE_RANGE = /^L(\d+)(?:-(\d+))?$/;
 const EXPLICIT_ANCHOR = /^\s*&lt;a\s+(?:id|name)=&quot;([^&]+)&quot;\s*&gt;\s*&lt;\/a&gt;\s*$/;
-
-// Resolves an anchor to its heading, also when an explicit anchor stands just above the heading it names.
-// A source line range such as `L12-39` resolves to its first line.
-export function anchorTarget(root, anchor) {
+function anchorTarget(root, anchor) {
   const line = anchor?.match(LINE_RANGE);
   const target = anchor && root.querySelector(`#${CSS.escape(HEADING_PREFIX + (line ? `L${line[1]}` : anchor))}`);
   const next = target?.nextElementSibling;
   return target?.classList.contains("md-anchor") && next && /^H[1-6]$/.test(next.tagName) ? next : target;
 }
-
-export function headingSlug(text) {
-  return text
-    .replace(/<[^>]+>/g, "")
-    .replace(/&[a-z]+;|&#\d+;/g, "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
-    .replace(/\s/g, "-");
+function headingSlug(text) {
+  return text.replace(/<[^>]+>/g, "").replace(/&[a-z]+;|&#\d+;/g, "").toLowerCase().trim().replace(/[^\p{L}\p{N}\s_-]/gu, "").replace(/\s/g, "-");
 }
-
 function normalizePath(path) {
   const parts = [];
   for (const part of path.split("/")) {
@@ -43,16 +26,12 @@ function normalizePath(path) {
   }
   return parts.join("/");
 }
-
 function decode(value) {
   return value.replaceAll("&quot;", '"').replaceAll("&gt;", ">").replaceAll("&lt;", "<").replaceAll("&amp;", "&");
 }
-
-// A store artifact's links come resolved from the server as { href, target, resolved }, by the href as written:
-// target store:<location> or code:<repository>:<path> of what it opens, resolved null for a code file no checkout on this machine holds, and false for a link that names nothing.
 function storeLink(label, href, options) {
   const found = options.links?.get(decode(href));
-  if (found === undefined) return null;
+  if (found === void 0) return null;
   const anchor = decode(href).split("#")[1] ?? "";
   if (found.resolved === null) {
     return `<span class="doc-link-unresolved" data-link="unavailable">${label}<prism-chip tip="${escapeHtml(decode(href))} names a code file that no checkout of its repository on this machine holds">not available on this machine</prism-chip></span>`;
@@ -62,13 +41,9 @@ function storeLink(label, href, options) {
   }
   return `<a href="./review?artifact=${encodeURIComponent(found.target)}" data-doc-link="${escapeHtml(found.target)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}>${label}</a>`;
 }
-
-/** Markdown options' links from a store artifact's read: a map from each link's href to its { target, resolved }, or null without links. */
-export function linkTargets(links) {
-  return Array.isArray(links) ? new Map(links.map((item) => [item.href, { target: item.target ?? null, resolved: item.resolved === undefined ? false : item.resolved }])) : null;
+function linkTargets(links) {
+  return Array.isArray(links) ? new Map(links.map((item) => [item.href, { target: item.target ?? null, resolved: item.resolved === void 0 ? false : item.resolved }])) : null;
 }
-
-// External links open in a new tab; in-document anchors scroll; repository paths open as review tabs when the review knows them.
 function link(label, href, options) {
   if (/^https?:/i.test(href)) return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
   if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//")) return label;
@@ -83,29 +58,18 @@ function link(label, href, options) {
   }
   return `<a href="./review?artifact=${encodeURIComponent(resolved)}" data-doc-link="${escapeHtml(resolved)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}>${label}</a>`;
 }
-
 function inlineMarkdown(value, options) {
   const codes = [];
-  return value
-    .replace(/`([^`]+)`/g, (_, code) => `\u0000${codes.push(code) - 1}\u0000`)
-    // An image, ![alt](target), is no link and shows its alt text; the server's link extraction (artifact-links.mjs) reads links the same way.
-    .replace(/(!?)\[([^\]]+)\]\(([^)\s]+)\)/g, (_, image, label, href) => image ? label : link(label, href, options))
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-    .replace(/\u0000(\d+)\u0000/g, (_, index) => `<code>${codes[Number(index)]}</code>`);
+  return value.replace(/`([^`]+)`/g, (_, code) => `\0${codes.push(code) - 1}\0`).replace(/(!?)\[([^\]]+)\]\(([^)\s]+)\)/g, (_, image, label, href) => image ? label : link(label, href, options)).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/\*([^*]+)\*/g, "<em>$1</em>").replace(/\u0000(\d+)\u0000/g, (_, index) => `<code>${codes[Number(index)]}</code>`);
 }
-
-// Renders the lines of one paragraph; a line that ends in two spaces or a backslash keeps its line break, as in CommonMark.
 function inlineLines(lines, options) {
   const HARD_BREAK = /(?: {2,}|\\)$/;
   const marked = lines.map((line, index) => {
     const text = line.trim();
-    return index < lines.length - 1 && HARD_BREAK.test(line) ? `${text.replace(/\\$/, "")}\u0001` : text;
+    return index < lines.length - 1 && HARD_BREAK.test(line) ? `${text.replace(/\\$/, "")}` : text;
   });
   return inlineMarkdown(marked.join("\n"), options).replace(/\u0001\n/g, "<br>\n");
 }
-
-// Splits the lines of a quote into its paragraphs at its blank lines.
 function quoteParagraphs(lines) {
   const paragraphs = [[]];
   for (const line of lines) {
@@ -114,36 +78,20 @@ function quoteParagraphs(lines) {
   }
   return paragraphs.filter((paragraph) => paragraph.length);
 }
-
-// A line that starts a block of its own, so it ends an open paragraph instead of continuing it.
 function startsBlock(line, next = "") {
-  return FENCE.test(line.trim())
-    || /^#{1,6}\s/.test(line)
-    || /^\s{0,3}&gt;/.test(line)
-    || /^\s*([-*+]|1[.)])\s+\S/.test(line)
-    || EXPLICIT_ANCHOR.test(line)
-    || (line.trim().startsWith("|") && /^\s*\|?\s*:?-+/.test(next));
+  return FENCE.test(line.trim()) || /^#{1,6}\s/.test(line) || /^\s{0,3}&gt;/.test(line) || /^\s*([-*+]|1[.)])\s+\S/.test(line) || EXPLICIT_ANCHOR.test(line) || line.trim().startsWith("|") && /^\s*\|?\s*:?-+/.test(next);
 }
-
 function tableCells(line, options) {
   return line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => inlineMarkdown(cell.trim(), options));
 }
-
-// A highlighted code block in the kit's code element, which colors its tok-<name> spans with the theme's syntax colors.
 function codeBlock(html, language) {
   return `<prism-code${language ? ` language="${language}"` : ""}><pre><code${language ? ` class="language-${language}"` : ""}>${html}</code></pre></prism-code>`;
 }
-
-// A fenced block inside a document, which prism-doc styles as a code block with the theme's syntax colors.
 function fencedBlock(html, language) {
   return `<pre><code${language ? ` class="language-${language}"` : ""}>${html}</code></pre>`;
 }
-
-// A fence opens with three or more backticks or tildes and closes on a line that starts with the same character.
 const FENCE = /^(`{3,}|~{3,})/;
-
-// Renders the small Markdown subset Prism artifacts use; any other file shows as preformatted text.
-export function renderText(path, content, options = {}) {
+function renderText(path, content, options = {}) {
   const escaped = escapeHtml(content);
   if (!path.toLowerCase().endsWith(".md")) {
     const language = languageOf(path);
@@ -151,29 +99,25 @@ export function renderText(path, content, options = {}) {
   }
   const lines = escaped.split(/\r?\n/);
   const output = [];
-  const slugs = new Map();
-  // An open fence keeps its language and its lines until it closes, so the block is highlighted as a whole.
+  const slugs = /* @__PURE__ */ new Map();
   let fence = null;
-  // Open lists, outermost first: each keeps its type and the indent of its items, and its last item stays open so a deeper list nests inside it.
   const lists = [];
   const closeLists = (indent = -1) => {
     while (lists.length && lists.at(-1).indent > indent) output.push(`</li></${lists.pop().type}>`);
   };
   const closeList = () => closeLists();
   const LIST_ITEM = /^(\s*)([-*+]|(\d{1,9})[.)])\s+(.*)$/;
-  // A blank line ends the open lists unless a list item or an indented continuation follows it.
   const listContinues = (from) => {
     let next = from;
     while (next < lines.length && !lines[next].trim()) next += 1;
     if (next >= lines.length || !lists.length) return false;
     return LIST_ITEM.test(lines[next]) || /^\s{2,}\S/.test(lines[next]);
   };
-  // Consecutive text lines form one paragraph, and consecutive quoted lines one quote, as in CommonMark: a single line break inside them is a space.
   let paragraph = null;
   let quote = null;
   const flush = () => {
     if (paragraph) output.push(`<p>${inlineLines(paragraph, options)}</p>`);
-    if (quote) output.push(`<blockquote>${quoteParagraphs(quote).map((lines) => `<p>${inlineLines(lines, options)}</p>`).join("\n")}</blockquote>`);
+    if (quote) output.push(`<blockquote>${quoteParagraphs(quote).map((lines2) => `<p>${inlineLines(lines2, options)}</p>`).join("\n")}</blockquote>`);
     paragraph = null;
     quote = null;
   };
@@ -182,7 +126,6 @@ export function renderText(path, content, options = {}) {
     const line = lines[index];
     const item = line.match(LIST_ITEM);
     const marker = line.trim().match(FENCE)?.[1] ?? null;
-    // A paragraph or quote ends at a blank line or at any line that starts another block; a quote also takes unmarked lines that continue its text.
     if (paragraph && (fence || !line.trim() || startsBlock(line, lines[index + 1]))) flush();
     if (quote && !QUOTE.test(line) && (!line.trim() || startsBlock(line, lines[index + 1]) || !quote.at(-1).trim())) flush();
     if (fence && marker?.[0] === fence.marker) {
@@ -221,21 +164,19 @@ export function renderText(path, content, options = {}) {
       output.push(`<h${level} id="${HEADING_PREFIX}${escapeHtml(seen ? `${slug}-${seen}` : slug)}">${inlineMarkdown(text, options)}</h${level}>`);
     } else if (item) {
       const indent = item[1].replace(/\t/g, "    ").length;
-      const type = item[3] === undefined ? "ul" : "ol";
+      const type = item[3] === void 0 ? "ul" : "ol";
       closeLists(indent);
       const top = lists.at(-1);
       if (top && top.indent === indent && top.type !== type) closeLists(indent - 1);
       if (lists.at(-1)?.indent === indent) {
         output.push("</li>");
       } else {
-        // An ordered list starts at its first item's number, as CommonMark does; later items count up from there.
         const start = type === "ol" && Number(item[3]) !== 1 ? ` start="${Number(item[3])}"` : "";
         output.push(`<${type}${start}>`);
         lists.push({ type, indent });
       }
       output.push(`<li>${inlineMarkdown(item[4], options)}`);
     } else if (lists.length && /^\s{2,}\S/.test(line)) {
-      // An indented line under an item continues that item: right after the item's text it continues the same paragraph, after a blank line it starts a new one.
       output.push(`${lines[index - 1]?.trim() ? "" : "<br>"}${inlineMarkdown(line.trim(), options)}`);
     } else if (QUOTE.test(line)) {
       closeList();
@@ -252,13 +193,9 @@ export function renderText(path, content, options = {}) {
   closeList();
   return output.join("\n");
 }
-
 const TOC_MINIMUM = 3;
 const HEADING = /^H([1-6])$/;
-
 const headingLevel = (node) => Number(HEADING.exec(node.tagName)?.[1] ?? 0);
-
-// Hides every block under a folded heading, up to the next heading of the same or a higher level; a nested fold stays folded when its parent opens.
 function applyFolds(content) {
   const open = [];
   for (const node of content.children) {
@@ -268,7 +205,6 @@ function applyFolds(content) {
     if (level) open.push({ level, folded: node.classList.contains("is-folded") });
   }
 }
-
 function setFold(content, heading, folded) {
   heading.classList.toggle("is-folded", folded);
   const button = heading.querySelector(":scope > .md-fold");
@@ -282,16 +218,14 @@ function setFold(content, heading, folded) {
   }
   applyFolds(content);
 }
-
-// Each heading with content under it gets a fold toggle; the folds set, kept by the caller per view, survives a re-render.
-export function decorateFolds(content, folds) {
+function decorateFolds(content, folds) {
   content.prismFolds = folds;
   const children = [...content.children];
   children.forEach((heading, index) => {
     const level = headingLevel(heading);
     if (!level || heading.querySelector(":scope > .md-fold")) return;
     const next = children[index + 1];
-    if (!next || (headingLevel(next) && headingLevel(next) <= level)) return;
+    if (!next || headingLevel(next) && headingLevel(next) <= level) return;
     const button = document.createElement("prism-button");
     button.setAttribute("variant", "ghost");
     button.setAttribute("size", "sm");
@@ -309,7 +243,6 @@ export function decorateFolds(content, folds) {
     });
     heading.classList.add("md-foldable");
     heading.prepend(button);
-    // The toggles sit in a gutter that the content keeps for them, so they never reach past the card, panel, or preview that holds the document.
     content.classList.add("has-folds");
     if (folds?.has(heading.id)) heading.classList.add("is-folded");
     const folded = heading.classList.contains("is-folded");
@@ -319,9 +252,7 @@ export function decorateFolds(content, folds) {
   });
   applyFolds(content);
 }
-
-// Opens a folded target heading and every folded heading above a target, so a link, a contents entry, or a find can land inside a folded section.
-export function revealInDocument(target) {
+function revealInDocument(target) {
   const content = target?.closest?.(".document-content");
   if (!content) return;
   let node = target;
@@ -335,12 +266,9 @@ export function revealInDocument(target) {
     if (previous.classList.contains("is-folded")) setFold(content, previous, false);
   }
 }
-
-// A rendered document with enough headings gets a contents list beside it; the current section is marked while scrolling.
-// folds holds the ids of the folded headings, keyed by the document's position on the page.
-export function decorateDocuments(root, folds = new Map()) {
+function decorateDocuments(root, folds = /* @__PURE__ */ new Map()) {
   [...root.querySelectorAll(".document-content")].forEach((content, position) => {
-    if (!folds.has(position)) folds.set(position, new Set());
+    if (!folds.has(position)) folds.set(position, /* @__PURE__ */ new Set());
     decorateFolds(content, folds.get(position));
   });
   for (const content of root.querySelectorAll(".document-content")) {
@@ -349,14 +277,12 @@ export function decorateDocuments(root, folds = new Map()) {
     const headings = [...content.querySelectorAll("h1[id], h2[id], h3[id]")];
     if (headings.length < TOC_MINIMUM) continue;
     const top = Math.min(...headings.map((heading) => Number(heading.tagName[1])));
-    // The kit's contents element lays itself out beside the document and folds above it in a narrow window.
     const toc = document.createElement("prism-contents");
     toc.innerHTML = `<ol>${headings.map((heading) => `<li class="depth-${Number(heading.tagName[1]) - top}"><a href="#${escapeHtml(heading.id.slice(HEADING_PREFIX.length))}" data-doc-anchor="${escapeHtml(heading.id.slice(HEADING_PREFIX.length))}">${escapeHtml(heading.textContent)}</a></li>`).join("")}</ol>`;
     content.before(toc);
   }
 }
-
-export function markCurrentSection(root, viewportTop) {
+function markCurrentSection(root, viewportTop) {
   for (const toc of root.querySelectorAll("prism-contents")) {
     const host = toc.parentElement;
     const scroller = host.closest(".is-maximized") ?? document.getElementById("workspace");
@@ -367,9 +293,20 @@ export function markCurrentSection(root, viewportTop) {
     let current = links[0];
     for (const anchor of links) {
       const heading = host.querySelector(`#${CSS.escape(HEADING_PREFIX + anchor.dataset.docAnchor)}`);
-      // At the end of the scroll the last heading on screen is current, since later headings can never reach the top.
       if (heading && heading.getBoundingClientRect().top <= (atEnd ? window.innerHeight : areaTop + 96)) current = anchor;
     }
     toc.markCurrent?.(current);
   }
 }
+export {
+  HEADING_PREFIX,
+  LINE_RANGE,
+  anchorTarget,
+  decorateDocuments,
+  decorateFolds,
+  headingSlug,
+  linkTargets,
+  markCurrentSection,
+  renderText,
+  revealInDocument
+};

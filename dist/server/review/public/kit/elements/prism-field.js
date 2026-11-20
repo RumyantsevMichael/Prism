@@ -1,12 +1,8 @@
-// prism-field: a labelled native text, search, textarea, or select control in the light DOM, with a hint and an error message.
+// Generated from src/server/review/public/kit/elements/prism-field.ts by scripts/native-build/compile.mjs.
 import { Base, setAttribute, uniqueId } from "./base.js";
-
 const TYPES = ["text", "search", "textarea", "select"];
-
-// Whether the browser sizes a text area to its content from the stylesheet's field-sizing, so the element's script need not.
 const sizesToContent = () => globalThis.CSS?.supports?.("field-sizing", "content") ?? false;
-
-export class PrismField extends Base {
+class PrismField extends Base {
   static tag = "prism-field";
   static observedAttributes = ["label", "hint", "name", "value", "placeholder", "required", "disabled", "invalid", "error", "type"];
   static catalog = {
@@ -27,12 +23,10 @@ export class PrismField extends Base {
     states: ["text", "search", "textarea", "select", "hint", "invalid", "disabled", "bare", "filter"],
     keyboard: ["The native control takes the keyboard as it always does; Tab reaches it and the label names it."]
   };
-
   connectedCallback() {
     if (!this.control) this.build();
     this.sync();
   }
-
   attributeChangedCallback(name, previous, next) {
     if (!this.control) return;
     if (name === "type") {
@@ -43,23 +37,19 @@ export class PrismField extends Base {
     } else if (name === "value") this.value = next ?? "";
     this.sync();
   }
-
   get type() {
     const type = this.getAttribute("type");
     return TYPES.includes(type) ? type : "text";
   }
-
   get value() {
     return this.control ? this.control.value : this.getAttribute("value") ?? "";
   }
-
   set value(value) {
     if (this.control) {
       this.control.value = value ?? "";
       this.fit();
     } else this.setAttribute("value", value ?? "");
   }
-
   /** Grows a text area to its text where the browser cannot size it from its content; the stylesheet's minimum and maximum heights still apply. */
   fit() {
     const control = this.control;
@@ -68,7 +58,6 @@ export class PrismField extends Base {
     const border = control.offsetHeight - control.clientHeight;
     control.style.setProperty("height", `${control.scrollHeight + border}px`);
   }
-
   build(value = this.getAttribute("value")) {
     const document = this.ownerDocument;
     const id = this.controlId ??= uniqueId("prism-field");
@@ -93,7 +82,6 @@ export class PrismField extends Base {
     this.control = control;
     if (type === "select") {
       this.fillOptions();
-      // Only changes to the prism-option children rebuild the options, never the native options this field writes.
       this.options ??= new MutationObserver((records) => {
         const touched = records.some((record) => {
           if (this.control?.contains(record.target)) return false;
@@ -105,14 +93,13 @@ export class PrismField extends Base {
       this.options.observe(this, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["value", "selected", "disabled"] });
     } else {
       this.options?.disconnect();
-      if (value !== null && value !== undefined) control.value = value;
+      if (value !== null && value !== void 0) control.value = value;
       if (type === "textarea") {
         control.addEventListener("input", () => this.fit());
         requestAnimationFrame(() => this.fit());
       }
     }
   }
-
   // The prism-option children become the native select's options, keeping the chosen value when it still exists.
   fillOptions() {
     const control = this.control;
@@ -132,7 +119,6 @@ export class PrismField extends Base {
     if (keep !== null && options.some((option) => option.value === keep)) control.value = keep;
     else if (!options.some((option) => option.selected) && initial !== null) control.value = initial;
   }
-
   sync() {
     const control = this.control;
     if (!control) return;
@@ -155,3 +141,6 @@ export class PrismField extends Base {
     setAttribute(control, "aria-describedby", described.length ? described.join(" ") : null);
   }
 }
+export {
+  PrismField
+};

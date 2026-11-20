@@ -1,34 +1,29 @@
-// prism-chip: a short label in a tone; static text, a link with href, or a button with interactive, which pressed makes a toggle.
+// Generated from src/server/review/public/kit/elements/prism-chip.ts by scripts/native-build/compile.mjs.
 import { Base, setAttribute, shadow } from "./base.js";
 import { remeasure, unwatchShortening, watchShortening } from "../shorten.js";
-
-export const TONES = Object.freeze(["neutral", "accent", "danger", "warning", "success", "info"]);
-
-export class PrismChip extends Base {
+const TONES = Object.freeze(["neutral", "accent", "danger", "warning", "success", "info"]);
+class PrismChip extends Base {
   static tag = "prism-chip";
   static styles = ["prism-chip.css"];
   static observedAttributes = ["href", "interactive", "target", "label", "pressed"];
   static catalog = {
-    purpose: "A short label in a tone, led by an optional glyph from slot=\"start\" and followed by quieter secondary text from slot=\"meta\"; static text, a link with href, or a button with interactive, which pressed makes a toggle such as a filter.",
+    purpose: 'A short label in a tone, led by an optional glyph from slot="start" and followed by quieter secondary text from slot="meta"; static text, a link with href, or a button with interactive, which pressed makes a toggle such as a filter.',
     options: [
       { name: "tone", values: TONES, default: "neutral", description: "The color of the chip; the text stays at 4.5:1 on its soft fill." },
       { name: "href", values: ["URL"], default: "", description: "Makes the chip a link to that address." },
       { name: "interactive", values: ["boolean"], default: "false", description: "Makes the chip a button that sends click." },
       { name: "label", values: ["text"], default: "", description: "The accessible name of a link or button chip whose text alone does not say what it does." },
       { name: "pressed", values: ["true", "false"], default: "", description: "Makes a button chip a toggle, exposed as aria-pressed and filled in the accent while true." },
-      { name: "slot=\"start\"", values: ["children"], default: "", description: "A glyph that leads the label, such as a prism-icon, set apart from it by the chip's gap." },
-      { name: "slot=\"meta\"", values: ["children"], default: "", description: "Secondary text shown after the label, such as a count or a kind." },
+      { name: 'slot="start"', values: ["children"], default: "", description: "A glyph that leads the label, such as a prism-icon, set apart from it by the chip's gap." },
+      { name: 'slot="meta"', values: ["children"], default: "", description: "Secondary text shown after the label, such as a count or a kind." },
       { name: "tip", values: ["text"], default: "", description: "A short description the kit tooltip shows on hover and keyboard focus." }
     ],
     states: ["static", "tones", "link", "interactive", "pressed", "start", "meta"],
     keyboard: ["A link chip opens with Enter and a button chip activates with Enter and Space, which also toggles a pressed chip's state through its click handler.", "A static chip whose text is shortened joins the Tab order so its full text can be read."]
   };
-
   constructor() {
     super();
     this.root = shadow(this, PrismChip.styles, "");
-    // A link or button chip that is focused as a whole, from script or a test, passes focus to its own control, which the keyboard uses.
-    // It checks again once the focusing script has run, since that script may focus the host more than once.
     const pass = () => {
       if (this.control && !this.root.activeElement && this.matches(":focus")) this.control.focus();
     };
@@ -38,16 +33,13 @@ export class PrismChip extends Base {
     });
     this.render();
   }
-
   connectedCallback() {
     this.holdFocus();
     watchShortening(this, this.text, { focusable: () => this.mode !== "static" });
   }
-
   disconnectedCallback() {
     unwatchShortening(this);
   }
-
   attributeChangedCallback(name) {
     if (name === "label") {
       if (this.control) setAttribute(this.control, "aria-label", this.getAttribute("label") || null);
@@ -61,7 +53,6 @@ export class PrismChip extends Base {
     if (this.isConnected) this.holdFocus();
     if (this.isConnected) watchShortening(this, this.text, { focusable: () => this.mode !== "static" });
   }
-
   // The host of a link or button chip takes focus only from script, with tabindex -1, so its control stays the one Tab stop.
   holdFocus() {
     if (this.mode !== "static" && !this.hasAttribute("tabindex")) {
@@ -72,11 +63,9 @@ export class PrismChip extends Base {
       this.heldFocus = false;
     }
   }
-
   get mode() {
     return this.hasAttribute("href") ? "link" : this.hasAttribute("interactive") ? "button" : "static";
   }
-
   render() {
     const mode = this.mode;
     if (this.control && this.rendered === mode) {
@@ -85,17 +74,14 @@ export class PrismChip extends Base {
     }
     this.rendered = mode;
     const inner = `<span class="start" hidden><slot name="start"></slot></span><span class="text"><slot></slot></span><span class="meta" hidden><slot name="meta"></slot></span>`;
-    this.root.innerHTML = mode === "link"
-      ? `<a class="chip" part="chip">${inner}</a>`
-      : mode === "button"
-        ? `<button class="chip" part="chip" type="button">${inner}</button>`
-        : `<span class="chip" part="chip">${inner}</span>`;
+    this.root.innerHTML = mode === "link" ? `<a class="chip" part="chip">${inner}</a>` : mode === "button" ? `<button class="chip" part="chip" type="button">${inner}</button>` : `<span class="chip" part="chip">${inner}</span>`;
     this.control = mode === "static" ? null : this.root.querySelector(".chip");
     this.text = this.root.querySelector(".text");
-    // The start and meta parts show only when a child fills their slot.
     for (const part of this.root.querySelectorAll(".start, .meta")) {
       const slot = part.querySelector("slot");
-      const show = () => { part.hidden = !slot.assignedNodes().length; };
+      const show = () => {
+        part.hidden = !slot.assignedNodes().length;
+      };
       slot.addEventListener("slotchange", show);
       show();
     }
@@ -111,7 +97,6 @@ export class PrismChip extends Base {
     this.showPressed();
     if (this.isConnected) remeasure(this);
   }
-
   // A button chip with pressed is a toggle whose state assistive technology reads from aria-pressed.
   showPressed() {
     if (this.mode !== "button" || !this.control) return;
@@ -119,3 +104,7 @@ export class PrismChip extends Base {
     setAttribute(this.control, "aria-pressed", pressed === "true" || pressed === "false" ? pressed : null);
   }
 }
+export {
+  PrismChip,
+  TONES
+};

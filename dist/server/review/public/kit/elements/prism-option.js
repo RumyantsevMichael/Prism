@@ -1,7 +1,6 @@
-// prism-option: one option of a select prism-field, given by its value, its text, and whether it is selected.
+// Generated from src/server/review/public/kit/elements/prism-option.ts by scripts/native-build/compile.mjs.
 import { Base } from "./base.js";
-
-export class PrismOption extends Base {
+class PrismOption extends Base {
   static tag = "prism-option";
   static catalog = {
     purpose: "One option of a select prism-field; the field turns its options into the native select's options.",
@@ -14,3 +13,6 @@ export class PrismOption extends Base {
     keyboard: ["The native select moves between options with the arrow keys."]
   };
 }
+export {
+  PrismOption
+};

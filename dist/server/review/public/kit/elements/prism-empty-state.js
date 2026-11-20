@@ -1,7 +1,6 @@
-// prism-empty-state: says that a place has nothing to show yet, with a heading and, below it, its children, such as what to do next.
+// Generated from src/server/review/public/kit/elements/prism-empty-state.ts by scripts/native-build/compile.mjs.
 import { Base, distribute, make } from "./base.js";
-
-export class PrismEmptyState extends Base {
+class PrismEmptyState extends Base {
   static tag = "prism-empty-state";
   static observedAttributes = ["heading"];
   static catalog = {
@@ -10,7 +9,6 @@ export class PrismEmptyState extends Base {
     states: ["default", "with-action"],
     keyboard: []
   };
-
   connectedCallback() {
     if (!this.headingElement) {
       this.headingElement = make(this, "p", "prism-empty-state-heading");
@@ -21,10 +19,12 @@ export class PrismEmptyState extends Base {
     }
     this.attributeChangedCallback();
   }
-
   attributeChangedCallback() {
     if (!this.headingElement) return;
     this.headingElement.textContent = this.getAttribute("heading") ?? "";
     this.headingElement.hidden = !this.getAttribute("heading");
   }
 }
+export {
+  PrismEmptyState
+};

@@ -1,53 +1,50 @@
+// Generated from src/server/review/public/views/line-diff.ts by scripts/native-build/compile.mjs.
 import { escapeHtml } from "./util.js";
-
-// Above this many compared line pairs the diff gives up, so a huge record cannot freeze the page.
-const MAX_CELLS = 4_000_000;
+const MAX_CELLS = 4e6;
 const CONTEXT = 3;
-
-const lines = (text) => text === null || text === undefined || text === "" ? [] : text.replace(/\n$/, "").split("\n");
-
-/**
- * The operations that turn the items of a into those of b: [{ op: "same" | "del" | "add", before, after }] with each item's index in a or b, or null when there are too many to compare.
- * Equal leading and trailing items are matched first, and the middle uses a longest common subsequence; items compare with ===.
- */
-export function diffItems(a, b) {
+const lines = (text) => text === null || text === void 0 || text === "" ? [] : text.replace(/\n$/, "").split("\n");
+function diffItems(a, b) {
   let start = 0;
   while (start < a.length && start < b.length && a[start] === b[start]) start++;
   let endA = a.length, endB = b.length;
-  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB--; }
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--;
+    endB--;
+  }
   const n = endA - start, m = endB - start;
   if (n * m > MAX_CELLS) return null;
   const width = m + 1;
   const table = new Uint32Array((n + 1) * width);
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      table[i * width + j] = a[start + i] === b[start + j] ? table[(i + 1) * width + j + 1] + 1 : Math.max(table[(i + 1) * width + j], table[i * width + j + 1]);
+  for (let i2 = n - 1; i2 >= 0; i2--) {
+    for (let j2 = m - 1; j2 >= 0; j2--) {
+      table[i2 * width + j2] = a[start + i2] === b[start + j2] ? table[(i2 + 1) * width + j2 + 1] + 1 : Math.max(table[(i2 + 1) * width + j2], table[i2 * width + j2 + 1]);
     }
   }
   const ops = [];
   for (let k = 0; k < start; k++) ops.push({ op: "same", before: k, after: k });
   let i = 0, j = 0;
   while (i < n || j < m) {
-    if (i < n && j < m && a[start + i] === b[start + j]) { ops.push({ op: "same", before: start + i, after: start + j }); i++; j++; }
-    else if (i < n && (j === m || table[(i + 1) * width + j] >= table[i * width + j + 1])) { ops.push({ op: "del", before: start + i }); i++; }
-    else { ops.push({ op: "add", after: start + j }); j++; }
+    if (i < n && j < m && a[start + i] === b[start + j]) {
+      ops.push({ op: "same", before: start + i, after: start + j });
+      i++;
+      j++;
+    } else if (i < n && (j === m || table[(i + 1) * width + j] >= table[i * width + j + 1])) {
+      ops.push({ op: "del", before: start + i });
+      i++;
+    } else {
+      ops.push({ op: "add", after: start + j });
+      j++;
+    }
   }
   for (let k = 0; k < a.length - endA; k++) ops.push({ op: "same", before: endA + k, after: endB + k });
   return ops;
 }
-
-/**
- * The line operations that turn before into after: [{ op: "same" | "del" | "add", text }], or null when the texts are too large to compare.
- * Common leading and trailing lines are matched first, and the middle uses a longest common subsequence.
- */
-export function diffLines(before, after) {
+function diffLines(before, after) {
   const a = lines(before), b = lines(after);
   const ops = diffItems(a, b);
   return ops && ops.map((entry) => ({ op: entry.op, text: entry.op === "add" ? b[entry.after] : a[entry.before] }));
 }
-
-/** A unified diff table: changed lines with a few lines of context, and a fold for each longer unchanged run. */
-export function diffHtml(before, after, { beforeLabel = "before", afterLabel = "after" } = {}) {
+function diffHtml(before, after, { beforeLabel = "before", afterLabel = "after" } = {}) {
   const ops = diffLines(before, after);
   if (ops === null) return '<p class="muted">The two versions are too large to compare here. Open them side by side instead.</p>';
   if (!ops.some((entry) => entry.op !== "same")) return '<p class="muted">The two versions are identical.</p>';
@@ -65,12 +62,20 @@ export function diffHtml(before, after, { beforeLabel = "before", afterLabel = "
     folded = 0;
   };
   numbered.forEach((entry, index) => {
-    if (!keep[index]) { folded++; return; }
+    if (!keep[index]) {
+      folded++;
+      return;
+    }
     fold();
-    const mark = entry.op === "add" ? "+" : entry.op === "del" ? "−" : " ";
+    const mark = entry.op === "add" ? "+" : entry.op === "del" ? "\u2212" : " ";
     rows.push(`<tr class="diff-${entry.op}"><td class="diff-num">${entry.old ?? ""}</td><td class="diff-num">${entry.new ?? ""}</td><td class="diff-text"><span class="diff-mark" aria-hidden="true">${mark}</span>${escapeHtml(entry.text)}</td></tr>`);
   });
   fold();
-  return `<p class="diff-legend"><span class="diff-legend-del">− ${escapeHtml(beforeLabel)}</span><span class="diff-legend-add">+ ${escapeHtml(afterLabel)}</span></p>
+  return `<p class="diff-legend"><span class="diff-legend-del">\u2212 ${escapeHtml(beforeLabel)}</span><span class="diff-legend-add">+ ${escapeHtml(afterLabel)}</span></p>
     <div class="diff-scroll"><table class="line-diff"><tbody>${rows.join("")}</tbody></table></div>`;
 }
+export {
+  diffHtml,
+  diffItems,
+  diffLines
+};

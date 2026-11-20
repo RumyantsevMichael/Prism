@@ -1,15 +1,11 @@
-// prism-menu: a glass menu that the kit button named by `for` opens, with keyboard movement, radio and checkbox items, and placement inside the window.
-// A menu without `for` shows in place, as the catalog shows an open menu.
+// Generated from src/server/review/public/kit/elements/prism-menu.ts by scripts/native-build/compile.mjs.
 import { Base, deepActiveElement, emit, setAttribute } from "./base.js";
-
-const open = new Set();
+const open = /* @__PURE__ */ new Set();
 const GAP = "--prism-space-2";
-
 function pixels(element, name) {
   return parseFloat(getComputedStyle(element).getPropertyValue(name)) || 0;
 }
-
-export class PrismMenu extends Base {
+class PrismMenu extends Base {
   static tag = "prism-menu";
   static observedAttributes = ["for", "open", "heading", "keys"];
   static catalog = {
@@ -25,10 +21,9 @@ export class PrismMenu extends Base {
     states: ["closed", "actions", "groups", "titled", "sheet"],
     keyboard: ["Enter, Space, or ArrowDown on the button opens the menu on its first item, and ArrowUp on its last item.", "ArrowUp, ArrowDown, Home, and End move between items; in a group of tiles or segments ArrowLeft and ArrowRight move between its items.", "Enter, Space, or a click chooses an item, sends prism-select, closes the menu, and returns focus to the button.", "Escape closes the menu and returns focus; Tab or a click outside closes it."]
   };
-
   constructor() {
     super();
-    this.onTriggerClick = () => (this.isOpen ? this.close({ focus: true }) : this.show({ focus: "first" }));
+    this.onTriggerClick = () => this.isOpen ? this.close({ focus: true }) : this.show({ focus: "first" });
     this.onTriggerKey = (event) => {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -37,11 +32,9 @@ export class PrismMenu extends Base {
     };
     this.onOutside = (event) => {
       const path = event.composedPath();
-      if (path.includes(this) || (this.trigger && path.includes(this.trigger))) return;
+      if (path.includes(this) || this.trigger && path.includes(this.trigger)) return;
       this.close();
     };
-    // The menu follows its button when the window resizes or the page scrolls, but not when the menu scrolls its own items:
-    // placing it again resets its height, which would throw a long menu back to its top on every scroll.
     this.onViewport = (event) => {
       if (event?.type === "scroll" && event.target instanceof Node && this.contains(event.target)) return;
       this.place();
@@ -52,20 +45,17 @@ export class PrismMenu extends Base {
       if (item) this.choose(item);
     });
   }
-
   connectedCallback() {
     setAttribute(this, "role", "menu");
     this.syncTitle();
     this.bind();
     if (!this.trigger && this.hasAttribute("for")) requestAnimationFrame(() => this.bind());
   }
-
   disconnectedCallback() {
     this.unbind();
     this.stopListening();
     open.delete(this);
   }
-
   attributeChangedCallback(name) {
     if (!this.isConnected) return;
     if (name === "heading" || name === "keys") this.syncTitle();
@@ -75,7 +65,6 @@ export class PrismMenu extends Base {
       else this.close();
     }
   }
-
   // The title row: the heading, which also names the menu, and the keycap of its shortcut.
   syncTitle() {
     const heading = this.getAttribute("heading") ?? "";
@@ -97,23 +86,18 @@ export class PrismMenu extends Base {
     this.title$.hidden = !heading;
     setAttribute(this, "aria-label", heading || null);
   }
-
   get floating() {
     return this.hasAttribute("for");
   }
-
   get isOpen() {
     return this.floating ? this.matches(":popover-open") : true;
   }
-
   get items() {
     return [...this.querySelectorAll("prism-menu-item")].filter((item) => item.closest("prism-menu") === this);
   }
-
   get enabledItems() {
     return this.items.filter((item) => !item.hasAttribute("disabled"));
   }
-
   bind() {
     const id = this.getAttribute("for");
     const trigger = id ? this.getRootNode().getElementById?.(id) ?? this.ownerDocument.getElementById(id) : null;
@@ -133,20 +117,17 @@ export class PrismMenu extends Base {
     trigger.addEventListener("keydown", this.onTriggerKey);
     if (this.hasAttribute("open")) this.show();
   }
-
   unbind() {
     if (!this.trigger) return;
     this.trigger.removeEventListener("click", this.onTriggerClick);
     this.trigger.removeEventListener("keydown", this.onTriggerKey);
     this.trigger = null;
   }
-
   setOpenAttribute(on) {
     this.changing = true;
     this.toggleAttribute("open", on);
     this.changing = false;
   }
-
   /** Opens the menu, closing every other open menu, and moves focus to its first or last enabled item when `focus` says so. */
   show({ focus } = {}) {
     if (!this.floating) return;
@@ -168,7 +149,6 @@ export class PrismMenu extends Base {
     this.rove(target ?? items[0]);
     target?.focus();
   }
-
   /** Closes the menu, returning focus to its button when `focus` is set. */
   close({ focus = false } = {}) {
     if (!this.floating) return;
@@ -176,7 +156,6 @@ export class PrismMenu extends Base {
       try {
         this.hidePopover();
       } catch {
-        // A menu that left the document is already hidden.
       }
     }
     open.delete(this);
@@ -185,7 +164,6 @@ export class PrismMenu extends Base {
     this.stopListening();
     if (focus) this.trigger?.focus();
   }
-
   listen() {
     if (this.listening) return;
     this.listening = true;
@@ -193,7 +171,6 @@ export class PrismMenu extends Base {
     globalThis.addEventListener("resize", this.onViewport);
     globalThis.addEventListener("scroll", this.onViewport, true);
   }
-
   stopListening() {
     if (!this.listening) return;
     this.listening = false;
@@ -201,19 +178,16 @@ export class PrismMenu extends Base {
     globalThis.removeEventListener("resize", this.onViewport);
     globalThis.removeEventListener("scroll", this.onViewport, true);
   }
-
   // Below the button when it fits there, above it when there is more room above, and always inside the window.
   place() {
     if (!this.floating || !this.isOpen || !this.trigger) return;
     const anchor = this.trigger.getBoundingClientRect();
     const gap = pixels(this, GAP);
     const margin = pixels(this, "--prism-space-3");
-    // Measuring the menu at its full height lets a browser clamp its scroll position, so the position is kept across the measurement.
     const scrolled = this.scrollTop;
     this.style.removeProperty("max-height");
     const width = globalThis.innerWidth;
     const height = globalThis.innerHeight;
-    // A sheet spans the window inside its margins at the sheet width and below.
     const sheet = this.hasAttribute("sheet") && width <= pixels(this, "--prism-sheet-width");
     if (sheet) this.style.setProperty("width", `${Math.max(0, width - 2 * margin)}px`);
     else this.style.removeProperty("width");
@@ -230,16 +204,13 @@ export class PrismMenu extends Base {
     this.style.setProperty("left", `${left}px`);
     this.scrollTop = scrolled;
   }
-
   rove(target) {
     for (const item of this.items) item.setAttribute("tabindex", item === target ? "0" : "-1");
   }
-
   itemFrom(event) {
     const item = event.composedPath().find((node) => node.tagName === "PRISM-MENU-ITEM");
     return item && item.closest("prism-menu") === this ? item : null;
   }
-
   /** Checks a radio item and unchecks the others of its group, toggles a checkbox, sends prism-select, and closes the menu. */
   choose(item) {
     if (item.hasAttribute("disabled")) return;
@@ -254,7 +225,6 @@ export class PrismMenu extends Base {
     this.close({ focus: returnFocus });
     emit(this, "prism-select", detail);
   }
-
   onKey(event) {
     const items = this.enabledItems;
     const current = this.itemFrom(event);
@@ -269,7 +239,6 @@ export class PrismMenu extends Base {
         break;
       case "ArrowRight":
       case "ArrowLeft": {
-        // Tiles and segments sit side by side, so the side arrows move inside their group and wrap at its ends.
         const group = current?.closest("prism-menu-group[layout]");
         if (!group || !["tiles", "segmented"].includes(group.getAttribute("layout"))) return;
         const row = items.filter((item) => item.closest("prism-menu-group") === group);
@@ -299,7 +268,6 @@ export class PrismMenu extends Base {
         return;
       case "Tab":
         if (this.floating) {
-          // Focus goes back to the button first, so Tab moves on from there.
           this.close({ focus: true });
         }
         return;
@@ -312,3 +280,6 @@ export class PrismMenu extends Base {
     next.focus();
   }
 }
+export {
+  PrismMenu
+};

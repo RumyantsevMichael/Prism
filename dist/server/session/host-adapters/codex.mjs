@@ -1,3 +1,4 @@
+// Generated from src/server/session/host-adapters/codex.mts by scripts/native-build/compile.mjs.
 import path from "node:path";
 import {
   HOST_FACT_REASON,
@@ -10,48 +11,36 @@ import {
   inspectCodexEffectiveConfig
 } from "./codex-config.mjs";
 import { resolveRegisteredCapacityPolicy } from "../session-capacity.mjs";
-
 const HOST_VALUE_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._:/@\[\]-]{0,255}$/;
-
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-
 function nonemptyString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
-
 function normalizeHostValue(value) {
   const normalized = nonemptyString(value);
   return normalized && HOST_VALUE_PATTERN.test(normalized) ? normalized : null;
 }
-
 function validTokenCount(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
-
 function observedAt(now) {
   const value = now();
   const date = value instanceof Date ? value : new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
-
 function resultFromRecord(record) {
   if (record.status === "SUPPORTED") {
     return { status: "SUPPORTED", record };
   }
   return unsupportedHostSessionFacts(record.reasonCode, { record });
 }
-
 function unsupportedWithoutRecord(reasonCode) {
   return unsupportedHostSessionFacts(reasonCode, { record: null });
 }
-
-/**
- * The adapter combines correlated transcript evidence with bounded effective configuration evidence.
- */
-export function createCodexHostAdapter({
-  now = () => new Date(),
+function createCodexHostAdapter({
+  now = () => /* @__PURE__ */ new Date(),
   inspectTranscriptMetadata = inspectCodexTranscriptMetadata,
   readEffectiveConfig = inspectCodexEffectiveConfig
 } = {}) {
@@ -64,7 +53,6 @@ export function createCodexHostAdapter({
   if (typeof readEffectiveConfig !== "function") {
     throw new TypeError("The Codex effective config reader must be a function.");
   }
-
   return {
     async capture({ hookInput = {}, environment = process.env } = {}) {
       const input = isObject(hookInput) ? hookInput : {};
@@ -79,7 +67,6 @@ export function createCodexHostAdapter({
       if (!path.isAbsolute(projectRoot)) {
         return unsupportedWithoutRecord(HOST_FACT_REASON.INVALID_PROJECT_ROOT);
       }
-
       const timestamp = observedAt(now);
       if (!timestamp) {
         return unsupportedWithoutRecord(HOST_FACT_REASON.INVALID_SESSION_FACTS);
@@ -95,7 +82,6 @@ export function createCodexHostAdapter({
         compactionThresholdTokens: null,
         compactionScope: null
       };
-
       let metadata;
       try {
         metadata = await inspectTranscriptMetadata({
@@ -124,9 +110,9 @@ export function createCodexHostAdapter({
       const makeRecord = ({
         status,
         reasonCode = null,
-        capacityOverrides = {},
-        compactionScope = null,
-        sources = identitySources
+        capacityOverrides: capacityOverrides2 = {},
+        compactionScope: compactionScope2 = null,
+        sources: sources2 = identitySources
       }) => createHostSessionFactRecord({
         sessionId,
         projectRoot: correlatedProjectRoot,
@@ -139,11 +125,10 @@ export function createCodexHostAdapter({
           provider,
           model
         },
-        capacityOverrides,
-        compactionScope,
-        sources
+        capacityOverrides: capacityOverrides2,
+        compactionScope: compactionScope2,
+        sources: sources2
       });
-
       if (!rawModel) {
         return resultFromRecord(makeRecord({
           status: "UNSUPPORTED",
@@ -156,14 +141,13 @@ export function createCodexHostAdapter({
           reasonCode: HOST_FACT_REASON.INVALID_MODEL
         }));
       }
-
       const contextWindowTokens = input.model_context_window;
       const compactionThresholdTokens = input.model_auto_compact_token_limit;
       const compactionScope = input.model_auto_compact_token_limit_scope ?? null;
       const sources = {
         ...identitySources,
-        contextWindowTokens: contextWindowTokens !== undefined ? "hook.model_context_window" : null,
-        compactionThresholdTokens: compactionThresholdTokens !== undefined ? "hook.model_auto_compact_token_limit" : null,
+        contextWindowTokens: contextWindowTokens !== void 0 ? "hook.model_context_window" : null,
+        compactionThresholdTokens: compactionThresholdTokens !== void 0 ? "hook.model_auto_compact_token_limit" : null,
         compactionScope: compactionScope !== null ? "hook.model_auto_compact_token_limit_scope" : null
       };
       const validContext = validTokenCount(contextWindowTokens);
@@ -173,7 +157,7 @@ export function createCodexHostAdapter({
       const capacityOverrides = {};
       if (validContext) capacityOverrides.contextWindowTokens = contextWindowTokens;
       if (validThreshold) capacityOverrides.compactionThresholdTokens = compactionThresholdTokens;
-      if (!validScope || !validOrder || (contextWindowTokens !== undefined && !validContext) || (compactionThresholdTokens !== undefined && !validThreshold)) {
+      if (!validScope || !validOrder || contextWindowTokens !== void 0 && !validContext || compactionThresholdTokens !== void 0 && !validThreshold) {
         return resultFromRecord(makeRecord({
           status: "UNSUPPORTED",
           reasonCode: HOST_FACT_REASON.HOST_CAPACITY_UNAVAILABLE,
@@ -187,7 +171,6 @@ export function createCodexHostAdapter({
           }
         }));
       }
-
       if (compactionScope === "body_after_prefix") {
         return resultFromRecord(makeRecord({
           status: "UNSUPPORTED",
@@ -206,7 +189,6 @@ export function createCodexHostAdapter({
           sources
         }));
       }
-
       if (input.hook_event_name !== "PreToolUse") {
         return resultFromRecord(makeRecord({
           status: "UNSUPPORTED",
@@ -216,9 +198,8 @@ export function createCodexHostAdapter({
           sources
         }));
       }
-
       const transcriptContext = correlatedMetadata.contextWindowTokens;
-      if (!validTokenCount(transcriptContext) || (validContext && contextWindowTokens !== transcriptContext)) {
+      if (!validTokenCount(transcriptContext) || validContext && contextWindowTokens !== transcriptContext) {
         return resultFromRecord(makeRecord({
           status: "UNSUPPORTED",
           reasonCode: HOST_FACT_REASON.INVALID_EFFECTIVE_SETTINGS,
@@ -227,10 +208,9 @@ export function createCodexHostAdapter({
           sources
         }));
       }
-
       const observedRuntimeOverrides = {
         contextWindowTokens: transcriptContext,
-        ...(validThreshold ? { compactionThresholdTokens } : {})
+        ...validThreshold ? { compactionThresholdTokens } : {}
       };
       let effectiveConfig;
       try {
@@ -246,9 +226,7 @@ export function createCodexHostAdapter({
         ].includes(effectiveConfig?.reasonCode);
         return resultFromRecord(makeRecord({
           status: "UNSUPPORTED",
-          reasonCode: invalid
-            ? HOST_FACT_REASON.INVALID_EFFECTIVE_SETTINGS
-            : HOST_FACT_REASON.EFFECTIVE_SETTINGS_UNAVAILABLE,
+          reasonCode: invalid ? HOST_FACT_REASON.INVALID_EFFECTIVE_SETTINGS : HOST_FACT_REASON.EFFECTIVE_SETTINGS_UNAVAILABLE,
           capacityOverrides: observedRuntimeOverrides,
           compactionScope,
           sources: {
@@ -257,7 +235,6 @@ export function createCodexHostAdapter({
           }
         }));
       }
-
       const config = effectiveConfig.config;
       if (config.model !== null && config.model !== model) {
         return resultFromRecord(makeRecord({
@@ -274,10 +251,7 @@ export function createCodexHostAdapter({
       const configThreshold = config.model_auto_compact_token_limit;
       const configContext = config.model_context_window;
       const configScope = config.model_auto_compact_token_limit_scope;
-      if (
-        (validThreshold && configThreshold !== null && compactionThresholdTokens !== configThreshold)
-        || (compactionScope !== null && configScope !== null && compactionScope !== configScope)
-      ) {
+      if (validThreshold && configThreshold !== null && compactionThresholdTokens !== configThreshold || compactionScope !== null && configScope !== null && compactionScope !== configScope) {
         return resultFromRecord(makeRecord({
           status: "UNSUPPORTED",
           reasonCode: HOST_FACT_REASON.INVALID_EFFECTIVE_SETTINGS,
@@ -289,11 +263,8 @@ export function createCodexHostAdapter({
           }
         }));
       }
-
       let resolvedThreshold = validThreshold ? compactionThresholdTokens : configThreshold;
-      let thresholdSource = validThreshold
-        ? sources.compactionThresholdTokens
-        : (configThreshold === null ? null : "config.model_auto_compact_token_limit");
+      let thresholdSource = validThreshold ? sources.compactionThresholdTokens : configThreshold === null ? null : "config.model_auto_compact_token_limit";
       if (resolvedThreshold === null && configContext !== null) {
         const policy = resolveRegisteredCapacityPolicy({
           harness: "codex-cli",
@@ -357,31 +328,22 @@ export function createCodexHostAdapter({
           reasonCode: HOST_FACT_REASON.UNSUPPORTED_COMPACTION_SCOPE,
           capacityOverrides: {
             contextWindowTokens: transcriptContext,
-            ...(resolvedThreshold === null ? {} : { compactionThresholdTokens: resolvedThreshold })
+            ...resolvedThreshold === null ? {} : { compactionThresholdTokens: resolvedThreshold }
           },
           compactionScope: resolvedScope,
           sources: {
             ...sources,
             contextWindowTokens: correlatedMetadata.contextWindowSource,
-            compactionThresholdTokens: resolvedThreshold === null
-              ? "config.absent.model_auto_compact_token_limit"
-              : thresholdSource,
-            compactionScope: compactionScope !== null
-              ? sources.compactionScope
-              : (configScope === null
-                  ? "config.default.model_auto_compact_token_limit_scope"
-                  : "config.model_auto_compact_token_limit_scope")
+            compactionThresholdTokens: resolvedThreshold === null ? "config.absent.model_auto_compact_token_limit" : thresholdSource,
+            compactionScope: compactionScope !== null ? sources.compactionScope : configScope === null ? "config.default.model_auto_compact_token_limit_scope" : "config.model_auto_compact_token_limit_scope"
           }
         }));
       }
       const resolvedOverrides = {
         contextWindowTokens: transcriptContext,
-        ...(resolvedThreshold === null ? {} : { compactionThresholdTokens: resolvedThreshold })
+        ...resolvedThreshold === null ? {} : { compactionThresholdTokens: resolvedThreshold }
       };
-      if (
-        Object.hasOwn(resolvedOverrides, "compactionThresholdTokens")
-        && resolvedOverrides.compactionThresholdTokens > transcriptContext
-      ) {
+      if (Object.hasOwn(resolvedOverrides, "compactionThresholdTokens") && resolvedOverrides.compactionThresholdTokens > transcriptContext) {
         return resultFromRecord(makeRecord({
           status: "UNSUPPORTED",
           reasonCode: HOST_FACT_REASON.INVALID_EFFECTIVE_SETTINGS,
@@ -391,11 +353,7 @@ export function createCodexHostAdapter({
             ...sources,
             contextWindowTokens: correlatedMetadata.contextWindowSource,
             compactionThresholdTokens: thresholdSource,
-            compactionScope: compactionScope !== null
-              ? sources.compactionScope
-              : (configScope === null
-                  ? "config.default.model_auto_compact_token_limit_scope"
-                  : "config.model_auto_compact_token_limit_scope")
+            compactionScope: compactionScope !== null ? sources.compactionScope : configScope === null ? "config.default.model_auto_compact_token_limit_scope" : "config.model_auto_compact_token_limit_scope"
           }
         }));
       }
@@ -406,16 +364,13 @@ export function createCodexHostAdapter({
         sources: {
           ...sources,
           contextWindowTokens: correlatedMetadata.contextWindowSource,
-          compactionThresholdTokens: resolvedThreshold === null
-            ? "config.absent.model_auto_compact_token_limit"
-            : thresholdSource,
-          compactionScope: compactionScope !== null
-            ? sources.compactionScope
-            : (configScope === null
-                ? "config.default.model_auto_compact_token_limit_scope"
-                : "config.model_auto_compact_token_limit_scope")
+          compactionThresholdTokens: resolvedThreshold === null ? "config.absent.model_auto_compact_token_limit" : thresholdSource,
+          compactionScope: compactionScope !== null ? sources.compactionScope : configScope === null ? "config.default.model_auto_compact_token_limit_scope" : "config.model_auto_compact_token_limit_scope"
         }
       }));
     }
   };
 }
+export {
+  createCodexHostAdapter
+};

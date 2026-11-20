@@ -1,3 +1,4 @@
+// Generated from src/server/review/review-server-pool.mts by scripts/native-build/compile.mjs.
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { ConservationStore } from "../conservation/conservation-store.mjs";
@@ -7,19 +8,12 @@ import { pluginVersion } from "../plugin-root.mjs";
 import { recordFallback, reviewAppDirectory, reviewAppDisabled } from "./review-app-discovery.mjs";
 import { normalizeTabs, openBrowser, startReviewServer } from "./review-server.mjs";
 import { withWriteGrant } from "./write-sessions.mjs";
-
-const REVIEW_SERVER_IDLE_MS = 30 * 60 * 1000;
-const RETRY_APP_MS = 60 * 1000;
-
+const REVIEW_SERVER_IDLE_MS = 30 * 60 * 1e3;
+const RETRY_APP_MS = 60 * 1e3;
 function tabUrl(baseUrl, tabs) {
   const [activeTab] = normalizeTabs(tabs);
   return activeTab ? `${baseUrl}review?artifact=${encodeURIComponent(activeTab)}` : baseUrl;
 }
-
-// A project served by the shared review app until the app cannot be reached, then by its own session server until the app answers again.
-// The fallback is recorded with its reason, and both its page and the agent's review links say that this session alone serves it.
-// While it falls back, a use of the review at most once a minute tries the app in the background; once the app answers, new links lead to the app,
-// and the session server keeps serving the tabs it has open until the project's review closes.
 async function appBackedReview(client, projectRoot, { startSession, openBrowser: browserOpener, onFallback = recordFallback, retryMs = RETRY_APP_MS }) {
   let session = null;
   let privateServer = null;
@@ -32,7 +26,11 @@ async function appBackedReview(client, projectRoot, { startSession, openBrowser:
       if (session) former.push(session);
       session = null;
       privateServer = null;
-    }, () => { fellBackAt = Date.now(); }).finally(() => { retrying = null; });
+    }, () => {
+      fellBackAt = Date.now();
+    }).finally(() => {
+      retrying = null;
+    });
   };
   const fallBack = async (error) => {
     if (!session) {
@@ -69,32 +67,29 @@ async function appBackedReview(client, projectRoot, { startSession, openBrowser:
     reviewUrl: (tabs) => viaApp(async () => tabUrl((await client.present(projectRoot, { open: false })).url, tabs), (review) => review.reviewUrl(tabs)),
     getSession: () => viaApp(async () => (await client.present(projectRoot, { open: false })).session, (review) => review.getSession()),
     setOpenTabs: (tabs) => viaApp(async () => (await client.present(projectRoot, { tabs, open: false })).session.openTabs, (review) => review.setOpenTabs(tabs)),
-    open: (tabs, { group } = {}) => viaApp(async () => {
-      const answer = await client.present(projectRoot, { tabs: normalizeTabs(tabs), ...(group === undefined ? {} : { group }), open: true });
-      // The app never opens a browser; this session opens it in its own environment, with the app's grant in the fragment of only the URL it opens.
+    open: (tabs, { group, by } = {}) => viaApp(async () => {
+      const answer = await client.present(projectRoot, { tabs: normalizeTabs(tabs), ...group === void 0 ? {} : { group }, ...by ? { by } : {}, open: true });
       const opened = answer.open ? Boolean(await browserOpener(withWriteGrant(answer.url, answer.writeGrant))) : false;
       return { url: answer.url, opened, ...answer.session };
-    }, (review) => review.open(tabs, group === undefined ? {} : { group })),
+    }, (review) => review.open(tabs, { ...group === void 0 ? {} : { group }, ...by ? { by } : {} })),
     viewerCount: async () => {
       if (!session && !former.length) return 1;
-      const counts = await Promise.all([...former, ...(session ? [session] : [])].map((held) => held.then((review) => review.viewerCount())));
+      const counts = await Promise.all([...former, ...session ? [session] : []].map((held) => held.then((review) => review.viewerCount())));
       return (session ? 0 : 1) + counts.reduce((sum, count) => sum + count, 0);
     },
     privateServer: () => privateServer,
     heldServer: async () => session && await session,
     close: async () => {
       await retrying;
-      await Promise.allSettled([...former, ...(session ? [session] : [])].map(async (held) => (await held).close()));
+      await Promise.allSettled([...former, ...session ? [session] : []].map(async (held) => (await held).close()));
     }
   };
 }
-
-export function createReviewServerPool({ start = startReviewServer, app } = {}) {
-  const reviewServers = new Map();
-  const taskRoots = new Map();
+function createReviewServerPool({ start = startReviewServer, app } = {}) {
+  const reviewServers = /* @__PURE__ */ new Map();
+  const taskRoots = /* @__PURE__ */ new Map();
   const client = app ? createReviewAppClient(app) : null;
-  const startReview = client ? (options) => appBackedReview(client, options.projectRoot, { startSession: start, openBrowser: app.openBrowser ?? openBrowser, ...(app.onFallback ? { onFallback: app.onFallback } : {}), ...(app.retryMs === undefined ? {} : { retryMs: app.retryMs }) }) : start;
-
+  const startReview = client ? (options) => appBackedReview(client, options.projectRoot, { startSession: start, openBrowser: app.openBrowser ?? openBrowser, ...app.onFallback ? { onFallback: app.onFallback } : {}, ...app.retryMs === void 0 ? {} : { retryMs: app.retryMs } }) : start;
   function refreshIdleTimeout(projectRoot, binding) {
     clearTimeout(binding.idleTimeout);
     const idleTimeout = setTimeout(async () => {
@@ -120,7 +115,6 @@ export function createReviewServerPool({ start = startReviewServer, app } = {}) 
     binding.idleTimeout = idleTimeout;
     idleTimeout.unref();
   }
-
   async function get(projectRoot, id) {
     const boundRoot = taskRoots.get(id);
     if (boundRoot && boundRoot !== projectRoot) {
@@ -149,7 +143,6 @@ export function createReviewServerPool({ start = startReviewServer, app } = {}) 
       throw error;
     }
   }
-
   async function close() {
     for (const binding of reviewServers.values()) {
       clearTimeout(binding.idleTimeout);
@@ -160,29 +153,22 @@ export function createReviewServerPool({ start = startReviewServer, app } = {}) 
     taskRoots.clear();
     await client?.close();
   }
-
-  // Registration lists the project in the review app from session start or the first tool call that names it, once per project;
-  // a failure leaves it to the review tools, which fall back to a session server.
-  // With open, a session start also opens a browser on the project while no review tab is connected.
-  const registered = new Set();
+  const registered = /* @__PURE__ */ new Set();
   function register(projectRoot, { open = false } = {}) {
     if (!client || registered.has(projectRoot)) return;
     registered.add(projectRoot);
     const opener = app.openBrowser ?? openBrowser;
     const started = open ? client.openAtStart(projectRoot).then((answer) => answer.open && opener(withWriteGrant(answer.url, answer.writeGrant))) : client.register(projectRoot);
-    void started.catch(() => {});
+    void started.catch(() => {
+    });
   }
-
-  // Starts the review app before any project is known, so it is ready for a host that names its project only with a tool call.
   function startApp() {
-    void client?.start().catch(() => {});
+    void client?.start().catch(() => {
+    });
   }
-
   return { get, close, register, startApp };
 }
-
-/** prism review --workspaces opens the review app's root, its workspace list, with a write grant, from any folder; it needs the shared review app. */
-export async function startWorkspacesReview({ env = process.env, openBrowser: browserOpener = openBrowser, app = {} } = {}) {
+async function startWorkspacesReview({ env = process.env, openBrowser: browserOpener = openBrowser, app = {} } = {}) {
   if (reviewAppDisabled(env)) throw new Error("the workspace list is served by the shared review app, which PRISM_REVIEW_APP turns off here.");
   const client = createReviewAppClient({ directory: reviewAppDirectory(env), ...app });
   try {
@@ -193,22 +179,19 @@ export async function startWorkspacesReview({ env = process.env, openBrowser: br
     await client.close();
   }
 }
-
-// The prism review command presents through the user's review app and returns; it holds a server only when it serves the review itself.
-export async function startStandaloneReview({ projectRoot = process.cwd(), artifactPath, env = process.env, start = startReviewServer, openBrowser: browserOpener = openBrowser, app = {} } = {}) {
+async function startStandaloneReview({ projectRoot = process.cwd(), artifactPath, env = process.env, start = startReviewServer, openBrowser: browserOpener = openBrowser, app = {} } = {}) {
   const root = await realpath(path.resolve(projectRoot));
   if (reviewAppDisabled(env)) {
     const server = await start({ projectRoot: root, openBrowser: browserOpener });
     try {
-      return { ...(await server.open(artifactPath)), held: server };
+      return { ...await server.open(artifactPath), held: server };
     } catch (error) {
       await server.close();
       throw error;
     }
   }
-  // Without host data this command knows no project's evidence, so it leaves the app with the evidence a session reported; store clones live in the app folder for every host.
   const hostData = env.PLUGIN_DATA || env.CLAUDE_PLUGIN_DATA;
-  const client = createReviewAppClient({ directory: reviewAppDirectory(env), recordStoreDirectory: managedStoresDirectory(env), ...(hostData ? { evidenceDirectory: new ConservationStore(undefined, env).directory } : {}), ...app });
+  const client = createReviewAppClient({ directory: reviewAppDirectory(env), recordStoreDirectory: managedStoresDirectory(env), ...hostData ? { evidenceDirectory: new ConservationStore(void 0, env).directory } : {}, ...app });
   const review = await appBackedReview(client, root, { startSession: start, openBrowser: browserOpener });
   try {
     const result = await review.open(artifactPath);
@@ -220,3 +203,8 @@ export async function startStandaloneReview({ projectRoot = process.cwd(), artif
     await client.close();
   }
 }
+export {
+  createReviewServerPool,
+  startStandaloneReview,
+  startWorkspacesReview
+};

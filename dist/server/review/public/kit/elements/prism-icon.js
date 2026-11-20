@@ -1,7 +1,5 @@
-// prism-icon: one glyph of the kit's icon set, drawn in the current text color.
+// Generated from src/server/review/public/kit/elements/prism-icon.ts by scripts/native-build/compile.mjs.
 import { Base, setAttribute, shadow } from "./base.js";
-
-// 24 by 24 outline glyphs drawn with round strokes in currentColor.
 const GLYPHS = {
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/>',
   close: '<path d="M18 6 6 18M6 6l12 12"/>',
@@ -60,11 +58,8 @@ const GLYPHS = {
   needs: '<circle cx="18" cy="12" r="2.6"/><path d="M3.5 12h11.9M11 7.5l4.4 4.5-4.4 4.5"/>',
   unblocks: '<circle cx="6" cy="12" r="2.6"/><path d="M8.6 12H20M15.5 7.5 20 12l-4.5 4.5"/>'
 };
-
-/** The names of every glyph the icon set draws. */
-export const ICON_NAMES = Object.freeze(Object.keys(GLYPHS));
-
-export class PrismIcon extends Base {
+const ICON_NAMES = Object.freeze(Object.keys(GLYPHS));
+class PrismIcon extends Base {
   static tag = "prism-icon";
   static styles = ["prism-icon.css"];
   static observedAttributes = ["name", "label"];
@@ -79,20 +74,16 @@ export class PrismIcon extends Base {
     states: ["decorative", "labelled", "sizes", "tones"],
     keyboard: []
   };
-
   constructor() {
     super();
     this.root = shadow(this, PrismIcon.styles, "");
   }
-
   connectedCallback() {
     this.render();
   }
-
   attributeChangedCallback() {
     if (this.isConnected) this.render();
   }
-
   render() {
     const glyph = GLYPHS[this.getAttribute("name")] ?? "";
     this.root.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" focusable="false" aria-hidden="true">${glyph}</svg>`;
@@ -108,3 +99,7 @@ export class PrismIcon extends Base {
     }
   }
 }
+export {
+  ICON_NAMES,
+  PrismIcon
+};

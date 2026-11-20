@@ -152,6 +152,20 @@ prism-option {
   box-sizing: border-box;
 }
 
+/* ---------- Text that is not for copying: controls, navigation, and marks ----------
+   A press, a double click, or a drag on a control, a navigation item, or a status mark does not select its text, as in a desktop application;
+   records, documents, code, identifiers, figures, messages, and fields stay selectable. Shadow content takes its host's value. */
+
+:where(prism-button, prism-tab, prism-tabs, prism-doc-tab, prism-doc-tab-group, prism-doc-tabs, prism-menu, prism-menu-group, prism-menu-item,
+  prism-rail, prism-rail-item, prism-segmented, prism-choice-option, prism-listbox, prism-list-item, prism-tree-item, prism-inbox-item,
+  prism-count-link, prism-breadcrumbs, prism-contents, prism-stepper, prism-step, prism-chip, prism-badge, prism-status, prism-phase,
+  prism-severity, prism-slice-bar, prism-meter, prism-spinner, prism-avatar, prism-icon, prism-kbd, prism-tooltip, prism-resizer,
+  prism-maximize, prism-agent-summary),
+.prism-disclosure-toggle {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* ---------- Kit buttons and tabs: the element is the control's box ---------- */
 
 prism-button:focus-visible {
@@ -1451,6 +1465,16 @@ prism-list-item[active] {
   display: none;
 }
 
+/* A disabled option shows quieter and takes no hover. */
+prism-list-item[disabled] {
+  color: var(--prism-color-ink-faint);
+  cursor: default;
+}
+
+prism-list-item[disabled]:hover {
+  background: transparent;
+}
+
 /* A first-current listbox shows its first option as the one Enter chooses until the keys move. */
 prism-list-item[current] {
   background: var(--prism-color-selected);
@@ -1683,6 +1707,17 @@ prism-list-item mark {
   border-top: var(--prism-stroke) solid var(--prism-color-line);
 }
 
+/* A footer note stands at the start of the footer and takes the room its actions leave, so they wrap below it on a narrow window. */
+.prism-dialog-foot > [slot="footer-note"] {
+  flex: 1 1 calc(var(--prism-list-width) * 0.75);
+  align-self: center;
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
 .prism-dialog-frame {
   display: contents;
 }
@@ -1882,6 +1917,174 @@ prism-popover:focus-visible {
 
 .prism-popover-body > :last-child {
   margin-bottom: 0;
+}
+
+/* ---------- prism-picker: a label, one field-like button with the value and its detail, a hint or error, and a popover to choose in ---------- */
+
+prism-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+prism-picker [hidden] {
+  display: none !important;
+}
+
+.prism-picker-label {
+  min-width: 0;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+/* The button reads as a field, in the field's box: the value and its detail start at the left and shorten, and the chevron ends it. */
+.prism-picker-button {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  height: var(--prism-control-height);
+  padding: 0 var(--prism-space-3) 0 var(--prism-space-4);
+  text-align: start;
+  cursor: pointer;
+}
+
+.prism-picker-button:hover:not(:disabled) {
+  background: var(--prism-color-hover);
+}
+
+.prism-picker-button:focus-visible {
+  outline: none;
+  border-color: var(--prism-color-accent);
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-accent);
+}
+
+.prism-picker-button:disabled {
+  cursor: default;
+}
+
+.prism-picker-button > .prism-picker-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-picker-button > :is(prism-spinner, prism-icon) {
+  flex: none;
+}
+
+.prism-picker-chevron {
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-picker-display {
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-picker-separator,
+.prism-picker-detail {
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-picker-hint,
+.prism-picker-error {
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.prism-picker-error {
+  color: var(--prism-color-danger);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+/* The popover: the filter, the options in a list that scrolls on its own, then the empty text or the extra controls. */
+.prism-picker-popover .prism-popover-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-3);
+}
+
+.prism-picker-options {
+  max-height: calc(10 * var(--prism-control-height));
+}
+
+.prism-picker-empty,
+.prism-picker-extra {
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+}
+
+.prism-picker-empty > *,
+.prism-picker-extra > * {
+  margin: 0;
+}
+
+.prism-picker-extra {
+  display: grid;
+  gap: var(--prism-space-2);
+  color: var(--prism-color-ink);
+}
+
+/* ---------- Run choices: one prism-picker per run choice, a choice of its own purpose across the width and the agents two to a row ---------- */
+
+.prism-run-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--prism-space-6) var(--prism-space-5);
+  min-width: 0;
+}
+
+.prism-run-choices > [data-wide],
+.prism-run-choices-note {
+  grid-column: 1 / -1;
+}
+
+.prism-run-choices-note {
+  margin: 0;
+  color: var(--prism-color-danger);
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.prism-run-choices-note[hidden] {
+  display: none;
+}
+
+/* Below a run choice's models: the host's note, a typed name, and the effort of the chosen model. */
+.prism-run-choice-effort-head {
+  margin-top: var(--prism-space-2);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.prism-run-choice-efforts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.prism-run-choice-none,
+.prism-run-choice-levels {
+  color: var(--prism-color-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .prism-run-choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* ---------- prism-disclosure: a quiet toggle and the content it shows ---------- */

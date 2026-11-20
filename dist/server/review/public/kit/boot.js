@@ -1,5 +1,4 @@
-// Applies the last theme and density this browser saw at this origin to <html> before the first paint.
-// The page loads this classic script ahead of its stylesheets; preferences.js later applies the review app's stored choice, which wins.
+// Generated from src/server/review/public/kit/boot.ts by scripts/native-build/compile.mjs.
 (function applyLastChoice() {
   var root = document.documentElement;
   var choice = { theme: "system", density: "compact" };
@@ -8,7 +7,6 @@
     if (stored && ["system", "light", "dark"].indexOf(stored.theme) >= 0) choice.theme = stored.theme;
     if (stored && ["compact", "comfortable"].indexOf(stored.density) >= 0) choice.density = stored.density;
   } catch (error) {
-    // Storage that is blocked or unreadable leaves the defaults.
   }
   var dark = false;
   try {
@@ -17,6 +15,6 @@
     dark = false;
   }
   root.setAttribute("data-theme-choice", choice.theme);
-  root.setAttribute("data-theme", choice.theme === "system" ? (dark ? "dark" : "light") : choice.theme);
+  root.setAttribute("data-theme", choice.theme === "system" ? dark ? "dark" : "light" : choice.theme);
   root.setAttribute("data-density", choice.density);
 })();

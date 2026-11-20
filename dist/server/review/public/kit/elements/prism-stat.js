@@ -1,8 +1,7 @@
-// prism-stat: one figure with its label, a hint, a tone, an optional glyph, and a layout.
+// Generated from src/server/review/public/kit/elements/prism-stat.ts by scripts/native-build/compile.mjs.
 import { Base, shadow } from "./base.js";
 import { ICON_NAMES } from "./prism-icon.js";
-
-export class PrismStat extends Base {
+class PrismStat extends Base {
   static tag = "prism-stat";
   static styles = ["prism-stat.css"];
   static observedAttributes = ["label", "value", "hint", "tone", "icon"];
@@ -19,21 +18,16 @@ export class PrismStat extends Base {
     states: ["default", "tone", "inline", "figure"],
     keyboard: []
   };
-
   constructor() {
     super();
-    // The words live in light DOM, slotted into the tile, so they read as the element's own text.
     this.root = shadow(this, PrismStat.styles, `<div class="stat" part="stat"><slot name="label"></slot><slot name="value"></slot><slot name="hint"></slot></div>`);
   }
-
   connectedCallback() {
     this.render();
   }
-
   attributeChangedCallback() {
     if (this.isConnected) this.render();
   }
-
   render() {
     const parts = ["label", "value", "hint"].filter((name) => this.getAttribute(name)).map((name) => {
       const part = this.ownerDocument.createElement("span");
@@ -51,3 +45,6 @@ export class PrismStat extends Base {
     this.replaceChildren(...parts);
   }
 }
+export {
+  PrismStat
+};

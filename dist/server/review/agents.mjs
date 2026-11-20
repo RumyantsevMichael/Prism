@@ -1,14 +1,10 @@
-// The agents list: every launched session of this computer and every claim of the workspace that no launched session holds, one entry each,
-// grouped by what needs the person, with the counts the top bar and the Agents page show. No entry names a claim holder or a host session id.
+// Generated from src/server/review/agents.mts by scripts/native-build/compile.mjs.
 import { listLaunches } from "../session/launched-sessions.mjs";
 import { loadHeldClaims, loadRoadmapView } from "./workspace-model.mjs";
-
 const GROUPS = ["needs-you", "launched", "other", "expired"];
 const time = (value) => Date.parse(value ?? "") || 0;
-
-const launchAction = (state) => (state === "waiting" ? "answer" : state === "running" ? "stop" : "open");
-const launchGroup = (state) => (state === "failed" || state === "waiting" ? "needs-you" : "launched");
-
+const launchAction = (state) => state === "waiting" ? "answer" : state === "running" ? "stop" : "open";
+const launchGroup = (state) => state === "failed" || state === "waiting" ? "needs-you" : "launched";
 function launchEntry(launch, title, claim) {
   return {
     id: `launch:${launch.id}`,
@@ -27,7 +23,6 @@ function launchEntry(launch, title, claim) {
     action: launchAction(launch.state)
   };
 }
-
 function claimEntry(claim, expired) {
   return {
     id: `claim:${claim.initiative}/${claim.slug}`,
@@ -46,8 +41,6 @@ function claimEntry(claim, expired) {
     action: null
   };
 }
-
-// Within needs-you, failed before waiting; launches the latest launched first; live claims the one that lapses first first; expired ones the latest to lapse first.
 function order(left, right) {
   const group = GROUPS.indexOf(left.group) - GROUPS.indexOf(right.group);
   if (group) return group;
@@ -56,9 +49,7 @@ function order(left, right) {
   if (left.group === "other") return time(left.expiresAt) - time(right.expiresAt) || left.id.localeCompare(right.id);
   return time(right.expiresAt) - time(left.expiresAt) || left.id.localeCompare(right.id);
 }
-
-/** `{ agents, counts }` for the checkout: a launch holds every claim of its initiative whose holder is the launch's holder. */
-export async function listAgents({ projectRoot, env = process.env, now = Date.now() }) {
+async function listAgents({ projectRoot, env = process.env, now = Date.now() }) {
   const [{ launches }, { claims }, roadmap] = await Promise.all([
     listLaunches({ projectRoot, env, now }),
     loadHeldClaims(projectRoot).catch(() => ({ claims: [] })),
@@ -87,7 +78,10 @@ export async function listAgents({ projectRoot, env = process.env, now = Date.no
     thisComputer: count((agent) => agent.kind === "launch"),
     other: count((agent) => agent.group === "other"),
     expired: count((agent) => agent.group === "expired"),
-    working: count((agent) => (agent.kind === "launch" ? agent.state === "running" || agent.state === "waiting" : agent.group === "other"))
+    working: count((agent) => agent.kind === "launch" ? agent.state === "running" || agent.state === "waiting" : agent.group === "other")
   };
   return { agents, counts };
 }
+export {
+  listAgents
+};

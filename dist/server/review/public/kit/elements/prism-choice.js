@@ -1,7 +1,6 @@
-// prism-choice: a named radio group of prism-choice-option elements, each a native radio input, reporting the chosen value.
+// Generated from src/server/review/public/kit/elements/prism-choice.ts by scripts/native-build/compile.mjs.
 import { Base, setAttribute, uniqueId } from "./base.js";
-
-export class PrismChoice extends Base {
+class PrismChoice extends Base {
   static tag = "prism-choice";
   static observedAttributes = ["label", "value"];
   static catalog = {
@@ -15,15 +14,12 @@ export class PrismChoice extends Base {
     states: ["unchosen", "chosen", "with-detail", "clearable"],
     keyboard: ["Tab reaches the chosen option, or the first one when none is chosen.", "The arrow keys move the choice to the next or previous enabled option and send change.", "In a clearable choice, Space on the chosen option leaves nothing chosen and sends change."]
   };
-
   constructor() {
     super();
     this.addEventListener("change", () => {
       this.touched = true;
     });
-    // A radio that was already chosen when the pointer went down is unchosen by that click in a clearable choice; a native radio ignores it.
     this.addEventListener("pointerdown", (event) => this.noteChosen(event.target));
-    // A native radio ignores Space once it is chosen, so a clearable choice unchooses it here.
     this.addEventListener("keydown", (event) => {
       this.chosenAtStart = null;
       if (event.key !== " " || !this.hasAttribute("clearable")) return;
@@ -40,11 +36,9 @@ export class PrismChoice extends Base {
       if (unchoose) this.clear();
     });
   }
-
   noteChosen(target) {
     this.chosenAtStart = target instanceof HTMLInputElement && target.classList.contains("prism-choice-input") && target.checked ? target : null;
   }
-
   /** Leaves no option chosen and sends change when one was. */
   clear() {
     const chosen = this.inputs.find((input) => input.checked);
@@ -52,7 +46,6 @@ export class PrismChoice extends Base {
     chosen.checked = false;
     this.dispatchEvent(new Event("change", { bubbles: true }));
   }
-
   connectedCallback() {
     setAttribute(this, "role", "radiogroup");
     if (!this.heading) {
@@ -64,7 +57,6 @@ export class PrismChoice extends Base {
     this.attributeChangedCallback("label");
     if (this.hasAttribute("value")) this.value = this.getAttribute("value");
   }
-
   attributeChangedCallback(name, previous, next) {
     if (!this.heading) return;
     if (name === "value" && next !== null) {
@@ -76,16 +68,16 @@ export class PrismChoice extends Base {
     this.heading.hidden = !label;
     setAttribute(this, "aria-labelledby", label ? this.heading.id : null);
   }
-
   get inputs() {
     return [...this.querySelectorAll("input.prism-choice-input")];
   }
-
   get value() {
     return this.inputs.find((input) => input.checked)?.value ?? "";
   }
-
   set value(value) {
     for (const input of this.inputs) input.checked = input.value === String(value);
   }
 }
+export {
+  PrismChoice
+};

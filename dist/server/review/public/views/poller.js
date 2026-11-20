@@ -1,38 +1,23 @@
-// A browser opens at most six connections to the review app for all its tabs together, so a page never lets a check pile up behind a slow answer.
-// Each kind of check has at most one request in flight, the next one is scheduled only after the answer, and a hidden tab checks nothing until it is shown again,
-// except a check made for a hidden tab, such as the count of waiting questions that raises a desktop notification.
-
-// How long a periodic check may wait for its answer before it counts as failed, and how long any other request may take.
-export const POLL_DEADLINE_MS = 8000;
-export const REQUEST_DEADLINE_MS = 30000;
-
-/** A signal that aborts a request after `ms`, so a request the browser keeps queued fails instead of waiting forever. */
-export function deadline(ms = REQUEST_DEADLINE_MS) {
+// Generated from src/server/review/public/views/poller.ts by scripts/native-build/compile.mjs.
+const POLL_DEADLINE_MS = 8e3;
+const REQUEST_DEADLINE_MS = 3e4;
+function deadline(ms = REQUEST_DEADLINE_MS) {
   if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") return AbortSignal.timeout(ms);
   const controller = new AbortController();
   setTimeout(() => controller.abort(new DOMException("The request took too long.", "TimeoutError")), ms);
   return controller.signal;
 }
-
-/**
- * Runs `run` now and then again `interval` milliseconds after each run settles, where `interval` may be a function of the last result.
- * `now()` asks for a run at once: while one is in flight it runs once more after that one instead of starting a second request.
- * While the document is hidden no run starts on the timer; showing it runs once at once and resumes the schedule.
- * With `whileHidden`, the poller runs the other way round: only while the document is hidden, starting once it hides.
- */
-export function createPoller({ run, interval, whileHidden = false, doc = globalThis.document, setTimer = (callback, ms) => setTimeout(callback, ms), clearTimer = (id) => clearTimeout(id) }) {
+function createPoller({ run, interval, whileHidden = false, doc = globalThis.document, setTimer = (callback, ms) => setTimeout(callback, ms), clearTimer = (id) => clearTimeout(id) }) {
   let timer = null;
   let running = null;
   let again = false;
   let started = false;
   const hidden = () => doc?.visibilityState === "hidden";
   const active = () => whileHidden ? hidden() : !hidden();
-
   function cancel() {
     if (timer !== null) clearTimer(timer);
     timer = null;
   }
-
   function schedule(result) {
     cancel();
     if (!started || !active()) return;
@@ -42,28 +27,22 @@ export function createPoller({ run, interval, whileHidden = false, doc = globalT
       if (active()) tick();
     }, delay);
   }
-
   function tick() {
     cancel();
-    running = Promise.resolve()
-      .then(run)
-      .then((result) => ({ result }), () => ({ result: undefined }))
-      .then(({ result }) => {
-        running = null;
-        if (again) {
-          again = false;
-          return tick();
-        }
-        schedule(result);
-        return result;
-      });
+    running = Promise.resolve().then(run).then((result) => ({ result }), () => ({ result: void 0 })).then(({ result }) => {
+      running = null;
+      if (again) {
+        again = false;
+        return tick();
+      }
+      schedule(result);
+      return result;
+    });
     return running;
   }
-
   function onVisibility() {
     if (started && active() && !running) tick();
   }
-
   return {
     start() {
       if (started) return running ?? Promise.resolve();
@@ -88,9 +67,7 @@ export function createPoller({ run, interval, whileHidden = false, doc = globalT
     }
   };
 }
-
-/** Wraps an async function so calls made while it runs share one follow-up run instead of each starting their own. */
-export function coalesce(fn) {
+function coalesce(fn) {
   let running = null;
   let again = false;
   const call = () => {
@@ -109,3 +86,10 @@ export function coalesce(fn) {
   };
   return call;
 }
+export {
+  POLL_DEADLINE_MS,
+  REQUEST_DEADLINE_MS,
+  coalesce,
+  createPoller,
+  deadline
+};

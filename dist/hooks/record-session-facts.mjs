@@ -1,3 +1,4 @@
+// Generated from src/hooks/record-session-facts.mts by scripts/native-build/compile.mjs.
 import path from "node:path";
 import { realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -10,10 +11,8 @@ import {
 } from "../server/session/host-session-facts.mjs";
 import { agentModelDirectory, writeAgentModel } from "../server/session/agent-models.mjs";
 import { holderOf } from "../server/workflow/slice-claims.mjs";
-
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
-const CONTEXT_EVENTS = new Set(["SessionStart", "UserPromptSubmit"]);
-
+const CONTEXT_EVENTS = /* @__PURE__ */ new Set(["SessionStart", "UserPromptSubmit"]);
 async function readHookInput(input = process.stdin) {
   const chunks = [];
   let size = 0;
@@ -27,8 +26,7 @@ async function readHookInput(input = process.stdin) {
   }
   return Buffer.concat(chunks).toString("utf8");
 }
-
-export async function recordSessionFacts({
+async function recordSessionFacts({
   input = process.stdin,
   environment = process.env,
   adapter = null
@@ -44,28 +42,16 @@ export async function recordSessionFacts({
   }
   let capture = await (adapter || createCodexHostAdapter()).capture({ hookInput, environment });
   let claudeCodeSessionDigest = null;
-  if (
-    !adapter
-    && !capture.record
-    // A Claude Code input that names no cwd, which Codex always names, is refused by the Codex adapter for its project root rather than its metadata.
-    && (capture.reasonCode === HOST_FACT_REASON.HOST_METADATA_UNAVAILABLE || (capture.reasonCode === HOST_FACT_REASON.NO_PROJECT_ROOT && !Object.hasOwn(hookInput, "cwd")))
-    && typeof environment.CLAUDE_PROJECT_DIR === "string"
-    && environment.CLAUDE_PROJECT_DIR.trim()
-    && !environment.CODEX_VERSION
-    && !Object.hasOwn(hookInput, "turn_id")
-    && !Object.hasOwn(hookInput, "subagent")
-  ) {
+  if (!adapter && !capture.record && (capture.reasonCode === HOST_FACT_REASON.HOST_METADATA_UNAVAILABLE || capture.reasonCode === HOST_FACT_REASON.NO_PROJECT_ROOT && !Object.hasOwn(hookInput, "cwd")) && typeof environment.CLAUDE_PROJECT_DIR === "string" && environment.CLAUDE_PROJECT_DIR.trim() && !environment.CODEX_VERSION && !Object.hasOwn(hookInput, "turn_id") && !Object.hasOwn(hookInput, "subagent")) {
     capture = await createClaudeCodeHostAdapter().capture({ hookInput, environment });
-    // A new Claude Code session has no transcript until its first model call, and the PreToolUse refresh
-    // before each Prism tool call records the facts, so the key is announced before any record exists.
     if (typeof hookInput.session_id === "string" && hookInput.session_id.trim() && !hookInput.agent_id) {
       claudeCodeSessionDigest = createSessionCorrelationKey(hookInput.session_id);
     }
   }
-  // A capture of the session's main agent that names a model notes it for the claims that agent takes; a sub-agent's input is refused above and records no capture.
   const model = capture.record?.host?.model;
   if (model && !hookInput.agent_id) {
-    await writeAgentModel({ holder: holderOf(hookInput.session_id), model, directory: agentModelDirectory({ ...process.env, ...environment }) }).catch(() => {});
+    await writeAgentModel({ holder: holderOf(hookInput.session_id), model, directory: agentModelDirectory({ ...process.env, ...environment }) }).catch(() => {
+    });
   }
   const dataDirectory = environment.PLUGIN_DATA || environment.CLAUDE_PLUGIN_DATA;
   let hookOutput = null;
@@ -84,18 +70,20 @@ export async function recordSessionFacts({
   }
   return { ...capture, hookOutput };
 }
-
 async function main() {
   try {
     const result = await recordSessionFacts();
     if (result.hookOutput) {
-      process.stdout.write(`${JSON.stringify(result.hookOutput)}\n`);
+      process.stdout.write(`${JSON.stringify(result.hookOutput)}
+`);
     }
   } catch {
   }
 }
-
 const modulePath = fileURLToPath(import.meta.url);
 if (process.argv[1] && modulePath === path.resolve(process.argv[1])) {
   await main();
 }
+export {
+  recordSessionFacts
+};

@@ -1,11 +1,8 @@
-// prism-dialog: a modal dialog on frosted glass over a native <dialog>, whose backdrop is the blurred scrim. It renders in light DOM:
-// its heading and a Close button sit in its header, children with slot="footer" after its body, and every other child in its body.
+// Generated from src/server/review/public/kit/elements/prism-dialog.ts by scripts/native-build/compile.mjs.
 import { Base, deepActiveElement, distribute, emit, focusables, make, setAttribute, uniqueId } from "./base.js";
-
 const PLACEMENTS = ["center", "top", "start", "bottom", "end"];
 const SIZES = ["sm", "md", "lg"];
-
-export class PrismDialog extends Base {
+class PrismDialog extends Base {
   static tag = "prism-dialog";
   static observedAttributes = ["heading", "open", "size", "placement", "bare", "modeless", "flush"];
   static catalog = {
@@ -18,7 +15,8 @@ export class PrismDialog extends Base {
       { name: "modeless", values: ["boolean"], default: "false", description: "Opens without a scrim and leaves the page usable behind it, as a drawer of details beside the page does; Escape and Close still close it, and focus moves into it when it opens." },
       { name: "bare", values: ["boolean"], default: "false", description: "Shows no header: the heading still names the dialog for assistive technology without being a heading of its own, and Escape or a click on the scrim closes it, for a dialog whose content draws its own header or none." },
       { name: "flush", values: ["boolean"], default: "false", description: "The body draws no padding, for content that lays itself out to the dialog's edges, such as the navigation drawer's rail and sidebar." },
-      { name: "slot=\"footer\"", values: ["children"], default: "", description: "Actions after the body." }
+      { name: 'slot="footer"', values: ["children"], default: "", description: "Actions after the body." },
+      { name: 'slot="footer-note"', values: ["children"], default: "", description: "A short note at the start of the footer, before its actions, such as what confirming does; on a narrow window the actions wrap below it." }
     ],
     states: ["closed", "center", "top", "start", "bottom", "end", "modeless", "bare", "flush", "long-content"],
     keyboard: [
@@ -26,17 +24,14 @@ export class PrismDialog extends Base {
       "Escape, the Close button, or a click on the scrim closes it and sends prism-close; focus returns to the element that had it; a bare dialog has no Close button."
     ]
   };
-
   connectedCallback() {
     if (!this.surface) this.build();
     this.sync();
     if (this.hasAttribute("open") && !this.surface.open) this.show();
   }
-
   disconnectedCallback() {
     if (this.surface?.open) this.surface.close();
   }
-
   attributeChangedCallback(name) {
     if (!this.surface) return;
     if (name === "open" && !this.changing) {
@@ -46,7 +41,6 @@ export class PrismDialog extends Base {
     }
     this.sync();
   }
-
   build() {
     const id = uniqueId("prism-dialog");
     this.surface = make(this, "dialog", "prism-dialog-surface", { role: "dialog", "aria-modal": "true", "aria-labelledby": `${id}-heading` });
@@ -58,15 +52,13 @@ export class PrismDialog extends Base {
     head.append(this.headingElement, this.closeButton);
     this.body = make(this, "div", "prism-dialog-body");
     this.footer = make(this, "footer", "prism-dialog-foot");
-    // The frame holds the dialog's parts; a drawer draws it as an island inset from the surface's edges, and other placements leave it out of the layout.
     this.frame = make(this, "div", "prism-dialog-frame");
     this.frame.append(head, this.body, this.footer);
     this.surface.append(this.frame);
     this.append(this.surface);
-    this.children$ = distribute(this, { footer: this.footer, default: this.body }, [this.surface]);
+    this.children$ = distribute(this, { footer: this.footer, "footer-note": this.footer, default: this.body }, [this.surface]);
     this.surface.addEventListener("close", () => this.closed());
     this.surface.addEventListener("keydown", (event) => {
-      // A modeless dialog is not the browser's modal, so Escape closes it here; Tab moves on to the page as it would from any region.
       if (this.hasAttribute("modeless")) {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -76,7 +68,6 @@ export class PrismDialog extends Base {
       }
       this.trap(event);
     });
-    // A click whose point is outside the surface lands on its backdrop, the scrim.
     this.surface.addEventListener("click", (event) => {
       if (event.target !== this.surface) return;
       const drawn = this.surface.dataset.placement === "start" ? this.frame : this.surface;
@@ -85,7 +76,6 @@ export class PrismDialog extends Base {
       if (!inside) this.close();
     });
   }
-
   sync() {
     this.headingElement.textContent = this.getAttribute("heading") ?? "";
     if (!PLACEMENTS.includes(this.getAttribute("placement"))) setAttribute(this.surface, "data-placement", "center");
@@ -93,7 +83,6 @@ export class PrismDialog extends Base {
     setAttribute(this.surface, "data-size", SIZES.includes(this.getAttribute("size")) ? this.getAttribute("size") : "md");
     const bare = this.hasAttribute("bare");
     setAttribute(this.surface, "data-bare", bare ? "" : null);
-    // A bare dialog shows no header, so its heading only names the dialog and is no heading of the content, which may draw its own.
     setAttribute(this.headingElement, "role", bare ? "none" : null);
     this.closeButton.hidden = bare;
     this.footer.hidden = this.footer.childNodes.length === 0;
@@ -102,23 +91,19 @@ export class PrismDialog extends Base {
     setAttribute(this.surface, "aria-modal", modeless ? "false" : "true");
     setAttribute(this.surface, "data-modeless", modeless ? "" : null);
   }
-
   get isOpen() {
     return Boolean(this.surface?.open);
   }
-
   setOpenAttribute(on) {
     this.changing = true;
     this.toggleAttribute("open", on);
     this.changing = false;
   }
-
   /** Opens the dialog as a modal, remembering the focused element and moving focus inside. */
   show() {
     if (!this.surface) this.build();
     this.sync();
     if (this.surface.open) return;
-    // A surface closed natively, as by Escape, sends its close event a task later; finish that opening before this one starts.
     this.closed();
     this.returnTo = this.ownerDocument.activeElement;
     this.pending = true;
@@ -134,14 +119,12 @@ export class PrismDialog extends Base {
     const first = this.surface.querySelector("[autofocus]") ?? focusables(this.body)[0] ?? focusables(this.footer)[0] ?? this.closeButton;
     first.focus();
   }
-
   /** Closes the dialog; it then sends prism-close and returns focus. */
   close() {
     if (!this.surface?.open) return;
     this.surface.close();
     this.closed();
   }
-
   // Finishes one opening exactly once, whichever comes first: close() or the surface's close event. A late close event from an earlier opening finds the surface open again or the opening finished, and changes nothing.
   closed() {
     if (!this.pending || this.surface.open) return;
@@ -152,7 +135,6 @@ export class PrismDialog extends Base {
     if (target?.isConnected && target !== this.ownerDocument.body) target.focus?.();
     emit(this, "prism-close", {});
   }
-
   // Tab and Shift+Tab wrap inside the dialog.
   trap(event) {
     if (event.key !== "Tab") return;
@@ -161,9 +143,12 @@ export class PrismDialog extends Base {
     const active = this.ownerDocument.activeElement;
     const deep = deepActiveElement(this.ownerDocument);
     const index = stops.findIndex((stop) => stop === active || stop === deep || stop.contains(deep));
-    const next = event.shiftKey ? (index <= 0 ? stops.at(-1) : null) : (index === stops.length - 1 || index < 0 ? stops[0] : null);
+    const next = event.shiftKey ? index <= 0 ? stops.at(-1) : null : index === stops.length - 1 || index < 0 ? stops[0] : null;
     if (!next) return;
     event.preventDefault();
     next.focus();
   }
 }
+export {
+  PrismDialog
+};

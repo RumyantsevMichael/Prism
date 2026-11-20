@@ -1,8 +1,8 @@
+// Generated from src/server/repository-intelligence/repository-intelligence-providers.mts by scripts/native-build/compile.mjs.
 import { CODENIB_CAPABILITIES, CODENIB_SUPPORTED_VERSION, CodeNibRepositoryIntelligence, openCodeNibClient } from "./codenib-provider.mjs";
 import { CODEGRAPH_CAPABILITIES, CODEGRAPH_SUPPORTED_VERSION, openCodeGraphRepositoryIntelligence } from "./codegraph-provider.mjs";
 import { CompositeRepositoryIntelligence } from "./composite-repository-intelligence.mjs";
 import { openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
-
 const NATIVE_CAPABILITIES = Object.freeze({
   lexicalSearch: true,
   semanticSearch: false,
@@ -10,19 +10,13 @@ const NATIVE_CAPABILITIES = Object.freeze({
   symbolGraph: false,
   verifiedSource: true
 });
-
-// The static native capabilities cover the lexical source layer only. The semantic layer adds search, hybrid ranking, and the symbol graph
-// whenever its runtime can run, because search prepares the index on first use. A degraded preparation withdraws them until a retry succeeds.
-export function withNativeSemanticCapabilities(providers, nativeStatus) {
+function withNativeSemanticCapabilities(providers, nativeStatus) {
   const semantic = Boolean(nativeStatus?.runtime?.supported && nativeStatus.runtime.published && nativeStatus.status !== "degraded");
-  return providers.map(provider => provider.id === "native" && semantic
-    ? { ...provider, capabilities: { ...provider.capabilities, semanticSearch: true, hybridSearch: true, symbolGraph: true } } : provider);
+  return providers.map((provider) => provider.id === "native" && semantic ? { ...provider, capabilities: { ...provider.capabilities, semanticSearch: true, hybridSearch: true, symbolGraph: true } } : provider);
 }
-
 function availabilityStatus(code) {
   return String(code || "").includes("incompatible") ? "incompatible" : "unavailable";
 }
-
 function sanitizedMessage(provider, code) {
   const messages = {
     "not-installed": `${provider} is not installed or cannot be started.`,
@@ -45,23 +39,21 @@ function sanitizedMessage(provider, code) {
   };
   return messages[code] || `${provider} is unavailable for this project.`;
 }
-
 function failureCode(error) {
   if (typeof error?.code === "string" && /^[a-z0-9-]+$/.test(error.code)) return error.code;
   if (error?.cause?.code === "ENOENT" || error?.code === "ENOENT" || /\bENOENT\b/.test(String(error?.message))) return "not-installed";
   return "open-failed";
 }
-
 async function closeSession(session) {
   try {
     await session?.close?.();
   } catch {
   }
 }
-
 async function normalizedSession(descriptor, projectRoot, context) {
   const opened = await descriptor.open(projectRoot, context);
-  const close = typeof opened?.close === "function" ? () => opened.close() : async () => {};
+  const close = typeof opened?.close === "function" ? () => opened.close() : async () => {
+  };
   try {
     const provider = opened?.provider || opened;
     if (!provider || typeof provider.describe !== "function") {
@@ -77,14 +69,12 @@ async function normalizedSession(descriptor, projectRoot, context) {
     throw error;
   }
 }
-
 function descriptorMetadata(descriptor) {
   return {
     version: String(descriptor.metadata?.version || "unknown"),
-    capabilities: { ...(descriptor.metadata?.capabilities || {}) }
+    capabilities: { ...descriptor.metadata?.capabilities || {} }
   };
 }
-
 function availableRecord(session) {
   const metadata = descriptorMetadata(session.descriptor);
   return {
@@ -92,12 +82,11 @@ function availableRecord(session) {
     kind: session.descriptor.kind,
     status: "available",
     version: session.description?.version ? String(session.description.version) : metadata.version,
-    capabilities: { ...metadata.capabilities, ...(session.description?.capabilities || {}) },
+    capabilities: { ...metadata.capabilities, ...session.description?.capabilities || {} },
     diagnosticCode: null,
     message: null
   };
 }
-
 function unavailableRecord(descriptor, error) {
   const code = failureCode(error);
   const metadata = descriptorMetadata(descriptor);
@@ -111,8 +100,7 @@ function unavailableRecord(descriptor, error) {
     message: sanitizedMessage(descriptor.id, code)
   };
 }
-
-export class RepositoryIntelligenceSelectionError extends Error {
+class RepositoryIntelligenceSelectionError extends Error {
   constructor(provider, code, message = sanitizedMessage(provider, code), options = {}) {
     super(message, options);
     this.name = "RepositoryIntelligenceSelectionError";
@@ -121,8 +109,7 @@ export class RepositoryIntelligenceSelectionError extends Error {
     this.recoverable = true;
   }
 }
-
-export function createRepositoryIntelligenceDescriptors(options = {}) {
+function createRepositoryIntelligenceDescriptors(options = {}) {
   const openNative = options.openNative || openNativeRepositoryIntelligence;
   const openCodeGraph = options.openCodeGraph || openCodeGraphRepositoryIntelligence;
   const openCodeNib = options.openCodeNib || openCodeNibClient;
@@ -133,7 +120,8 @@ export function createRepositoryIntelligenceDescriptors(options = {}) {
       metadata: { version: "1", capabilities: NATIVE_CAPABILITIES },
       async open(projectRoot) {
         const provider = await openNative(projectRoot, options.native);
-        return { provider, close: async () => {} };
+        return { provider, close: async () => {
+        } };
       }
     },
     {
@@ -142,7 +130,8 @@ export function createRepositoryIntelligenceDescriptors(options = {}) {
       metadata: { version: `>=${CODEGRAPH_SUPPORTED_VERSION.minimum},<${CODEGRAPH_SUPPORTED_VERSION.maximumExclusive}`, capabilities: CODEGRAPH_CAPABILITIES },
       async open(projectRoot, context) {
         const provider = await openCodeGraph(projectRoot, context.nativeProvider, options.codegraph);
-        return { provider, close: async () => {} };
+        return { provider, close: async () => {
+        } };
       }
     },
     {
@@ -161,11 +150,9 @@ export function createRepositoryIntelligenceDescriptors(options = {}) {
     }
   ];
 }
-
 function sortedDescriptors(descriptors) {
   return [...descriptors].sort((left, right) => left.id.localeCompare(right.id));
 }
-
 function descriptorMap(descriptors) {
   const entries = sortedDescriptors(descriptors).map((descriptor) => [descriptor.id, descriptor]);
   if (new Set(entries.map(([id]) => id)).size !== entries.length) {
@@ -173,7 +160,6 @@ function descriptorMap(descriptors) {
   }
   return new Map(entries);
 }
-
 async function openNativeSession(projectRoot, descriptors) {
   const descriptor = descriptorMap(descriptors).get("native");
   if (!descriptor || descriptor.kind !== "built-in") {
@@ -181,15 +167,13 @@ async function openNativeSession(projectRoot, descriptors) {
   }
   return normalizedSession(descriptor, projectRoot, {});
 }
-
 async function openExternalSession(descriptor, projectRoot, nativeSession) {
   return normalizedSession(descriptor, projectRoot, {
     nativeProvider: nativeSession.provider,
     nativeDescription: nativeSession.description
   });
 }
-
-export async function listRepositoryIntelligenceProviders(projectRoot, options = {}) {
+async function listRepositoryIntelligenceProviders(projectRoot, options = {}) {
   const descriptors = options.descriptors || createRepositoryIntelligenceDescriptors(options);
   const nativeSession = await openNativeSession(projectRoot, descriptors);
   try {
@@ -211,8 +195,7 @@ export async function listRepositoryIntelligenceProviders(projectRoot, options =
     await closeSession(nativeSession);
   }
 }
-
-export async function withRepositoryIntelligence(projectRoot, action, options = {}) {
+async function withRepositoryIntelligence(projectRoot, action, options = {}) {
   if (typeof action !== "function") throw new TypeError("A repository intelligence action is required.");
   const requestedSelection = options.selection || "auto";
   const descriptors = options.descriptors || createRepositoryIntelligenceDescriptors(options);
@@ -225,14 +208,14 @@ export async function withRepositoryIntelligence(projectRoot, action, options = 
   try {
     if (!["native", "auto"].includes(requestedSelection)) {
       const descriptor = byId.get(requestedSelection);
-      try { selectedSession = await openExternalSession(descriptor, projectRoot, nativeSession); }
-      catch (error) {
+      try {
+        selectedSession = await openExternalSession(descriptor, projectRoot, nativeSession);
+      } catch (error) {
         const code = failureCode(error);
         options.onExclusion?.({ provider: descriptor.id, reasonCode: code });
         throw new RepositoryIntelligenceSelectionError(descriptor.id, code, sanitizedMessage(descriptor.id, code), { cause: error });
       }
     }
-
     const composite = new CompositeRepositoryIntelligence(nativeSession.provider, selectedSession?.provider || null, {
       requestedSelection,
       selectedExternal: selectedSession?.descriptor.id || null
@@ -243,3 +226,10 @@ export async function withRepositoryIntelligence(projectRoot, action, options = 
     await closeSession(nativeSession);
   }
 }
+export {
+  RepositoryIntelligenceSelectionError,
+  createRepositoryIntelligenceDescriptors,
+  listRepositoryIntelligenceProviders,
+  withNativeSemanticCapabilities,
+  withRepositoryIntelligence
+};

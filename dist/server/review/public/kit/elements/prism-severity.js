@@ -1,11 +1,8 @@
-// prism-severity: how severe a review finding is, as three rising bars filled up to its level and an optional word, apart from the status palette so a severity never reads as a status.
+// Generated from src/server/review/public/kit/elements/prism-severity.ts by scripts/native-build/compile.mjs.
 import { Base, setAttribute, shadow } from "./base.js";
-
-export const SEVERITIES = Object.freeze({ blocker: "Blocker", high: "High", medium: "Medium", low: "Low" });
-// How many of the three bars each level fills.
+const SEVERITIES = Object.freeze({ blocker: "Blocker", high: "High", medium: "Medium", low: "Low" });
 const FILLED = { low: 1, medium: 2, high: 3, blocker: 3 };
-
-export class PrismSeverity extends Base {
+class PrismSeverity extends Base {
   static tag = "prism-severity";
   static styles = ["prism-severity.css"];
   static observedAttributes = ["level", "glyph-only"];
@@ -18,25 +15,20 @@ export class PrismSeverity extends Base {
     states: [...Object.keys(SEVERITIES), "glyph-only"],
     keyboard: []
   };
-
   constructor() {
     super();
     this.root = shadow(this, PrismSeverity.styles, `<span class="bars" part="bars" aria-hidden="true"><b></b><b></b><b></b></span><span class="word" part="word"></span>`);
   }
-
   connectedCallback() {
     this.render();
   }
-
   attributeChangedCallback() {
     if (this.isConnected) this.render();
   }
-
   get level() {
     const level = this.getAttribute("level");
     return Object.hasOwn(SEVERITIES, level) ? level : "low";
   }
-
   render() {
     const level = this.level;
     const word = SEVERITIES[level];
@@ -49,3 +41,7 @@ export class PrismSeverity extends Base {
     setAttribute(this, "tip", glyphOnly ? `${word} severity` : null);
   }
 }
+export {
+  PrismSeverity,
+  SEVERITIES
+};

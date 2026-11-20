@@ -1,9 +1,7 @@
-// prism-place-head: the head of a place's sidebar in light DOM: one line on the tab strip's line with the place's title as a level 2 heading and, at its end, children with slot="end", such as the button that hides the sidebar.
-// The subtitle says what the place holds in the title's tooltip, since the rows below already show it.
+// Generated from src/server/review/public/kit/elements/prism-place-head.ts by scripts/native-build/compile.mjs.
 import { Base, make } from "./base.js";
 import { remeasure, unwatchShortening, watchShortening } from "../shorten.js";
-
-export class PrismPlaceHead extends Base {
+class PrismPlaceHead extends Base {
   static tag = "prism-place-head";
   static observedAttributes = ["heading", "subtitle"];
   static catalog = {
@@ -11,26 +9,22 @@ export class PrismPlaceHead extends Base {
     options: [
       { name: "heading", values: ["text"], default: "", description: "The place's title, a level 2 heading; it ends with an ellipsis when it does not fit, and the tooltip shows it whole." },
       { name: "subtitle", values: ["text"], default: "", description: "What the place holds, shown in the title's tooltip after the title." },
-      { name: "slot=\"end\"", values: ["children"], default: "", description: "Controls at the head's end, such as the button that hides the sidebar." }
+      { name: 'slot="end"', values: ["children"], default: "", description: "Controls at the head's end, such as the button that hides the sidebar." }
     ],
     states: ["default", "no-subtitle", "end", "long-text", "unbroken-name"],
     keyboard: ["The head is not a control; a shortened title joins the Tab order so its full text can be read.", "Controls in the end slot keep their own keys."]
   };
-
   connectedCallback() {
     if (!this.title$) this.build();
     this.sync();
     watchShortening(this.title$, this.title$);
   }
-
   disconnectedCallback() {
     unwatchShortening(this.title$);
   }
-
   attributeChangedCallback() {
     if (this.title$) this.sync();
   }
-
   build() {
     this.title$ = make(this, "h2", "prism-place-head-title");
     this.end$ = make(this, "span", "prism-place-head-end");
@@ -47,7 +41,6 @@ export class PrismPlaceHead extends Base {
     this.children$ = new MutationObserver(place);
     this.children$.observe(this, { childList: true });
   }
-
   sync() {
     const heading = this.getAttribute("heading") ?? "";
     const subtitle = this.getAttribute("subtitle") ?? "";
@@ -56,7 +49,9 @@ export class PrismPlaceHead extends Base {
       remeasure(this.title$);
     }
     const tip = subtitle ? `${heading}: ${subtitle}` : heading;
-    // The head names the place and what it holds on hover over its title, and the title says the same when it is shortened.
     for (const node of [this, this.title$]) if (node.getAttribute("tip") !== tip) node.setAttribute("tip", tip);
   }
 }
+export {
+  PrismPlaceHead
+};

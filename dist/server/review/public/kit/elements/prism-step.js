@@ -1,25 +1,21 @@
-// prism-step: one step of a prism-stepper: a bar in the phase's fill when it is done or current, or a dot in a vertical stepper, its label,
-// an optional detail from its slot="detail" children, and its state written for assistive technology.
+// Generated from src/server/review/public/kit/elements/prism-step.ts by scripts/native-build/compile.mjs.
 import { Base, make, setAttribute } from "./base.js";
 import { unwatchShortening, watchShortening } from "../shorten.js";
-
 const PHASES = ["requirements", "design", "frozen", "build", "review", "shipped"];
 const STATES = ["done", "current", "upcoming"];
-
-export class PrismStep extends Base {
+class PrismStep extends Base {
   static tag = "prism-step";
   static observedAttributes = ["phase", "state"];
   static catalog = {
     purpose: "One phase of a prism-stepper with its state: a bar in --prism-color-phase-<phase>-fill when done or current and --prism-color-line-strong when upcoming.",
     options: [
       { name: "phase", values: PHASES, default: "", description: "The phase, which gives the bar its color." },
-      { name: "state", values: STATES, default: "upcoming", description: "Where the slice is; current is exposed as aria-current=\"step\" and every state is written out for assistive technology." },
-      { name: "slot=\"detail\"", values: ["children"], default: "", description: "Children shown under the label, such as the current step's meter and progress text." }
+      { name: "state", values: STATES, default: "upcoming", description: 'Where the slice is; current is exposed as aria-current="step" and every state is written out for assistive technology.' },
+      { name: 'slot="detail"', values: ["children"], default: "", description: "Children shown under the label, such as the current step's meter and progress text." }
     ],
     states: STATES,
     keyboard: []
   };
-
   connectedCallback() {
     if (!this.nameElement) {
       this.bar = make(this, "span", "prism-step-bar", { "aria-hidden": "true" });
@@ -38,22 +34,21 @@ export class PrismStep extends Base {
     this.attributeChangedCallback();
     watchShortening(this, this.nameElement);
   }
-
   disconnectedCallback() {
     unwatchShortening(this);
   }
-
   get state() {
     return STATES.includes(this.getAttribute("state")) ? this.getAttribute("state") : "upcoming";
   }
-
   get tooltipText() {
     return `${this.nameElement?.textContent.trim() ?? ""}, ${this.state}`;
   }
-
   attributeChangedCallback() {
     if (!this.nameElement) return;
     setAttribute(this, "aria-current", this.state === "current" ? "step" : null);
     this.stateElement.textContent = `, ${this.state}`;
   }
 }
+export {
+  PrismStep
+};

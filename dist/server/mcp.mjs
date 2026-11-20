@@ -1,3 +1,4 @@
+// Generated from src/server/mcp.mts by scripts/native-build/compile.mjs.
 import { randomBytes } from "node:crypto";
 import { jsonLine, readJsonLines } from "./json-lines.mjs";
 import { pluginURL } from "./plugin-root.mjs";
@@ -12,7 +13,8 @@ import path from "node:path";
 import { COMMENTS_PER_ARTIFACT_MAX, finishUnfinishedMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, recordStoreSummary, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
-import { callSessionId, configureClaims, harnessName, withCallSession, withClaimAgent } from "./workflow/slice-claims.mjs";
+import { callIsMainAgent, callSessionId, claimHolder, claimHost, configureClaims, harnessName, withCallSession, withClaimAgent } from "./workflow/slice-claims.mjs";
+import { readAgentModel } from "./session/agent-models.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
@@ -34,7 +36,7 @@ import { listArtifacts } from "./review/review-server.mjs";
 import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { opensAtStart } from "./review/open-at-start.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
-import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
+import { checkpointPause, effectiveSettings, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, claimedByUpdate, getInitiative, initiativeAcknowledgement, initiativeWork, readInitiative, requireClaimedWork, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
@@ -54,15 +56,13 @@ import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, s
 import { callAgent, callAgentRole, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
+import { HOSTS } from "./session/launch-hosts.mjs";
+import { EFFORT_PATTERN, MODEL_PATTERN, PROVIDER_PATTERN, RUN_KINDS } from "./session/run-options.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
-
-// PRISM_REVIEW_APP=off keeps this session on its own review server, as tests and plugin checkouts under development need.
 const reviewServers = createReviewServerPool(reviewAppDisabled() ? {} : { app: { directory: reviewAppDirectory(), evidenceDirectory: conservationStore.directory, intelligenceDirectory: nativeSemanticRuntime.directory, recordStoreDirectory: managedStoresDirectory() } });
 const pluginManifest = JSON.parse(await readFile(pluginURL(".codex-plugin/plugin.json"), "utf8"));
-// The host reads this process's stdout as the protocol, so the log goes to the shared Prism log file, and warnings also to stderr, which hosts keep.
 startProcessLog("mcp", { version: pluginManifest.version, cwd: process.cwd() }, { mirror: true });
-
 function decisionDataDirectory(argumentsValue) {
   const configured = process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA;
   if (configured && argumentsValue.dataDirectory && path.resolve(argumentsValue.dataDirectory) !== path.resolve(configured)) {
@@ -70,31 +70,28 @@ function decisionDataDirectory(argumentsValue) {
   }
   return argumentsValue.dataDirectory || configured;
 }
-
-async function recordAutomaticDecision(input) {
+async function recordAutomaticDecision(input2) {
   try {
-    return await appendDecision(input);
+    return await appendDecision(input2);
   } catch {
     return { status: "unavailable", reasonCode: "decision_store_unavailable" };
   }
 }
-
 function estimateReasons(plan) {
   if (plan.tokenEstimate?.expected !== null) return [];
-  const result = [];
+  const result2 = [];
   const diagnostics = plan.diagnostics || {};
-  if (diagnostics.noAnchors) result.push("no_anchors");
-  if (diagnostics.unresolvedRequired?.length) result.push("unresolved_required");
-  if (diagnostics.unresolvedConcepts?.length) result.push("unresolved_concepts");
+  if (diagnostics.noAnchors) result2.push("no_anchors");
+  if (diagnostics.unresolvedRequired?.length) result2.push("unresolved_required");
+  if (diagnostics.unresolvedConcepts?.length) result2.push("unresolved_concepts");
   for (const [name, enabled] of Object.entries(plan.provider?.capabilities || {})) {
     if (["lexicalSearch", "semanticSearch", "symbolGraph", "verifiedSource"].includes(name) && enabled !== true) {
-      result.push(`${name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}_unavailable`);
+      result2.push(`${name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}_unavailable`);
     }
   }
-  if (!diagnostics.estimateEligible && result.length === 0) result.push("provider_estimate_ineligible");
-  return result;
+  if (!diagnostics.estimateEligible && result2.length === 0) result2.push("provider_estimate_ineligible");
+  return result2;
 }
-
 function contextDecision(plan, requestedProvider, exclusions = []) {
   const ranges = [plan.mustRead || [], plan.likelyRead || [], plan.possibleRead || []];
   const verifiedTokens = plan.observedSource?.approximateTokens ?? ranges.flat().reduce((sum, item) => sum + (item.rangeComplete && Number.isSafeInteger(item.sourceTokens) ? item.sourceTokens : 0), 0);
@@ -111,24 +108,15 @@ function contextDecision(plan, requestedProvider, exclusions = []) {
     estimate: { lower: plan.tokenEstimate?.lower ?? null, expected: plan.tokenEstimate?.expected ?? null, upper: plan.tokenEstimate?.upper ?? null }
   };
 }
-
 function taskId(metadata = {}) {
   return metadata["x-codex-turn-metadata"]?.thread_id ?? metadata.threadId ?? "mcp-process";
 }
-
-// The project roots that tool calls named in a host that names no project at start; only the first call for a root asks whether to open the browser.
-const namedRoots = new Set();
-
-// A projectRoot argument that the server cannot use is the caller's mistake, which the log records as a refusal rather than as a failure of the server.
+const namedRoots = /* @__PURE__ */ new Set();
 const projectRootRefusal = (message) => Object.assign(new Error(message), { refusal: true });
-
 async function requestedProjectRoot(argumentsValue) {
   const hostProjectRoot = process.env.CLAUDE_PROJECT_DIR;
   const hasSuppliedProjectRoot = Object.hasOwn(argumentsValue, "projectRoot");
-  if (
-    hasSuppliedProjectRoot
-    && (typeof argumentsValue.projectRoot !== "string" || !path.isAbsolute(argumentsValue.projectRoot))
-  ) {
+  if (hasSuppliedProjectRoot && (typeof argumentsValue.projectRoot !== "string" || !path.isAbsolute(argumentsValue.projectRoot))) {
     throw projectRootRefusal("The projectRoot argument must be an absolute path.");
   }
   const projectRoot = hasSuppliedProjectRoot ? argumentsValue.projectRoot : hostProjectRoot;
@@ -139,8 +127,6 @@ async function requestedProjectRoot(argumentsValue) {
     throw projectRootRefusal("The projectRoot argument must be an absolute path.");
   }
   const resolvedRoot = await realpath(projectRoot);
-  // A session that starts in a folder holding several checkouts side by side names the checkout it works in, so a project root below the start folder is served,
-  // and one outside it is refused, so a session reaches only the folders it started over.
   if (hostProjectRoot && hasSuppliedProjectRoot) {
     const hostRoot = await realpath(hostProjectRoot);
     const relative = path.relative(hostRoot, resolvedRoot);
@@ -148,40 +134,28 @@ async function requestedProjectRoot(argumentsValue) {
       throw projectRootRefusal(`The projectRoot argument ${resolvedRoot} is not the folder where the session started, or a folder below it. Pass ${hostRoot} or a checkout below it.`);
     }
   }
-  // The tool call's project root is the checkout whose first store access in this call may move its existing artifacts into the store, since this call's result reports the move.
   nameToolCallRoot(resolvedRoot);
-  // A host that names no project at start, such as Codex, lists its project in the review app from its first Prism tool call,
-  // and that call opens the review browser as a session start does, since it is the first moment the session knows its project.
   if (hostProjectRoot) outsideToolCall(() => reviewServers.register(resolvedRoot));
   else if (!namedRoots.has(resolvedRoot)) {
     namedRoots.add(resolvedRoot);
     void outsideToolCall(() => opensAtStart(resolvedRoot).then((open) => reviewServers.register(resolvedRoot, { open }), () => reviewServers.register(resolvedRoot)));
   }
-  // The native index starts building once the project is known, so a later search finds it ready; this never waits for the build, and the build moves no artifact.
   void outsideToolCall(() => startBackgroundPreparation(resolvedRoot));
   return resolvedRoot;
 }
-
 async function server(argumentsValue, metadata) {
   const id = taskId(metadata);
   const projectRoot = await requestedProjectRoot(argumentsValue);
   return reviewServers.get(projectRoot, id);
 }
-
-// Claude Code gives its agent only the structured content of a result that has one, so the text items after the first, which carry notes such as a move report or a saved conflict,
-// also go into the structured content as notes, in their order, after any notes it already holds.
-// Prism's refusal codes are lower-case words joined by "_", such as validation_failed, unlike Node's system error codes, such as ENOENT.
-const isRefusal = (error) => error?.refusal === true || (typeof error?.code === "string" && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(error.code));
-
+const isRefusal = (error) => error?.refusal === true || typeof error?.code === "string" && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(error.code);
 function withNotesInStructure(value) {
   const structured = value?.structuredContent;
   if (!structured || typeof structured !== "object" || Array.isArray(structured) || !Array.isArray(value.content) || value.content.length < 2) return value;
   const notes = value.content.slice(1).filter((item) => item?.type === "text" && typeof item.text === "string" && item.text).map((item) => item.text);
   if (!notes.length) return value;
-  return { ...value, structuredContent: { ...structured, notes: [...(Array.isArray(structured.notes) ? structured.notes : []), ...notes] } };
+  return { ...value, structuredContent: { ...structured, notes: [...Array.isArray(structured.notes) ? structured.notes : [], ...notes] } };
 }
-
-// Write a result to the host: whether the write reached standard output.
 function result(id, value) {
   return new Promise((resolve) => {
     try {
@@ -191,7 +165,6 @@ function result(id, value) {
     }
   });
 }
-
 function requestedTabs(argumentsValue) {
   const hasArtifact = Object.hasOwn(argumentsValue, "artifact");
   const hasArtifacts = Object.hasOwn(argumentsValue, "artifacts");
@@ -201,41 +174,38 @@ function requestedTabs(argumentsValue) {
   if (hasArtifacts) {
     return argumentsValue.artifacts;
   }
-  return hasArtifact ? argumentsValue.artifact : undefined;
+  return hasArtifact ? argumentsValue.artifact : void 0;
 }
-
-// An agent may name the tab group its presented tabs join, such as the piece of work they belong to.
-function requestedGroup(argumentsValue) {
-  return Object.hasOwn(argumentsValue, "group") ? { group: argumentsValue.group } : {};
+async function requestedGroup(argumentsValue) {
+  if (!Object.hasOwn(argumentsValue, "group")) return {};
+  if (argumentsValue.group === null || argumentsValue.group === void 0) return { group: argumentsValue.group };
+  const holder = claimHolder();
+  const model = callIsMainAgent() ? await readAgentModel(holder).catch(() => null) : null;
+  return { group: argumentsValue.group, by: { holder, ...claimHost() ? { host: claimHost() } : {}, ...model ? { model } : {} } };
 }
-
-// A session that fell back to its own review server tells the agent, so two review pages for one project reach the user as a known cause.
 function reviewContent(url, review) {
   const fallback = review.privateServer?.();
-  return fallback
-    ? `Human review URL: ${url}\nThis session serves the project from its own review server, because the shared review app could not be reached: ${fallback.reason} Another session may show the same project at a different URL, so tell the user that this link belongs to this session.`
-    : `Human review URL: ${url}`;
+  return fallback ? `Human review URL: ${url}
+This session serves the project from its own review server, because the shared review app could not be reached: ${fallback.reason} Another session may show the same project at a different URL, so tell the user that this link belongs to this session.` : `Human review URL: ${url}`;
 }
-
-function stateContent(result) {
-  const validity = result.valid ? "valid" : "invalid";
-  const revision = result.revision ?? "none";
-  const opened = `${result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : ""}${result.supersededGates?.length ? `\nAnswered correctness gates superseded and closed: ${result.supersededGates.join(", ")}` : ""}`;
-  const answered = (result.state?.pending ?? []).filter((gate) => gate?.answer);
-  const gates = `${opened}${answered.length ? `\nUser gates answered in the review browser: ${answered.map((gate) => gate.id).join(", ")}` : ""}`;
-  return `Coordination state ${validity}: ${result.initiative}\nRevision: ${revision}${gates}`;
+function stateContent(result2) {
+  const validity = result2.valid ? "valid" : "invalid";
+  const revision = result2.revision ?? "none";
+  const opened = `${result2.openedGates?.length ? `
+Opened user gates: ${result2.openedGates.map((gate) => gate.id).join(", ")}` : ""}${result2.supersededGates?.length ? `
+Answered correctness gates superseded and closed: ${result2.supersededGates.join(", ")}` : ""}`;
+  const answered = (result2.state?.pending ?? []).filter((gate) => gate?.answer);
+  const gates = `${opened}${answered.length ? `
+User gates answered in the review browser: ${answered.map((gate) => gate.id).join(", ")}` : ""}`;
+  return `Coordination state ${validity}: ${result2.initiative}
+Revision: ${revision}${gates}`;
 }
-
-// A read of a shipped initiative that marked its slice documents asks to commit those in the checkout apart from the task's changes, and says that the record store shares its own.
 async function historyMarksContent(projectRoot, history) {
   return history?.marked?.length ? [{ type: "text", text: await historyMarksText(projectRoot, history.initiative, history.marked) }] : [];
 }
-
-// The coordination state text of a shipped initiative carries the history message as a line of its own.
 async function shippedHistoryContent(projectRoot, history) {
   return history ? [{ type: "text", text: history.message }, ...await historyMarksContent(projectRoot, history)] : [];
 }
-
 function contextPlanContent(plan) {
   return [
     `Repository context plan for commit ${plan.commit}.`,
@@ -246,38 +216,40 @@ function contextPlanContent(plan) {
     `Observed verified source: ${plan.observedSource?.approximateTokens ?? 0} approximate tokens across ${plan.observedSource?.verifiedRangeCount ?? 0} ranges.`
   ].join("\n");
 }
-
-function repositoryFitContent(result) {
-  if (result.status === "UNSUPPORTED") {
-    return `Repository fit: UNSUPPORTED.\nReason: ${result.reason}${result.reasonCode ? `\nReason code: ${result.reasonCode}.` : ""}`;
+function repositoryFitContent(result2) {
+  if (result2.status === "UNSUPPORTED") {
+    return `Repository fit: UNSUPPORTED.
+Reason: ${result2.reason}${result2.reasonCode ? `
+Reason code: ${result2.reasonCode}.` : ""}`;
   }
   return [
-    `Repository fit: ${result.fit}.`,
-    `Repository read budget: ${result.repositoryReadBudgetTokens}.`,
-    `Compaction threshold: ${result.capacity.compactionThresholdTokens}.`,
-    `Capacity profile: ${result.profileId ?? "explicit-input"}.`
+    `Repository fit: ${result2.fit}.`,
+    `Repository read budget: ${result2.repositoryReadBudgetTokens}.`,
+    `Compaction threshold: ${result2.capacity.compactionThresholdTokens}.`,
+    `Capacity profile: ${result2.profileId ?? "explicit-input"}.`
   ].join("\n");
 }
-
-function sessionCapacityContent(result) {
-  if (result.status === "UNSUPPORTED") {
-    return `Session capacity: UNSUPPORTED.\nReason: ${result.reason}${result.reasonCode ? `\nReason code: ${result.reasonCode}.` : ""}`;
+function sessionCapacityContent(result2) {
+  if (result2.status === "UNSUPPORTED") {
+    return `Session capacity: UNSUPPORTED.
+Reason: ${result2.reason}${result2.reasonCode ? `
+Reason code: ${result2.reasonCode}.` : ""}`;
   }
   return [
     "Session capacity: SUPPORTED.",
-    `Context window: ${result.capacity.contextWindowTokens}.`,
-    `Compaction threshold: ${result.capacity.compactionThresholdTokens}.`,
-    `Capacity profile: ${result.profileId ?? "explicit-input"}.`
+    `Context window: ${result2.capacity.contextWindowTokens}.`,
+    `Compaction threshold: ${result2.capacity.compactionThresholdTokens}.`,
+    `Capacity profile: ${result2.profileId ?? "explicit-input"}.`
   ].join("\n");
 }
-
 function providerListContent(providers) {
   return providers.map(({ id, status, diagnosticCode }) => `${id}: ${status}${diagnosticCode ? ` (${diagnosticCode})` : ""}`).join("\n");
 }
-
 function sessionConsumptionContent(summary) {
   if (summary.status === "UNSUPPORTED") {
-    return `Session consumption: UNSUPPORTED.\nReason: ${summary.reason}${summary.reasonCode ? `\nReason code: ${summary.reasonCode}.` : ""}`;
+    return `Session consumption: UNSUPPORTED.
+Reason: ${summary.reason}${summary.reasonCode ? `
+Reason code: ${summary.reasonCode}.` : ""}`;
   }
   return [
     "Session consumption: SUPPORTED.",
@@ -289,51 +261,41 @@ function sessionConsumptionContent(summary) {
     ...runMeasuresContent(summary.runMeasures)
   ].join("\n");
 }
-
 function privateServerContent(review) {
   const fallback = review.privateServer?.();
   return fallback ? { privateServer: fallback } : {};
 }
-
 function runMeasureText({ value, coverage }) {
   return value === null ? coverage : `${value} (${coverage})`;
 }
-
 function attributedTargetText({ initiative, slice, kind, wave, designRun }) {
   if (kind === "wave") return `${initiative}/${slice} wave ${wave}`;
   if (kind === "design-run") return `${initiative}/${slice} design run ${designRun}`;
   return `${initiative}/${slice}`;
 }
-
 function attributedMeasuresText(measures) {
   return `wall ms ${runMeasureText(measures.wallTimeMs)}, active ms ${runMeasureText(measures.activeTimeMs)}, input ${runMeasureText(measures.inputTokens)}, cache-write ${runMeasureText(measures.cacheWriteTokens)}, cache-read ${runMeasureText(measures.cacheReadTokens)}, output ${runMeasureText(measures.outputTokens)}, tool calls ${runMeasureText(measures.toolCalls)}`;
 }
-
 function runTotalsText(totals) {
   return `runs ${runMeasureText(totals.runs)}, wall ms ${runMeasureText(totals.wallTimeMs)}, elapsed active ms ${runMeasureText(totals.elapsedActiveTimeMs)}, summed active ms ${runMeasureText(totals.summedActiveTimeMs)}, input ${runMeasureText(totals.inputTokens)}, cache-write ${runMeasureText(totals.cacheWriteTokens)}, cache-read ${runMeasureText(totals.cacheReadTokens)}, output ${runMeasureText(totals.outputTokens)}, tool calls ${runMeasureText(totals.toolCalls)}`;
 }
-
 function runMeasuresContent(runMeasures) {
   if (!runMeasures) return [];
   const attribution = runMeasures.attribution;
   return [
     `Run statistics collection: ${runMeasures.collection}.`,
     ...runMeasures.executions.map((row) => `Run measures ${row.execution}${row.host ? ` ${row.host}` : ""}: wall ms ${runMeasureText(row.wallTimeMs)}, active ms ${runMeasureText(row.activeTimeMs)} (idle over ${runMeasures.idleThresholdMs} ms excluded), input ${runMeasureText(row.inputTokens)}, cache-write ${runMeasureText(row.cacheWriteTokens)}, cache-read ${runMeasureText(row.cacheReadTokens)}, output ${runMeasureText(row.outputTokens)}, tool calls ${runMeasureText(row.toolCalls)}${row.ended ? ", ended" : ""}${row.belowSession ? `, below session ${row.belowSession}` : ""}.`),
-    ...(attribution
-      ? [
-          ...attribution.targets.map((entry) => `Attributed to ${attributedTargetText(entry.target)} as ${entry.role} (${entry.attribution}): ${attributedMeasuresText(entry)}.`),
-          `Unattributed: ${attributedMeasuresText(attribution.unattributed)}.`
-        ]
-      : []),
-    ...(runMeasures.recorded ? [`Recorded run totals: ${runTotalsText(runMeasures.recorded)}.`] : []),
+    ...attribution ? [
+      ...attribution.targets.map((entry) => `Attributed to ${attributedTargetText(entry.target)} as ${entry.role} (${entry.attribution}): ${attributedMeasuresText(entry)}.`),
+      `Unattributed: ${attributedMeasuresText(attribution.unattributed)}.`
+    ] : [],
+    ...runMeasures.recorded ? [`Recorded run totals: ${runTotalsText(runMeasures.recorded)}.`] : [],
     ...(runMeasures.inProgress?.targets ?? []).map((entry) => `In progress for ${attributedTargetText(entry.target)} as ${entry.role} (${entry.attribution}), not yet recorded: ${attributedMeasuresText(entry)}.`)
   ];
 }
-
 function reviewSessionContent(review) {
   return review.getSession();
 }
-
 function assertExactToolArguments(value, allowed, required, name) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${name} must be an object.`);
@@ -349,74 +311,86 @@ function assertExactToolArguments(value, allowed, required, name) {
     }
   }
 }
-
 function activeCapacityRequest(argumentsValue, projectRoot) {
   return createActiveSessionCapacityRequest(argumentsValue.session, {
     dataDirectory: process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA,
     projectRoot
   });
 }
-
 function failure(id, code, message, data) {
   const response = { jsonrpc: "2.0", id, error: { code, message } };
-  if (data !== undefined) {
+  if (data !== void 0) {
     response.error.data = data;
   }
   process.stdout.write(jsonLine(response));
 }
-
 function stateErrorData(error) {
-  // A refused repository name carries the name the store would accept, so a client can offer the line to commit.
   if (error?.name === "RecordStoreError" && REPOSITORY_REFUSALS.includes(error.code)) {
     return { code: error.code, proposed: error.proposed ?? null };
   }
-  // A configured artifact folder that would take the source tree names its key, the folder as resolved, and the component whose folder it is or holds.
   if (error?.code === "artifact_folder_invalid" && ["RecordStoreError", "ArtifactError"].includes(error?.name)) {
-    return { code: error.code, key: error.key, folder: error.folder, ...(error.component === undefined ? {} : { component: error.component }) };
+    return { code: error.code, key: error.key, folder: error.folder, ...error.component === void 0 ? {} : { component: error.component } };
   }
-  // A refused artifact read or update names the current version, the scopes that hold a path, the scope that already holds it, the edit that did not apply, the name that breaks the artifact name form, or the declared components.
   if (error?.name === "ArtifactError") {
-    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "path", "location", "limit", "nameLimit", "component", "components", "proposed"].filter(key => error[key] !== undefined).map(key => [key, error[key]])) };
+    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "path", "location", "limit", "nameLimit", "component", "components", "proposed"].filter((key) => error[key] !== void 0).map((key) => [key, error[key]])) };
   }
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };
   }
   if (error instanceof ChangeMapError) {
-    return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
+    return { code: error.code, ...error.errors ? { errors: error.errors } : {}, ...error.currentRevision === void 0 ? {} : { currentRevision: error.currentRevision } };
   }
-  // A refused component declaration or design names the entry, components, dependency, cycle, slice, or crossing paths it is about,
-  // an unfinished scope names the leaves it waits on, a blocked ship names each scope and its blocked dependents, an unconfirmed ship its gate and what changed after it was asked, a ship that an open approval stops each ADR and its gates,
-  // a ship with open work names its gates, claims, and proposals, and a refused change to a shipped initiative names it and its ship time.
   if (error instanceof InitiativeError || error instanceof RoadmapError || ["ShippedHistoryError", "UnreadableRoadmapError", "InitiativeGraphError", "VerificationError", "SliceDesignError", "DesignViewError", "ComponentError"].includes(error?.name)) {
-    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState", "entry", "components", "component", "dependency", "cycle", "slice", "paths", "folder", "scope", "waiting", "scopes", "afterGate", "changed", "adrs", "gates", "claims", "proposals", "fixes", "initiative", "shippedAt"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
+    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState", "entry", "components", "component", "dependency", "cycle", "slice", "paths", "folder", "scope", "waiting", "scopes", "afterGate", "changed", "adrs", "gates", "claims", "proposals", "fixes", "initiative", "shippedAt"].filter((key) => error[key] !== void 0).map((key) => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
   }
   if (error?.name !== "CoordinationStateError") {
-    // A refused deferral keeps every problem, because the caller needs each finding's reason to correct the request.
-    if (["validation_failed", "invalid_path", "lock_timeout", "stale_snapshot", "preparation_failed", "unsupported_runtime", "corrupt_asset", "resource_limit", "incomplete_structure", "evidence_missing", "gate_blocked", "revision_conflict", "deferral_refused"].includes(error.code)) return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "expectedSnapshot", "currentSnapshot", "evidenceId"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) && !(error.code === "deferral_refused" && key === "problems") ? error[key].slice(0, 100) : error[key]])) };
-    return undefined;
+    if (["validation_failed", "invalid_path", "lock_timeout", "stale_snapshot", "preparation_failed", "unsupported_runtime", "corrupt_asset", "resource_limit", "incomplete_structure", "evidence_missing", "gate_blocked", "revision_conflict", "deferral_refused"].includes(error.code)) return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "expectedSnapshot", "currentSnapshot", "evidenceId"].filter((key) => error[key] !== void 0).map((key) => [key, Array.isArray(error[key]) && !(error.code === "deferral_refused" && key === "problems") ? error[key].slice(0, 100) : error[key]])) };
+    return void 0;
   }
   const data = { code: error.code };
   for (const key of ["errors", "warnings", "current", "validation"]) {
-    if (error[key] !== undefined) {
+    if (error[key] !== void 0) {
       data[key] = error[key];
     }
   }
   return data;
 }
-
-// Hosts show agents the error message but not the error data, so the message also lists the problems that the data holds.
-// A problem that the message already states is not listed again.
+const RUN_HOST_NAMES = HOSTS.map(({ host }) => host);
+const RUN_CHOICE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    model: { type: "string", pattern: MODEL_PATTERN.source },
+    effort: { type: "string", pattern: EFFORT_PATTERN.source },
+    typed: { type: "boolean", const: true, description: "Only beside a model name the person typed, which the host does not list." }
+  }
+};
+const AGENT_CHOICE_SCHEMA = {
+  ...RUN_CHOICE_SCHEMA,
+  properties: {
+    ...RUN_CHOICE_SCHEMA.properties,
+    earlier: { type: "string", minLength: 1, maxLength: 200, description: "An earlier model name that no host can take, kept alone until the person replaces it; it reads as the host default." }
+  }
+};
+const RUN_HOST_ENTRY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    provider: { type: "string", pattern: PROVIDER_PATTERN.source },
+    ...Object.fromEntries(RUN_KINDS.map(({ kind, purpose }) => [kind, purpose === "agents" ? AGENT_CHOICE_SCHEMA : RUN_CHOICE_SCHEMA]))
+  }
+};
 const LISTED_PROBLEMS = 20;
 function errorMessage(error, data) {
   const stated = (item) => error.message.includes(typeof item === "string" ? item : item.message || "\0");
-  const items = [...(Array.isArray(data?.problems) ? data.problems : []), ...(Array.isArray(data?.errors) ? data.errors : [])].filter((item) => !stated(item));
+  const items = [...Array.isArray(data?.problems) ? data.problems : [], ...Array.isArray(data?.errors) ? data.errors : []].filter((item) => !stated(item));
   if (!items.length) return error.message;
   const line = (item) => typeof item === "string" ? item : [item.code, item.id || item.file || item.path || item.field, item.message].filter(Boolean).join(": ") || JSON.stringify(item);
   const listed = items.slice(0, LISTED_PROBLEMS).map((item) => `- ${line(item)}`);
   if (items.length > LISTED_PROBLEMS) listed.push(`- ${items.length - LISTED_PROBLEMS} more problems are in the error data.`);
-  return `${error.message}\n${listed.join("\n")}`;
+  return `${error.message}
+${listed.join("\n")}`;
 }
-
 const capacityOverridesInputSchema = {
   type: "object",
   additionalProperties: false,
@@ -425,18 +399,15 @@ const capacityOverridesInputSchema = {
     compactionThresholdTokens: { type: "integer", minimum: 1, maximum: 9007199254740991 }
   }
 };
-
 const completeCapacityOverridesInputSchema = {
   ...capacityOverridesInputSchema,
   required: ["contextWindowTokens", "compactionThresholdTokens"]
 };
-
 const sessionCorrelationKeyInputSchema = {
   type: "string",
   pattern: "^[a-f0-9]{64}$",
   description: "The SHA-256 session correlation key emitted as developer context by the enabled Prism session hook."
 };
-
 const explicitSessionInputSchema = {
   type: "object",
   additionalProperties: false,
@@ -449,7 +420,6 @@ const explicitSessionInputSchema = {
     capacityOverrides: capacityOverridesInputSchema
   }
 };
-
 const activeSessionInputSchema = {
   type: "object",
   additionalProperties: false,
@@ -462,9 +432,7 @@ const activeSessionInputSchema = {
     compactionScope: { const: "total", description: "Explicitly attest that the supplied capacity threshold counts total session tokens." }
   }
 };
-
 const sessionInputSchema = { oneOf: [explicitSessionInputSchema, activeSessionInputSchema] };
-
 const tools = [
   ...ROADMAP_TOOLS,
   ...INITIATIVE_TOOLS,
@@ -721,7 +689,8 @@ const tools = [
         activeSlice: { type: "string" },
         recoveryContent: { type: "string", maxLength: 65536 },
         changes: {
-          type: "object", additionalProperties: false,
+          type: "object",
+          additionalProperties: false,
           properties: {
             active: { type: "array", items: { type: "object" } },
             pending: { type: "array", items: { oneOf: [{ type: "string" }, { type: "object" }] } },
@@ -739,7 +708,7 @@ const tools = [
   },
   {
     name: "get_coordination_state",
-    description: "Read an initiative's coordination state record with its revision. Reads never create the record. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
+    description: "Read an initiative's coordination state record with its revision. Reads never create the record. Its settings.host names the supported host that launches run on, and settings.models keeps, per host, a provider and the coordinator's, designImplementation's, codeReview's, securityReview's, and gateSummary's { model, effort, typed }, each part left out for the host default; an earlier models value reads migrated, host defaults as {} and named models as typed choices of every host, except that a name breaking the model rule is kept alone as { earlier } on that agent kind, which reads as the host default and is never passed to a host. childAgents: { host, kinds } names the calling client's host, or null for a client of no supported host, and for each agent kind, designImplementation, codeReview, securityReview, and gateSummary, the { model, effort } to start that kind of child agent with on that host, null leaving the host default. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
     inputSchema: {
       type: "object",
       properties: {
@@ -803,6 +772,7 @@ const tools = [
               type: "object",
               additionalProperties: false,
               properties: {
+                host: { type: "string", enum: RUN_HOST_NAMES },
                 autonomy: { type: "string", enum: ["conservative", "broad", "full"] },
                 commit: { type: "string", enum: ["on", "off"] },
                 push: { type: "string", enum: ["on", "off"] },
@@ -810,17 +780,12 @@ const tools = [
                 review: { type: "string", enum: ["marked", "recommended", "all"] },
                 models: {
                   oneOf: [
-                    { type: "string", enum: ["defaults", "host defaults"] },
+                    { type: "string", enum: ["defaults", "host defaults"], description: "The earlier form, stored as no choice." },
                     {
                       type: "object",
-                      required: ["delivery", "review", "securityReview"],
-                      additionalProperties: false,
-                      properties: {
-                        delivery: { type: "string", minLength: 1 },
-                        review: { type: "string", minLength: 1 },
-                        securityReview: { type: "string", minLength: 1 },
-                        examples: { type: "string", minLength: 1 }
-                      }
+                      description: "The choices kept for each host; a part left out is the host's default, and an earlier { delivery, review, securityReview, examples } value is stored as typed choices of every host, with a name breaking the model rule kept as { earlier }.",
+                      propertyNames: { enum: RUN_HOST_NAMES },
+                      additionalProperties: RUN_HOST_ENTRY_SCHEMA
                     }
                   ]
                 }
@@ -856,8 +821,8 @@ const tools = [
                       op: { const: "ask" },
                       kind: { type: "string", enum: ["visual-review", "correctness", "decision", "assistance"] },
                       slice: { type: "string", minLength: 1 },
-                      question: { type: "string", minLength: 1, maxLength: 4000, description: "The question itself, one or two plain sentences." },
-                      context: { type: "string", minLength: 1, maxLength: 8000, description: "Markdown the person reads before answering: what happened, what was tried, what the choice changes, and a concrete example. Required for decision and assistance gates, so a person who has not followed the run can decide from the gate alone." },
+                      question: { type: "string", minLength: 1, maxLength: 4e3, description: "The question itself, one or two plain sentences." },
+                      context: { type: "string", minLength: 1, maxLength: 8e3, description: "Markdown the person reads before answering: what happened, what was tried, what the choice changes, and a concrete example. Required for decision and assistance gates, so a person who has not followed the run can decide from the gate alone." },
                       artifacts: { type: "array", maxItems: 50, items: { type: "string", minLength: 1 } },
                       options: {
                         type: "array",
@@ -879,7 +844,7 @@ const tools = [
                     type: "object",
                     required: ["op", "id"],
                     additionalProperties: false,
-                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 }, choice: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$", description: "For a decision gate the user answered in the conversation: the id of the option they chose, which the closed gate keeps as choice. A gate the user answered in the review browser accepts only the option of that answer." }, reason: { type: "string", minLength: 1, maxLength: 1000, description: "Required for an unanswered gate: the user's answer in the conversation, or why the question no longer applies. The review browser shows it with the closed question." } }
+                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 }, choice: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$", description: "For a decision gate the user answered in the conversation: the id of the option they chose, which the closed gate keeps as choice. A gate the user answered in the review browser accepts only the option of that answer." }, reason: { type: "string", minLength: 1, maxLength: 1e3, description: "Required for an unanswered gate: the user's answer in the conversation, or why the question no longer applies. The review browser shows it with the closed question." } }
                   }
                 ]
               }
@@ -896,20 +861,15 @@ const tools = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   }
 ];
-
-const stateTools = new Set(["get_coordination_state", "validate_coordination_state", "update_coordination_state", "checkpoint_pause"]);
-// Only Claude Code was shown to move a long call to the background and wake the session with its result; other hosts would block the turn.
+const stateTools = /* @__PURE__ */ new Set(["get_coordination_state", "validate_coordination_state", "update_coordination_state", "checkpoint_pause"]);
 const BACKGROUND_WAIT_CLIENTS = /claude/i;
 const FIRST_BACKGROUND_VERSION = [2, 1, 212];
-const DEFAULT_BACKGROUND_MS = 120000;
-const pendingWaits = new Map();
-// The gate waits that run, so closing awaits each one letting go of its gates.
-const endingWaits = new Set();
-// A deferred wait's gates stay held this long for the Stop hook's wait to start and renew them.
-const DEFERRED_HOLD_MS = 2 * 60000;
+const DEFAULT_BACKGROUND_MS = 12e4;
+const pendingWaits = /* @__PURE__ */ new Map();
+const endingWaits = /* @__PURE__ */ new Set();
+const DEFERRED_HOLD_MS = 2 * 6e4;
 let clientName = null;
 let clientVersion = null;
-
 function olderThan(version, minimum) {
   const parts = String(version ?? "").split(/[.-]/).slice(0, 3).map(Number);
   if (parts.length < 3 || parts.some((part) => !Number.isInteger(part))) return false;
@@ -918,8 +878,6 @@ function olderThan(version, minimum) {
   }
   return false;
 }
-
-// A wait only helps when the host moves it to the background before its own tool timeout cancels it.
 function waitUnsupportedReason() {
   if (!BACKGROUND_WAIT_CLIENTS.test(clientName ?? "")) return `The host ${clientName ?? "(unnamed)"} does not move long tool calls to the background.`;
   if (olderThan(clientVersion, FIRST_BACKGROUND_VERSION)) return `Claude Code ${clientVersion} predates background tool calls (2.1.212).`;
@@ -929,13 +887,9 @@ function waitUnsupportedReason() {
   if (Number.isFinite(timeout) && timeout > 0 && timeout <= handoff) return `MCP_TOOL_TIMEOUT (${timeout} ms) ends the call before Claude Code moves it to the background (${handoff} ms).`;
   return null;
 }
-
 function progress(progressToken, value, message) {
   process.stdout.write(jsonLine({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken, progress: value, message } }));
 }
-
-// An approval answer reaches only the checkout whose ask_approval recorded its gate, which this machine remembers; a get_artifact read that returns the answer
-// as latestAnswer is one way that checkout receives it. Failing to remember never fails the call, whose store change already happened.
 async function noteApprovalDelivery(name, projectRoot, value) {
   try {
     if (name === "update_artifact") await recordAskedGates(projectRoot, (value.artifacts ?? []).map((entry) => entry.gate).filter((gate) => typeof gate === "string"));
@@ -943,51 +897,40 @@ async function noteApprovalDelivery(name, projectRoot, value) {
   } catch {
   }
 }
-
 async function callGateWait(argumentsValue, metadata, requestId) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
-  const gateIds = argumentsValue.gateIds ?? (argumentsValue.gateId === undefined ? undefined : [argumentsValue.gateId]);
+  const gateIds = argumentsValue.gateIds ?? (argumentsValue.gateId === void 0 ? void 0 : [argumentsValue.gateId]);
   if (!Array.isArray(gateIds) || !gateIds.length) {
     throw new Error("Pass the recorded gate ids in gateIds.");
   }
-  // A wait names the initiative whose coordination state holds the gates, or the artifact whose status record holds them.
-  const source = typeof argumentsValue.artifact === "string" && argumentsValue.artifact
-    ? { artifact: argumentsValue.artifact, ...(argumentsValue.scope === undefined ? {} : { scope: argumentsValue.scope }) }
-    : { initiative: argumentsValue.initiative };
-  if (source.artifact === undefined && (typeof source.initiative !== "string" || !source.initiative)) {
+  const source = typeof argumentsValue.artifact === "string" && argumentsValue.artifact ? { artifact: argumentsValue.artifact, ...argumentsValue.scope === void 0 ? {} : { scope: argumentsValue.scope } } : { initiative: argumentsValue.initiative };
+  if (source.artifact === void 0 && (typeof source.initiative !== "string" || !source.initiative)) {
     throw new Error("Pass initiative, the initiative whose coordination state holds the gates, or artifact, the requirement or ADR whose approval gates to wait on.");
   }
   let value;
   const unsupported = waitUnsupportedReason();
   const hookSession = callSessionId(metadata);
-  // Only the initiative's coordinator when the wait starts has it end on the person's changes; one step of the session tells whether it coordinates and which entries it holds at its start.
-  // Every wait that names an initiative holds its gates in the session's notice record while it runs, so their answers reach the agent once, in its result, whichever agent waited.
-  // An artifact wait holds no gates there, since its gates live in the artifact's status record.
   const initiative = source.initiative;
   const notices = typeof initiative === "string" ? {} : null;
-  const start = notices && !(unsupported && !hookSession)
-    ? await startGateWait({ projectRoot, initiative, agent: currentCallAgent() }).catch(() => ({ coordinates: false, known: null }))
-    : { coordinates: false, known: null };
+  const start = notices && !(unsupported && !hookSession) ? await startGateWait({ projectRoot, initiative, agent: currentCallAgent() }).catch(() => ({ coordinates: false, known: null })) : { coordinates: false, known: null };
   const coordinates = start.coordinates;
-  const knownEntries = Array.isArray(start.known) ? start.known : undefined;
+  const knownEntries = Array.isArray(start.known) ? start.known : void 0;
   if (unsupported && hookSession) {
-    // Codex names its session in the call's metadata, and its Stop hook for that session waits once this turn ends.
-    // The gates stay held for a short lease, which the polls of the hook's wait, under the same wait id, renew.
     const waitId = randomBytes(16).toString("hex");
     const held = notices && { ...notices, waitId, hold: Date.now() + DEFERRED_HOLD_MS };
-    value = await waitForUserGates({ projectRoot, ...source, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, notices: held, watchChanges: coordinates });
+    value = await waitForUserGates({ projectRoot, ...source, gateIds, maxWaitMinutes: 1e-4, settleMs: 0, knownEntries, notices: held, watchChanges: coordinates });
     if (value.status === "timeout") {
       const maxWaitMinutes = Math.min(argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES, HOOK_WAIT_MINUTES);
-      const { replaced } = await recordWaitRequest({ sessionId: hookSession, projectRoot, ...source, gateIds: value.gateIds, maxWaitMinutes, knownEntries, coordinates, ...(held ? { waitId } : {}) });
-      // The request this one replaced never reaches the hook, so its wait lets go of its gates.
-      if (replaced) await endGateWait({ ...replaced, cancelled: true }).catch(() => {});
+      const { replaced } = await recordWaitRequest({ sessionId: hookSession, projectRoot, ...source, gateIds: value.gateIds, maxWaitMinutes, knownEntries, coordinates, ...held ? { waitId } : {} });
+      if (replaced) await endGateWait({ ...replaced, cancelled: true }).catch(() => {
+      });
       value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
     }
   } else if (unsupported) {
     value = { status: "unsupported_host", gateIds, client: clientName, reason: unsupported };
   } else {
     const controller = new AbortController();
-    if (requestId !== undefined) pendingWaits.set(requestId, controller);
+    if (requestId !== void 0) pendingWaits.set(requestId, controller);
     const progressToken = metadata?.progressToken;
     try {
       const running = waitForUserGates({
@@ -999,9 +942,9 @@ async function callGateWait(argumentsValue, metadata, requestId) {
         knownEntries,
         notices,
         watchChanges: coordinates,
-        heartbeatMs: Number(process.env.PRISM_GATE_WAIT_HEARTBEAT_MS) || 60000,
-        settleMs: process.env.PRISM_GATE_WAIT_SETTLE_MS === undefined ? undefined : Number(process.env.PRISM_GATE_WAIT_SETTLE_MS),
-        onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, "Waiting for the user's answer in the review browser")
+        heartbeatMs: Number(process.env.PRISM_GATE_WAIT_HEARTBEAT_MS) || 6e4,
+        settleMs: process.env.PRISM_GATE_WAIT_SETTLE_MS === void 0 ? void 0 : Number(process.env.PRISM_GATE_WAIT_SETTLE_MS),
+        onProgress: progressToken === void 0 ? void 0 : (seconds) => progress(progressToken, seconds, "Waiting for the user's answer in the review browser")
       });
       endingWaits.add(running);
       try {
@@ -1026,44 +969,67 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   }[value.status]();
   return { content: [{ type: "text", text }], structuredContent: value };
 }
-const repositoryTools = new Set([...NATIVE_INTELLIGENCE_TOOLS.map(tool => tool.name), "list_repository_intelligence_providers", "plan_repository_context", "resolve_session_capacity", "evaluate_repository_fit", "summarize_session_consumption", "set_workflow_recording", "read_workflow_decisions", "record_workflow_decision"]);
-
-// A record tool's result in a project with a record store names the store, so an agent never takes recordPath for a file in the checkout.
+const repositoryTools = /* @__PURE__ */ new Set([...NATIVE_INTELLIGENCE_TOOLS.map((tool) => tool.name), "list_repository_intelligence_providers", "plan_repository_context", "resolve_session_capacity", "evaluate_repository_fit", "summarize_session_consumption", "set_workflow_recording", "read_workflow_decisions", "record_workflow_decision"]);
 async function withRecordStore(projectRoot, value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const recordStore = await recordStoreSummary(projectRoot).catch(() => null);
   return recordStore ? { ...value, recordStore } : value;
 }
-
+function clientHost() {
+  const name = (clientName ?? "").toLowerCase();
+  const found = HOSTS.find(({ label }) => name.includes(label.split(" ")[0].toLowerCase()));
+  return found?.host ?? null;
+}
+const CHILD_AGENT_KINDS = RUN_KINDS.filter(({ purpose }) => purpose === "agents").map(({ kind }) => kind);
+const passedName = (value) => typeof value === "string" ? value : null;
+function childAgents(read) {
+  const host = clientHost();
+  const models = effectiveSettings(read?.valid ? read.state : null).models;
+  const entry = host && models && typeof models === "object" && !Array.isArray(models) ? models[host] ?? {} : {};
+  const kinds = Object.fromEntries(CHILD_AGENT_KINDS.map((kind) => {
+    const choice = entry && typeof entry[kind] === "object" && entry[kind] !== null && !Object.hasOwn(entry[kind], "earlier") ? entry[kind] : {};
+    return [kind, { model: passedName(choice.model), effort: passedName(choice.effort) }];
+  }));
+  return { host, kinds };
+}
 async function callStateTool(name, argumentsValue) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
-  const input = { ...argumentsValue, projectRoot };
+  const input2 = { ...argumentsValue, projectRoot };
   let resultValue;
   if (name === "get_coordination_state") {
-    resultValue = await readCoordinationState(input);
+    resultValue = await readCoordinationState(input2);
+    resultValue = { ...resultValue, childAgents: childAgents(resultValue) };
     const history = await shippedHistory(projectRoot, argumentsValue.initiative);
     if (history) resultValue = { ...resultValue, shippedHistory: history };
   } else if (name === "validate_coordination_state") {
-    resultValue = await validateCoordinationState(input);
+    resultValue = await validateCoordinationState(input2);
   } else if (name === "update_coordination_state") {
-    resultValue = await updateCoordinationState(input);
-    // The prompt hooks deliver a gate's answer only to the session that asked it; a gate the session cannot remember is still answered through its wait or a read of the state.
+    resultValue = await updateCoordinationState(input2);
     const opened = (resultValue?.openedGates ?? []).map((gate) => gate?.id).filter((id) => typeof id === "string");
     await rememberAskedGates({ projectRoot, initiative: argumentsValue.initiative, gateIds: opened }).catch((error) => log.warn("asked_gates_unrecorded", errorFields(error)));
   } else if (name === "checkpoint_pause") {
-    resultValue = await checkpointPause(input);
+    resultValue = await checkpointPause(input2);
     const dataDirectory = decisionDataDirectory(argumentsValue);
     if (dataDirectory) {
-      const recording = await recordAutomaticDecision({ projectRoot, dataDirectory, correlationKey: argumentsValue.correlationKey,
-        decision: { kind: "pause", outcome: "PAUSED", evidencePaths: [resultValue.recoveryPath], stateRevision: resultValue.revision,
-          recoveryDigest: resultValue.recoveryDigest, activeSlices: [argumentsValue.activeSlice] } });
+      const recording = await recordAutomaticDecision({
+        projectRoot,
+        dataDirectory,
+        correlationKey: argumentsValue.correlationKey,
+        decision: {
+          kind: "pause",
+          outcome: "PAUSED",
+          evidencePaths: [resultValue.recoveryPath],
+          stateRevision: resultValue.revision,
+          recoveryDigest: resultValue.recoveryDigest,
+          activeSlices: [argumentsValue.activeSlice]
+        }
+      });
       resultValue = { ...resultValue, decisionRecording: recording };
     }
   } else {
     throw new Error(`Unknown state tool: ${name}`);
   }
   if (name === "get_coordination_state" || name === "update_coordination_state") resultValue = await withRecordStore(projectRoot, resultValue);
-  // Closed gates are history for the review browser; agents never need them.
   if (resultValue?.state?.closed) {
     const { closed, ...state } = resultValue.state;
     resultValue = { ...resultValue, state };
@@ -1072,24 +1038,22 @@ async function callStateTool(name, argumentsValue) {
   if (Array.isArray(resultValue?.keptSettings) && resultValue.keptSettings.length) content.push({ type: "text", text: keptSettingsText(resultValue.keptSettings) });
   return { content, structuredContent: resultValue };
 }
-
 async function callRepositoryTool(name, argumentsValue) {
-  // Agents often write a directory as "src/", so a trailing slash is dropped before the strict path checks.
-  if (Array.isArray(argumentsValue?.filters?.paths)) argumentsValue = { ...argumentsValue, filters: { ...argumentsValue.filters, paths: argumentsValue.filters.paths.map(value => typeof value === "string" && value.length > 1 ? value.replace(/\/+$/, "") : value) } };
-  if (NATIVE_INTELLIGENCE_TOOLS.some(tool => tool.name === name)) {
-    const schema = NATIVE_INTELLIGENCE_TOOLS.find(tool => tool.name === name).inputSchema;
+  if (Array.isArray(argumentsValue?.filters?.paths)) argumentsValue = { ...argumentsValue, filters: { ...argumentsValue.filters, paths: argumentsValue.filters.paths.map((value) => typeof value === "string" && value.length > 1 ? value.replace(/\/+$/, "") : value) } };
+  if (NATIVE_INTELLIGENCE_TOOLS.some((tool) => tool.name === name)) {
+    const schema = NATIVE_INTELLIGENCE_TOOLS.find((tool) => tool.name === name).inputSchema;
     assertInput(schema, argumentsValue);
-    try { assertExactToolArguments(argumentsValue, Object.keys(schema.properties), schema.required, `${name} arguments`); }
-    catch (error) { error.code = "validation_failed"; throw error; }
-    const projectRoot = await requestedProjectRoot(argumentsValue).catch(error => { error.code = "invalid_path"; throw error; });
-    let value = name === "search_repository_concepts" ? await searchRepositoryConcepts({ ...argumentsValue, projectRoot })
-      : name === "find_shared_dependencies" ? await findSharedDependencies({ ...argumentsValue, projectRoot })
-      : name === "report_module_interfaces" ? await reportModuleInterfaces({ ...argumentsValue, projectRoot })
-      : name === "find_shared_literals" ? await findSharedLiterals({ ...argumentsValue, projectRoot })
-      : name === "report_cohesion_clusters" ? await reportCohesionClusters({ ...argumentsValue, projectRoot })
-      : name === "find_same_name_units" ? await findSameNameUnits({ ...argumentsValue, projectRoot })
-      : name === "report_complex_units" ? await reportComplexUnits({ ...argumentsValue, projectRoot })
-      : await nativeSemanticRuntime.status(projectRoot, argumentsValue.waitMs);
+    try {
+      assertExactToolArguments(argumentsValue, Object.keys(schema.properties), schema.required, `${name} arguments`);
+    } catch (error) {
+      error.code = "validation_failed";
+      throw error;
+    }
+    const projectRoot = await requestedProjectRoot(argumentsValue).catch((error) => {
+      error.code = "invalid_path";
+      throw error;
+    });
+    let value = name === "search_repository_concepts" ? await searchRepositoryConcepts({ ...argumentsValue, projectRoot }) : name === "find_shared_dependencies" ? await findSharedDependencies({ ...argumentsValue, projectRoot }) : name === "report_module_interfaces" ? await reportModuleInterfaces({ ...argumentsValue, projectRoot }) : name === "find_shared_literals" ? await findSharedLiterals({ ...argumentsValue, projectRoot }) : name === "report_cohesion_clusters" ? await reportCohesionClusters({ ...argumentsValue, projectRoot }) : name === "find_same_name_units" ? await findSameNameUnits({ ...argumentsValue, projectRoot }) : name === "report_complex_units" ? await reportComplexUnits({ ...argumentsValue, projectRoot }) : await nativeSemanticRuntime.status(projectRoot, argumentsValue.waitMs);
     if (!["search_repository_concepts", "find_shared_dependencies", "report_module_interfaces", "find_shared_literals", "report_cohesion_clusters", "find_same_name_units", "report_complex_units"].includes(name)) {
       const diagnostics = value.diagnostics || [], offset = argumentsValue.offset || 0, limit = argumentsValue.limit || 20;
       value = { ...value, diagnostics: diagnostics.slice(offset, offset + limit), totalDiagnostics: diagnostics.length, nextOffset: offset + limit < diagnostics.length ? offset + limit : null };
@@ -1099,20 +1063,20 @@ async function callRepositoryTool(name, argumentsValue) {
   if (name === "set_workflow_recording") {
     assertExactToolArguments(argumentsValue, ["projectRoot", "dataDirectory", "enabled"], ["projectRoot", "dataDirectory", "enabled"], "set_workflow_recording arguments");
     const projectRoot = await requestedProjectRoot(argumentsValue);
-    const result = await setDecisionRecording({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), enabled: argumentsValue.enabled });
-    return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+    const result2 = await setDecisionRecording({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), enabled: argumentsValue.enabled });
+    return { content: [{ type: "text", text: JSON.stringify(result2) }], structuredContent: result2 };
   }
   if (name === "read_workflow_decisions") {
     assertExactToolArguments(argumentsValue, ["projectRoot", "dataDirectory", "correlationKey", "initiative", "recoveryPaths"], ["projectRoot", "dataDirectory"], "read_workflow_decisions arguments");
     const projectRoot = await requestedProjectRoot(argumentsValue);
-    const result = await readDecisionHistory({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), correlationKey: argumentsValue.correlationKey, initiative: argumentsValue.initiative, recoveryPaths: argumentsValue.recoveryPaths });
-    return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+    const result2 = await readDecisionHistory({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), correlationKey: argumentsValue.correlationKey, initiative: argumentsValue.initiative, recoveryPaths: argumentsValue.recoveryPaths });
+    return { content: [{ type: "text", text: JSON.stringify(result2) }], structuredContent: result2 };
   }
   if (name === "record_workflow_decision") {
     assertExactToolArguments(argumentsValue, ["projectRoot", "dataDirectory", "correlationKey", "decision"], ["projectRoot", "dataDirectory", "decision"], "record_workflow_decision arguments");
     const projectRoot = await requestedProjectRoot(argumentsValue);
-    const result = await appendDecision({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), correlationKey: argumentsValue.correlationKey, decision: argumentsValue.decision, source: "agent_checkpoint" });
-    return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+    const result2 = await appendDecision({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), correlationKey: argumentsValue.correlationKey, decision: argumentsValue.decision, source: "agent_checkpoint" });
+    return { content: [{ type: "text", text: JSON.stringify(result2) }], structuredContent: result2 };
   }
   if (name === "summarize_session_consumption") {
     assertExactToolArguments(argumentsValue, ["projectRoot", "correlationKey", "dataDirectory"], ["projectRoot", "correlationKey", "dataDirectory"], "summarize_session_consumption arguments");
@@ -1159,7 +1123,8 @@ async function callRepositoryTool(name, argumentsValue) {
     const dataDirectory = argumentsValue.session?.dataDirectory || decisionDataDirectory(argumentsValue);
     if (dataDirectory) {
       const recording = await recordAutomaticDecision({
-        projectRoot: await requestedProjectRoot(argumentsValue), dataDirectory,
+        projectRoot: await requestedProjectRoot(argumentsValue),
+        dataDirectory,
         correlationKey: argumentsValue.session?.correlationKey,
         decision: { kind: "repository_fit", outcome: fit.fit || "UNSUPPORTED", reasonCodes: fit.reasonCode ? [String(fit.reasonCode).toLowerCase().replace(/[^a-z0-9_-]/g, "_")] : [], estimate: argumentsValue.tokenEstimate }
       });
@@ -1171,9 +1136,10 @@ async function callRepositoryTool(name, argumentsValue) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     const native = await nativeSemanticRuntime.status(projectRoot), diagnostics = native.diagnostics || [];
     const providers = withNativeSemanticCapabilities(await listRepositoryIntelligenceProviders(projectRoot), native);
-    // get_repository_intelligence_status pages the complete diagnostics.
-    return { content: [{ type: "text", text: providerListContent(providers) }],
-      structuredContent: { providers, native: { ...native, diagnostics: diagnostics.slice(0, 20), totalDiagnostics: diagnostics.length } } };
+    return {
+      content: [{ type: "text", text: providerListContent(providers) }],
+      structuredContent: { providers, native: { ...native, diagnostics: diagnostics.slice(0, 20), totalDiagnostics: diagnostics.length } }
+    };
   }
   if (name === "plan_repository_context") {
     const projectRoot = await requestedProjectRoot(argumentsValue);
@@ -1181,7 +1147,7 @@ async function callRepositoryTool(name, argumentsValue) {
     if (["auto", "native"].includes(argumentsValue.provider || "auto")) {
       native = await prepareNativeProvider(projectRoot, { expectedSnapshot: argumentsValue.expectedSnapshot });
       if (native.preparation.status === "preparing") {
-        const value = { ...native.preparation, prepared: undefined };
+        const value = { ...native.preparation, prepared: void 0 };
         return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
       }
     }
@@ -1189,39 +1155,44 @@ async function callRepositoryTool(name, argumentsValue) {
     const exclusions = [];
     try {
       plan = await withRepositoryIntelligence(projectRoot, (provider) => planRepositoryContext({
-      task: argumentsValue.task,
-      hints: argumentsValue.hints,
-      provider,
-      limits: {
-        budget: argumentsValue.budget,
-        searchHits: argumentsValue.searchHits,
-        graphNodes: argumentsValue.graphNodes
-      }
-      }), { selection: argumentsValue.provider || "auto", ...(native ? { openNative: async () => native.provider } : {}), onExclusion: (item) => exclusions.push(item) });
+        task: argumentsValue.task,
+        hints: argumentsValue.hints,
+        provider,
+        limits: {
+          budget: argumentsValue.budget,
+          searchHits: argumentsValue.searchHits,
+          graphNodes: argumentsValue.graphNodes
+        }
+      }), { selection: argumentsValue.provider || "auto", ...native ? { openNative: async () => native.provider } : {}, onExclusion: (item) => exclusions.push(item) });
     } catch (error) {
-      const dataDirectory = decisionDataDirectory(argumentsValue);
-      if (dataDirectory) await recordAutomaticDecision({ projectRoot, dataDirectory, correlationKey: argumentsValue.correlationKey,
-        decision: { kind: "context_plan", outcome: "FAILURE", requestedProvider: argumentsValue.provider || "auto", reasonCodes: [String(error.code || "planning_failed").toLowerCase().replace(/[^a-z0-9_-]/g, "_")] } });
+      const dataDirectory2 = decisionDataDirectory(argumentsValue);
+      if (dataDirectory2) await recordAutomaticDecision({
+        projectRoot,
+        dataDirectory: dataDirectory2,
+        correlationKey: argumentsValue.correlationKey,
+        decision: { kind: "context_plan", outcome: "FAILURE", requestedProvider: argumentsValue.provider || "auto", reasonCodes: [String(error.code || "planning_failed").toLowerCase().replace(/[^a-z0-9_-]/g, "_")] }
+      });
       throw error;
     }
     const dataDirectory = decisionDataDirectory(argumentsValue);
     if (dataDirectory) {
-      const recording = await recordAutomaticDecision({ projectRoot, dataDirectory, correlationKey: argumentsValue.correlationKey,
-        decision: contextDecision(plan, argumentsValue.provider || "auto", exclusions) });
+      const recording = await recordAutomaticDecision({
+        projectRoot,
+        dataDirectory,
+        correlationKey: argumentsValue.correlationKey,
+        decision: contextDecision(plan, argumentsValue.provider || "auto", exclusions)
+      });
       if (recording.status === "unavailable") plan = { ...plan, decisionRecording: recording };
     }
     return { content: [{ type: "text", text: contextPlanContent(plan) }], structuredContent: plan };
   }
   throw new Error(`Unknown repository-intelligence tool: ${name}`);
 }
-
-// Hosts that cannot keep a long call open get an early running answer before their own tool timeout, and call again to keep waiting.
-const VERIFY_EARLY_RETURN_MS = 45000;
-
+const VERIFY_EARLY_RETURN_MS = 45e3;
 async function callVerifySlice(argumentsValue, metadata, requestId) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
   const controller = new AbortController();
-  if (requestId !== undefined) pendingWaits.set(requestId, controller);
+  if (requestId !== void 0) pendingWaits.set(requestId, controller);
   const progressToken = metadata?.progressToken;
   try {
     const value = await verifySlice({
@@ -1229,46 +1200,33 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
       projectRoot,
       signal: controller.signal,
       maxWaitMs: waitUnsupportedReason() ? Number(process.env.PRISM_VERIFY_EARLY_RETURN_MS) || VERIFY_EARLY_RETURN_MS : Infinity,
-      onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, `Running the test command (${seconds} s)`)
+      onProgress: progressToken === void 0 ? void 0 : (seconds) => progress(progressToken, seconds, `Running the test command (${seconds} s)`)
     });
-    // A passing run with a source snapshot gets its change map derived in the background, so the review browser can show it.
     if (value.status === "passed" && value.snapshotId) startChangeMapDerivation({ projectRoot, initiative: argumentsValue.initiative, slice: argumentsValue.slice });
     const brief = verificationBrief(value);
     const { outputTail, ...summary } = brief;
-    const text = [brief.message ?? `Verification ${brief.status}.`, JSON.stringify(summary), outputTail ? `Output tail:\n${outputTail}` : ""].filter(Boolean).join("\n");
+    const text = [brief.message ?? `Verification ${brief.status}.`, JSON.stringify(summary), outputTail ? `Output tail:
+${outputTail}` : ""].filter(Boolean).join("\n");
     return { content: [{ type: "text", text }], structuredContent: brief };
   } finally {
     pendingWaits.delete(requestId);
   }
 }
-
-// The first write after an upgrade moves files in the user's work tree, so its result says which, to commit on their own.
 const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
-
-// A saved artifact named as the checkout names it, by its path and scope label, or by its store location when the checkout gives it no path.
 async function savedArtifactLine(item, argumentsValue) {
   return `- ${await savedArtifactWhere(item.store, item.location, argumentsValue)} (this machine's version: ${item.savedAs})`;
 }
-
 async function savedArtifactWhere(store, location, argumentsValue) {
   const projectRoot = await requestedProjectRoot(argumentsValue ?? {}).catch(() => null);
   const named = projectRoot ? await artifactAtLocation(projectRoot, store, location).catch(() => null) : null;
   return named?.path ? `${named.path} in scope ${named.scope.label}` : `artifacts/${location} in the record store at ${store}${named ? `, scope ${named.scope.label}` : ""}`;
 }
-
-// A local move that a store sync sent elsewhere, named by the path and scope label that the store keeps the artifact at and the scope label this machine moved it to.
 async function undoneMoveLine(item, argumentsValue) {
   const projectRoot = await requestedProjectRoot(argumentsValue ?? {}).catch(() => null);
   const movedTo = projectRoot ? await artifactAtLocation(projectRoot, item.store, item.movedTo).catch(() => null) : null;
   return `- ${await savedArtifactWhere(item.store, item.undoneMove, argumentsValue)}, which this machine moved to scope ${movedTo?.scope.label ?? `artifacts/${item.movedTo}`}`;
 }
-
-// Whether the store at storeBase holds an artifact at a location below artifacts/, told from the file's entry alone, so no byte of a file above its kind's bound is read.
 const holdsArtifact = (storeBase, location) => lstat(path.join(storeBase, "artifacts", ...location.split("/"))).then((stats) => stats.isFile(), () => false);
-
-// A saved status record or comment named by the artifact it belongs to, and a comment also by its line and text, quoted only from a comment of the exact form Prism writes,
-// since the saved copy may be any file that another machine's store brought, and any other file is named by its path, scope, and saved copy alone.
-// where, when given, is the location at which the store keeps the artifact, as for a file whose path there would be too long, while the saved file names the location it was made at, and copy names whose copy it is.
 async function savedDerivedLine(item, argumentsValue, where = null, copy = "saved copy") {
   const line = await savedArtifactWhere(item.store, where ?? item.statusOf ?? item.commentOn, argumentsValue);
   if (item.statusOf) return `${line}, its status record (${copy}: ${item.savedAs})`;
@@ -1276,43 +1234,40 @@ async function savedDerivedLine(item, argumentsValue, where = null, copy = "save
   const said = comment ? `, a comment on line ${comment.line}: ${JSON.stringify(comment.text)}` : ", a file in its comment folder that is no comment of the form Prism writes, so its bytes are not shown";
   return `${line}${said} (${copy}: ${item.savedAs})`;
 }
-
-// The notes of one tool result that name the files a store sync saved hold at most SAVED_NOTE_MAX bytes, whatever a sync brings:
-// each list's first line, which says what was saved and why, always stays, the entries past the bound are left out from the end unread,
-// and a last line counts them and names the store's sync folder, which holds every saved copy. Returns the lines.
 const SAVED_NOTE_MAX = 32 * 1024;
 const SAVED_FOLDER = `${path.sep}.prism-sync${path.sep}conflicts${path.sep}`;
 async function savedFilesNote(sections) {
   if (!sections.length) return [];
   const bytes = (line) => Buffer.byteLength(line, "utf8") + 1;
-  // A local change that a sync undid has no saved copy, so it names the store's sync folder for its saved copies as it is.
   const folders = [...new Set(sections.flatMap((section) => section.items).map((item) => {
     if (!item.savedAs) return item.folder;
     const at = item.savedAs.lastIndexOf(SAVED_FOLDER);
     return at < 0 ? path.dirname(item.savedAs) : item.savedAs.slice(0, at + SAVED_FOLDER.length - 1);
   }))];
   const where = folders.length === 1 ? `the store's sync folder ${folders[0]} holds` : `the stores' sync folders ${folders.join(", ")} hold`;
-  const closing = (count) => `Prism left ${count} more saved ${count === 1 ? "file" : "files"} out of this note to keep it short; ${where} every saved copy.`;
-  let budget = SAVED_NOTE_MAX - bytes(closing(Number.MAX_SAFE_INTEGER)) - sections.reduce((sum, section) => sum + bytes(section.header), 0);
+  const closing2 = (count) => `Prism left ${count} more saved ${count === 1 ? "file" : "files"} out of this note to keep it short; ${where} every saved copy.`;
+  let budget = SAVED_NOTE_MAX - bytes(closing2(Number.MAX_SAFE_INTEGER)) - sections.reduce((sum, section) => sum + bytes(section.header), 0);
   const lines = [];
   let omitted = 0;
   for (const section of sections) {
     lines.push(section.header);
     for (const [index, item] of section.items.entries()) {
-      if (omitted) { omitted += section.items.length - index; break; }
+      if (omitted) {
+        omitted += section.items.length - index;
+        break;
+      }
       const entry = await section.line(item);
-      if (bytes(entry) > budget) { omitted += section.items.length - index; break; }
+      if (bytes(entry) > budget) {
+        omitted += section.items.length - index;
+        break;
+      }
       lines.push(entry);
       budget -= bytes(entry);
     }
   }
-  if (omitted) lines.push(closing(omitted));
+  if (omitted) lines.push(closing2(omitted));
   return lines;
 }
-
-// The move of a checkout's existing artifacts into its repository's scope says which files left the checkout, which stayed and why, and which tracked files still name them.
-// Its text holds at most ARTIFACT_MOVE_NOTE_MAX bytes: every section's header, which gives its count, always stays, list entries past that are left out from the end, and its last line counts them and names the ledger, which lists every move and kept file.
-// Every path it prints goes through shownPath, so no file name begins or ends a line of Prism's text.
 const ARTIFACT_MOVE_NOTE_MAX = 32 * 1024;
 function artifactMoveNote(move) {
   const store = shownPath(move.store);
@@ -1325,7 +1280,6 @@ function artifactMoveNote(move) {
   if (move.deferred) return `This checkout's descriptive files wait for a pull from the record store's remote before they move into the record store at ${store}: the store's sync could not complete the pull (sync state ${move.deferred.state}), so Prism moved, removed, and recorded nothing, the files stay in the checkout, and a later tool call of this checkout tries again.`;
   const them = (count) => count === 1 ? "it" : "them";
   const sections = [];
-  // Kept and untracked files come first, since each waits for a person, and a long move's list of moves is what the closing line leaves to the ledger.
   if (move.kept.length) sections.push({ header: `Prism kept ${plural(move.kept.length, "tracked file")} under the artifact paths in the checkout, where ${move.kept.length === 1 ? "it stays" : "they stay"} until a person settles ${move.kept.length === 1 ? "it" : "each"}:`, entries: move.kept.map((item) => `- ${shownPath(item.path)} (${item.reason}): ${keptExplanation(item)}.`) });
   const passed = move.passed ?? [];
   if (passed.length) sections.push({ header: `Git's index does not let Prism take ${plural(passed.length, "tracked file")} under the artifact paths, so ${passed.length === 1 ? "it stays" : "they stay"} in the checkout; a later session's move decides each once Git sees its changes again:`, entries: passed.map((item) => `- ${shownPath(item.path)} (${item.reason}): ${keptExplanation(item)}.`) });
@@ -1341,59 +1295,48 @@ function artifactMoveNote(move) {
     sections.push({ header: `${plural(total, "tracked file")} in the checkout still ${total === 1 ? "names" : "name"} the former path of a file moved now or earlier, or a configured folder that lost files, by line; the configured paths stay the artifacts' addresses, so update only text that tells readers to open these files in the checkout:`, entries });
   }
   if (!sections.length && !fixed.length) return null;
-  // A long move writes its ledger as several files, and the closing line names each, which together list every move and kept file.
   const ledgers = (Array.isArray(move.ledger) ? move.ledger : move.ledger ? [move.ledger] : []).map((name) => shownPath(`${ARTIFACT_MIGRATIONS}/${name}`));
-  const ledger = ledgers.length === 1 ? ` and the ledger ${ledgers[0]} in the record store at ${store} lists every move and kept file`
-    : ledgers.length ? ` and the ledger files ${ledgers.slice(0, -1).join(", ")} and ${ledgers.at(-1)} in the record store at ${store} together list every move and kept file` : "";
-  const closing = (count) => `Prism left ${count} more ${count === 1 ? "entry" : "entries"} out of this report to keep it short${ledger}.`;
+  const ledger = ledgers.length === 1 ? ` and the ledger ${ledgers[0]} in the record store at ${store} lists every move and kept file` : ledgers.length ? ` and the ledger files ${ledgers.slice(0, -1).join(", ")} and ${ledgers.at(-1)} in the record store at ${store} together list every move and kept file` : "";
+  const closing2 = (count) => `Prism left ${count} more ${count === 1 ? "entry" : "entries"} out of this report to keep it short${ledger}.`;
   const bytes = (line) => Buffer.byteLength(line, "utf8") + 1;
-  // Room for the closing line, which names the ledger and counts what was left out, and for every header and fixed line, which say what moved and what stayed and how many.
-  let budget = ARTIFACT_MOVE_NOTE_MAX - bytes(closing(Number.MAX_SAFE_INTEGER)) - [...fixed, ...sections.map((section) => section.header)].reduce((sum, line) => sum + bytes(line), 0);
+  let budget = ARTIFACT_MOVE_NOTE_MAX - bytes(closing2(Number.MAX_SAFE_INTEGER)) - [...fixed, ...sections.map((section) => section.header)].reduce((sum, line) => sum + bytes(line), 0);
   const lines = [...fixed];
   let omitted = 0;
   for (const section of sections) {
     lines.push(section.header);
     for (const [index, entry] of section.entries.entries()) {
-      if (omitted || bytes(entry) > budget) { omitted += section.entries.length - index; break; }
+      if (omitted || bytes(entry) > budget) {
+        omitted += section.entries.length - index;
+        break;
+      }
       lines.push(entry);
       budget -= bytes(entry);
     }
   }
-  if (omitted) lines.push(closing(omitted));
+  if (omitted) lines.push(closing2(omitted));
   return lines.join("\n");
 }
-
-// A sync that found the same record, or the same lines of an artifact, changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
-// A saved version stays pending until a tool result carries it, so a server that stopped before naming it leaves it to the next one.
-// Returns the result with the notes, and what to do once it was written or was not: a written result confirms the saved versions it names, and one never written leaves them for the next result.
-// proceed() says whether the result is still to be written, such as while the host has not cancelled the call.
 async function withRecordNotes(value, argumentsValue, call, proceed = () => true) {
-  const none = { value, written: async () => {}, unwritten: () => {} };
+  const none = { value, written: async () => {
+  }, unwritten: () => {
+  } };
   if (!Array.isArray(value?.content)) return none;
-  // The other notes are taken first, so the move's removals come as close as they can before the result is written.
   const taken = await takeSavedConflicts().catch(() => []);
-  // A file that this machine's sync held back because it was above its kind's bound, and that another machine then changed or removed, is named for that cause alone, from its path, never its bytes.
   const overBound = taken.filter((item) => item.overBound);
   const saved = taken.filter((item) => item.record && !item.overBound);
   const removals = taken.filter((item) => item.undoneRemoval);
   const fileRemovals = taken.filter((item) => item.undoneFile);
   const recordRemovals = taken.filter((item) => item.undoneRecord);
   const moves = taken.filter((item) => item.undoneMove);
-  // A file of either machine's that a sync took out because its path at its artifact's new location would be too long is named with that location, for that cause alone.
   const tooLong = taken.filter((item) => item.tooLongAt && !item.overBound);
-  // Another machine's change that a sync took out where this machine's removal stood is named apart, since it is no change of this machine's.
   const theirs = taken.filter((item) => item.theirs && !item.tooLongAt);
   const artifacts = taken.filter((item) => item.location && !item.theirs && !item.tooLongAt && !item.overBound);
-  // A file at the store's root, such as its README, is saved when both machines changed it, and a store file is also saved when the other machine changed the version that this machine's sync withheld.
   const files = taken.filter((item) => item.file && !item.bothChanged && !item.overBound);
   const bothChanged = taken.filter((item) => item.file && item.bothChanged);
-  // A comment of this machine's that its folder's bound left out belongs to an artifact that the store still holds, with the comments that reached the store first.
   const surplus = taken.filter((item) => item.commentOn && item.surplus && !item.theirs && !item.tooLongAt);
-  // A status record that changed on both sides keeps the upstream one while its artifact stays; one, or a comment, whose artifact the store no longer holds left the store.
   const derived = [];
-  for (const item of taken.filter((item) => (item.statusOf || item.commentOn) && !item.theirs && !item.surplus && !item.tooLongAt && !item.overBound)) derived.push({ item, kept: Boolean(item.statusOf) && await holdsArtifact(item.store, item.statusOf) });
+  for (const item of taken.filter((item2) => (item2.statusOf || item2.commentOn) && !item2.theirs && !item2.surplus && !item2.tooLongAt && !item2.overBound)) derived.push({ item, kept: Boolean(item.statusOf) && await holdsArtifact(item.store, item.statusOf) });
   const sections = [];
-  // The local removals and moves that a sync undid come first, since each is a deliberate change of this machine that the store no longer shows.
   if (removals.length) {
     sections.push({ header: `Store sync undid this machine's removal of ${plural(removals.length, "artifact")}, because another machine edited ${removals.length === 1 ? "its" : "their"} text, as approving a file does, before this machine's removal reached the store; the store holds ${removals.length === 1 ? "it" : "them"} again with the other machine's changes. Read each one again with get_artifact and remove it again with update_artifact if the removal still matters.`, items: removals, line: async (item) => `- ${await savedArtifactWhere(item.store, item.undoneRemoval, argumentsValue)}` });
   }
@@ -1457,16 +1400,18 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
     sections.push({ header: `Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, items: files, line: async (item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})` });
   }
   const conflictLines = await savedFilesNote(sections);
-  // A decided move, the call's own or one that a refused, cancelled, or background call left, removes the checkout's files only here, right before a result of a tool call of the checkout is written,
-  // so the result that follows names every file it removed; a refused or cancelled call never gets here and removes nothing.
-  await finishUnfinishedMoves(call.roots, { proceed, writes: call.writes }).catch(() => {});
+  await finishUnfinishedMoves(call.roots, { proceed, writes: call.writes }).catch(() => {
+  });
   const reports = await takeMigrationReports(call.roots);
   if (!reports.length && !taken.length) return none;
   const lines = [];
-  // Each move of a checkout's artifacts is a text item of its own, after the other notes, so its bound and its closing line are its own.
   const moveNotes = [];
   for (const report of reports) {
-    if (report.artifacts) { const note = artifactMoveNote(report.artifacts); if (note) moveNotes.push(note); continue; }
+    if (report.artifacts) {
+      const note = artifactMoveNote(report.artifacts);
+      if (note) moveNotes.push(note);
+      continue;
+    }
     const into = report.store ? `the record store at ${report.store}` : ".prism";
     const kept = report.store ? "the record store" : ".prism";
     if (report.moved.length) {
@@ -1477,17 +1422,16 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   }
   lines.push(...conflictLines);
   return {
-    value: { ...value, content: [...value.content, ...(lines.length ? [{ type: "text", text: lines.join("\n") }] : []), ...moveNotes.map((text) => ({ type: "text", text }))] },
-    written: () => confirmSavedConflicts(taken).catch(() => {}),
-    unwritten: () => { restoreMigrationReports(reports); releaseSavedConflicts(taken); }
+    value: { ...value, content: [...value.content, ...lines.length ? [{ type: "text", text: lines.join("\n") }] : [], ...moveNotes.map((text) => ({ type: "text", text }))] },
+    written: () => confirmSavedConflicts(taken).catch(() => {
+    }),
+    unwritten: () => {
+      restoreMigrationReports(reports);
+      releaseSavedConflicts(taken);
+    }
   };
 }
-
-// A successful claim, or start of a slice, makes its agent the initiative's coordinator in the session.
-const coordinatingCall = (name, argumentsValue) => name === "update_initiative" && Array.isArray(argumentsValue?.operations)
-  && argumentsValue.operations.some((operation) => operation?.op === "claim" || (operation?.op === "set_status" && operation.status === "in-progress"));
-
-// A successful call that names an initiative tells the initiative's coordinator in the session, once, of the person's changes in the review app that the session has not been shown.
+const coordinatingCall = (name, argumentsValue) => name === "update_initiative" && Array.isArray(argumentsValue?.operations) && argumentsValue.operations.some((operation) => operation?.op === "claim" || operation?.op === "set_status" && operation.status === "in-progress");
 async function withPersonChanges(name, argumentsValue, value) {
   if (typeof argumentsValue?.initiative !== "string" || !Array.isArray(value?.content) || value.structuredContent?.status === "cancelled") return value;
   let changes;
@@ -1499,19 +1443,14 @@ async function withPersonChanges(name, argumentsValue, value) {
   if (!changes.length) return value;
   return { ...value, content: [...value.content, { type: "text", text: personChangesText(changes) }], structuredContent: { ...value.structuredContent, personChanges: changes } };
 }
-
-// The tools that work on one slice: each needs its caller's live claim on the slice or an ancestor.
-// A dependents' run checks a finished scope whose leaves are all done, so it works on no slice in progress and needs no claim.
-const SLICE_WORK_TOOLS = new Set(["verify_slice", "update_review", "update_change_map", "update_design_view"]);
-
-// An agent's tool call that works on slices is refused before it changes anything unless the caller holds the claim; the person's actions in the review app never come through here.
+const SLICE_WORK_TOOLS = /* @__PURE__ */ new Set(["verify_slice", "update_review", "update_change_map", "update_design_view"]);
 async function requireCallClaims(name, argumentsValue) {
   if (typeof argumentsValue?.initiative !== "string") return;
   if (name === "update_initiative") {
-    const projectRoot = await requestedProjectRoot(argumentsValue);
-    const record = await readInitiative(projectRoot, argumentsValue.initiative).then(({ loaded }) => loaded?.record, () => null);
+    const projectRoot2 = await requestedProjectRoot(argumentsValue);
+    const record = await readInitiative(projectRoot2, argumentsValue.initiative).then(({ loaded }) => loaded?.record, () => null);
     const work = initiativeWork(argumentsValue.operations, record);
-    await requireClaimedWork({ projectRoot, initiative: argumentsValue.initiative, tool: name, work, claimedHere: claimedByUpdate(argumentsValue.operations) });
+    await requireClaimedWork({ projectRoot: projectRoot2, initiative: argumentsValue.initiative, tool: name, work, claimedHere: claimedByUpdate(argumentsValue.operations) });
     return;
   }
   if (!SLICE_WORK_TOOLS.has(name) || typeof argumentsValue.slice !== "string") return;
@@ -1519,7 +1458,6 @@ async function requireCallClaims(name, argumentsValue) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
   await requireClaimedWork({ projectRoot, initiative: argumentsValue.initiative, tool: name, work: [{ slug: argumentsValue.slice, own: true }] });
 }
-
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
   await requireCallClaims(name, argumentsValue);
   if (name === "wait_for_user_gate") {
@@ -1528,7 +1466,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   if (name === "verify_slice") {
     return callVerifySlice(argumentsValue, metadata, requestId);
   }
-  if (CONSERVATION_TOOLS.some(tool => tool.name === name)) {
+  if (CONSERVATION_TOOLS.some((tool) => tool.name === name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     let value = await callConservationTool(name, { ...argumentsValue, projectRoot });
     if (name === "get_review") value = { ...value, runTotals: await readReviewRunTotals(projectRoot, argumentsValue) };
@@ -1542,8 +1480,8 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   }
   if (["get_change_map", "update_change_map"].includes(name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
-    const input = { ...argumentsValue, projectRoot };
-    const value = name === "get_change_map" ? await getChangeMap(input) : await updateChangeMap(input);
+    const input2 = { ...argumentsValue, projectRoot };
+    const value = name === "get_change_map" ? await getChangeMap(input2) : await updateChangeMap(input2);
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (stateTools.has(name)) {
@@ -1551,22 +1489,17 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   }
   if (["get_roadmap", "update_roadmap", "get_initiative", "update_initiative"].includes(name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
-    const input = { ...argumentsValue, projectRoot };
-    let value = name === "get_roadmap" ? await getRoadmap(input)
-      : name === "update_roadmap" ? await updateRoadmap(input)
-      : name === "get_initiative" ? await getInitiative(input)
-      : initiativeAcknowledgement(await updateInitiative(input), input.operations);
+    const input2 = { ...argumentsValue, projectRoot };
+    let value = name === "get_roadmap" ? await getRoadmap(input2) : name === "update_roadmap" ? await updateRoadmap(input2) : name === "get_initiative" ? await getInitiative(input2) : initiativeAcknowledgement(await updateInitiative(input2), input2.operations);
     if (name === "get_initiative") value = { ...value, runTotals: await readInitiativeRecordRunTotals(projectRoot, value.initiative, value) };
     value = await withRecordStore(projectRoot, value);
-    const marks = name === "get_initiative" ? await historyMarksContent(projectRoot, value.shippedHistory)
-      : name === "get_roadmap" ? await Promise.all((value.markedHistory ?? []).map(async (item) => ({ type: "text", text: await historyMarksText(projectRoot, item.initiative, item.marked) })))
-      : [];
+    const marks = name === "get_initiative" ? await historyMarksContent(projectRoot, value.shippedHistory) : name === "get_roadmap" ? await Promise.all((value.markedHistory ?? []).map(async (item) => ({ type: "text", text: await historyMarksText(projectRoot, item.initiative, item.marked) }))) : [];
     return { content: [{ type: "text", text: JSON.stringify(value) }, ...marks], structuredContent: value };
   }
   if (name === "get_artifact" || name === "update_artifact") {
-    const input = { ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) };
-    const value = name === "get_artifact" ? await getArtifact(input) : await updateArtifact(input);
-    await noteApprovalDelivery(name, input.projectRoot, value);
+    const input2 = { ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) };
+    const value = name === "get_artifact" ? await getArtifact(input2) : await updateArtifact(input2);
+    await noteApprovalDelivery(name, input2.projectRoot, value);
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (repositoryTools.has(name)) {
@@ -1575,14 +1508,14 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   const review = await server(argumentsValue, metadata);
   if (name === "get_review_url") {
     const tabs = requestedTabs(argumentsValue);
-    if (tabs !== undefined) {
+    if (tabs !== void 0) {
       await review.setOpenTabs(tabs);
     }
     const url = await review.reviewUrl(tabs);
     return { content: [{ type: "text", text: reviewContent(url, review) }], structuredContent: { url, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "present_review") {
-    const opened = await review.open(requestedTabs(argumentsValue), requestedGroup(argumentsValue));
+    const opened = await review.open(requestedTabs(argumentsValue), await requestedGroup(argumentsValue));
     return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "list_reviewable_artifacts") {
@@ -1591,26 +1524,20 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   }
   throw new Error(`Unknown tool: ${name}`);
 }
-
-// A host that names the project at start gets it listed in the review app and its native index preparing before any tool call, without
-// delaying initialize, and opens the review browser when nobody watches one; a host that names no project still gets a running app.
-// Its repository name is checked in the background too, so an accepted checkout is recorded in this machine's checkout list before any tool call.
 if (process.env.CLAUDE_PROJECT_DIR) {
   void realpath(process.env.CLAUDE_PROJECT_DIR).then(async (root) => {
     void startBackgroundPreparation(root);
-    void recordStoreOf(root).catch(() => {});
+    void recordStoreOf(root).catch(() => {
+    });
     reviewServers.register(root, { open: await opensAtStart(root) });
-  }, () => {});
+  }, () => {
+  });
 } else {
   reviewServers.startApp();
 }
-
-// The ids of the tool calls in progress, and of those the host cancelled: MCP asks a receiver not to respond to a cancelled request, and the host ignores a response that arrives after its cancel,
-// so a call cancelled before its result is written gets no response, and the saved versions its notes would name stay pending for the next result the host reads.
-const callsInProgress = new Set();
-const cancelledCalls = new Set();
-const callNames = new Map();
-
+const callsInProgress = /* @__PURE__ */ new Set();
+const cancelledCalls = /* @__PURE__ */ new Set();
+const callNames = /* @__PURE__ */ new Map();
 const input = readJsonLines(process.stdin);
 input.on("line", async (line) => {
   if (!line.trim()) {
@@ -1622,7 +1549,6 @@ input.on("line", async (line) => {
     if (request.method === "initialize") {
       clientName = typeof request.params?.clientInfo?.name === "string" ? request.params.clientInfo.name : null;
       clientVersion = typeof request.params?.clientInfo?.version === "string" ? request.params.clientInfo.version : null;
-      // The harness the client names itself is what each claim this server takes records as its host.
       configureClaims({ host: harnessName(request.params?.clientInfo) });
       result(request.id, {
         protocolVersion: request.params?.protocolVersion ?? "2025-06-18",
@@ -1639,33 +1565,35 @@ input.on("line", async (line) => {
       const started = performance.now(), done = log.doing(`call:${request.id}`, String(name));
       const call = toolCallContext();
       const value = await withToolCall(call, () => withCallSession(meta, async () => {
-        const agent = await callAgent(meta).catch(() => undefined);
-        // A claim records the session's main agent model only when the call is positively that agent's.
+        const agent = await callAgent(meta).catch(() => void 0);
         const role = await callAgentRole(meta).catch(() => "unknown");
         return withCallAgent(agent, () => withClaimAgent(role === "main", async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id))));
       })).finally(done);
-      log.debug("tool_call", { tool: name, ms: Math.round(performance.now() - started), ...(value?.isError ? { isError: true } : {}) });
-      // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
+      log.debug("tool_call", { tool: name, ms: Math.round(performance.now() - started), ...value?.isError ? { isError: true } : {} });
       if (value.structuredContent?.status === "cancelled" || cancelledCalls.has(request.id)) return;
-      if (closing) { await result(request.id, value); return; }
+      if (closing) {
+        await result(request.id, value);
+        return;
+      }
       const noted = await withRecordNotes(value, argumentsValue, call, () => !closing && !cancelledCalls.has(request.id));
-      // A cancel that arrived while the notes were taken still stops the result, and nothing runs between this check and the write.
-      if (cancelledCalls.has(request.id)) { noted.unwritten(); return; }
+      if (cancelledCalls.has(request.id)) {
+        noted.unwritten();
+        return;
+      }
       if (await result(request.id, noted.value) && !closing) await noted.written();
       else noted.unwritten();
     } else if (request.method === "notifications/cancelled") {
       const id = request.params?.requestId;
       if (callsInProgress.has(id)) cancelledCalls.add(id);
       pendingWaits.get(id)?.abort();
-    } else if (request.id !== undefined) {
+    } else if (request.id !== void 0) {
       failure(request.id, -32601, `Method not found: ${request.method}`);
     }
   } catch (error) {
     const tool = callNames.has(request?.id) ? { tool: callNames.get(request.id) } : {};
-    // A refusal, which names its reason by a code of Prism's own, answers a call that the caller can fix, so it is no warning and carries no stack; any other error is one.
-    if (isRefusal(error)) log.info("request_refused", { method: request?.method, ...tool, ...(typeof error.code === "string" ? { code: error.code } : {}), error: error.message });
+    if (isRefusal(error)) log.info("request_refused", { method: request?.method, ...tool, ...typeof error.code === "string" ? { code: error.code } : {}, error: error.message });
     else log.warn("request_failed", { method: request?.method, ...tool, ...errorFields(error) });
-    if (request?.id !== undefined && !cancelledCalls.has(request.id)) {
+    if (request?.id !== void 0 && !cancelledCalls.has(request.id)) {
       const data = stateErrorData(error);
       failure(request.id, -32603, errorMessage(error, data), data);
     }
@@ -1677,13 +1605,8 @@ input.on("line", async (line) => {
     }
   }
 });
-
-// The host ends the session by closing input or by a signal, so the server exits once its cleanup ends, or after a short grace period,
-// even when index preparation, a store sync, or a child process started meanwhile would keep it alive.
-// Claude Code sends SIGINT and then SIGTERM about a tenth of a second apart, and ends the process soon after, so the stores' pending syncs go to a detached process first.
-// On Windows a signal ends the process without running any of its code, so a detached watcher holds the pending syncs while any are pending and finishes them however the server ends.
 configureRecordSync({ watchPending: true, log });
-const CLOSE_GRACE_MS = 5000;
+const CLOSE_GRACE_MS = 5e3;
 let closing = false;
 async function stop(reason) {
   if (closing) return;
@@ -1697,7 +1620,6 @@ async function stop(reason) {
     cancelVerifications();
     stopClaimRenewals();
     await Promise.all([nativeSemanticRuntime.close(), reviewServers.close(), Promise.allSettled([...endingWaits])]);
-    // A write that the cleanup finished has its sync handed off too.
     handOffRecordSyncs();
   } finally {
     await log.flush();

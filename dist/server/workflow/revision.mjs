@@ -1,5 +1,5 @@
-// Revision mismatches name the likely cause, so an agent can retry with the right value instead of working around the tool.
-export function revisionMismatch(label, expected, current) {
+// Generated from src/server/workflow/revision.mts by scripts/native-build/compile.mjs.
+function revisionMismatch(label, expected, current) {
   if (expected === "null") {
     return `The expectedRevision argument is the string "null". Pass JSON null${current === null ? ` to create the ${label}` : `, or the current revision ${current} to change the existing ${label}`}.`;
   }
@@ -11,3 +11,6 @@ export function revisionMismatch(label, expected, current) {
   }
   return `The ${label} changed since it was read. Read it again and retry with its current revision ${current}.`;
 }
+export {
+  revisionMismatch
+};

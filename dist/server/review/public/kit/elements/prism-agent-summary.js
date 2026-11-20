@@ -1,18 +1,13 @@
-// prism-agent-summary: the top bar's agents button, a kit button that draws its own content inside its native button: up to three live agent avatars,
-// `<n> working`, and status badges of the failed and waiting sessions, which a phone-width window collapses to two avatars and one corner count.
+// Generated from src/server/review/public/kit/elements/prism-agent-summary.ts by scripts/native-build/compile.mjs.
 import { setAttribute } from "./base.js";
 import { PrismButton } from "./prism-button.js";
-
 const STACK = 3;
 const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
 const whole = (value) => Math.max(0, Number.parseInt(value ?? "", 10) || 0);
-
-/** The button's accessible name, such as `Agents: 4 working, 1 failed, 1 waits, 1 claim expired`. */
-export function agentSummaryName({ working = 0, failed = 0, waiting = 0, expired = 0 } = {}) {
+function agentSummaryName({ working = 0, failed = 0, waiting = 0, expired = 0 } = {}) {
   return [`Agents: ${working} working`, failed ? `${failed} failed` : "", waiting ? `${waiting} waits` : "", expired ? `${plural(expired, "claim", "claims")} expired` : ""].filter(Boolean).join(", ");
 }
-
-export class PrismAgentSummary extends PrismButton {
+class PrismAgentSummary extends PrismButton {
   static tag = "prism-agent-summary";
   static styles = ["prism-button.css", "prism-agent-summary.css"];
   static observedAttributes = [...PrismButton.observedAttributes, "working", "failed", "waiting", "expired", "needs"];
@@ -28,14 +23,11 @@ export class PrismAgentSummary extends PrismButton {
     states: ["quiet", "working", "needs-you", "many"],
     keyboard: ["Enter and Space activate the button, which opens its popover."]
   };
-
   constructor() {
     super();
-    // The content is drawn inside the native button rather than slotted, so the button's own text and badges are its words.
     this.words.remove();
     this.content = this.root.querySelector(".content");
     this.content.innerHTML = `<span class="stack" part="stack"></span><span class="count" part="count"></span><span class="marks" part="marks"><prism-badge class="failed" variant="status" tone="danger" hidden></prism-badge><prism-badge class="waiting" variant="status" tone="warning" hidden></prism-badge></span>`;
-    // The corner count sits inside the native button too, in place of the kit button's badge slot.
     this.root.querySelector(".badge").remove();
     this.corner = this.root.ownerDocument.createElement("span");
     this.corner.className = "corner";
@@ -44,13 +36,11 @@ export class PrismAgentSummary extends PrismButton {
     this.control.append(this.corner);
     this.cornerBadge = this.corner.firstElementChild;
   }
-
   get counts() {
     const failed = whole(this.getAttribute("failed"));
     const waiting = whole(this.getAttribute("waiting"));
     return { working: whole(this.getAttribute("working")), failed, waiting, expired: whole(this.getAttribute("expired")), needs: this.hasAttribute("needs") ? whole(this.getAttribute("needs")) : failed + waiting };
   }
-
   sync() {
     super.sync();
     if (!this.content) return;
@@ -80,3 +70,7 @@ export class PrismAgentSummary extends PrismButton {
     if (this.cornerBadge.textContent !== String(counts.needs)) this.cornerBadge.textContent = String(counts.needs);
   }
 }
+export {
+  PrismAgentSummary,
+  agentSummaryName
+};

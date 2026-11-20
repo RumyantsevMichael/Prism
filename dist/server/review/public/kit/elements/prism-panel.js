@@ -1,11 +1,7 @@
-// prism-panel: a region with an eyebrow, a heading, tools in its header, a body, and a footer, drawn as a card, a plain block, an inset, or an island.
-// It renders in light DOM, so the page's content stays in the document: children with slot="tools" go to the header, slot="footer" after the body,
-// and every other child, also one added later, into the body.
+// Generated from src/server/review/public/kit/elements/prism-panel.ts by scripts/native-build/compile.mjs.
 import { Base, distribute, emit, make, setAttribute, toggleAttribute, uniqueId } from "./base.js";
-
 const VARIANTS = ["card", "plain", "inset", "island"];
-
-export class PrismPanel extends Base {
+class PrismPanel extends Base {
   static tag = "prism-panel";
   static observedAttributes = ["heading", "level", "eyebrow", "maximizable", "maximized", "region"];
   static catalog = {
@@ -23,7 +19,6 @@ export class PrismPanel extends Base {
     states: ["card", "plain", "inset", "island", "tools-and-footer", "maximizable", "region"],
     keyboard: ["The Maximize button takes Enter and Space.", "Escape restores a maximized panel while focus is inside it."]
   };
-
   constructor() {
     super();
     this.addEventListener("keydown", (event) => {
@@ -34,17 +29,14 @@ export class PrismPanel extends Base {
       }
     });
   }
-
   connectedCallback() {
     if (!VARIANTS.includes(this.getAttribute("variant"))) this.setAttribute("variant", "card");
     if (!this.body) this.build();
     this.sync();
   }
-
   attributeChangedCallback() {
     if (this.body) this.sync();
   }
-
   build() {
     this.header = make(this, "header", "prism-panel-head");
     this.titles = make(this, "div", "prism-panel-titles");
@@ -58,12 +50,10 @@ export class PrismPanel extends Base {
     this.append(this.body, this.footer);
     this.children$ = distribute(this, { tools: this.tools, footer: this.footer, default: this.body }, [this.header, this.body, this.footer]);
   }
-
   get level() {
     const level = Number(this.getAttribute("level"));
     return Number.isInteger(level) && level >= 1 && level <= 6 ? level : 2;
   }
-
   sync() {
     const heading = this.getAttribute("heading") ?? "";
     const level = this.level;
@@ -75,7 +65,6 @@ export class PrismPanel extends Base {
     }
     this.headingElement.textContent = heading;
     this.headingElement.hidden = !heading;
-    // A region panel is a landmark named by its heading.
     const region = this.hasAttribute("region") && Boolean(heading);
     if (region && !this.headingElement.id) this.headingElement.id = uniqueId("prism-panel-heading");
     if (region || this.isRegion) {
@@ -86,7 +75,6 @@ export class PrismPanel extends Base {
     const eyebrow = this.getAttribute("eyebrow") ?? "";
     this.eyebrowElement.textContent = eyebrow;
     this.eyebrowElement.hidden = !eyebrow;
-
     const maximizable = this.hasAttribute("maximizable");
     if (maximizable && !this.maximizeButton) {
       this.maximizeButton = make(this, "prism-maximize", "prism-panel-maximize");
@@ -105,13 +93,11 @@ export class PrismPanel extends Base {
     this.header.hidden = !heading && !eyebrow && !hasTools && !maximizable;
     this.footer.hidden = this.footer.childNodes.length === 0;
     if (!this.watching) {
-      // Tools and a footer that arrive later show their region.
       this.watching = new MutationObserver(() => this.sync());
       this.watching.observe(this.tools, { childList: true });
       this.watching.observe(this.footer, { childList: true });
     }
   }
-
   /** Sets the maximized state and sends prism-maximize. */
   toggleMaximized(on) {
     if (on === this.hasAttribute("maximized")) return;
@@ -119,3 +105,6 @@ export class PrismPanel extends Base {
     emit(this, "prism-maximize", { maximized: on });
   }
 }
+export {
+  PrismPanel
+};

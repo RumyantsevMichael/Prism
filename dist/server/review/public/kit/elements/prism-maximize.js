@@ -1,9 +1,6 @@
-// prism-maximize: the icon button that maximizes a region and restores it, named Maximize or Restore by its maximized attribute.
-// It renders a kit button in light DOM and does not change its own state: a click sends prism-maximize-request with detail.maximized, the state asked for,
-// and whoever owns the region, such as prism-panel or a page, sets maximized when it applies that state.
+// Generated from src/server/review/public/kit/elements/prism-maximize.ts by scripts/native-build/compile.mjs.
 import { Base, emit, make, setAttribute } from "./base.js";
-
-export class PrismMaximize extends Base {
+class PrismMaximize extends Base {
   static tag = "prism-maximize";
   static observedAttributes = ["maximized", "floating"];
   static catalog = {
@@ -15,7 +12,6 @@ export class PrismMaximize extends Base {
     states: ["default", "maximized", "floating", "long-text", "unbroken-name"],
     keyboard: ["Enter and Space press the button.", "Its tip names Escape, which the region's owner handles to restore."]
   };
-
   connectedCallback() {
     if (!this.button) {
       this.button = make(this, "prism-button", "prism-maximize-button", { variant: "ghost", size: "sm" });
@@ -25,11 +21,9 @@ export class PrismMaximize extends Base {
     }
     this.sync();
   }
-
   attributeChangedCallback() {
     if (this.button) this.sync();
   }
-
   sync() {
     const maximized = this.hasAttribute("maximized");
     setAttribute(this.button, "label", maximized ? "Restore" : "Maximize");
@@ -37,8 +31,10 @@ export class PrismMaximize extends Base {
     setAttribute(this.button, "pressed", String(maximized));
     setAttribute(this.button.firstElementChild, "name", maximized ? "restore" : "maximize");
   }
-
   focus(options) {
     this.button?.focus(options);
   }
 }
+export {
+  PrismMaximize
+};

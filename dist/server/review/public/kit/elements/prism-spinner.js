@@ -1,7 +1,6 @@
-// prism-spinner: a small turning ring that says something is loading, still under reduced motion.
+// Generated from src/server/review/public/kit/elements/prism-spinner.ts by scripts/native-build/compile.mjs.
 import { Base, setAttribute, shadow } from "./base.js";
-
-export class PrismSpinner extends Base {
+class PrismSpinner extends Base {
   static tag = "prism-spinner";
   static styles = ["prism-spinner.css"];
   static observedAttributes = ["label"];
@@ -11,21 +10,20 @@ export class PrismSpinner extends Base {
     states: ["default"],
     keyboard: []
   };
-
   constructor() {
     super();
     this.root = shadow(this, PrismSpinner.styles, `<span class="ring" part="ring" aria-hidden="true"></span><span class="label"></span>`);
   }
-
   connectedCallback() {
     setAttribute(this, "role", "status");
     this.attributeChangedCallback();
   }
-
   attributeChangedCallback() {
     const label = this.getAttribute("label") || "Loading";
     this.root.querySelector(".label").textContent = label;
-    // A status takes its name from the author, not from its content.
     setAttribute(this, "aria-label", label);
   }
 }
+export {
+  PrismSpinner
+};

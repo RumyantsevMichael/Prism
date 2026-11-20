@@ -1,3 +1,4 @@
+// Generated from src/server/workflow/verification.mts by scripts/native-build/compile.mjs.
 import { createHash, randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
@@ -18,25 +19,21 @@ import { refuseShipped } from "./shipped-history.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { publicRemote } from "./remote-url.mjs";
 import { parseStoreJson } from "./store-json.mjs";
-
-export { publicRemote };
-
 const APPROVALS_FILE = "verification-approvals.json";
 const OUTPUT_TAIL_BYTES = 64 * 1024;
-const RECORDED_TAIL_CHARS = 4000;
-const RETURNED_TAIL_CHARS = 20000;
+const RECORDED_TAIL_CHARS = 4e3;
+const RETURNED_TAIL_CHARS = 2e4;
 const BRIEF_TAIL_CHARS = 1500;
 const MAX_FAILING_NAMES = 20;
-const MAX_TRACKED_FAILURES = 1000;
+const MAX_TRACKED_FAILURES = 1e3;
 const MAX_CROSSING_PATHS = 200;
-const MAX_RUN_FILES = 2000;
+const MAX_RUN_FILES = 2e3;
 const DEFAULT_TIMEOUT_MINUTES = 30;
-const PROGRESS_MS = 30000;
-const KILL_GRACE_MS = 5000;
+const PROGRESS_MS = 3e4;
+const KILL_GRACE_MS = 5e3;
 const ALLOW = "allow";
 const DECLINE = "decline";
-
-export class VerificationError extends Error {
+class VerificationError extends Error {
   constructor(code, message, details = {}) {
     super(message);
     this.name = "VerificationError";
@@ -44,11 +41,10 @@ export class VerificationError extends Error {
     Object.assign(this, details);
   }
 }
-
 const fail = (code, message, details) => new VerificationError(code, message, details);
-const text = { type: "string", minLength: 1, maxLength: 2000 };
+const text = { type: "string", minLength: 1, maxLength: 2e3 };
 const slug = { type: "string", minLength: 1, maxLength: 120 };
-export const VERIFY_SLICE_SCHEMA = {
+const VERIFY_SLICE_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
@@ -62,61 +58,43 @@ export const VERIFY_SLICE_SCHEMA = {
   },
   required: ["projectRoot", "initiative", "slice"]
 };
-
 const digest = (value) => createHash("sha256").update(value).digest("hex");
-
-// An approval is keyed by the real working folder and the command text, so the same command in another folder asks again.
-const approvalKey = (cwd, command) => digest(`${cwd}\n${command}`);
-
-/** The test command a project configures in .prism/workflow.md under Stack. */
-// A project with no tests yet configures `- Test command: none yet`, which never passes a run as a no-op command would.
-export const TEST_COMMAND_PLACEHOLDER = /^none yet$/i;
+const approvalKey = (cwd, command) => digest(`${cwd}
+${command}`);
+const TEST_COMMAND_PLACEHOLDER = /^none yet$/i;
 const PLACEHOLDER_MESSAGE = "The project has no tests yet: its test command is the placeholder none yet, so Prism has nothing to run. The slice that adds the project's test runner sets the real command in .prism/workflow.md, and verification runs that command once it is set.";
-
 function refusePlaceholder(command, details = {}) {
   if (TEST_COMMAND_PLACEHOLDER.test(command)) throw fail("test_command_placeholder", PLACEHOLDER_MESSAGE, details);
 }
-
-export async function configuredTestCommand(projectRoot) {
+async function configuredTestCommand(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const command = config.sections?.Stack?.["Test command"]?.trim();
   return { config, command: command && !/^n\/a$/i.test(command) ? command : null };
 }
-
-// The initiative's slices as its record holds them, or an empty object when it cannot be read.
 async function recordedSlices(root, initiative) {
   const located = await locateRecord(root, { kind: "initiative", initiative });
-  try { return parseStoreJson((await readStoreFileBytes(located.target, STORE_FILE_BOUNDS.initiative))?.toString("utf8") ?? "null")?.slices ?? {}; }
-  catch { return {}; }
+  try {
+    return parseStoreJson((await readStoreFileBytes(located.target, STORE_FILE_BOUNDS.initiative))?.toString("utf8") ?? "null")?.slices ?? {};
+  } catch {
+    return {};
+  }
 }
-
-// The component a slice's accepted design recorded, as <repository>/<component>, or undefined for a slice accepted before components existed.
 async function recordedComponent(root, initiative, slice) {
-  return (await recordedSlices(root, initiative))[slice]?.component ?? undefined;
+  return (await recordedSlices(root, initiative))[slice]?.component ?? void 0;
 }
-
-// A project-relative folder with forward slashes, "" for the project root, or null for a path outside the project.
 function projectFolder(root, target) {
   const relative = path.relative(root, target);
   if (relative === "") return "";
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return null;
   return relative.split(path.sep).join("/");
 }
-
-/**
- * What a slice's verification runs and where: { config, command, folder, declaredFolder, cwd, component, declaration }, where cwd is the real path the command runs in,
- * folder is that path project-relative and "" for the project root, declaredFolder is the component's folder as declared,
- * and component is null for a slice without one, which reads no components and runs the repository's command in the project root.
- * A slice with a component runs that component's own command in its folder, or the repository's command in the project root when it declares none.
- * Every refusal comes before any approval is asked.
- */
 async function verificationTarget(root, initiative, slice) {
   const identity = await recordedComponent(root, initiative, slice);
-  if (identity === undefined) {
-    const { config, command } = await configuredTestCommand(root);
+  if (identity === void 0) {
+    const { config: config2, command } = await configuredTestCommand(root);
     if (!command) throw fail("test_command_missing", "The project configures no test command. Add one under ## Stack in .prism/workflow.md as - Test command: <command>, or - Test command: none yet while the project has no tests.");
     refusePlaceholder(command);
-    return { config, command, folder: "", declaredFolder: "", cwd: root, component: null, declaration: null };
+    return { config: config2, command, folder: "", declaredFolder: "", cwd: root, component: null, declaration: null };
   }
   const config = await readWorkflowConfig(root);
   const declaration = readComponents(config);
@@ -127,13 +105,6 @@ async function verificationTarget(root, initiative, slice) {
   }
   return { config, ...await componentTarget(root, declaration, component), component, declaration };
 }
-
-/**
- * Where a component's tests run: { command, folder, declaredFolder, cwd }, by clause 16 of the components contract.
- * A component with its own command runs it in its folder, and any other component runs the repository's command in the project root.
- * It refuses a missing command with test_command_missing, a working folder that does not exist with component_folder_missing,
- * and one that leads outside the project through a symbolic link with component_folder_outside.
- */
 async function componentTarget(root, declaration, component) {
   const own = component !== declaration.root && component.testCommand !== null;
   const command = own ? component.testCommand : declaration.root.testCommand;
@@ -147,38 +118,37 @@ async function componentTarget(root, declaration, component) {
   try {
     const resolved = await realpath(path.join(root, declaredFolder));
     if ((await stat(resolved)).isDirectory()) cwd = resolved;
-  } catch { cwd = null; }
+  } catch {
+    cwd = null;
+  }
   if (cwd === null) throw fail("component_folder_missing", `The folder ${declaredFolder} of the component ${component.identity}, where its test command runs, does not exist or is not a folder.`, { component: component.identity, folder: declaredFolder });
-  // A folder is declared by its text, while a symbolic link on its path can lead anywhere, so the command runs only in a folder of the project.
   const folder = projectFolder(root, cwd);
   if (folder === null) throw fail("component_folder_outside", `The folder ${declaredFolder} of the component ${component.identity} leads outside the project through a symbolic link, so Prism does not run its test command there. Point the component at a folder inside the project.`, { component: component.identity, folder: declaredFolder });
   return { command, folder, declaredFolder, cwd };
 }
-
-// Every result that names a command also names the folder it runs in and, for a slice with a component, that component.
-const named = (target) => ({ command: target.command, folder: target.folder, ...(target.component ? { component: target.component.identity } : {}) });
-
+const named = (target) => ({ command: target.command, folder: target.folder, ...target.component ? { component: target.component.identity } : {} });
 function dataDirectoryOf(dataDirectory) {
   return dataDirectory || process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA || path.join(os.homedir(), RECORD_DIRECTORY);
 }
-
-// Approvals stay in local plugin data, so a repository change can never approve a command on its own.
 async function withApprovals(dataDirectory, action) {
   const directory = dataDirectoryOf(dataDirectory);
   await mkdir(directory, { recursive: true });
   const target = path.join(directory, APPROVALS_FILE);
   return withArtifactLock(target, () => withFileLock(target, async () => {
     let store;
-    try { store = parseStoreJson(await readFile(target, "utf8")); }
-    catch { store = null; }
+    try {
+      store = parseStoreJson(await readFile(target, "utf8"));
+    } catch {
+      store = null;
+    }
     if (!store || store.schemaVersion !== 1 || typeof store.approved !== "object" || typeof store.requests !== "object") store = { schemaVersion: 1, approved: {}, requests: {} };
     const before = JSON.stringify(store);
     const result = await action(store);
-    if (JSON.stringify(store) !== before) await writeAtomically(target, `${JSON.stringify(store, null, 2)}\n`);
+    if (JSON.stringify(store) !== before) await writeAtomically(target, `${JSON.stringify(store, null, 2)}
+`);
     return result;
   }, fail));
 }
-
 async function gateChange(projectRoot, initiative, changes) {
   for (let attempt = 0; ; attempt += 1) {
     const current = await readCoordinationState({ projectRoot, initiative });
@@ -189,37 +159,26 @@ async function gateChange(projectRoot, initiative, changes) {
     }
   }
 }
-
 async function pendingGate(projectRoot, initiative, id) {
   const state = await readCoordinationState({ projectRoot, initiative });
   return (state.state?.pending ?? []).find((item) => item && typeof item === "object" && item.id === id) ?? null;
 }
-
-// The approval gates follow the rule for every decision gate: the situation, each option's consequence, and a recommendation.
 const APPROVAL_CONTEXT = "A slice is done only when Prism itself runs the project's tests and they pass. The command comes from `.prism/workflow.md`, and Prism has not run it in this folder before, so it asks you once. Whatever the command runs, runs with your shell, so check that it is the test command you expect.";
 const APPROVAL_RECOMMENDATION = { option: ALLOW, reason: "Allow it when it is the test command you configured for this project; decline when you do not recognize it." };
-
-// The folder is the one the command runs in, project-relative, and a component folder that leads there through a link is named beside it, so the question holds no path of the user's machine.
 function approvalQuestion(command, folder, declaredFolder, key) {
-  const place = `${folder === "" ? "the project root" : `the folder ${folder}`}${declaredFolder && declaredFolder !== folder ? `, where the component folder ${declaredFolder} leads` : ""}`;
+  const place2 = `${folder === "" ? "the project root" : `the folder ${folder}`}${declaredFolder && declaredFolder !== folder ? `, where the component folder ${declaredFolder} leads` : ""}`;
   return [
     "Allow Prism to run this test command to verify slices in this project?",
     "",
     command,
     "",
-    `Prism runs it with your shell in ${place}. A changed command, or the same command in another folder, asks again.`,
+    `Prism runs it with your shell in ${place2}. A changed command, or the same command in another folder, asks again.`,
     `Approval key: ${key.slice(0, 12)}`
   ].join("\n");
 }
-
-/** Whether the person cannot open this session's review browser: Claude Code sets CLAUDE_CODE_REMOTE in a cloud session. */
-export function reviewBrowserUnreachable(env = process.env) {
+function reviewBrowserUnreachable(env = process.env) {
   return env.CLAUDE_CODE_REMOTE === "true";
 }
-
-// Only the review browser records gate answers, so an Allow choice on the server's own gate is the user's approval.
-// Where the person cannot open the browser, the agent records the person's chat answer instead, quoted in the approval and the gate's history.
-// An approval is keyed by the real working folder and the command text, so an approval given before components existed, keyed by the project root, still allows that command there.
 async function approval({ root, initiative, slice, command, folder, declaredFolder, cwd, approvalGate, chatApproval, dataDirectory }) {
   const key = approvalKey(cwd, command);
   if (chatApproval && !reviewBrowserUnreachable()) throw fail("chat_approval_unavailable", "This session can open the review browser, so the user allows the test command there, not in chat. Call verify_slice without chatApproval.");
@@ -236,19 +195,21 @@ async function approval({ root, initiative, slice, command, folder, declaredFold
       } else if (gate.answer?.via === "browser" && gate.answer.choice === ALLOW) {
         store.approved[key] = { root, folder, command, approvedAt: gate.answer.answeredAt, gate: requested };
         delete store.requests[requested];
-        await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested }] }).catch(() => {});
+        await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested }] }).catch(() => {
+        });
         return { approved: true, key };
       } else if (gate.answer) {
         delete store.requests[requested];
-        await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested }] }).catch(() => {});
-        // An answer with a note and no choice neither allows nor declines the command.
+        await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested }] }).catch(() => {
+        });
         return { approved: false, key, status: gate.answer.choice === DECLINE ? "declined" : "approval_unclear", gateId: requested, note: gate.answer.note ?? null };
       } else if (chatApproval) {
         const quote = chatApproval.quote.trim();
-        const approvedAt = new Date().toISOString();
+        const approvedAt = (/* @__PURE__ */ new Date()).toISOString();
         store.approved[key] = { root, folder, command, approvedAt, gate: requested, via: "chat", quote };
         delete store.requests[requested];
-        await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested, reason: `The user allowed this command in chat, as recorded by the agent: "${quote}"` }] }).catch(() => {});
+        await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested, reason: `The user allowed this command in chat, as recorded by the agent: "${quote}"` }] }).catch(() => {
+        });
         return { approved: true, key };
       } else {
         return { approved: false, key, status: "approval_needed", gateId: requested };
@@ -259,56 +220,62 @@ async function approval({ root, initiative, slice, command, folder, declaredFold
       { id: DECLINE, label: "Decline", consequence: "Prism does not run it, and the slice stays unverified until the command changes or you allow it." }
     ], recommended: APPROVAL_RECOMMENDATION }] });
     const gateId = opened.openedGates[0].id;
-    store.requests[gateId] = { key, initiative, askedAt: new Date().toISOString() };
+    store.requests[gateId] = { key, initiative, askedAt: (/* @__PURE__ */ new Date()).toISOString() };
     return { approved: false, key, status: "approval_needed", gateId };
   });
 }
-
 function tail(value, limit) {
   return value.length > limit ? value.slice(value.length - limit) : value;
 }
-
-// Windows has no process groups and killing the shell leaves the command it started running, so there the whole tree is ended by taskkill.
 function killGroup(child, signal) {
   if (process.platform === "win32") {
     if (!child.pid) return;
     const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
-    killer.on("error", () => { try { child.kill(signal); } catch { /* The process already ended. */ } });
+    killer.on("error", () => {
+      try {
+        child.kill(signal);
+      } catch {
+      }
+    });
     return;
   }
-  try { process.kill(-child.pid, signal); }
-  catch { try { child.kill(signal); } catch { /* The process already ended. */ } }
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+    }
+  }
 }
-
-// The plugin's MCP definitions set NODE_USE_ENV_PROXY for the server's own downloads, and the host sets the plugin's root and data
-// directories for the server. A test command inherits none of them, so it runs as it would in the user's shell: Node would warn on
-// stderr under the proxy setting, and a project that reads plugin data, such as Prism itself, would read the host's.
 const SERVER_ONLY = /^(?:NODE_USE_ENV_PROXY|CLAUDE_PLUGIN_\w+|PLUGIN_DATA|PLUGIN_ROOT)$/;
 function commandEnvironment() {
   return Object.fromEntries(Object.entries(process.env).filter(([name]) => !SERVER_ONLY.test(name)));
 }
-
 function execute(command, cwd, { signal, timeoutMs, onProgress, logPath = null }) {
   return new Promise((resolve) => {
-    // The log receives every byte as it arrives, so it holds the whole output while memory keeps only the end.
     let log = logPath ? createWriteStream(logPath) : null;
-    log?.on("error", () => { log = null; });
+    log?.on("error", () => {
+      log = null;
+    });
     const started = Date.now();
     let output = "", timedOut = false, cancelled = false, forced = null;
     const child = spawn(command, { cwd, env: commandEnvironment(), shell: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-    // Only the end of the output is kept, so failing test names are read line by line as the output arrives, before it is cut.
-    const failing = new Set();
-    const scanners = new Map();
-    const scan = (stream, text, end = false) => {
-      const lines = `${scanners.get(stream) ?? ""}${text}`.split(/\r?\n/);
+    const failing = /* @__PURE__ */ new Set();
+    const scanners = /* @__PURE__ */ new Map();
+    const scan = (stream, text2, end = false) => {
+      const lines = `${scanners.get(stream) ?? ""}${text2}`.split(/\r?\n/);
       scanners.set(stream, end ? "" : tail(lines.pop(), OUTPUT_TAIL_BYTES));
-      for (const line of lines) if (failing.size < MAX_TRACKED_FAILURES) { const name = failingName(line); if (name) failing.add(name); }
+      for (const line of lines) if (failing.size < MAX_TRACKED_FAILURES) {
+        const name = failingName(line);
+        if (name) failing.add(name);
+      }
     };
     const collect = (stream) => (chunk) => {
-      const text = chunk.toString("utf8");
+      const text2 = chunk.toString("utf8");
       log?.write(chunk);
-      output = tail(output + text, OUTPUT_TAIL_BYTES);
-      scan(stream, text);
+      output = tail(output + text2, OUTPUT_TAIL_BYTES);
+      scan(stream, text2);
     };
     child.stdout.on("data", collect("stdout"));
     child.stderr.on("data", collect("stderr"));
@@ -317,11 +284,16 @@ function execute(command, cwd, { signal, timeoutMs, onProgress, logPath = null }
       forced = setTimeout(() => killGroup(child, "SIGKILL"), KILL_GRACE_MS);
       forced.unref();
     };
-    const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
-    const ticker = onProgress ? setInterval(() => onProgress(Math.round((Date.now() - started) / 1000), tail(output, 300)), PROGRESS_MS) : null;
-    const abort = () => { cancelled = true; stop(); };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stop();
+    }, timeoutMs);
+    const ticker = onProgress ? setInterval(() => onProgress(Math.round((Date.now() - started) / 1e3), tail(output, 300)), PROGRESS_MS) : null;
+    const abort = () => {
+      cancelled = true;
+      stop();
+    };
     signal?.addEventListener("abort", abort, { once: true });
-    // A cancel that arrived while the run was being set up has already fired, so it stops the command now.
     if (signal?.aborted) abort();
     const finish = (exitCode, exitSignal, spawnError) => {
       clearTimeout(timer);
@@ -329,9 +301,14 @@ function execute(command, cwd, { signal, timeoutMs, onProgress, logPath = null }
       if (ticker) clearInterval(ticker);
       signal?.removeEventListener("abort", abort);
       for (const stream of scanners.keys()) scan(stream, "", true);
-      if (spawnError) log?.write(`${spawnError.message}\n`);
-      const done = { exitCode, signal: exitSignal, timedOut, cancelled, output: spawnError ? `${output}${spawnError.message}\n` : output, failing: [...failing], durationMs: Date.now() - started };
-      if (!log) { resolve({ ...done, logged: false }); return; }
+      if (spawnError) log?.write(`${spawnError.message}
+`);
+      const done = { exitCode, signal: exitSignal, timedOut, cancelled, output: spawnError ? `${output}${spawnError.message}
+` : output, failing: [...failing], durationMs: Date.now() - started };
+      if (!log) {
+        resolve({ ...done, logged: false });
+        return;
+      }
       const written = log;
       written.end(() => resolve({ ...done, logged: log === written }));
     };
@@ -339,24 +316,17 @@ function execute(command, cwd, { signal, timeoutMs, onProgress, logPath = null }
     child.on("close", (code, exitSignal) => finish(code, exitSignal));
   });
 }
-
-// The full output stays in local plugin data, outside the project, so a caller reads it only when the brief result is not enough.
 async function logPathFor(dataDirectory, root, initiative, slice, id) {
   try {
     const directory = path.join(dataDirectoryOf(dataDirectory), "verification-logs", digest(root).slice(0, 16), initiative, slice);
     await mkdir(directory, { recursive: true });
     return path.join(directory, `${id}.log`);
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
-
-/**
- * The changed paths since a slice started that a change of another slice explains:
- * a frozen test of another slice that holds its frozen content, or is absent while that slice is not started,
- * and a path that another slice's latest passing run changed, when that run finished after this slice's start content was recorded and the path still holds the content it tested.
- * An exception whose contents Git cannot read does not apply, including one whose recorded tree is not a Git object identifier.
- */
 async function othersChanges(root, initiative, slice, design, changed) {
-  const explained = new Set();
+  const explained = /* @__PURE__ */ new Set();
   const slices = await recordedSlices(root, initiative);
   const pending = new Set(changed);
   for (const [key, other] of Object.entries(slices)) {
@@ -374,8 +344,7 @@ async function othersChanges(root, initiative, slice, design, changed) {
     if (key === slice || !theirs?.startTree || designProblems(theirs).length) continue;
     const runs = await listRecordEntries(root, { kind: "runs", initiative, slice: key }).catch(() => []);
     const latest = runs.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1)?.entry;
-    // Only a run of the other slice's current start, finished after this slice's start content, explains a change, and only when its tree is a Git object identifier.
-    if (!latest || !treeId(latest.tree) || !treeId(theirs.startTree) || !(Date.parse(latest.finishedAt) > since) || (theirs.startRecordedAt && !(Date.parse(latest.finishedAt) > Date.parse(theirs.startRecordedAt)))) continue;
+    if (!latest || !treeId(latest.tree) || !treeId(theirs.startTree) || !(Date.parse(latest.finishedAt) > since) || theirs.startRecordedAt && !(Date.parse(latest.finishedAt) > Date.parse(theirs.startRecordedAt))) continue;
     const made = await changedPaths(root, theirs.startTree, latest.tree);
     const differs = made === null ? null : await changedPaths(root, latest.tree, design.currentTree);
     if (made === null || differs === null) continue;
@@ -384,11 +353,6 @@ async function othersChanges(root, initiative, slice, design, changed) {
   }
   return explained;
 }
-
-/**
- * The changed paths since a slice started that leave its component, sorted, or null when Git can no longer read or compare the start content.
- * Every path added, changed, or removed counts, except those another slice's change explains, and a path crosses by the declaration recorded with the start content, which the caller checked is there.
- */
 async function crossingPaths(root, initiative, slice, { component, declaration }, design, tree) {
   if (!await treeReadable(root, design.startTree)) return null;
   const changed = await changedPaths(root, design.startTree, tree);
@@ -398,12 +362,6 @@ async function crossingPaths(root, initiative, slice, { component, declaration }
   const folder = component === declaration.root ? "" : component.folder;
   return changed.filter((file) => !explained.has(file) && crossesComponent(design.startDeclaration, component.identity, folder, file)).sort();
 }
-
-/**
- * The files a run records for the content it tested: { files, filesFrom, filesTruncated? }, files { path, blob } sorted by path for each path that differs from the slice's start content, plus each frozen test,
- * blob the Git blob hash of the tested bytes or null for a removed path, at most MAX_RUN_FILES of them.
- * A slice without start content that Git can read records its frozen tests only, with filesFrom frozen-tests; no file bytes are ever recorded.
- */
 async function runFiles(root, design, tree) {
   const frozen = design.frozenTests.map((item) => item?.path).filter((item) => typeof item === "string");
   const changed = treeId(design.startTree) && await treeReadable(root, design.startTree) ? await changedBlobs(root, design.startTree, tree) : null;
@@ -411,77 +369,59 @@ async function runFiles(root, design, tree) {
   const tested = await objectsAt(root, tree, frozen);
   for (const file of frozen) blobs.set(file, tested?.get(file) ?? null);
   const files = [...blobs].map(([file, blob]) => ({ path: file, blob })).sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
-  return { files: files.slice(0, MAX_RUN_FILES), filesFrom: changed === null ? "frozen-tests" : "start-content", ...(files.length > MAX_RUN_FILES ? { filesTruncated: true } : {}) };
+  return { files: files.slice(0, MAX_RUN_FILES), filesFrom: changed === null ? "frozen-tests" : "start-content", ...files.length > MAX_RUN_FILES ? { filesTruncated: true } : {} };
 }
-
 async function verificationRun({ root, initiative, slice, target, key, design, signal, onProgress, dataDirectory }) {
   const { command, config } = target;
-  const startedAt = new Date().toISOString();
+  const startedAt = (/* @__PURE__ */ new Date()).toISOString();
   const id = `verification-${String(Date.now()).padStart(15, "0")}-${randomBytes(3).toString("hex")}`;
   const frozen = await checkFrozenTests(root, design.frozenTests);
   let log = null;
-  const base = { kind: "verification", startedAt, command, folder: target.folder, ...(target.component ? { component: target.component.identity } : {}), commandDigest: key, designAcceptedAt: design.acceptedAt, frozen };
+  const base = { kind: "verification", startedAt, command, folder: target.folder, ...target.component ? { component: target.component.identity } : {}, commandDigest: key, designAcceptedAt: design.acceptedAt, frozen };
   const stopped = { durationMs: 0, exitCode: null, signal: null, timedOut: false, passed: false, outputTail: "" };
   let entry;
   if (frozen.changed.length || frozen.missing.length) {
-    // A run that stops at its frozen tests compares nothing with the start content, so its boundary is unchecked.
-    entry = { ...base, ...(target.component ? { boundary: "unchecked" } : {}), finishedAt: startedAt, ...stopped, reason: "frozen_tests_changed", tree: null };
+    entry = { ...base, ...target.component ? { boundary: "unchecked" } : {}, finishedAt: startedAt, ...stopped, reason: "frozen_tests_changed", tree: null };
   } else {
     const before = await contentTree(root, config);
-    // A slice with a component and start content checks, before the command runs, that its changes stay inside the component.
-    // Only a slice started where Git could not hash the work tree, which has no start content, runs unchecked;
-    // start content recorded without a declaration, or that Git can no longer read, fails the run, since no later declaration may decide its boundary.
     const checking = Boolean(target.component && design.startTree);
     const undeclared = checking && !design.startDeclaration;
     const crossing = checking && !undeclared ? await crossingPaths(root, initiative, slice, target, design, before) : null;
     const boundary = target.component ? { boundary: crossing === null ? "unchecked" : "checked" } : {};
     if (checking && crossing === null) {
-      entry = { ...base, ...boundary, finishedAt: new Date().toISOString(), ...stopped, reason: "start_content_missing", startContent: undeclared ? "undeclared" : "unreadable", tree: before };
+      entry = { ...base, ...boundary, finishedAt: (/* @__PURE__ */ new Date()).toISOString(), ...stopped, reason: "start_content_missing", startContent: undeclared ? "undeclared" : "unreadable", tree: before };
     } else if (crossing?.length) {
-      entry = { ...base, ...boundary, finishedAt: new Date().toISOString(), ...stopped, reason: "component_boundary", crossing: crossing.slice(0, MAX_CROSSING_PATHS), crossingCount: crossing.length, tree: before };
+      entry = { ...base, ...boundary, finishedAt: (/* @__PURE__ */ new Date()).toISOString(), ...stopped, reason: "component_boundary", crossing: crossing.slice(0, MAX_CROSSING_PATHS), crossingCount: crossing.length, tree: before };
     } else {
-      const timeoutMs = Number(process.env.PRISM_VERIFY_TIMEOUT_MINUTES || DEFAULT_TIMEOUT_MINUTES) * 60000;
+      const timeoutMs = Number(process.env.PRISM_VERIFY_TIMEOUT_MINUTES || DEFAULT_TIMEOUT_MINUTES) * 6e4;
       const logPath = await logPathFor(dataDirectory, root, initiative, slice, id);
       const outcome = await execute(command, target.cwd, { signal, timeoutMs, onProgress, logPath });
       if (outcome.logged) log = logPath;
       const after = await contentTree(root, config).catch(() => null);
       const reason = outcome.cancelled ? "cancelled" : outcome.timedOut ? "timed_out" : outcome.exitCode !== 0 ? "command_failed" : after !== before ? "tracked_files_changed" : null;
-      // A passing run keeps a snapshot of the verified source, which the derived change map compares with the design baseline.
       const snapshotId = reason === null && design.baselineId ? await conservationStore.capture(root, { initiative, slice }).then((captured) => captured.snapshotId, () => null) : null;
-      // The content a passing run tested stays under the slice's passed ref while the slice has start content, so another slice's boundary check can still read it.
       if (reason === null && design.startTree) await setSliceRef(root, initiative, slice, "passed", before);
-      entry = { ...base, ...boundary, finishedAt: new Date().toISOString(), durationMs: outcome.durationMs, exitCode: outcome.exitCode, signal: outcome.signal, timedOut: outcome.timedOut, passed: reason === null, ...(reason ? { reason } : {}), tree: before, ...(after !== before ? { treeAfter: after } : {}), ...(snapshotId ? { snapshotId } : {}), ...(reason === "command_failed" && outcome.failing.length ? { failing: outcome.failing.slice(0, MAX_FAILING_NAMES), failingCount: outcome.failing.length } : {}), outputTail: tail(outcome.output, RECORDED_TAIL_CHARS), output: outcome.output };
+      entry = { ...base, ...boundary, finishedAt: (/* @__PURE__ */ new Date()).toISOString(), durationMs: outcome.durationMs, exitCode: outcome.exitCode, signal: outcome.signal, timedOut: outcome.timedOut, passed: reason === null, ...reason ? { reason } : {}, tree: before, ...after !== before ? { treeAfter: after } : {}, ...snapshotId ? { snapshotId } : {}, ...reason === "command_failed" && outcome.failing.length ? { failing: outcome.failing.slice(0, MAX_FAILING_NAMES), failingCount: outcome.failing.length } : {}, outputTail: tail(outcome.output, RECORDED_TAIL_CHARS), output: outcome.output };
     }
   }
-  // A run that stops at its frozen tests tested no content, so it records no files.
   if (treeId(entry.tree)) Object.assign(entry, await runFiles(root, design, entry.tree));
   entry.checkout = await checkoutOf(root, config, entry.tree).catch(() => null);
   const { output = entry.outputTail, ...recorded } = entry;
   const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, recorded);
-  return { id, path: stored.path, ...recorded, ...(log ? { log } : {}), output };
+  return { id, path: stored.path, ...recorded, ...log ? { log } : {}, output };
 }
-
-// Git answers about the checkout are optional, so any error is an unknown value rather than a failed run.
 function gitValue(root, args) {
   return new Promise((resolve) => {
-    execFile("git", ["-C", root, ...args], { timeout: 10000, windowsHide: true }, (error, stdout) => resolve(error ? null : stdout.trim() || null));
+    execFile("git", ["-C", root, ...args], { timeout: 1e4, windowsHide: true }, (error, stdout) => resolve(error ? null : stdout.trim() || null));
   });
 }
-
-// Hashing the committed content reads the head commit's tree into a scratch index, which a huge repository must not let stall a run.
-const DIRTY_TIMEOUT_MS = 30000;
-
-// A checkout's repository is the name its record store accepted, or its root commit when it names none or has no store.
-export async function repositoryOf(root) {
+const DIRTY_TIMEOUT_MS = 3e4;
+async function repositoryOf(root) {
   const store = await recordStoreOf(root).catch(() => null);
   return store?.repository ?? repositoryId(root);
 }
-
-// This machine's host name up to its first ".", which a run's checkout names.
 const hostName = () => os.hostname().split(".")[0];
-
-/** Where a run's code lives: { repository, remote, branch, head, dirty, host }; dirty is known only when the run hashed its work tree. */
-export async function checkoutOf(root, config, tree = null) {
+async function checkoutOf(root, config, tree = null) {
   const [repository, remote, branch, head] = await Promise.all([
     repositoryOf(root),
     gitValue(root, ["config", "--get", "remote.origin.url"]).then(publicRemote),
@@ -490,16 +430,12 @@ export async function checkoutOf(root, config, tree = null) {
   ]);
   let dirty = null;
   if (head && typeof tree === "string") {
-    // Uncommitted changes count as verification's own content tree does, so records, plans, and the roadmap never make a checkout dirty.
     const committed = await contentTree(root, config, { commit: head, timeoutMs: DIRTY_TIMEOUT_MS }).catch(() => null);
     if (committed) dirty = tree !== committed;
   }
   return { repository, remote, branch, head, dirty, host: hostName() };
 }
-
-// One run per slice at a time: a repeated call joins the running one, so a host that returns early can call again to keep waiting.
-const jobs = new Map();
-
+const jobs = /* @__PURE__ */ new Map();
 const REASONS = {
   frozen_tests_changed: "The frozen acceptance tests changed since the design was accepted, so the command did not run.",
   cancelled: "The run was cancelled.",
@@ -509,22 +445,19 @@ const REASONS = {
   component_boundary: "The changes since the slice started leave its component at the crossing paths, so the command did not run. Move each change this slice made back inside the component or under a shared path, or report the contract clause that needs it as a contract defect; report a crossing path that holds work this slice did not make instead of moving it.",
   start_content_missing: "Git can no longer read the content this slice started from, so its component boundary cannot be checked and the command did not run. Ask the user to set the slice back to not-started with the update_initiative set_status operation and start it again, which records the current content, the slice's earlier changes included, as new start content."
 };
-
-// Start content recorded while the ## Components declaration was invalid or lacked the slice's component has no declaration to check the boundary by.
 const UNDECLARED_START = "This slice started while the ## Components declaration in .prism/workflow.md was invalid or did not hold its component, so its start content has no declaration to check the component boundary by and the command did not run. Ask the user to make the ## Components declaration valid and hold the slice's component, then set the slice back to not-started with the update_initiative set_status operation and start it again, which records the current content, the slice's earlier changes included, as new start content with that declaration.";
-
 function resultOf(run) {
   const { output, ...rest } = run;
   const message = run.reason === "start_content_missing" && run.startContent === "undeclared" ? UNDECLARED_START : REASONS[run.reason];
-  return { status: run.passed ? "passed" : "failed", ...rest, ...(run.reason ? { message } : {}), outputTail: tail(output ?? "", RETURNED_TAIL_CHARS) };
+  return { status: run.passed ? "passed" : "failed", ...rest, ...run.reason ? { message } : {}, outputTail: tail(output ?? "", RETURNED_TAIL_CHARS) };
 }
-
-/** Run the approved test command of a slice with an accepted design in its working folder, after checking its frozen tests and, for a slice with a component, its component boundary, and record the run. */
-export async function verifySlice({ projectRoot, initiative, slice, approvalGate, chatApproval, contractDefects, dependents, dataDirectory, signal, onProgress, maxWaitMs = Infinity }) {
-  try { assertInput(VERIFY_SLICE_SCHEMA, { projectRoot, initiative, slice, ...(approvalGate ? { approvalGate } : {}), ...(chatApproval ? { chatApproval } : {}), ...(contractDefects ? { contractDefects } : {}), ...(dependents === undefined ? {} : { dependents }) }); }
-  catch (error) { throw fail("validation_failed", `The verification arguments are invalid: ${describeErrors(error.errors)}`, { errors: error.errors }); }
+async function verifySlice({ projectRoot, initiative, slice, approvalGate, chatApproval, contractDefects, dependents, dataDirectory, signal, onProgress, maxWaitMs = Infinity }) {
+  try {
+    assertInput(VERIFY_SLICE_SCHEMA, { projectRoot, initiative, slice, ...approvalGate ? { approvalGate } : {}, ...chatApproval ? { chatApproval } : {}, ...contractDefects ? { contractDefects } : {}, ...dependents === void 0 ? {} : { dependents } });
+  } catch (error) {
+    throw fail("validation_failed", `The verification arguments are invalid: ${describeErrors(error.errors)}`, { errors: error.errors });
+  }
   const root = await realpath(projectRoot);
-  // A shipped initiative's verification is history, so nothing runs and no contract defect or dependents' run is recorded.
   await refuseShipped(root, initiative);
   if (dependents === true) return dependentsRun({ root, initiative, scope: slice, approvalGate, chatApproval, contractDefects, dataDirectory, signal, onProgress, maxWaitMs });
   const design = await acceptedDesign(root, initiative, slice);
@@ -542,36 +475,33 @@ export async function verifySlice({ projectRoot, initiative, slice, approvalGate
     if (reviewBrowserUnreachable()) return { status: "approval_needed", gateId: allowed.gateId, ...names, chatApproval: true, message: `The user cannot open the review browser from this cloud session. Ask them in chat whether Prism may run this exact test command in ${where}: ${command}. When they allow it, call verify_slice again with approvalGate ${allowed.gateId} and chatApproval quoting their answer word for word.` };
     return { status: "approval_needed", gateId: allowed.gateId, ...names, message: `The user must allow the test command in the review browser first. Wait with wait_for_user_gate on ${allowed.gateId}, then call verify_slice again with approvalGate ${allowed.gateId}.` };
   }
-  const waited = await awaitJob(`${root}\0${initiative}\0${slice}`, `${command}\0${cwd}`, (jobSignal, progress) => verificationRun({ root, initiative, slice, target, key: allowed.key, design, dataDirectory, signal: jobSignal, onProgress: progress })
-    .then((run) => completeSlice(root, initiative, slice, design, run)), { signal, onProgress, maxWaitMs });
+  const waited = await awaitJob(`${root}\0${initiative}\0${slice}`, `${command}\0${cwd}`, (jobSignal, progress) => verificationRun({ root, initiative, slice, target, key: allowed.key, design, dataDirectory, signal: jobSignal, onProgress: progress }).then((run) => completeSlice(root, initiative, slice, design, run)), { signal, onProgress, maxWaitMs });
   if (waited.running) return { status: "running", ...names, startedAt: waited.startedAt, message: "The run continues in the Prism server. Call verify_slice again with the same arguments to keep waiting for its result." };
   return waited.finished.reason === "cancelled" && signal?.aborted ? { status: "cancelled" } : resultOf(waited.finished);
 }
-
-/**
- * Join the running job under a key when it runs the same work, named by its signature, or start a new one, and wait for it up to maxWaitMs:
- * { finished } with its result, or { running, startedAt } when the wait ended first, so a host that returns early can call again to keep waiting.
- */
 async function awaitJob(jobKey, signature, start, { signal, onProgress, maxWaitMs }, info = null) {
   let job = jobs.get(jobKey);
   if (!job || job.signature !== signature) {
     const controller = new AbortController();
-    const listeners = new Set();
-    job = { signature, controller, listeners, startedAt: new Date().toISOString(), promise: null, info };
-    job.promise = start(controller.signal, (seconds, latest) => listeners.forEach((listener) => listener(seconds, latest)))
-      .finally(() => { if (jobs.get(jobKey) === job) jobs.delete(jobKey); });
-    // A caller that returned early no longer awaits the run, so its failure must not go unhandled.
-    job.promise.catch(() => {});
+    const listeners = /* @__PURE__ */ new Set();
+    job = { signature, controller, listeners, startedAt: (/* @__PURE__ */ new Date()).toISOString(), promise: null, info };
+    job.promise = start(controller.signal, (seconds, latest) => listeners.forEach((listener) => listener(seconds, latest))).finally(() => {
+      if (jobs.get(jobKey) === job) jobs.delete(jobKey);
+    });
+    job.promise.catch(() => {
+    });
     jobs.set(jobKey, job);
   }
   if (onProgress) job.listeners.add(onProgress);
   const abort = () => job.controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
-  // A call cancelled while verification read the design and the approval has already fired its abort, so the run stops now.
   if (signal?.aborted) abort();
   let timer;
   try {
-    const early = Number.isFinite(maxWaitMs) ? new Promise((resolve) => { timer = setTimeout(() => resolve(null), maxWaitMs); }) : new Promise(() => {});
+    const early = Number.isFinite(maxWaitMs) ? new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), maxWaitMs);
+    }) : new Promise(() => {
+    });
     const finished = await Promise.race([job.promise, early]);
     return finished === null ? { running: true, startedAt: job.startedAt, info: job.info } : { finished };
   } finally {
@@ -580,17 +510,13 @@ async function awaitJob(jobKey, signature, start, { signal, onProgress, maxWaitM
     if (onProgress) job.listeners.delete(onProgress);
   }
 }
-
-// Reported defects are kept as a run entry, which outlives the initiative record, and block the slice until design revises the contract.
-export async function reportContractDefects(root, initiative, slice, design, defects) {
+async function reportContractDefects(root, initiative, slice, design, defects) {
   const id = `contract-defect-${String(Date.now()).padStart(15, "0")}-${randomBytes(3).toString("hex")}`;
-  // A defect report hashes no work tree, so its checkout leaves dirty unknown.
   const checkout = await checkoutOf(root, await readWorkflowConfig(root)).catch(() => null);
-  const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, { kind: "contract-defect", reportedAt: new Date().toISOString(), designAcceptedAt: design.acceptedAt, defects, checkout });
+  const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, { kind: "contract-defect", reportedAt: (/* @__PURE__ */ new Date()).toISOString(), designAcceptedAt: design.acceptedAt, defects, checkout });
   const { readInitiative, updateInitiative } = await import("./initiative.mjs");
   for (let attempt = 0; ; attempt += 1) {
     try {
-      // Only the revision is needed, so the retry never reads the slices' run entries that get_initiative summarizes.
       const current = (await readInitiative(root, initiative)).loaded;
       const updated = await updateInitiative({ projectRoot: root, initiative, expectedRevision: current.revision, actor: "verify_slice", operations: [{ op: "report_contract_defects", slug: slice, defects }] });
       return { status: "defects_recorded", sliceStatus: "blocked", initiativeRevision: updated.revision, run: stored.path, message: `The contract defects of ${slice} are recorded and the slice is blocked until design revises its contract. Stop implementing it.` };
@@ -600,15 +526,11 @@ export async function reportContractDefects(root, initiative, slice, design, def
     }
   }
 }
-
-// A passing run completes a slice whose design marks no review, so the coordinator never records that step itself.
 async function completeSlice(root, initiative, slice, design, run) {
   if (!run.passed || design.review === "required") return run;
   const { readInitiative, updateInitiative } = await import("./initiative.mjs");
-  // Another writer can update the record between the read and the write, so a revision conflict reads it again.
   for (let attempt = 0; ; attempt += 1) {
     try {
-      // Only the revision is needed, so the retry never reads the slices' run entries that get_initiative summarizes.
       const current = (await readInitiative(root, initiative)).loaded;
       if (current.record?.slices?.[slice]?.status === "done") return { ...run, sliceStatus: "done", initiativeRevision: current.revision };
       const updated = await updateInitiative({ projectRoot: root, initiative, expectedRevision: current.revision, actor: "verify_slice", operations: [{ op: "set_status", slug: slice, status: "done" }] });
@@ -619,18 +541,11 @@ async function completeSlice(root, initiative, slice, design, run) {
     }
   }
 }
-
-// A dependents' run checks, once a fit scope's leaves are done, every component of this repository that depends on the scope's components.
-// It runs other components' commands behind one approval gate, so the gate lists each command with the folder it runs in, and allowing it allows exactly the listed pairs.
-const GATE_QUESTION_LIMIT = 4000;
+const GATE_QUESTION_LIMIT = 4e3;
 const DEPENDENTS_CONTEXT = "Every slice of the scope passed its own tests. Before the initiative can ship, Prism runs the tests of the components that depend on the changed ones, so a break there shows now rather than after release. These commands come from `.prism/workflow.md`, and Prism has not run them in these folders before. Whatever they run, runs with your shell.";
 const DEPENDENT_TAILS = 5;
-
-// The commands of a dependents' run as the gate and its results name them: { command, folder, components } in run order.
 const listed = (pairs) => pairs.map(({ command, folder, components }) => ({ command, folder, components: [...components] }));
 const place = (folder, declaredFolder) => `${folder === "" ? "the project root" : `the folder ${folder}`}${declaredFolder && declaredFolder !== folder ? `, where the component folder ${declaredFolder} leads` : ""}`;
-
-// The question names every command and the folder it runs in, project-relative, grouped by command, and the components each one tests when they fit.
 function dependentsQuestion(scope, pairs, key) {
   const build = (withComponents) => {
     const lines = [`Allow Prism to run these test commands to check the components that depend on the finished scope ${scope}?`, ""];
@@ -648,18 +563,11 @@ function dependentsQuestion(scope, pairs, key) {
   if (brief.length <= GATE_QUESTION_LIMIT) return brief;
   throw fail("approval_too_large", `The dependents of ${scope} need ${pairs.length} test commands that one approval question cannot list in full, so nothing was asked or run. Give the components fewer distinct test commands or folders, for example by running one command in the project root.`, { scope });
 }
-
-/**
- * Ask once for every pair of command and working folder of a dependents' run that is not allowed yet: { approved: true, declined } when the run may start,
- * with declined holding the keys of the pairs the user declined, or { approved: false, status, gateId, pending } while it waits for an answer or the answer was only a note.
- * A gate allows exactly the pairs it listed, and an existing gate is reused only while the pairs it lists that are not allowed yet are exactly those still to allow.
- */
 async function dependentsApproval({ root, initiative, scope, pairs, approvalGate, chatApproval, dataDirectory }) {
   if (chatApproval && !reviewBrowserUnreachable()) throw fail("chat_approval_unavailable", "This session can open the review browser, so the user allows the test commands there, not in chat. Call verify_slice without chatApproval.");
   return withApprovals(dataDirectory, async (store) => {
     const pending = pairs.filter((pair) => !store.approved[pair.key]);
-    if (!pending.length) return { approved: true, declined: new Set(), gateId: null };
-    // A gate is reused only while the pairs it lists that are not allowed yet are exactly the pairs still to allow, so the result and its chat message name every pair that answering it allows.
+    if (!pending.length) return { approved: true, declined: /* @__PURE__ */ new Set(), gateId: null };
     const wanted = pending.map((pair) => pair.key).sort().join("\n");
     const covers = (request) => request?.kind === "dependents" && request.initiative === initiative && request.scope === scope && Array.isArray(request.pairs) && request.pairs.filter((item) => !store.approved[item?.key]).map((item) => item?.key).sort().join("\n") === wanted;
     if (approvalGate && store.requests[approvalGate] && !covers(store.requests[approvalGate])) throw fail("approval_mismatch", `The gate ${approvalGate} asked about other test commands or folders. Call verify_slice with dependents and without approvalGate to ask about the ones this run needs.`);
@@ -676,19 +584,21 @@ async function dependentsApproval({ root, initiative, scope, pairs, approvalGate
         delete store.requests[requested];
       } else if (gate.answer?.via === "browser" && gate.answer.choice === ALLOW) {
         allowAll(gate.answer.answeredAt);
-        await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested }] }).catch(() => {});
-        return { approved: true, declined: new Set(), gateId: requested };
+        await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested }] }).catch(() => {
+        });
+        return { approved: true, declined: /* @__PURE__ */ new Set(), gateId: requested };
       } else if (gate.answer) {
         delete store.requests[requested];
-        await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested }] }).catch(() => {});
-        // A decline blocks the components of every pair still to allow, while the allowed pairs run; a note alone neither allows nor declines.
+        await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested }] }).catch(() => {
+        });
         if (gate.answer.choice === DECLINE) return { approved: true, declined: new Set(pending.map((pair) => pair.key)), gateId: requested, note: gate.answer.note ?? null };
         return { approved: false, status: "approval_unclear", gateId: requested, pending, note: gate.answer.note ?? null };
       } else if (chatApproval) {
         const quote = chatApproval.quote.trim();
-        allowAll(new Date().toISOString(), { via: "chat", quote });
-        await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested, reason: `The user allowed these commands in chat, as recorded by the agent: "${quote}"` }] }).catch(() => {});
-        return { approved: true, declined: new Set(), gateId: requested };
+        allowAll((/* @__PURE__ */ new Date()).toISOString(), { via: "chat", quote });
+        await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested, reason: `The user allowed these commands in chat, as recorded by the agent: "${quote}"` }] }).catch(() => {
+        });
+        return { approved: true, declined: /* @__PURE__ */ new Set(), gateId: requested };
       } else {
         return { approved: false, status: "approval_needed", gateId: requested, pending };
       }
@@ -699,16 +609,10 @@ async function dependentsApproval({ root, initiative, scope, pairs, approvalGate
       { id: DECLINE, label: "Decline", consequence: "Prism runs none of them, and the components they test block shipping until a later run passes." }
     ], recommended: APPROVAL_RECOMMENDATION }] });
     const gateId = opened.openedGates[0].id;
-    store.requests[gateId] = { kind: "dependents", initiative, scope, pairs: pending.map(({ key: pairKey, command, folder }) => ({ key: pairKey, command, folder })), askedAt: new Date().toISOString() };
+    store.requests[gateId] = { kind: "dependents", initiative, scope, pairs: pending.map(({ key: pairKey, command, folder }) => ({ key: pairKey, command, folder })), askedAt: (/* @__PURE__ */ new Date()).toISOString() };
     return { approved: false, status: "approval_needed", gateId, pending };
   });
 }
-
-/**
- * Run the dependents of a finished fit scope: every component of this repository that depends, directly or through others, on a component of the scope's leaves.
- * Each distinct pair of command and working folder runs once, in dependency order, after one approval gate for the pairs not yet allowed, and the run is recorded on the scope.
- * A dependency on another repository's component never runs here.
- */
 async function dependentsRun({ root, initiative, scope, approvalGate, chatApproval, contractDefects, dataDirectory, signal, onProgress, maxWaitMs }) {
   if (contractDefects) throw fail("validation_failed", "A dependents' run takes no contract defects. Report a wrong contract clause with verify_slice on the slice whose contract it is, without dependents.");
   const { fitScopes, readInitiative, scopeDependents, scopeLeaves } = await import("./initiative.mjs");
@@ -718,8 +622,6 @@ async function dependentsRun({ root, initiative, scope, approvalGate, chatApprov
   const leaves = scopeLeaves(record, scope);
   const waiting = leaves.filter((leaf) => record.slices[leaf]?.status !== "done");
   if (waiting.length) throw fail("scope_unfinished", `The scope ${scope} is not finished, so its dependents do not run yet. Finish ${waiting.join(", ")} first.`, { scope, waiting });
-  // A call while this scope's dependents run joins that run, and a call with the gate of a finished run that declined pairs returns that run, so neither asks again.
-  // Any other call forgets the declined run, so a call without its gate asks again, and a gate whose pairs were all allowed runs the dependents again.
   const jobKey = `${root}\0${initiative}\0${scope}\0dependents`;
   const running = jobs.get(jobKey);
   if (running) return dependentsWaited(await awaitJob(jobKey, running.signature, null, { signal, onProgress, maxWaitMs }), scope, signal);
@@ -730,9 +632,8 @@ async function dependentsRun({ root, initiative, scope, approvalGate, chatApprov
   const declaration = readComponents(config);
   const dependents = scopeDependents(record, scope, declaration);
   if (!dependents.length) return { status: "no_dependents", scope, components: [], message: `No component of this repository depends on the components of ${scope}, so nothing ran and nothing was recorded.` };
-  // Every dependent's command and folder is checked, in run order, before anything is asked or run.
   const pairs = [];
-  const byKey = new Map();
+  const byKey = /* @__PURE__ */ new Map();
   const placed = [];
   for (const component of dependents) {
     const target = await componentTarget(root, declaration, component);
@@ -757,86 +658,75 @@ async function dependentsRun({ root, initiative, scope, approvalGate, chatApprov
   const declined = allowed.declined;
   const gate = allowed.gateId ?? approvalGate ?? null;
   const signature = pairs.map((pair) => `${pair.key}${declined.has(pair.key) ? "-" : "+"}`).join(",");
-  const start = (jobSignal, progress) => inWorkTree(root, () => dependentsExecution({ root, initiative, scope, config, pairs, placed, declined, dataDirectory, signal: jobSignal, onProgress: progress }))
-    .then((run) => {
-      if (gate && declined.size) settledDependents.set(jobKey, { gate, run });
-      return run;
-    });
+  const start = (jobSignal, progress) => inWorkTree(root, () => dependentsExecution({ root, initiative, scope, config, pairs, placed, declined, dataDirectory, signal: jobSignal, onProgress: progress })).then((run) => {
+    if (gate && declined.size) settledDependents.set(jobKey, { gate, run });
+    return run;
+  });
   return dependentsWaited(await awaitJob(jobKey, signature, start, { signal, onProgress, maxWaitMs }, { commands: listed(pairs) }), scope, signal);
 }
-
 function dependentsWaited(waited, scope, signal) {
   if (waited.running) return { status: "running", scope, commands: waited.info.commands, startedAt: waited.startedAt, message: "The dependents' run continues in the Prism server. Call verify_slice again with the same arguments to keep waiting for its result." };
   return waited.finished.reason === "cancelled" && signal?.aborted ? { status: "cancelled", scope } : dependentsResult(waited.finished);
 }
-
-// The latest finished dependents' run of each scope whose approval gate was declined, with that gate's id, until a call with another gate or none.
-const settledDependents = new Map();
-// The dependents' runs of one work tree run one after another, since each runs commands that may read or write the same files.
-const workTreeRuns = new Map();
-
+const settledDependents = /* @__PURE__ */ new Map();
+const workTreeRuns = /* @__PURE__ */ new Map();
 function inWorkTree(root, action) {
   const run = (workTreeRuns.get(root) ?? Promise.resolve()).then(action);
-  const settledRun = run.then(() => {}, () => {});
+  const settledRun = run.then(() => {
+  }, () => {
+  });
   workTreeRuns.set(root, settledRun);
-  settledRun.then(() => { if (workTreeRuns.get(root) === settledRun) workTreeRuns.delete(root); });
+  settledRun.then(() => {
+    if (workTreeRuns.get(root) === settledRun) workTreeRuns.delete(root);
+  });
   return run;
 }
-
 async function dependentsExecution({ root, initiative, scope, config, pairs, placed, declined, dataDirectory, signal, onProgress }) {
-  const startedAt = new Date().toISOString();
+  const startedAt = (/* @__PURE__ */ new Date()).toISOString();
   const started = Date.now();
   const id = `dependents-${String(started).padStart(15, "0")}-${randomBytes(3).toString("hex")}`;
-  const timeoutMs = Number(process.env.PRISM_VERIFY_TIMEOUT_MINUTES || DEFAULT_TIMEOUT_MINUTES) * 60000;
+  const timeoutMs = Number(process.env.PRISM_VERIFY_TIMEOUT_MINUTES || DEFAULT_TIMEOUT_MINUTES) * 6e4;
   const before = await contentTree(root, config);
   const commands = [];
-  const statusOf = new Map();
+  const statusOf = /* @__PURE__ */ new Map();
   for (const [index, pair] of pairs.entries()) {
-    const entry = { command: pair.command, folder: pair.folder, components: [...pair.components] };
+    const entry2 = { command: pair.command, folder: pair.folder, components: [...pair.components] };
     if (declined.has(pair.key)) {
       statusOf.set(pair.key, "declined");
-      commands.push({ ...entry, status: "declined" });
+      commands.push({ ...entry2, status: "declined" });
       continue;
     }
     if (signal.aborted) {
       statusOf.set(pair.key, "failed");
-      commands.push({ ...entry, status: "failed", reason: "cancelled" });
+      commands.push({ ...entry2, status: "failed", reason: "cancelled" });
       continue;
     }
     const logPath = await logPathFor(dataDirectory, root, initiative, scope, `${id}-${index + 1}`);
     const outcome = await execute(pair.command, pair.cwd, { signal, timeoutMs, onProgress, logPath });
-    const reason = outcome.cancelled ? "cancelled" : outcome.timedOut ? "timed_out" : outcome.exitCode !== 0 ? "command_failed" : null;
-    statusOf.set(pair.key, reason ? "failed" : "passed");
-    commands.push({ ...entry, status: reason ? "failed" : "passed", ...(reason ? { reason } : {}), exitCode: outcome.exitCode, signal: outcome.signal, timedOut: outcome.timedOut, durationMs: outcome.durationMs, outputTail: tail(outcome.output, RECORDED_TAIL_CHARS), ...(outcome.logged ? { log: logPath } : {}) });
+    const reason2 = outcome.cancelled ? "cancelled" : outcome.timedOut ? "timed_out" : outcome.exitCode !== 0 ? "command_failed" : null;
+    statusOf.set(pair.key, reason2 ? "failed" : "passed");
+    commands.push({ ...entry2, status: reason2 ? "failed" : "passed", ...reason2 ? { reason: reason2 } : {}, exitCode: outcome.exitCode, signal: outcome.signal, timedOut: outcome.timedOut, durationMs: outcome.durationMs, outputTail: tail(outcome.output, RECORDED_TAIL_CHARS), ...outcome.logged ? { log: logPath } : {} });
   }
   const after = await contentTree(root, config).catch(() => null);
   const cancelled = commands.some((item) => item.reason === "cancelled");
   const components = placed.map(({ name, pair }) => ({ name, folder: pair.folder, command: pair.command, status: statusOf.get(pair.key) }));
-  // Commands that changed project files leave no single tested state, so every dependent is blocked, as is every one a cancelled run did not finish.
   const reason = cancelled ? "cancelled" : after !== before ? "tracked_files_changed" : null;
   const blocked = reason ? components.map((item) => item.name) : components.filter((item) => item.status !== "passed").map((item) => item.name);
-  const entry = { kind: "dependents", scope, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - started, passed: blocked.length === 0, ...(reason ? { reason } : {}), components, blocked, commands: commands.map(({ log, ...rest }) => rest), tree: before, ...(after !== before ? { treeAfter: after } : {}) };
+  const entry = { kind: "dependents", scope, startedAt, finishedAt: (/* @__PURE__ */ new Date()).toISOString(), durationMs: Date.now() - started, passed: blocked.length === 0, ...reason ? { reason } : {}, components, blocked, commands: commands.map(({ log, ...rest }) => rest), tree: before, ...after !== before ? { treeAfter: after } : {} };
   entry.checkout = await checkoutOf(root, config, before).catch(() => null);
   const stored = await appendRecord(root, { kind: "runs", initiative, slice: scope }, id, entry);
-  // The full output stays in local plugin data, so only the result names each command's log.
   return { id, path: stored.path, ...entry, commands };
 }
-
 const DEPENDENTS_REASONS = {
   cancelled: "The dependents' run was cancelled, so every dependent is blocked until a later run passes.",
   tracked_files_changed: "The dependents' test commands changed project files while they ran, so the run does not identify one tested state and every dependent is blocked. Run the dependents again."
 };
-
-// A run with declined pairs is returned again for its gate, so its message says how to ask again.
 const ASK_AGAIN = "The user declined some of these commands, so calling with the same approvalGate returns this run again; call verify_slice with dependents and without approvalGate to ask and run again.";
-
 function dependentsResult(run) {
   const base = DEPENDENTS_REASONS[run.reason] ?? (run.passed ? `Every dependent of ${run.scope} passed.` : `The scope ${run.scope} is blocked by ${run.blocked.join(", ")}: a dependent whose tests failed or were declined blocks shipping until a later dependents' run passes.`);
   const message = run.commands.some((item) => item.status === "declined") ? `${base} ${ASK_AGAIN}` : base;
-  return { status: run.passed ? "passed" : "failed", scope: run.scope, ...(run.reason ? { reason: run.reason } : {}), message, components: run.components, blocked: run.blocked, commands: run.commands, durationMs: run.durationMs, run: run.path, ...(run.checkout ? { code: run.checkout } : {}), kind: "dependents" };
+  return { status: run.passed ? "passed" : "failed", scope: run.scope, ...run.reason ? { reason: run.reason } : {}, message, components: run.components, blocked: run.blocked, commands: run.commands, durationMs: run.durationMs, run: run.path, ...run.checkout ? { code: run.checkout } : {}, kind: "dependents" };
 }
-
-// Test names a failing run reports, read from common runner formats: cargo, Node, TAP, pytest, Go, Jest, and Vitest.
 const FAILING_PATTERNS = [
   /^test (\S+) \.\.\. FAILED$/,
   /^---- (\S+) stdout ----$/,
@@ -845,10 +735,7 @@ const FAILING_PATTERNS = [
   /^--- FAIL: (\S+)/,
   /^\s*[✖✕×] (.+?)(?: \(\d+(?:\.\d+)?\s*m?s\))?$/
 ];
-
-// A TAP line marked TODO or SKIP is an expected failure, not a broken test.
 const EXPECTED_FAILURE = /^\s*not ok \d+\b.*\s#\s*(?:TODO|SKIP)\b/i;
-
 function failingName(line) {
   const trimmed = line.trimEnd();
   if (EXPECTED_FAILURE.test(trimmed)) return null;
@@ -858,52 +745,60 @@ function failingName(line) {
   }
   return null;
 }
-
-export function failingTests(output) {
-  const names = new Set();
+function failingTests(output) {
+  const names = /* @__PURE__ */ new Set();
   for (const line of String(output ?? "").split(/\r?\n/)) {
     const name = failingName(line);
     if (name) names.add(name);
   }
   return [...names];
 }
-
-/** What a coordinator needs from a run: the verdict, the failing tests, and where the full log is; the record keeps the rest. */
-export function verificationBrief(value) {
+function verificationBrief(value) {
   if (!["passed", "failed"].includes(value.status)) return value;
   if (value.kind === "dependents") {
-    // A dependents' run names every command's log, and the output tail only of the first few that failed.
     let tails = 0;
-    const commands = value.commands.map(({ command, folder, components, status, reason, log, outputTail }) => ({ command, folder, components, status, ...(reason ? { reason } : {}), ...(log ? { log } : {}), ...(status === "failed" && outputTail && tails++ < DEPENDENT_TAILS ? { outputTail: tail(outputTail, BRIEF_TAIL_CHARS) } : {}) }));
-    return { status: value.status, scope: value.scope, ...(value.reason ? { reason: value.reason } : {}), message: value.message, components: value.components, blocked: value.blocked, commands, durationMs: value.durationMs, run: value.run, ...(value.code ? { code: value.code } : {}) };
+    const commands = value.commands.map(({ command, folder, components, status, reason, log, outputTail }) => ({ command, folder, components, status, ...reason ? { reason } : {}, ...log ? { log } : {}, ...status === "failed" && outputTail && tails++ < DEPENDENT_TAILS ? { outputTail: tail(outputTail, BRIEF_TAIL_CHARS) } : {} }));
+    return { status: value.status, scope: value.scope, ...value.reason ? { reason: value.reason } : {}, message: value.message, components: value.components, blocked: value.blocked, commands, durationMs: value.durationMs, run: value.run, ...value.code ? { code: value.code } : {} };
   }
-  // A run reads failing names from its whole output; the tail is only a fallback for a result without them.
   const failing = value.status !== "failed" ? [] : value.failing ?? failingTests(value.outputTail);
   const failingCount = value.failingCount ?? failing.length;
   const frozen = value.frozen && (value.frozen.changed.length || value.frozen.missing.length) ? { frozenChanged: value.frozen.changed, frozenMissing: value.frozen.missing } : {};
   return {
     status: value.status,
-    ...(value.reason ? { reason: value.reason, message: value.message } : {}),
+    ...value.reason ? { reason: value.reason, message: value.message } : {},
     // A run that left its component lists the paths to move back, so the brief keeps them.
-    ...(value.crossing ? { crossing: value.crossing, crossingCount: value.crossingCount } : {}),
-    ...(value.component ? { component: value.component } : {}),
-    ...(value.folder !== undefined ? { folder: value.folder } : {}),
-    ...(value.boundary ? { boundary: value.boundary } : {}),
-    ...(failing.length ? { failing: failing.slice(0, MAX_FAILING_NAMES), failingCount } : {}),
+    ...value.crossing ? { crossing: value.crossing, crossingCount: value.crossingCount } : {},
+    ...value.component ? { component: value.component } : {},
+    ...value.folder !== void 0 ? { folder: value.folder } : {},
+    ...value.boundary ? { boundary: value.boundary } : {},
+    ...failing.length ? { failing: failing.slice(0, MAX_FAILING_NAMES), failingCount } : {},
     ...frozen,
-    ...(value.sliceStatus ? { sliceStatus: value.sliceStatus } : {}),
+    ...value.sliceStatus ? { sliceStatus: value.sliceStatus } : {},
     // Marking the slice done writes the initiative record, so the caller's next update needs this revision.
-    ...(value.initiativeRevision ? { initiativeRevision: value.initiativeRevision } : {}),
-    ...(value.statusMessage ? { statusMessage: value.statusMessage } : {}),
+    ...value.initiativeRevision ? { initiativeRevision: value.initiativeRevision } : {},
+    ...value.statusMessage ? { statusMessage: value.statusMessage } : {},
     durationMs: value.durationMs,
     run: value.path,
-    ...(value.log ? { log: value.log } : {}),
-    ...(value.status === "passed" && value.checkout ? { code: value.checkout } : {}),
-    ...(value.status === "failed" && value.outputTail ? { outputTail: tail(value.outputTail, BRIEF_TAIL_CHARS) } : {})
+    ...value.log ? { log: value.log } : {},
+    ...value.status === "passed" && value.checkout ? { code: value.checkout } : {},
+    ...value.status === "failed" && value.outputTail ? { outputTail: tail(value.outputTail, BRIEF_TAIL_CHARS) } : {}
   };
 }
-
-/** Abort every running verification, as the server does when its host disconnects. */
-export function cancelVerifications() {
+function cancelVerifications() {
   for (const job of jobs.values()) job.controller.abort();
 }
+export {
+  TEST_COMMAND_PLACEHOLDER,
+  VERIFY_SLICE_SCHEMA,
+  VerificationError,
+  cancelVerifications,
+  checkoutOf,
+  configuredTestCommand,
+  failingTests,
+  publicRemote,
+  reportContractDefects,
+  repositoryOf,
+  reviewBrowserUnreachable,
+  verificationBrief,
+  verifySlice
+};

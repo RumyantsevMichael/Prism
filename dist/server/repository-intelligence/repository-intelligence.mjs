@@ -1,30 +1,27 @@
+// Generated from src/server/repository-intelligence/repository-intelligence.mts by scripts/native-build/compile.mjs.
 const REQUIRED_PROVIDER_METHODS = ["describe", "search", "neighbors", "read"];
-const TIER_ORDER = new Map([["mustRead", 0], ["likelyRead", 1], ["possibleRead", 2]]);
-const MUST_RELATIONSHIPS = new Set(["definition", "implementation", "implements", "extends", "overrides"]);
-const LIKELY_RELATIONSHIPS = new Set(["caller", "callee", "calls", "reference", "tests", "type-dependency", "uses-type"]);
+const TIER_ORDER = /* @__PURE__ */ new Map([["mustRead", 0], ["likelyRead", 1], ["possibleRead", 2]]);
+const MUST_RELATIONSHIPS = /* @__PURE__ */ new Set(["definition", "implementation", "implements", "extends", "overrides"]);
+const LIKELY_RELATIONSHIPS = /* @__PURE__ */ new Set(["caller", "callee", "calls", "reference", "tests", "type-dependency", "uses-type"]);
 const HINT_KEYS = ["files", "symbols", "concepts", "expectedModifiedFiles"];
-
-export const REPOSITORY_CONTEXT_INPUT_LIMITS = Object.freeze({
+const REPOSITORY_CONTEXT_INPUT_LIMITS = Object.freeze({
   taskCharacters: 16384,
   hintsPerKind: 32,
   hintCharacters: 1024
 });
-
-export const approximateTokenCounter = Object.freeze({
+const approximateTokenCounter = Object.freeze({
   name: "utf8-bytes-divided-by-3",
   exact: false,
   count(value) {
     return Math.ceil(Buffer.byteLength(String(value), "utf8") / 3);
   }
 });
-
 function assertProvider(provider) {
   const missing = REQUIRED_PROVIDER_METHODS.filter((name) => typeof provider?.[name] !== "function");
   if (missing.length) {
     throw new TypeError("A repository-intelligence provider must implement describe, search, neighbors, and read.");
   }
 }
-
 function exceedsCharacterLimit(value, limit) {
   let count = 0;
   for (const _character of value) {
@@ -33,7 +30,6 @@ function exceedsCharacterLimit(value, limit) {
   }
   return false;
 }
-
 function validateInputs(task, hints) {
   if (typeof task !== "string" || !task.trim()) {
     throw new TypeError("The repository-context task must be a non-empty string.");
@@ -50,7 +46,7 @@ function validateInputs(task, hints) {
   }
   for (const name of HINT_KEYS) {
     const values = hints[name];
-    if (values === undefined) continue;
+    if (values === void 0) continue;
     if (!Array.isArray(values)) {
       throw new TypeError(`Repository-context ${name} hints must be an array.`);
     }
@@ -67,21 +63,17 @@ function validateInputs(task, hints) {
     }
   }
 }
-
 function integer(value, fallback) {
   return Number.isInteger(value) && value > 0 ? value : fallback;
 }
-
 function normalizeRange(range) {
   const startLine = integer(range?.startLine, 1);
   const endLine = Math.max(startLine, integer(range?.endLine, startLine));
   return { startLine, endLine };
 }
-
 function validRange(range) {
   return Number.isInteger(range?.startLine) && range.startLine > 0 && Number.isInteger(range?.endLine) && range.endLine >= range.startLine;
 }
-
 function normalizeNode(node) {
   if (!node || typeof node !== "object" || typeof node.file !== "string" || !node.file) {
     throw new TypeError("Repository context nodes must include a file path.");
@@ -94,22 +86,19 @@ function normalizeNode(node) {
     kind: String(node.kind || "symbol"),
     name: String(node.name || node.id || node.file),
     rangeComplete: validRange(node.range) && node.rangeComplete !== false,
-    ...(node.qualifiedName ? { qualifiedName: String(node.qualifiedName) } : {}),
-    ...(node.signature ? { signature: String(node.signature) } : {})
+    ...node.qualifiedName ? { qualifiedName: String(node.qualifiedName) } : {},
+    ...node.signature ? { signature: String(node.signature) } : {}
   };
 }
-
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
-
 function anchorTier(hit, rank) {
   if (hit.reasons?.includes("explicit-design-reference") || hit.reasons?.includes("expected-modification-target") || rank < 2) {
     return "mustRead";
   }
   return "likelyRead";
 }
-
 function neighborTier(neighbor, anchorTiers) {
   const relationship = String(neighbor.relationship || "related").toLowerCase();
   if (MUST_RELATIONSHIPS.has(relationship) && anchorTiers.get(String(neighbor.from)) === "mustRead") {
@@ -120,7 +109,6 @@ function neighborTier(neighbor, anchorTiers) {
   }
   return "possibleRead";
 }
-
 function candidate(nodeValue, tier, reasons, score) {
   const node = normalizeNode(nodeValue);
   return {
@@ -128,15 +116,13 @@ function candidate(nodeValue, tier, reasons, score) {
     tier,
     reasons: unique(reasons.map(String)),
     score: Number.isFinite(score) ? Number(score) : null,
-    symbols: [{ name: node.name, kind: node.kind, ...(node.qualifiedName ? { qualifiedName: node.qualifiedName } : {}), ...(node.signature ? { signature: node.signature } : {}) }],
+    symbols: [{ name: node.name, kind: node.kind, ...node.qualifiedName ? { qualifiedName: node.qualifiedName } : {}, ...node.signature ? { signature: node.signature } : {} }],
     needsRead: true
   };
 }
-
 function overlaps(left, right) {
   return left.file === right.file && left.range.startLine <= right.range.endLine && right.range.startLine <= left.range.endLine;
 }
-
 function mergeCandidate(left, right) {
   const preferredTier = TIER_ORDER.get(left.tier) <= TIER_ORDER.get(right.tier) ? left.tier : right.tier;
   return {
@@ -156,7 +142,6 @@ function mergeCandidate(left, right) {
     needsRead: true
   };
 }
-
 function mergeOverlappingCandidates(candidates) {
   const ordered = [...candidates].sort((left, right) => left.file.localeCompare(right.file) || left.range.startLine - right.range.startLine || left.range.endLine - right.range.endLine);
   const merged = [];
@@ -170,7 +155,6 @@ function mergeOverlappingCandidates(candidates) {
   }
   return merged;
 }
-
 function publicItem(item) {
   return {
     id: item.id,
@@ -185,13 +169,11 @@ function publicItem(item) {
     sourceTokens: item.sourceTokens
   };
 }
-
 function sumTokens(items, includedTiers) {
   const included = items.filter(({ tier }) => includedTiers.has(tier));
   if (included.some(({ rangeComplete }) => !rangeComplete)) return null;
   return included.reduce((total, item) => total + item.sourceTokens, 0);
 }
-
 async function readCandidate(item, provider) {
   const requestedRange = item.range;
   const response = await provider.read({ file: item.file, range: requestedRange });
@@ -210,14 +192,12 @@ async function readCandidate(item, provider) {
   item.rendered = rendered;
   item.needsRead = false;
 }
-
-export async function planRepositoryContext({ task, hints = {}, provider, tokenCounter = approximateTokenCounter, limits = {} }) {
+async function planRepositoryContext({ task, hints = {}, provider, tokenCounter = approximateTokenCounter, limits = {} }) {
   validateInputs(task, hints);
   assertProvider(provider);
   if (typeof tokenCounter?.count !== "function" || typeof tokenCounter.name !== "string") {
     throw new TypeError("The token counter must include a name and count function.");
   }
-
   const description = await provider.describe();
   if (typeof description?.commit !== "string" || !description.commit.trim() || description.commit === "unknown") {
     throw new Error("The repository-intelligence provider did not supply a concrete repository commit.");
@@ -227,7 +207,7 @@ export async function planRepositoryContext({ task, hints = {}, provider, tokenC
     budget: limits.budget || "balanced"
   });
   const hits = Array.isArray(search?.hits) ? search.hits : [];
-  const anchorTiers = new Map();
+  const anchorTiers = /* @__PURE__ */ new Map();
   const anchors = hits.map((hit, rank) => {
     const tier = anchorTier(hit, rank);
     const normalized = candidate(hit.node, tier, hit.reasons || ["provider-ranked-match"], hit.score);
@@ -237,7 +217,6 @@ export async function planRepositoryContext({ task, hints = {}, provider, tokenC
     }
     return normalized;
   });
-
   const neighborResult = await provider.neighbors(anchors.map(({ id, file, range, kind, name, qualifiedName, signature, rangeComplete }) => ({
     id,
     file,
@@ -245,8 +224,8 @@ export async function planRepositoryContext({ task, hints = {}, provider, tokenC
     kind,
     name,
     rangeComplete,
-    ...(qualifiedName ? { qualifiedName } : {}),
-    ...(signature ? { signature } : {})
+    ...qualifiedName ? { qualifiedName } : {},
+    ...signature ? { signature } : {}
   })), {
     maxNodes: integer(limits.graphNodes, 24),
     relationships: ["definition", "implementation", "caller", "callee", "reference", "type-dependency", "tests"]
@@ -257,7 +236,6 @@ export async function planRepositoryContext({ task, hints = {}, provider, tokenC
     [String(neighbor.relationship || "related")],
     neighbor.score
   ));
-
   let items = mergeOverlappingCandidates([...anchors, ...neighbors]);
   for (const item of items) {
     await readCandidate(item, provider);
@@ -274,45 +252,36 @@ export async function planRepositoryContext({ task, hints = {}, provider, tokenC
   for (const item of items) {
     item.sourceTokens = tokenCounter.count(item.rendered);
   }
-
-  const must = new Set(["mustRead"]);
-  const expected = new Set(["mustRead", "likelyRead"]);
-  const upper = new Set(["mustRead", "likelyRead", "possibleRead"]);
+  const must = /* @__PURE__ */ new Set(["mustRead"]);
+  const expected = /* @__PURE__ */ new Set(["mustRead", "likelyRead"]);
+  const upper = /* @__PURE__ */ new Set(["mustRead", "likelyRead", "possibleRead"]);
   const classified = (tier) => items.filter((item) => item.tier === tier).map(publicItem);
   const providerDiagnostics = [
-    ...(Array.isArray(search?.diagnostics) ? search.diagnostics : []),
-    ...(Array.isArray(neighborResult?.diagnostics) ? neighborResult.diagnostics : [])
+    ...Array.isArray(search?.diagnostics) ? search.diagnostics : [],
+    ...Array.isArray(neighborResult?.diagnostics) ? neighborResult.diagnostics : []
   ];
   const unresolvedRequired = Array.isArray(search?.unresolvedRequired) ? search.unresolvedRequired : [];
   const unresolvedConcepts = unique(Array.isArray(search?.unresolvedConcepts) ? search.unresolvedConcepts.map(String) : []);
   const noAnchors = anchors.length === 0;
   const capabilities = description?.capabilities || {};
-  const providerEstimateEligible = search?.estimateEligible === true
-    && neighborResult?.estimateEligible === true
-    && capabilities.lexicalSearch === true
-    && capabilities.semanticSearch === true
-    && capabilities.symbolGraph === true
-    && capabilities.verifiedSource === true;
+  const providerEstimateEligible = search?.estimateEligible === true && neighborResult?.estimateEligible === true && capabilities.lexicalSearch === true && capabilities.semanticSearch === true && capabilities.symbolGraph === true && capabilities.verifiedSource === true;
   const estimate = (tiers) => unresolvedRequired.length || unresolvedConcepts.length || noAnchors || !providerEstimateEligible ? null : sumTokens(items, tiers);
-
   const providerResult = {
     name: String(description?.name || "unknown"),
     capabilities
   };
   for (const key of ["selection", "contributors", "fallback"]) {
-    if (description?.[key] !== undefined) {
+    if (description?.[key] !== void 0) {
       providerResult[key] = description[key];
     }
   }
-
   if (typeof provider.verifySnapshot === "function") {
     await provider.verifySnapshot();
   }
-
   return {
     schemaVersion: 1,
     commit: description.commit,
-    ...(description.sourceFingerprint ? { sourceFingerprint: String(description.sourceFingerprint) } : {}),
+    ...description.sourceFingerprint ? { sourceFingerprint: String(description.sourceFingerprint) } : {},
     provider: providerResult,
     anchors: anchors.map(publicItem),
     mustRead: classified("mustRead"),
@@ -342,3 +311,8 @@ export async function planRepositoryContext({ task, hints = {}, provider, tokenC
     }
   };
 }
+export {
+  REPOSITORY_CONTEXT_INPUT_LIMITS,
+  approximateTokenCounter,
+  planRepositoryContext
+};

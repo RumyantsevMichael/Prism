@@ -1,10 +1,7 @@
-// The shared shortening observer: a kit element that shows one line of text ends text that does not fit with an ellipsis in CSS,
-// and this observer marks it `shortened` while it does, so the tooltip can show the full text and a static element joins the Tab order to reach it.
-
-const watched = new Map();
+// Generated from src/server/review/public/kit/shorten.ts by scripts/native-build/compile.mjs.
+const watched = /* @__PURE__ */ new Map();
 let resizes = null;
 let mutations = null;
-
 function measure(host) {
   const entry = watched.get(host);
   if (!entry) return;
@@ -14,7 +11,6 @@ function measure(host) {
     if (shortened) host.setAttribute("shortened", "");
     else host.removeAttribute("shortened");
   }
-  // An element that is not focusable already joins the Tab order while shortened, so a keyboard user can reach its full text.
   const joins = shortened && !focusable();
   if (joins && !host.hasAttribute("tabindex")) {
     host.setAttribute("tabindex", "0");
@@ -24,29 +20,24 @@ function measure(host) {
     entry.added = false;
   }
 }
-
-/**
- * Watches `text`, the element of `host`'s shadow root that holds its one line of text, and keeps `shortened` on `host` in step with it.
- * `focusable` tells whether the host already takes focus some other way.
- */
-export function watchShortening(host, text, { focusable = () => false } = {}) {
+function watchShortening(host, text, { focusable = () => false } = {}) {
   if (!globalThis.ResizeObserver || !globalThis.MutationObserver) return;
   resizes ??= new ResizeObserver((entries) => {
     for (const entry of entries) {
-      for (const [host, item] of watched) if (item.text === entry.target || host === entry.target) measure(host);
+      for (const [host2, item] of watched) if (item.text === entry.target || host2 === entry.target) measure(host2);
     }
   });
   if (!mutations) globalThis.document?.fonts?.addEventListener?.("loadingdone", () => {
-    for (const host of watched.keys()) measure(host);
+    for (const host2 of watched.keys()) measure(host2);
   });
   mutations ??= new MutationObserver((records) => {
-    const hosts = new Set();
+    const hosts = /* @__PURE__ */ new Set();
     for (const record of records) {
       for (let node = record.target; node; node = node.parentNode ?? node.host) {
         if (watched.has(node)) hosts.add(node);
       }
     }
-    for (const host of hosts) measure(host);
+    for (const host2 of hosts) measure(host2);
   });
   const previous = watched.get(host);
   if (previous) resizes.unobserve(previous.text);
@@ -56,14 +47,10 @@ export function watchShortening(host, text, { focusable = () => false } = {}) {
   mutations.observe(host, { childList: true, characterData: true, subtree: true });
   requestAnimationFrame(() => measure(host));
 }
-
-/** Measures a watched host again, such as after its content or its mode changed. */
-export function remeasure(host) {
+function remeasure(host) {
   measure(host);
 }
-
-/** Stops watching a host that left the document. */
-export function unwatchShortening(host) {
+function unwatchShortening(host) {
   const entry = watched.get(host);
   if (!entry) return;
   resizes?.unobserve(entry.text);
@@ -71,3 +58,8 @@ export function unwatchShortening(host) {
   if (entry.added) host.removeAttribute("tabindex");
   watched.delete(host);
 }
+export {
+  remeasure,
+  unwatchShortening,
+  watchShortening
+};

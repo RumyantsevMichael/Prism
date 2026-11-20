@@ -1,9 +1,8 @@
-// prism-badge: a count or a status in a tone, static text with no role of a control.
+// Generated from src/server/review/public/kit/elements/prism-badge.ts by scripts/native-build/compile.mjs.
 import { Base, shadow } from "./base.js";
 import { unwatchShortening, watchShortening } from "../shorten.js";
 import { TONES } from "./prism-chip.js";
-
-export class PrismBadge extends Base {
+class PrismBadge extends Base {
   static tag = "prism-badge";
   static styles = ["prism-badge.css"];
   static catalog = {
@@ -17,17 +16,17 @@ export class PrismBadge extends Base {
     states: ["count", "status", "tones", "solid"],
     keyboard: ["A badge whose text is shortened joins the Tab order so its full text can be read."]
   };
-
   constructor() {
     super();
     this.root = shadow(this, PrismBadge.styles, `<span class="badge" part="badge"><span class="dot" aria-hidden="true"></span><span class="text"><slot></slot></span></span>`);
   }
-
   connectedCallback() {
     watchShortening(this, this.root.querySelector(".text"));
   }
-
   disconnectedCallback() {
     unwatchShortening(this);
   }
 }
+export {
+  PrismBadge
+};

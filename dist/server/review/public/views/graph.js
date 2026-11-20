@@ -1,5 +1,5 @@
+// Generated from src/server/review/public/views/graph.ts by scripts/native-build/compile.mjs.
 import { escapeHtml } from "./util.js";
-
 const SVG = "http://www.w3.org/2000/svg";
 const POINTS_PER_INCH = 72;
 const NODE_PADDING_X = 14;
@@ -7,7 +7,6 @@ const NODE_HEIGHT = 46;
 const NODE_MAX_WIDTH = 340;
 let vizInstance;
 let measureContext;
-
 function viz() {
   if (!window.Viz) {
     throw new Error("The Graphviz layout engine is not loaded.");
@@ -15,14 +14,11 @@ function viz() {
   vizInstance ??= window.Viz.instance();
   return vizInstance;
 }
-
 function textWidth(text, font) {
   measureContext ??= document.createElement("canvas").getContext("2d");
   measureContext.font = font;
   return measureContext.measureText(text).width;
 }
-
-// A node box renders its title and subtitle in the kit's fonts and sizes, so it is measured with the same design values.
 function nodeFonts() {
   const root = getComputedStyle(document.documentElement);
   const value = (name) => root.getPropertyValue(name).trim();
@@ -32,19 +28,15 @@ function nodeFonts() {
     subtitle: `${value("--prism-font-weight-regular")} ${value("--prism-font-size-xs")} ${value("--prism-font-ui")}`
   };
 }
-
 function nodeWidth(node, fonts) {
-  // Measure with the font the node box actually renders, plus the border and a safety margin for font fallback.
   const title = textWidth(node.title ?? "", node.monospace ? fonts.code : fonts.title);
   const subtitle = textWidth(node.subtitle ?? "", fonts.subtitle);
   const widest = Math.max(title, subtitle);
   return Math.min(NODE_MAX_WIDTH, Math.max(90, Math.ceil(widest * 1.06) + NODE_PADDING_X * 2 + 10));
 }
-
 function quote(value) {
   return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
-
 function buildDot(graph, names) {
   const lines = [
     "digraph G {",
@@ -52,7 +44,7 @@ function buildDot(graph, names) {
     'node [shape=box, fixedsize=true, label=""];',
     "edge [arrowhead=none];"
   ];
-  const byCluster = new Map();
+  const byCluster = /* @__PURE__ */ new Map();
   for (const node of graph.nodes) {
     const key = node.cluster ?? "";
     if (!byCluster.has(key)) {
@@ -60,7 +52,7 @@ function buildDot(graph, names) {
     }
     byCluster.get(key).push(node);
   }
-  const clusterNames = new Map();
+  const clusterNames = /* @__PURE__ */ new Map();
   for (const [clusterId, nodes] of byCluster) {
     const declarations = nodes.map((node) => `${names.get(node.id)} [width=${(node.width / POINTS_PER_INCH).toFixed(3)}, height=${(NODE_HEIGHT / POINTS_PER_INCH).toFixed(3)}];`);
     if (clusterId) {
@@ -85,12 +77,10 @@ function buildDot(graph, names) {
   lines.push("}");
   return { dot: lines.join("\n"), clusterNames };
 }
-
 function parsePoint(value) {
   const [x, y] = value.split(",").map(Number);
   return { x, y };
 }
-
 function edgePath(pos, flip) {
   const points = pos.split(/\s+/).filter((part) => part && !part.startsWith("e,") && !part.startsWith("s,")).map(parsePoint).map(flip);
   if (points.length === 0) {
@@ -102,7 +92,6 @@ function edgePath(pos, flip) {
   }
   return path;
 }
-
 function svgElement(name, attributes = {}) {
   const element = document.createElementNS(SVG, name);
   for (const [key, value] of Object.entries(attributes)) {
@@ -110,9 +99,7 @@ function svgElement(name, attributes = {}) {
   }
   return element;
 }
-
-// Lay out with Graphviz, then draw every node and edge ourselves so styling and interaction stay in our hands.
-export async function renderGraph(target, graph, { onSelect, selectedId = null, clusterLabels = new Map() } = {}) {
+async function renderGraph(target, graph, { onSelect, selectedId = null, clusterLabels = /* @__PURE__ */ new Map() } = {}) {
   const fonts = nodeFonts();
   const nodes = graph.nodes.map((node) => ({ ...node, width: nodeWidth(node, fonts) }));
   const names = new Map(nodes.map((node, index) => [node.id, `n${index}`]));
@@ -126,7 +113,6 @@ export async function renderGraph(target, graph, { onSelect, selectedId = null, 
   const edges = svgElement("g", { class: "graph-edges" });
   const nodeLayer = svgElement("g", { class: "graph-nodes" });
   svg.append(clusters, edges, nodeLayer);
-
   for (const object of layout.objects ?? []) {
     if (object.name?.startsWith("cluster_") && object.bb) {
       const [x1, y1, x2, y2] = object.bb.split(",").map(Number);
@@ -139,7 +125,6 @@ export async function renderGraph(target, graph, { onSelect, selectedId = null, 
       clusters.append(group);
     }
   }
-
   const edgeElements = [];
   const objects = layout.objects ?? [];
   for (const edge of layout.edges ?? []) {
@@ -152,8 +137,7 @@ export async function renderGraph(target, graph, { onSelect, selectedId = null, 
     edges.append(element);
     edgeElements.push(element);
   }
-
-  const nodeElements = new Map();
+  const nodeElements = /* @__PURE__ */ new Map();
   for (const object of objects) {
     const id = ids.get(object.name);
     if (!id || !object.pos) {
@@ -163,7 +147,6 @@ export async function renderGraph(target, graph, { onSelect, selectedId = null, 
     const center = flip(parsePoint(object.pos));
     const nodeWidthPoints = Number(object.width) * POINTS_PER_INCH;
     const nodeHeightPoints = Number(object.height) * POINTS_PER_INCH;
-    // A node opens what it names, so it is a link; its SVG title carries the full text of a box that shortens it.
     const group = svgElement("g", { class: `graph-node ${node.className ?? ""}`, tabindex: 0, role: "link", "aria-label": `${node.title}${node.subtitle ? `, ${node.subtitle}` : ""}` });
     group.dataset.id = id;
     const tooltip = svgElement("title");
@@ -184,7 +167,6 @@ export async function renderGraph(target, graph, { onSelect, selectedId = null, 
     nodeLayer.append(group);
     nodeElements.set(id, group);
   }
-
   function highlight(focusId) {
     svg.classList.toggle("has-focus", Boolean(focusId));
     const related = new Set(focusId ? [focusId] : []);
@@ -201,7 +183,6 @@ export async function renderGraph(target, graph, { onSelect, selectedId = null, 
       element.classList.toggle("is-selected", id === selectedId);
     }
   }
-
   target.replaceChildren(svg);
   highlight(selectedId);
   return {
@@ -217,15 +198,14 @@ export async function renderGraph(target, graph, { onSelect, selectedId = null, 
     }
   };
 }
-
-export function graphCard({ title, eyebrow, legend = "" }) {
+function graphCard({ title, eyebrow, legend = "" }) {
   const section = document.createElement("prism-panel");
   section.className = "view-section graph-view";
   section.setAttribute("heading", title);
   section.setAttribute("eyebrow", eyebrow);
   section.innerHTML = `
     <div slot="tools" class="diagram-tools" role="group" aria-label="Graph controls">
-      <prism-button variant="ghost" size="sm" data-zoom="out" label="Zoom out" tip="Zoom out">−</prism-button>
+      <prism-button variant="ghost" size="sm" data-zoom="out" label="Zoom out" tip="Zoom out">\u2212</prism-button>
       <prism-button variant="ghost" size="sm" data-zoom="fit" tip="Fit to width">Fit</prism-button>
       <prism-button variant="ghost" size="sm" data-zoom="reset" tip="Actual size" data-zoom-label>100%</prism-button>
       <prism-button variant="ghost" size="sm" data-zoom="in" label="Zoom in" tip="Zoom in">+</prism-button>
@@ -234,8 +214,7 @@ export function graphCard({ title, eyebrow, legend = "" }) {
     <prism-canvas class="graph-viewport" pannable tabindex="-1"><prism-spinner label="Laying out graph"></prism-spinner></prism-canvas>`;
   return section;
 }
-
-export function enablePanZoom(section, state) {
+function enablePanZoom(section, state) {
   const viewport = section.querySelector(".graph-viewport");
   const svg = viewport.querySelector("svg");
   if (!svg) {
@@ -250,12 +229,10 @@ export function enablePanZoom(section, state) {
     svg.style.width = `${naturalWidth * state.scale}px`;
     svg.style.height = `${naturalHeight * state.scale}px`;
     label.textContent = `${Math.round(state.scale * 100)}%`;
-    // The canvas's dotted grid scales with the graph.
     viewport.setAttribute("scale", String(state.scale));
   };
   apply(state.scale ?? Math.max(0.85, fitScale()));
-  // The pan position survives a refresh the same way the zoom does.
-  if (state.left !== undefined) {
+  if (state.left !== void 0) {
     viewport.scrollLeft = state.left;
     viewport.scrollTop = state.top;
   }
@@ -298,3 +275,8 @@ export function enablePanZoom(section, state) {
   viewport.addEventListener("pointerup", end);
   viewport.addEventListener("pointercancel", end);
 }
+export {
+  enablePanZoom,
+  graphCard,
+  renderGraph
+};

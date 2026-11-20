@@ -1,3 +1,4 @@
+// Generated from src/server/session/host-adapters/claude-code.mts by scripts/native-build/compile.mjs.
 import { constants as fileConstants } from "node:fs";
 import * as defaultFileSystem from "node:fs/promises";
 import os from "node:os";
@@ -11,53 +12,42 @@ import {
   readHostSessionFacts,
   unsupportedHostSessionFacts
 } from "../host-session-facts.mjs";
-
 const MAX_TRANSCRIPT_TAIL_BYTES = 256 * 1024;
 const MAX_SETTINGS_BYTES = 1024 * 1024;
 const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
 const HOST_VALUE_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._:/@\[\]-]{0,255}$/;
-
-// Conservative Claude Code capacity policy. Claude Code resolves its compaction trigger from settings,
-// environment, server-side client data, and experiments that hooks cannot observe, so Prism estimates low.
-export const CLAUDE_CODE_ESTIMATE_POLICY = Object.freeze({
-  standardContextWindowTokens: 200000,
-  extendedContextWindowTokens: 1000000,
-  defaultAutoCompactWindowTokens: 200000,
-  outputReserveTokens: 20000,
+const CLAUDE_CODE_ESTIMATE_POLICY = Object.freeze({
+  standardContextWindowTokens: 2e5,
+  extendedContextWindowTokens: 1e6,
+  defaultAutoCompactWindowTokens: 2e5,
+  outputReserveTokens: 2e4,
   thresholdPercent: 80,
-  implementationReserveTokens: 60000
+  implementationReserveTokens: 6e4
 });
-
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-
 function nonemptyString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
-
 function positiveInteger(value) {
   const text = nonemptyString(value);
   if (!text || !/^\d+$/.test(text)) return null;
   const number = Number(text);
   return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
-
 function enabledFlag(value) {
   const text = nonemptyString(value)?.toLowerCase();
   return Boolean(text) && !["0", "false", "no", "off"].includes(text);
 }
-
 function observedAt(now) {
   const value = now();
   const date = value instanceof Date ? value : new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
-
 function baseModel(model) {
   return model.replace(/\[[^\]]*\]$/, "");
 }
-
 async function canonicalDirectory(value, fileSystem) {
   const normalized = nonemptyString(value);
   if (!normalized || !path.isAbsolute(normalized)) return null;
@@ -69,7 +59,6 @@ async function canonicalDirectory(value, fileSystem) {
     return null;
   }
 }
-
 async function readBoundedTail(filePath, maxBytes, fileSystem) {
   const handle = await fileSystem.open(filePath, fileConstants.O_RDONLY | (fileConstants.O_NOFOLLOW ?? 0));
   try {
@@ -84,11 +73,7 @@ async function readBoundedTail(filePath, maxBytes, fileSystem) {
     await handle.close();
   }
 }
-
-/**
- * Reads the latest Claude Code version and main-thread model for one session from a bounded transcript tail.
- */
-export async function inspectClaudeCodeTranscript({ transcriptPath, sessionId, fileSystem = defaultFileSystem } = {}) {
+async function inspectClaudeCodeTranscript({ transcriptPath, sessionId, fileSystem = defaultFileSystem } = {}) {
   const normalizedPath = nonemptyString(transcriptPath);
   if (!normalizedPath || !path.isAbsolute(normalizedPath)) return null;
   let text;
@@ -116,7 +101,6 @@ export async function inspectClaudeCodeTranscript({ transcriptPath, sessionId, f
   }
   return harnessVersion ? { harnessVersion, model } : null;
 }
-
 const MAX_USAGE_TRANSCRIPT_BYTES = 64 * 1024 * 1024;
 const USAGE_READ_CHUNK_BYTES = 256 * 1024;
 const USAGE_FIELDS = [
@@ -125,10 +109,9 @@ const USAGE_FIELDS = [
   ["cacheReadTokens", "cache_read_input_tokens"],
   ["outputTokens", "output_tokens"]
 ];
-
 function messageUsage(entry, { sessionId, agentId }) {
   if (!isObject(entry) || entry.type !== "assistant" || entry.sessionId !== sessionId) return null;
-  if (agentId === null ? entry.isSidechain === true : (entry.agentId !== undefined && entry.agentId !== agentId)) return null;
+  if (agentId === null ? entry.isSidechain === true : entry.agentId !== void 0 && entry.agentId !== agentId) return null;
   const id = nonemptyString(entry.message?.id);
   const usage = entry.message?.usage;
   if (!id || !isObject(usage)) return null;
@@ -141,13 +124,7 @@ function messageUsage(entry, { sessionId, agentId }) {
   const time = typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : Number.NaN;
   return { id, counts, time: Number.isFinite(time) ? time : null };
 }
-
-/**
- * Sums Claude Code per-message usage once per message id from one execution transcript.
- * Reads only usage, timestamps, and message ids, in memory, and stops at 64 MiB or at the deadline.
- * Returns absent, empty, unrecognized, unreadable, cut-short, or counted totals; never zero for an unknown format.
- */
-export async function readClaudeCodeMessageUsage({
+async function readClaudeCodeMessageUsage({
   transcriptPath,
   sessionId,
   agentId = null,
@@ -164,7 +141,7 @@ export async function readClaudeCodeMessageUsage({
   } catch (error) {
     return { status: error?.code === "ENOENT" ? "absent" : "unreadable" };
   }
-  const messages = new Map();
+  const messages = /* @__PURE__ */ new Map();
   let sawContent = false;
   try {
     const metadata = await handle.stat();
@@ -204,7 +181,8 @@ export async function readClaudeCodeMessageUsage({
   } catch {
     return { status: "unreadable" };
   } finally {
-    await handle.close().catch(() => {});
+    await handle.close().catch(() => {
+    });
   }
   if (messages.size === 0) return { status: sawContent ? "unrecognized" : "empty" };
   const totals = { inputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 0 };
@@ -224,7 +202,6 @@ export async function readClaudeCodeMessageUsage({
     latestMessageId: latest?.id ?? [...messages.keys()].at(-1)
   };
 }
-
 function settingsWindows(settings) {
   const windows = [];
   const collect = (value) => {
@@ -239,23 +216,16 @@ function settingsWindows(settings) {
   }
   return windows;
 }
-
 function settingsPaths({ projectRoot, environment }) {
   const configDirectory = nonemptyString(environment.CLAUDE_CONFIG_DIR) ?? path.join(os.homedir(), ".claude");
   return [
     path.join(configDirectory, "settings.json"),
     path.join(projectRoot, ".claude", "settings.json"),
     path.join(projectRoot, ".claude", "settings.local.json"),
-    process.platform === "darwin"
-      ? "/Library/Application Support/ClaudeCode/managed-settings.json"
-      : "/etc/claude-code/managed-settings.json"
+    process.platform === "darwin" ? "/Library/Application Support/ClaudeCode/managed-settings.json" : "/etc/claude-code/managed-settings.json"
   ];
 }
-
-/**
- * Returns the smallest numeric `autoCompactWindow` from any Claude Code settings layer, reading only that key.
- */
-export async function readClaudeCodeAutoCompactWindow({ projectRoot, environment = process.env, fileSystem = defaultFileSystem } = {}) {
+async function readClaudeCodeAutoCompactWindow({ projectRoot, environment = process.env, fileSystem = defaultFileSystem } = {}) {
   let smallest = null;
   for (const settingsPath of settingsPaths({ projectRoot, environment })) {
     let settings;
@@ -272,18 +242,13 @@ export async function readClaudeCodeAutoCompactWindow({ projectRoot, environment
   }
   return smallest;
 }
-
 function providerFor(environment) {
   if (enabledFlag(environment.CLAUDE_CODE_USE_BEDROCK)) return "aws-bedrock";
   if (enabledFlag(environment.CLAUDE_CODE_USE_VERTEX)) return "google-vertex";
   if (enabledFlag(environment.CLAUDE_CODE_USE_FOUNDRY)) return "azure-foundry";
   return "anthropic";
 }
-
-/**
- * Derives a deliberately low Claude Code capacity estimate from the model and the observable window controls.
- */
-export function estimateClaudeCodeCapacity({ model, environment = {}, settingsAutoCompactWindow = null, policy = CLAUDE_CODE_ESTIMATE_POLICY }) {
+function estimateClaudeCodeCapacity({ model, environment = {}, settingsAutoCompactWindow = null, policy = CLAUDE_CODE_ESTIMATE_POLICY }) {
   const extended = /\[1m\]$/i.test(model) && !enabledFlag(environment.CLAUDE_CODE_DISABLE_1M_CONTEXT);
   let contextWindowTokens = extended ? policy.extendedContextWindowTokens : policy.standardContextWindowTokens;
   const maxContext = positiveInteger(environment.CLAUDE_CODE_MAX_CONTEXT_TOKENS);
@@ -305,7 +270,6 @@ export function estimateClaudeCodeCapacity({ model, environment = {}, settingsAu
   if (compactionThresholdTokens < 1) return null;
   return { contextWindowTokens, compactionThresholdTokens };
 }
-
 const ESTIMATE_SOURCES = Object.freeze({
   harness: "claude-code-adapter",
   harnessVersion: "transcript.version",
@@ -314,12 +278,8 @@ const ESTIMATE_SOURCES = Object.freeze({
   compactionThresholdTokens: "estimate.claude_code.auto_compact_threshold",
   compactionScope: "claude_code.total_input_tokens"
 });
-
-/**
- * The adapter records a conservative capacity estimate for a root Claude Code session.
- */
-export function createClaudeCodeHostAdapter({
-  now = () => new Date(),
+function createClaudeCodeHostAdapter({
+  now = () => /* @__PURE__ */ new Date(),
   fileSystem = defaultFileSystem,
   inspectTranscript = inspectClaudeCodeTranscript,
   readAutoCompactWindow = readClaudeCodeAutoCompactWindow,
@@ -337,7 +297,6 @@ export function createClaudeCodeHostAdapter({
       if (!projectRoot) return unsupportedHostSessionFacts(HOST_FACT_REASON.NO_PROJECT_ROOT, { record: null });
       const timestamp = observedAt(now);
       if (!timestamp) return unsupportedHostSessionFacts(HOST_FACT_REASON.INVALID_SESSION_FACTS, { record: null });
-
       let transcript = null;
       try {
         transcript = await inspectTranscript({ transcriptPath: input.transcript_path, sessionId, fileSystem });
@@ -347,22 +306,19 @@ export function createClaudeCodeHostAdapter({
       if (!transcript?.harnessVersion) {
         return unsupportedHostSessionFacts(HOST_FACT_REASON.HOST_METADATA_UNAVAILABLE, { record: null });
       }
-
       let model = nonemptyString(input.model);
       let modelSource = "hook.model";
       if (!model) {
         const dataDirectory = nonemptyString(environment.PLUGIN_DATA || environment.CLAUDE_PLUGIN_DATA);
         let previous = null;
         try {
-          previous = dataDirectory
-            ? await readPreviousFacts({
-              dataDirectory,
-              correlationKey: createSessionCorrelationKey(sessionId),
-              projectRoot,
-              now,
-              maxAgeMs: HOST_FACT_MAX_AGE_MS
-            })
-            : null;
+          previous = dataDirectory ? await readPreviousFacts({
+            dataDirectory,
+            correlationKey: createSessionCorrelationKey(sessionId),
+            projectRoot,
+            now,
+            maxAgeMs: HOST_FACT_MAX_AGE_MS
+          }) : null;
         } catch {
           previous = null;
         }
@@ -400,7 +356,6 @@ export function createClaudeCodeHostAdapter({
         const unsupported = record({ status: "UNSUPPORTED", reasonCode, sources: identitySources });
         return unsupportedHostSessionFacts(reasonCode, { record: unsupported });
       }
-
       let settingsAutoCompactWindow = null;
       try {
         settingsAutoCompactWindow = await readAutoCompactWindow({ projectRoot, environment, fileSystem });
@@ -426,3 +381,11 @@ export function createClaudeCodeHostAdapter({
     }
   };
 }
+export {
+  CLAUDE_CODE_ESTIMATE_POLICY,
+  createClaudeCodeHostAdapter,
+  estimateClaudeCodeCapacity,
+  inspectClaudeCodeTranscript,
+  readClaudeCodeAutoCompactWindow,
+  readClaudeCodeMessageUsage
+};

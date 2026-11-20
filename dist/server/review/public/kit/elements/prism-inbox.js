@@ -1,8 +1,6 @@
-// prism-inbox: a list of prism-inbox-item rows to pick one from, whose picked item a page shows beside the list, as a mail inbox does.
-// The list takes one Tab stop and the selection follows the arrow keys, so the detail beside it changes as the person moves through the list.
+// Generated from src/server/review/public/kit/elements/prism-inbox.ts by scripts/native-build/compile.mjs.
 import { Base, emit, setAttribute } from "./base.js";
-
-export class PrismInbox extends Base {
+class PrismInbox extends Base {
   static tag = "prism-inbox";
   static observedAttributes = ["label"];
   static catalog = {
@@ -16,7 +14,6 @@ export class PrismInbox extends Base {
       "Enter, Space, or a click selects the item and sends prism-select."
     ]
   };
-
   constructor() {
     super();
     this.addEventListener("keydown", (event) => this.onKey(event));
@@ -25,42 +22,34 @@ export class PrismInbox extends Base {
       if (item && this.items.includes(item)) this.choose(item);
     });
   }
-
   connectedCallback() {
     setAttribute(this, "role", "listbox");
     setAttribute(this, "tabindex", "0");
     this.attributeChangedCallback();
     this.sync();
   }
-
   attributeChangedCallback() {
     setAttribute(this, "aria-label", this.getAttribute("label") || null);
   }
-
   /** The visible items in order. */
   get items() {
     return [...this.querySelectorAll("prism-inbox-item")].filter((item) => item.closest("prism-inbox") === this && !item.closest("[hidden]"));
   }
-
   /** The selected item, or null. */
   get selected() {
     return this.items.find((item) => item.selected) ?? null;
   }
-
   /** The selected item's value, or an empty string; setting it selects the item with that value without sending prism-select. */
   get value() {
     return this.selected?.value ?? "";
   }
-
   set value(value) {
     for (const item of this.querySelectorAll("prism-inbox-item")) item.selected = item.value === String(value);
     this.sync();
   }
-
   sync() {
     setAttribute(this, "aria-activedescendant", this.selected?.id ?? null);
   }
-
   /** Selects an item, shows it, and sends prism-select with its value. */
   choose(item) {
     for (const other of this.querySelectorAll("prism-inbox-item")) other.selected = other === item;
@@ -68,7 +57,6 @@ export class PrismInbox extends Base {
     item.scrollIntoView?.({ block: "nearest" });
     emit(this, "prism-select", { value: item.value });
   }
-
   onKey(event) {
     if (event.altKey || event.ctrlKey || event.metaKey || event.target !== this) return;
     const items = this.items;
@@ -99,3 +87,6 @@ export class PrismInbox extends Base {
     if (next) this.choose(next);
   }
 }
+export {
+  PrismInbox
+};

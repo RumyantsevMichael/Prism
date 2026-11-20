@@ -1,15 +1,11 @@
+// Generated from src/server/review/public/views/agents.ts by scripts/native-build/compile.mjs.
 import { createActionList, readOnlyNotice } from "./actions.js";
 import { openQuestion } from "./attention.js";
 import { coalesce } from "./poller.js";
 import { badge, bindLinks, emptyState, escapeHtml } from "./util.js";
 import { agoText, timeLeft } from "../kit/claim-time.js";
-
-// The Agents page: every agent of the workspace and every session launched on this computer, one library table row each, grouped by
-// what needs the person, read from api/agents every few seconds; a launched session's terminal command and its own actions unfold under its row.
-
-export const EMPTY_TEXT = "No agent works on this workspace, and nothing was launched on this computer.";
-export const REFRESH_MS = 5000;
-
+const EMPTY_TEXT = "No agent works on this workspace, and nothing was launched on this computer.";
+const REFRESH_MS = 5e3;
 const STATES = Object.freeze({
   running: ["Running", "accent"],
   waiting: ["Waiting for you", "warning"],
@@ -20,69 +16,51 @@ const STATES = Object.freeze({
   working: ["Working", "info"],
   expired: ["Expired", "neutral"]
 });
-
-// The table's groups in their order, and what each Show choice shows, with the count each choice names.
-export const GROUPS = Object.freeze([["needs-you", "Needs you"], ["launched", "Launched on this computer"], ["other", "Other sessions"], ["expired", "Claims that expired"]]);
-export const SHOWS = Object.freeze([
+const GROUPS = Object.freeze([["needs-you", "Needs you"], ["launched", "Launched on this computer"], ["other", "Other sessions"], ["expired", "Claims that expired"]]);
+const SHOWS = Object.freeze([
   ["all", "All", "all", ["needs-you", "launched", "other", "expired"]],
   ["needs-you", "Needs you", "needsYou", ["needs-you"]],
   ["this-computer", "This computer", "thisComputer", ["needs-you", "launched"]],
   ["other", "Other sessions", "other", ["other"]],
   ["expired", "Expired", "expired", ["expired"]]
 ]);
-
-/** A duration in milliseconds as hours, minutes, and seconds, such as `4s`, `2m 05s`, or `1h 02m 09s`. */
-export function runningText(ms) {
-  const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+function runningText(ms) {
+  const total = Math.max(0, Math.floor((Number(ms) || 0) / 1e3));
   const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
+  const minutes = Math.floor(total % 3600 / 60);
   const seconds = total % 60;
   const two = (value) => String(value).padStart(2, "0");
   if (hours) return `${hours}h ${two(minutes)}m ${two(seconds)}s`;
   if (minutes) return `${minutes}m ${two(seconds)}s`;
   return `${seconds}s`;
 }
-
-/** How the last run ended, as the host reported it, or an empty text while no run has ended. */
-export function exitText(exit) {
+function exitText(exit) {
   if (!exit) return "";
   if (exit.signal) return `Ended by signal ${exit.signal}`;
-  return exit.code === null || exit.code === undefined ? "" : `Exit code ${exit.code}`;
+  return exit.code === null || exit.code === void 0 ? "" : `Exit code ${exit.code}`;
 }
-
-/** The state's words and the tone of its badge. */
-export function stateOf(entry) {
+function stateOf(entry) {
   return STATES[entry.state] ?? [String(entry.state ?? ""), "neutral"];
 }
-
-/** The harness and the model an entry names, or Agent when it names neither harness nor model. */
-export function hostText(entry) {
-  return [entry.harness || "Agent", entry.model].filter(Boolean).join(" · ");
+function hostText(entry) {
+  return [entry.harness || "Agent", entry.model].filter(Boolean).join(" \xB7 ");
 }
-
-// How long ago a time was, in seconds below a minute so a run that just ended still reads as a time ago.
-function agoWords(at, now) {
-  const time = Date.parse(at ?? "");
+function agoWords(at2, now) {
+  const time = Date.parse(at2 ?? "");
   if (!Number.isFinite(time)) return "";
-  const seconds = Math.floor(Math.max(0, now - time) / 1000);
-  return seconds < 60 ? `${seconds}s ago` : agoText(at, now);
+  const seconds = Math.floor(Math.max(0, now - time) / 1e3);
+  return seconds < 60 ? `${seconds}s ago` : agoText(at2, now);
 }
-
-/** What an entry works on: how a failed launch ended and why, else its activity and slice, else a launch's reason. */
-export function workText(entry, now = Date.now()) {
+function workText(entry, now = Date.now()) {
   if (entry.kind === "launch" && entry.state === "failed") {
     const ended = agoWords(entry.launch?.endedAt, now);
     return [ended ? `Ended ${ended}` : "", entry.reason ?? ""].filter(Boolean).join(": ");
   }
-  if (entry.slice) return [entry.activity, entry.slice.title].filter(Boolean).join(" · ");
+  if (entry.slice) return [entry.activity, entry.slice.title].filter(Boolean).join(" \xB7 ");
   return entry.reason ?? "";
 }
-
-// A launch runs, and its time counts, while it runs or waits on the person.
 const ticking = (entry) => entry.state === "running" || entry.state === "waiting";
-
-/** An entry's time: how long a launch has run, the lease a live claim has left, or how long ago an expired claim lapsed. */
-export function timeText(entry, now = Date.now(), elapsed = 0) {
+function timeText(entry, now = Date.now(), elapsed = 0) {
   if (entry.kind === "launch") return runningText((entry.launch?.runningMs ?? 0) + (ticking(entry) ? elapsed : 0));
   if (entry.group === "expired") {
     const ago = agoText(entry.expiresAt, now);
@@ -90,26 +68,20 @@ export function timeText(entry, now = Date.now(), elapsed = 0) {
   }
   return timeLeft(entry.expiresAt, now).text;
 }
-
-// A start as the time of day for today, and the day and time otherwise.
-function startText(at, now) {
-  const time = Date.parse(at ?? "");
+function startText(at2, now) {
+  const time = Date.parse(at2 ?? "");
   if (!Number.isFinite(time)) return "";
   const date = new Date(time);
-  const clock = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  return new Date(now).toDateString() === date.toDateString() ? clock : `${date.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${clock}`;
+  const clock = date.toLocaleTimeString(void 0, { hour: "2-digit", minute: "2-digit" });
+  return new Date(now).toDateString() === date.toDateString() ? clock : `${date.toLocaleDateString(void 0, { day: "numeric", month: "short" })} ${clock}`;
 }
-
-/** The line under a launch's name: when it started, how its last run ended, and how many runs it had when more than one. */
-export function launchFacts(launch, now = Date.now()) {
+function launchFacts(launch, now = Date.now()) {
   if (!launch) return "";
-  return [launch.launchedAt ? `Started ${startText(launch.launchedAt, now)}` : "", exitText(launch.exit), launch.runs > 1 ? `${launch.runs} runs` : ""].filter(Boolean).join(" · ");
+  return [launch.launchedAt ? `Started ${startText(launch.launchedAt, now)}` : "", exitText(launch.exit), launch.runs > 1 ? `${launch.runs} runs` : ""].filter(Boolean).join(" \xB7 ");
 }
-
-// Within needs-you, failed before waiting; launches the latest launched first; live claims the one that lapses first first; expired ones the latest to lapse first.
 const at = (value) => Date.parse(value ?? "") || 0;
 function order(left, right) {
-  const groups = GROUPS.map(([group]) => group);
+  const groups = GROUPS.map(([group2]) => group2);
   const group = groups.indexOf(left.group) - groups.indexOf(right.group);
   if (group) return group;
   if (left.group === "needs-you" && left.state !== right.state) return left.state === "failed" ? -1 : right.state === "failed" ? 1 : 0;
@@ -117,9 +89,7 @@ function order(left, right) {
   if (left.group === "other") return at(left.expiresAt) - at(right.expiresAt) || left.id.localeCompare(right.id);
   return at(right.expiresAt) - at(left.expiresAt) || left.id.localeCompare(right.id);
 }
-
-/** The counts of the Show choices, from the entries as the page holds them. */
-export function countsOf(entries) {
+function countsOf(entries) {
   const count = (accept) => entries.filter(accept).length;
   return {
     all: entries.length,
@@ -129,9 +99,7 @@ export function countsOf(entries) {
     expired: count((entry) => entry.group === "expired")
   };
 }
-
 const KIND_ICONS = { launch: "play", claim: "agent", expired: "clock" };
-
 function titleHtml(entry, ctx) {
   const icon = entry.kind === "launch" ? KIND_ICONS.launch : entry.group === "expired" ? KIND_ICONS.expired : KIND_ICONS.claim;
   const ref = entry.kind === "launch" ? `initiative:${entry.initiative?.id}` : entry.slice?.ref ?? `initiative:${entry.initiative?.id}`;
@@ -139,30 +107,25 @@ function titleHtml(entry, ctx) {
   const link = ref && ctx.hasArtifact(ref) ? `<a href="./review?artifact=${encodeURIComponent(ref)}" data-artifact="${escapeHtml(ref)}">${escapeHtml(entry.name ?? "")}</a>` : `<span>${escapeHtml(entry.name ?? "")}</span>`;
   return `<prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${link}${facts ? `<span class="prism-lib-cell is-detail">${escapeHtml(facts)}</span>` : ""}</span>`;
 }
-
 function actionHtml(entry, writable) {
   if (entry.action === "answer") return '<prism-button size="sm" variant="primary" data-agent-action="answer" text="Answer"></prism-button>';
-  // A tab that can only read shows the stop it cannot send as unavailable.
   if (entry.action === "stop") return `<prism-button size="sm" variant="ghost" data-agent-action="stop" text="Stop"${writable ? "" : ' disabled tip="This tab can only read."'}></prism-button>`;
   if (entry.action === "open") return '<prism-button size="sm" variant="ghost" data-agent-action="open" text="Open"></prism-button>';
   return "";
 }
-
 function detailsHtml(entry) {
   const command = entry.launch?.resumeCommand;
-  // The reason shows here only when the row's Working on names the slice in its place.
   const reason = entry.reason && !workText(entry).includes(entry.reason) ? `<p class="agents-details-reason">${escapeHtml(entry.reason)}</p>` : "";
   if (!command) return `${reason}<p class="agents-details-lead">${ticking(entry) ? "It runs now; the command that continues it in a terminal shows once it stops." : "This session has no terminal command to continue it."}</p>`;
   return `${reason}<p class="agents-details-lead">Continue it in a terminal, in <span class="agents-folder" data-code-subject>${escapeHtml(command.cwd)}</span></p>
     <div class="agents-command"><prism-code class="agents-code"><pre><code>${escapeHtml(command.command)}</code></pre></prism-code><prism-button size="sm" variant="ghost" data-copy-command tip="Copy the command">Copy</prism-button></div>`;
 }
-
-export async function render(container, entity, ctx) {
+async function render(container, entity, ctx) {
   const state = ctx.state;
   state.show = SHOWS.some(([value]) => value === state.show) ? state.show : entity.data?.show ?? "all";
   state.openAgents ??= [];
   const showChoices = SHOWS.map(([value, label]) => `<span value="${value}">${label} <span data-show-count="${value}">0</span></span>`).join("");
-  const columns = ["Agent", "Host · model", "Working on", "State", "Time", ""].map((name) => `<span>${escapeHtml(name)}</span>`).join("");
+  const columns = ["Agent", "Host \xB7 model", "Working on", "State", "Time", ""].map((name) => `<span>${escapeHtml(name)}</span>`).join("");
   container.innerHTML = `<div class="agents">
     <div class="agents-notice" data-agents-notice></div>
     <p class="error agents-error" role="alert" hidden></p>
@@ -187,19 +150,16 @@ export async function render(container, entity, ctx) {
     head.innerHTML = `<h2 class="prism-lib-group-name">${escapeHtml(label)} <prism-badge tone="neutral">0</prism-badge></h2>`;
     return [group, head];
   }));
-  const rows = new Map();
-  const drafts = (state.actionDrafts ??= {});
+  const rows = /* @__PURE__ */ new Map();
+  const drafts = state.actionDrafts ??= {};
   let entries = [];
   let loaded = false;
   let readOnly = typeof ctx.canWrite === "function" ? !ctx.canWrite() : false;
   bindLinks(table, ctx);
-
   const noteReadOnly = () => {
     if (readOnly && !noticeSlot.childElementCount) noticeSlot.innerHTML = readOnlyNotice();
   };
   noteReadOnly();
-
-  // A launched session's own actions, such as Resume, in its details; Stop stays the row's own action, so the list leaves it out.
   const api = {
     ...ctx.actionApi,
     async list(target) {
@@ -219,9 +179,7 @@ export async function render(container, entity, ctx) {
       }
     }
   };
-  // Each action keeps its button, so its row reads as what it does beside the button, and an unavailable one says why under it.
   const heading = (action) => ({ label: `<span class="agents-action-effect">${escapeHtml(action.effect)}</span>`, detail: "" });
-
   function rowFor(entry) {
     let row = rows.get(entry.id);
     if (row) return row;
@@ -239,20 +197,17 @@ export async function render(container, entity, ctx) {
     const work = cell();
     const badgeCell = cell();
     const time = cell();
-    const clock = document.createElement("span");
-    clock.className = "agents-time";
-    time.append(clock);
+    const clock2 = document.createElement("span");
+    clock2.className = "agents-time";
+    time.append(clock2);
     const action = cell();
     action.classList.add("agents-action");
     element.append(title, host, work, badgeCell, time, action);
-    row = { element, cells: { title, host, work, badge: badgeCell, action }, clock, html: {}, entry, fetchedAt: Date.now(), details: null, actions: null };
+    row = { element, cells: { title, host, work, badge: badgeCell, action }, clock: clock2, html: {}, entry, fetchedAt: Date.now(), details: null, actions: null };
     rows.set(entry.id, row);
     return row;
   }
-
   const isOpen = (row) => state.openAgents.includes(row.entry.id);
-
-  // A launch's details exist once it has any, and unfold under its cells only while the person opened them.
   function paintDetails(row) {
     if (row.entry.kind !== "launch") return;
     if (!row.details) {
@@ -274,15 +229,12 @@ export async function render(container, entity, ctx) {
     }
     const open = isOpen(row);
     row.details.element.hidden = !open;
-    // A tab that can only read offers no action of the session.
     if (open && !readOnly && !row.actions) row.actions = createActionList({ root: row.details.actionsRoot, targets: [`launch:${row.entry.launch.id}`], api, drafts, heading, compact: true, notice: false, emptyText: "", unavailableButtons: true });
     if (readOnly && row.actions) {
       row.actions = null;
       row.details.actionsRoot.replaceChildren();
     }
   }
-
-  // Writes only what changed, so a focused control keeps its focus and a second that passes redraws only the time.
   function paint(row, now = Date.now()) {
     const { entry } = row;
     const [words, tone] = stateOf(entry);
@@ -298,7 +250,6 @@ export async function render(container, entity, ctx) {
       row.html[key] = value;
       row.cells[key].innerHTML = value;
     }
-    // Open says whether the details are unfolded without redrawing the button, so it keeps its focus.
     const opener = row.cells.action.querySelector('[data-agent-action="open"]');
     if (opener && opener.getAttribute("aria-expanded") !== String(isOpen(row))) opener.setAttribute("aria-expanded", String(isOpen(row)));
     if (entry.kind === "launch") row.clock.dataset.runningTime = "";
@@ -307,8 +258,6 @@ export async function render(container, entity, ctx) {
     if (row.clock.textContent !== time) row.clock.textContent = time;
     paintDetails(row);
   }
-
-  // Places the head, each shown group's head, and its rows in order, moving a node only when the order changed, and hides what the Show choice leaves out.
   function layout() {
     entries.sort(order);
     const counts = countsOf(entries);
@@ -347,10 +296,9 @@ export async function render(container, entity, ctx) {
     toolbar.hidden = none;
     empty.hidden = !none;
   }
-
   function showAgents(list) {
     const now = Date.now();
-    const seen = new Set();
+    const seen = /* @__PURE__ */ new Set();
     for (const entry of list) {
       seen.add(entry.id);
       const row = rowFor(entry);
@@ -369,8 +317,6 @@ export async function render(container, entity, ctx) {
     entries = [...list];
     layout();
   }
-
-  // One read at a time; a read asked for while one is on its way runs once after it.
   const refresh = coalesce(async () => {
     try {
       const response = await fetch("./api/agents", { cache: "no-store" });
@@ -384,8 +330,6 @@ export async function render(container, entity, ctx) {
       errorLine.hidden = false;
     }
   });
-
-  // Each second counts a running launch's time on, and moves a claim whose lease passed to the claims that expired.
   function tick() {
     const now = Date.now();
     let moved = false;
@@ -393,19 +337,17 @@ export async function render(container, entity, ctx) {
       const { entry } = row;
       if (entry.kind === "claim" && entry.group === "other" && at(entry.expiresAt) && at(entry.expiresAt) <= now) {
         row.entry = { ...entry, group: "expired", state: "expired" };
-        entries = entries.map((item) => (item.id === entry.id ? row.entry : item));
+        entries = entries.map((item) => item.id === entry.id ? row.entry : item);
         moved = true;
       }
       paint(row, now);
     }
     if (moved) layout();
   }
-
   show.addEventListener("change", (event) => {
     state.show = event.detail?.value ?? show.value;
     layout();
   });
-
   table.addEventListener("click", async (event) => {
     const copy = event.target.closest("[data-copy-command]");
     if (copy && table.contains(copy)) {
@@ -438,15 +380,28 @@ export async function render(container, entity, ctx) {
       }
     }
   });
-
-  // The clock and the refresh stop once the page left the window.
   const clock = setInterval(() => {
     if (!container.isConnected) return clearInterval(clock);
     tick();
-  }, 1000);
+  }, 1e3);
   const poll = setInterval(() => {
     if (!container.isConnected) return clearInterval(poll);
     void refresh();
   }, REFRESH_MS);
   await refresh();
 }
+export {
+  EMPTY_TEXT,
+  GROUPS,
+  REFRESH_MS,
+  SHOWS,
+  countsOf,
+  exitText,
+  hostText,
+  launchFacts,
+  render,
+  runningText,
+  stateOf,
+  timeText,
+  workText
+};

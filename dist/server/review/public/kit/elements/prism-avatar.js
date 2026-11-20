@@ -1,7 +1,6 @@
-// prism-avatar: an agent as a rounded square with the agent glyph, or a person as a circle with initials, with the live dot and the expired outline.
+// Generated from src/server/review/public/kit/elements/prism-avatar.ts by scripts/native-build/compile.mjs.
 import { Base, escapeHtml, setAttribute, shadow } from "./base.js";
-
-export class PrismAvatar extends Base {
+class PrismAvatar extends Base {
   static tag = "prism-avatar";
   static styles = ["prism-avatar.css"];
   static observedAttributes = ["kind", "name", "hue", "live", "breathing", "expired", "size"];
@@ -19,20 +18,16 @@ export class PrismAvatar extends Base {
     states: ["agent", "person", "workspace", "live", "expired"],
     keyboard: []
   };
-
   constructor() {
     super();
     this.root = shadow(this, PrismAvatar.styles, "");
   }
-
   connectedCallback() {
     this.render();
   }
-
   attributeChangedCallback() {
     if (this.isConnected) this.render();
   }
-
   render() {
     const kind = this.getAttribute("kind");
     const person = kind === "person";
@@ -43,6 +38,9 @@ export class PrismAvatar extends Base {
     const dot = this.hasAttribute("live") && !this.hasAttribute("expired") ? `<span class="dot" part="dot"></span>` : "";
     this.root.innerHTML = `<span class="face" part="face" aria-hidden="true">${face}</span>${dot}`;
     setAttribute(this, "role", "img");
-    setAttribute(this, "aria-label", name ? (person || workspace ? name : `${name} (agent)`) : null);
+    setAttribute(this, "aria-label", name ? person || workspace ? name : `${name} (agent)` : null);
   }
 }
+export {
+  PrismAvatar
+};

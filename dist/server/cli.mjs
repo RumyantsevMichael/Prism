@@ -1,7 +1,6 @@
+// Generated from src/server/cli.mts by scripts/native-build/compile.mjs.
 import { startStandaloneReview, startWorkspacesReview } from "./review/review-server-pool.mjs";
-
 const USAGE = "Usage: prism review [artifact-path]\n       prism review --workspaces\n\nOpens the Prism review browser for the project in the current directory.\nWithout an artifact path, the browser opens on Attention.\nWith --workspaces, it opens the review app's list of workspaces from any folder.\n";
-
 const [command = "review", artifactPath, ...extra] = process.argv.slice(2);
 if (["-h", "--help", "help"].includes(command) || ["-h", "--help"].includes(artifactPath)) {
   process.stdout.write(USAGE);
@@ -13,21 +12,24 @@ if (["-h", "--help", "help"].includes(command) || ["-h", "--help"].includes(arti
   try {
     result = await startWorkspacesReview();
   } catch (error) {
-    process.stderr.write(`prism review: ${error.message}\n`);
+    process.stderr.write(`prism review: ${error.message}
+`);
     process.exit(1);
   }
-  process.stdout.write(`${result.url}\n`);
+  process.stdout.write(`${result.url}
+`);
   if (!result.opened) process.stderr.write("prism review: no new browser tab opened; an open review tab can switch workspaces; the URL above opens a tab that can only read.\n");
 } else {
   let result;
   try {
     result = await startStandaloneReview({ artifactPath });
   } catch (error) {
-    process.stderr.write(`prism review: ${error.message}\n`);
+    process.stderr.write(`prism review: ${error.message}
+`);
     process.exit(1);
   }
-  process.stdout.write(`${result.url}\n`);
-  // The shared review app keeps serving after this command returns; only a review served by this command needs it to keep running.
+  process.stdout.write(`${result.url}
+`);
   if (result.held) {
     const close = async () => {
       await result.held.close();

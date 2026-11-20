@@ -1,7 +1,6 @@
-// prism-doc: holds rendered Markdown in light DOM; kit.css styles its headings, paragraphs, lists, links, tables, quotes, inline code, code blocks, images, and the blocks and words a diff marks.
+// Generated from src/server/review/public/kit/elements/prism-doc.ts by scripts/native-build/compile.mjs.
 import { Base } from "./base.js";
-
-export class PrismDoc extends Base {
+class PrismDoc extends Base {
   static tag = "prism-doc";
   static catalog = {
     purpose: "Holds rendered Markdown in light DOM and styles its headings, paragraphs, lists, links, tables, quotes, inline code, code blocks, and images from the design values.",
@@ -13,3 +12,6 @@ export class PrismDoc extends Base {
     keyboard: []
   };
 }
+export {
+  PrismDoc
+};

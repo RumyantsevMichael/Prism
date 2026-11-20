@@ -1,3 +1,4 @@
+// Generated from src/server/workflow/initiative.mts by scripts/native-build/compile.mjs.
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -26,13 +27,11 @@ import { refuseShipped, shippedHistory } from "./shipped-history.mjs";
 import { contractClauses, plannedChanges } from "./design-view.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { deferredFindings, loadReview } from "../review/review-ledger.mjs";
-
 const RECORD_NAME = "initiative.json";
 const PROJECTION_NAME = "initiative.md";
 const RECORD_MAX_BYTES = 1024 * 1024;
 const HISTORY_LIMIT = 500;
-
-export class InitiativeError extends Error {
+class InitiativeError extends Error {
   constructor(code, message, details = {}) {
     super(message);
     this.name = "InitiativeError";
@@ -40,32 +39,28 @@ export class InitiativeError extends Error {
     Object.assign(this, details);
   }
 }
-
 const fail = (code, message, details) => new InitiativeError(code, message, details);
-const text = { type: "string", minLength: 1, maxLength: 2000 };
+const text = { type: "string", minLength: 1, maxLength: 2e3 };
 const slug = { type: "string", minLength: 1, maxLength: 120 };
 const strings = { type: "array", maxItems: 200, items: text };
 const object = (properties, required = Object.keys(properties)) => ({ type: "object", additionalProperties: false, properties, required });
 const childSchema = object({ slug, title: text, outcome: text, requirements: strings }, ["slug", "title", "requirements"]);
-export const SPLIT_EVIDENCE_KINDS = Object.freeze(["contract_size", "unfrozen", "user_gate"]);
+const SPLIT_EVIDENCE_KINDS = Object.freeze(["contract_size", "unfrozen", "user_gate"]);
 const evidenceSchema = { oneOf: [
   object({ kind: { const: "contract_size" }, files: { type: "array", minItems: 1, maxItems: 400, items: text } }),
   object({ kind: { const: "unfrozen" }, assumption: text, settledBy: slug }),
   object({ kind: { const: "user_gate" }, gate: text }, ["kind"])
 ] };
-
 const splitOperation = object({ op: { const: "split" }, parent: slug, children: { type: "array", minItems: 1, maxItems: 50, items: childSchema }, evidence: evidenceSchema }, ["op", "parent", "children"]);
 const dependenciesOperation = object({ op: { const: "set_dependencies" }, slug, dependencies: { type: "array", maxItems: 200, items: slug } });
 const updateSliceOperation = object({ op: { const: "update_slice" }, slug, title: text, outcome: text }, ["op", "slug"]);
 const acceptDesignOperation = object({ op: { const: "accept_design" }, slug, frozenTests: { type: "array", minItems: 1, maxItems: 200, items: text }, review: { enum: REVIEW_MARKS }, component: { type: "string", minLength: 1, maxLength: 200 } }, ["op", "slug", "frozenTests", "review"]);
 const requirementsList = { type: "array", minItems: 1, maxItems: 200, items: text };
 const addFixOperation = object({ op: { const: "add_fix" }, slug, defects: { type: "array", minItems: 1, maxItems: 50, items: slug }, fix: object({ slug, title: text, outcome: text, requirements: requirementsList }) });
-const STANDALONE = new Set(["remove_records", "propose_design", "accept_proposal"]);
-// Sync outcomes that mean nothing else shares the record, so a claim is confirmed locally.
-const LOCAL_SYNC = new Set(["no_upstream", "not_a_repository"]);
-
-export const GET_INITIATIVE_SCHEMA = object({ projectRoot: text, initiative: slug }, ["projectRoot", "initiative"]);
-export const UPDATE_INITIATIVE_SCHEMA = object({
+const STANDALONE = /* @__PURE__ */ new Set(["remove_records", "propose_design", "accept_proposal"]);
+const LOCAL_SYNC = /* @__PURE__ */ new Set(["no_upstream", "not_a_repository"]);
+const GET_INITIATIVE_SCHEMA = object({ projectRoot: text, initiative: slug }, ["projectRoot", "initiative"]);
+const UPDATE_INITIATIVE_SCHEMA = object({
   projectRoot: text,
   initiative: slug,
   expectedRevision: { oneOf: [{ type: "string", minLength: 1 }, { type: "null" }] },
@@ -90,7 +85,6 @@ export const UPDATE_INITIATIVE_SCHEMA = object({
     object({ op: { const: "remove_records" } })
   ] } }
 }, ["projectRoot", "initiative", "expectedRevision", "operations"]);
-
 function validateInput(schema, input) {
   try {
     assertInput(schema, input);
@@ -98,8 +92,7 @@ function validateInput(schema, input) {
     throw fail("validation_failed", `The initiative arguments are invalid: ${describeErrors(error.errors)}`, { errors: error.errors });
   }
 }
-
-export async function resolveInitiative(projectRoot, initiative, createParent = false) {
+async function resolveInitiative(projectRoot, initiative, createParent = false) {
   if (!SLUG_PATTERN.test(initiative ?? "")) {
     throw fail("invalid_path", "The initiative identifier must use letters, digits, hyphens, or underscores.");
   }
@@ -109,47 +102,42 @@ export async function resolveInitiative(projectRoot, initiative, createParent = 
     throw fail("invalid_config", "The workflow config disables the plans path, so initiatives have no location.");
   }
   const record = await locateRecord(projectRoot, { kind: "initiative", initiative });
-  // With a store the plan files and the initiative view are store artifacts, so the checkout gets no plans folder.
   const store = (config.workspace?.store ?? null) !== null;
   const projectionPath = `${directory}/${PROJECTION_NAME}`;
   const inStore = store && await inArtifactStore(projectRoot, projectionPath);
   const projection = inStore ? { deltaPath: projectionPath } : await resolveArtifactPath(projectRoot, projectionPath, createParent, PROJECTION_NAME);
   return { root: record.root, initiative, directory, config, store, requirementsDirectory: config.paths.requirements, recordPath: record.path, target: record.target, projectionPath: projection.deltaPath, projectionInStore: inStore };
 }
-
 function revisionOf(contents) {
   return createHash("sha256").update(contents).digest("hex");
 }
-
 function canonicalRecord(record) {
   const slices = {};
   for (const key of Object.keys(record.slices).sort()) {
     const slice = record.slices[key];
     slices[key] = {
       title: slice.title,
-      ...(slice.outcome ? { outcome: slice.outcome } : {}),
+      ...slice.outcome ? { outcome: slice.outcome } : {},
       status: slice.status,
       parent: slice.parent,
-      ...(slice.fixes ? { fixes: { slice: slice.fixes.slice, defects: [...slice.fixes.defects] } } : {}),
+      ...slice.fixes ? { fixes: { slice: slice.fixes.slice, defects: [...slice.fixes.defects] } } : {},
       requirements: [...slice.requirements].sort(),
       dependencies: [...slice.dependencies].sort(),
-      ...(slice.component ? { component: slice.component } : {}),
-      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.views ? { views: slice.design.views.map(({ path: file, kind, elements, relations, dense }) => ({ path: file, kind, elements, relations, dense })) } : {}), ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}), ...(slice.design.staged ? { staged: true } : {}), ...startOf(slice.design) } } : {}),
-      ...(slice.splitEvidence ? { splitEvidence: slice.splitEvidence } : {}),
-      ...(slice.contractDefects ? { contractDefects: slice.contractDefects } : {}),
-      ...(slice.defects?.length ? { defects: slice.defects.map((item) => ({ id: item.id, requirements: [...item.requirements], summary: item.summary, reportedAt: item.reportedAt })) } : {})
+      ...slice.component ? { component: slice.component } : {},
+      ...slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...slice.design.views ? { views: slice.design.views.map(({ path: file, kind, elements, relations, dense }) => ({ path: file, kind, elements, relations, dense })) } : {}, ...slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}, ...slice.design.staged ? { staged: true } : {}, ...startOf(slice.design) } } : {},
+      ...slice.splitEvidence ? { splitEvidence: slice.splitEvidence } : {},
+      ...slice.contractDefects ? { contractDefects: slice.contractDefects } : {},
+      ...slice.defects?.length ? { defects: slice.defects.map((item) => ({ id: item.id, requirements: [...item.requirements], summary: item.summary, reportedAt: item.reportedAt })) } : {}
     };
   }
   const proposals = Object.fromEntries(Object.keys(record.proposals ?? {}).sort().map((key) => [key, record.proposals[key]]));
-  return { schemaVersion: 1, id: record.id, slices, ...(Object.keys(proposals).length ? { proposals } : {}), history: record.history.slice(-HISTORY_LIMIT) };
+  return { schemaVersion: 1, id: record.id, slices, ...Object.keys(proposals).length ? { proposals } : {}, history: record.history.slice(-HISTORY_LIMIT) };
 }
-
 function serialize(record) {
-  return `${JSON.stringify(canonicalRecord(record), null, 2)}\n`;
+  return `${JSON.stringify(canonicalRecord(record), null, 2)}
+`;
 }
-
 const COMPONENT_IDENTITY = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?\/[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
-
 function validateRecord(raw, initiative) {
   const errors = [];
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -160,12 +148,12 @@ function validateRecord(raw, initiative) {
   if (!Array.isArray(raw.history)) errors.push("history must be an array.");
   for (const [key, slice] of Object.entries(raw.slices ?? {})) {
     for (const problem of designProblems(slice?.design)) errors.push(`${key}: ${problem}`);
-    if (slice?.contractDefects !== undefined && (!Array.isArray(slice.contractDefects) || slice.contractDefects.some((item) => typeof item?.clause !== "string" || typeof item?.reason !== "string"))) errors.push(`${key}: contractDefects must list { clause, reason } entries.`);
-    if (slice?.component !== undefined && (typeof slice.component !== "string" || !COMPONENT_IDENTITY.test(slice.component) || slice.status === "split")) errors.push(`${key}: component must be a <repository>/<component> identity on a slice that is not split.`);
-    if (slice?.splitEvidence !== undefined && (slice.status !== "split" || !SPLIT_EVIDENCE_KINDS.includes(slice.splitEvidence?.kind))) errors.push(`${key}: splitEvidence belongs to a split slice and names its kind.`);
+    if (slice?.contractDefects !== void 0 && (!Array.isArray(slice.contractDefects) || slice.contractDefects.some((item) => typeof item?.clause !== "string" || typeof item?.reason !== "string"))) errors.push(`${key}: contractDefects must list { clause, reason } entries.`);
+    if (slice?.component !== void 0 && (typeof slice.component !== "string" || !COMPONENT_IDENTITY.test(slice.component) || slice.status === "split")) errors.push(`${key}: component must be a <repository>/<component> identity on a slice that is not split.`);
+    if (slice?.splitEvidence !== void 0 && (slice.status !== "split" || !SPLIT_EVIDENCE_KINDS.includes(slice.splitEvidence?.kind))) errors.push(`${key}: splitEvidence belongs to a split slice and names its kind.`);
     errors.push(...defectProblems(raw.slices, key));
   }
-  if (raw.proposals !== undefined) {
+  if (raw.proposals !== void 0) {
     if (raw.proposals === null || typeof raw.proposals !== "object" || Array.isArray(raw.proposals)) errors.push("proposals must be an object keyed by scope.");
     else for (const [key, proposal] of Object.entries(raw.proposals)) if (!Object.hasOwn(raw.slices ?? {}, key) || !Array.isArray(proposal?.operations)) errors.push(`proposals.${key} must name a slice and list its operations.`);
   }
@@ -177,19 +165,16 @@ function validateRecord(raw, initiative) {
   }
   return { errors, analysis };
 }
-
 const DEFECT_ID = /^d[1-9][0-9]*$/;
-
-// A done slice keeps the defects reported on it, and each of its fix slices names defects it holds that no other fix slice names.
 function defectProblems(slices, key) {
   const slice = slices?.[key];
   const problems = [];
-  if (slice?.defects !== undefined) {
+  if (slice?.defects !== void 0) {
     const valid = Array.isArray(slice.defects) && slice.defects.every((item) => DEFECT_ID.test(item?.id ?? "") && Array.isArray(item.requirements) && item.requirements.length > 0 && item.requirements.every((reference) => typeof reference === "string") && typeof item.summary === "string" && item.summary.length > 0 && typeof item.reportedAt === "string");
     if (!valid || new Set(slice.defects.map((item) => item.id)).size !== slice.defects.length) problems.push(`${key}: defects must list { id, requirements, summary, reportedAt } entries with distinct d<n> ids.`);
     if (slice.status !== "done") problems.push(`${key}: defects belong to a done slice.`);
   }
-  if (slice?.fixes !== undefined) {
+  if (slice?.fixes !== void 0) {
     const fixed = slices?.[slice.fixes?.slice];
     const held = new Set(Array.isArray(fixed?.defects) ? fixed.defects.map((item) => item?.id) : []);
     const defects = Array.isArray(slice.fixes?.defects) ? slice.fixes.defects : [];
@@ -199,12 +184,7 @@ function defectProblems(slices, key) {
   }
   return problems;
 }
-
-/**
- * Each defect reported on a done slice whose fix is unfinished, in slice then defect order: { slice, defect, fix, status },
- * where fix is the fix slice that names the defect and status its status, or null and not-designed while no fix slice names it.
- */
-export function unfinishedFixes(record) {
+function unfinishedFixes(record) {
   const slices = record?.slices && typeof record.slices === "object" ? record.slices : {};
   const number = (id) => Number(String(id).slice(1));
   const found = [];
@@ -218,23 +198,15 @@ export function unfinishedFixes(record) {
   }
   return found;
 }
-
-/** The refusal message of a ship that waits for fixes, naming each unfinished one. */
-export function unfinishedFixesMessage(initiative, fixes) {
+function unfinishedFixesMessage(initiative, fixes) {
   const named = fixes.map((item) => item.fix === null ? `${item.slice} ${item.defect} (no fix slice designed)` : `${item.slice} ${item.defect} (fix ${item.fix} is ${item.status})`);
   return `The initiative ${initiative} cannot ship while fixes to its done work are unfinished: ${named.join("; ")}. Design a fix slice for each defect and finish it before shipping.`;
 }
-
-/**
- * Merge three versions of an initiative record by structure for store sync: each slice by slug, each proposal by scope, and each scalar.
- * Returns { contents } with the canonical bytes of a merged record that passes validation and graph analysis, or { conflict } otherwise.
- */
-export function mergeInitiativeRecord(versions) {
+function mergeInitiativeRecord(versions) {
   const initiative = versions.path.split("/")[1];
   try {
     const { base, local, upstream } = parseVersions(versions, () => ({ schemaVersion: 1, id: initiative, slices: {}, history: [] }));
     if ([base, local, upstream].some((record) => !record || typeof record !== "object" || Array.isArray(record) || !record.slices || typeof record.slices !== "object" || !Array.isArray(record.history))) throw new MergeConflict("A version of the initiative record has no slices or history.");
-    // Slices compare in their canonical form, so a reordered requirement or dependency list is no change.
     const [b, l, u] = [base, local, upstream].map((record) => ({ ...canonicalRecord(record), schemaVersion: record.schemaVersion, proposals: record.proposals ?? {} }));
     const merged = {
       schemaVersion: mergeUnit("schemaVersion", b.schemaVersion, l.schemaVersion, u.schemaVersion),
@@ -254,11 +226,9 @@ export function mergeInitiativeRecord(versions) {
     return { conflict: error instanceof MergeConflict ? error.message : `The initiative record versions could not be merged: ${error.message}` };
   }
 }
-
 async function loadRecord(resolved) {
   let contents;
   try {
-    // The record is read without following a link and only within its 1 MiB bound, so a larger file reads as a damaged record, unread.
     contents = await readStoreFileBytes(resolved.target, RECORD_MAX_BYTES);
   } catch (error) {
     if (error.tooLarge) return { exists: true, revision: oversizedRevision(error), text: "", record: null, valid: false, errors: [error.message], analysis: null };
@@ -268,21 +238,16 @@ async function loadRecord(resolved) {
   const spelledAs = await recordSpelling(resolved);
   if (spelledAs !== null) return { exists: false, revision: null, record: null, valid: true, errors: [], analysis: null, spelledAs };
   const revision = revisionOf(contents);
-  const text = contents.toString("utf8");
+  const text2 = contents.toString("utf8");
   let raw;
   try {
-    raw = parseStoreJson(text);
+    raw = parseStoreJson(text2);
   } catch {
-    return { exists: true, revision, text, record: null, valid: false, errors: ["The initiative record must contain valid JSON."], analysis: null };
+    return { exists: true, revision, text: text2, record: null, valid: false, errors: ["The initiative record must contain valid JSON."], analysis: null };
   }
   const { errors, analysis } = validateRecord(raw, resolved.initiative);
-  return { exists: true, revision, text, record: raw, valid: errors.length === 0, errors, analysis };
+  return { exists: true, revision, text: text2, record: raw, valid: errors.length === 0, errors, analysis };
 }
-
-/**
- * The identifier of another initiative whose record folder a file system that ignores letter case, as macOS and Windows do by default, opens for this one,
- * or null when the folder carries this identifier's spelling or lies elsewhere, as a legacy location does.
- */
 async function recordSpelling(resolved) {
   const folder = path.dirname(resolved.target);
   if (path.basename(folder) !== resolved.initiative) return null;
@@ -290,14 +255,12 @@ async function recordSpelling(resolved) {
   if (names === null || names.includes(resolved.initiative)) return null;
   return names.find((name) => name.toLowerCase() === resolved.initiative.toLowerCase()) ?? null;
 }
-
 function derived(analysis, record) {
   if (!analysis) return null;
   const { slices, ...rest } = analysis;
   const fixes = unfinishedFixes(record);
   return { ...rest, unfinishedFixes: fixes, readyToShip: analysis.complete[analysis.root] === true && fixes.length === 0 };
 }
-
 function publicResult(resolved, loaded) {
   return {
     initiative: resolved.initiative,
@@ -311,22 +274,18 @@ function publicResult(resolved, loaded) {
     derived: derived(loaded.analysis, loaded.record)
   };
 }
-
-export async function readInitiative(projectRoot, initiative) {
+async function readInitiative(projectRoot, initiative) {
   const resolved = await resolveInitiative(projectRoot, initiative);
   return { resolved, loaded: await loadRecord(resolved) };
 }
-
-export async function getInitiative(input) {
+async function getInitiative(input) {
   validateInput(GET_INITIATIVE_SCHEMA, input);
   const { resolved, loaded } = await readInitiative(input.projectRoot, input.initiative);
-  // Each slice with a passing run names the checkout it was verified in, since records in a shared store do not travel with a branch.
   const code = {};
-  for (const slug of Object.keys(loaded.record?.slices ?? {})) {
-    const checkout = await verifiedCode(resolved.root, resolved.initiative, slug).catch(() => null);
-    if (checkout) code[slug] = checkout;
+  for (const slug2 of Object.keys(loaded.record?.slices ?? {})) {
+    const checkout = await verifiedCode(resolved.root, resolved.initiative, slug2).catch(() => null);
+    if (checkout) code[slug2] = checkout;
   }
-  // Each fit scope with a recorded dependents' run shows its latest one, read from the run records alone, never from the components.
   const dependents = {};
   for (const scope of fitScopes(loaded.record)) {
     const latest = await latestDependentsRun(resolved.root, resolved.initiative, scope).catch(() => null);
@@ -334,60 +293,43 @@ export async function getInitiative(input) {
   }
   const view = await claimsView(resolved, loaded);
   const result = publicResult(resolved, view.loaded);
-  // Each slice whose review deferred findings lists them, so a reader sees them apart from the unresolved ones; an unreadable review is left out.
   if (result.derived) {
     const deferred = {};
-    for (const slug of Object.keys(view.loaded.record?.slices ?? {})) {
-      const review = await loadReview(resolved.root, resolved.initiative, slug).catch(() => null);
+    for (const slug2 of Object.keys(view.loaded.record?.slices ?? {})) {
+      const review = await loadReview(resolved.root, resolved.initiative, slug2).catch(() => null);
       const entries = review?.document ? deferredFindings(review.document) : [];
-      if (entries.length) deferred[slug] = entries;
+      if (entries.length) deferred[slug2] = entries;
     }
     result.derived.deferredFindings = deferred;
   }
-  // A shipped initiative's read says that its state is history, also when it has no initiative record.
   const history = await shippedHistory(resolved.root, resolved.initiative);
-  return { ...result, ...(Object.keys(code).length ? { code } : {}), ...(Object.keys(dependents).length ? { dependents } : {}), ...view.fields, ...(history ? { shippedHistory: history } : {}) };
+  return { ...result, ...Object.keys(code).length ? { code } : {}, ...Object.keys(dependents).length ? { dependents } : {}, ...view.fields, ...history ? { shippedHistory: history } : {} };
 }
-
-/**
- * The fit scopes of an initiative record, in slug order: each split slice without split evidence, whose design accepted a slice plan,
- * and each leaf whose parent is null or has split evidence, which is a scope of its own.
- */
-export function fitScopes(record) {
+function fitScopes(record) {
   const slices = record?.slices && typeof record.slices === "object" ? record.slices : {};
-  return Object.keys(slices).filter((slug) => {
-    const slice = slices[slug];
+  return Object.keys(slices).filter((slug2) => {
+    const slice = slices[slug2];
     if (slice?.status === "split") return !slice.splitEvidence;
     return slice?.parent == null || Boolean(slices[slice.parent]?.splitEvidence);
   }).sort();
 }
-
-/** The leaves of a scope in slug order: the leaves below its planned slices, which are the planned slices themselves unless one was split, or the leaf itself. */
-export function scopeLeaves(record, scope) {
+function scopeLeaves(record, scope) {
   const slices = record?.slices && typeof record.slices === "object" ? record.slices : {};
-  // A fix slice is a leaf beside the done slice it fixes, so the done slice stays a leaf of its scope too.
-  const children = (slug, fixes) => Object.keys(slices).filter((key) => slices[key]?.parent === slug && Boolean(slices[key]?.fixes) === fixes);
-  const leaves = (slug, seen = new Set()) => {
-    if (seen.has(slug)) return [];
-    seen.add(slug);
-    const own = children(slug, false);
-    return [...(own.length ? own.flatMap((child) => leaves(child, seen)) : [slug]), ...children(slug, true).flatMap((child) => leaves(child, seen))];
+  const children = (slug2, fixes) => Object.keys(slices).filter((key) => slices[key]?.parent === slug2 && Boolean(slices[key]?.fixes) === fixes);
+  const leaves = (slug2, seen = /* @__PURE__ */ new Set()) => {
+    if (seen.has(slug2)) return [];
+    seen.add(slug2);
+    const own = children(slug2, false);
+    return [...own.length ? own.flatMap((child) => leaves(child, seen)) : [slug2], ...children(slug2, true).flatMap((child) => leaves(child, seen))];
   };
   return Object.hasOwn(slices, scope) ? [...new Set(leaves(scope))].sort() : [];
 }
-
-/**
- * The dependents of a scope by a valid declaration, in run order: every component that depends on a component its leaves record.
- * A leaf without a component, or with one the declaration no longer holds, adds none, so the dependents' run and ship judge a scope alike.
- */
-export function scopeDependents(record, scope, declaration) {
+function scopeDependents(record, scope, declaration) {
   const recorded = scopeLeaves(record, scope).map((leaf) => record.slices[leaf]?.component).filter((identity) => typeof identity === "string");
   return dependentsOf(declaration, recorded.map((identity) => findComponent(declaration, identity)).filter(Boolean));
 }
-
-/** The claim records of an initiative by slice, with the problems of any that cannot be read. */
 async function readClaims(resolved) {
-  const claims = new Map();
+  const claims = /* @__PURE__ */ new Map();
   const problems = [];
   for (const { slice, bytes } of await listClaimRecords(resolved.root, resolved.initiative)) {
     const parsed = parseClaim(slice, bytes);
@@ -396,11 +338,6 @@ async function readClaims(resolved) {
   }
   return { claims, problems };
 }
-
-/**
- * Show the live claims with an initiative read: the record view gives each claimed slice its claim, and claims lists each live claim's label, activity, and expiry,
- * where heldHere marks this server's claims; claims this server lost since its last report for the initiative are listed once under lostClaims.
- */
 async function claimsView(resolved, loaded, { report = true } = {}) {
   const { claims, problems } = await readClaims(resolved);
   const now = Date.now();
@@ -409,65 +346,47 @@ async function claimsView(resolved, loaded, { report = true } = {}) {
   let record = loaded.record;
   if (record?.slices && typeof record.slices === "object") {
     record = { ...record, slices: { ...record.slices } };
-    for (const [slug, claim] of claims) {
-      if (!isLive(claim, now) || !Object.hasOwn(record.slices, slug)) continue;
-      record.slices[slug] = { ...record.slices[slug], claim: { holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, claimedAt: claim.claimedAt, renewedAt: claim.renewedAt, expiresAt: claim.expiresAt } };
-      listed[slug] = { label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, expiresAt: claim.expiresAt, heldHere: claim.holder === holder };
+    for (const [slug2, claim] of claims) {
+      if (!isLive(claim, now) || !Object.hasOwn(record.slices, slug2)) continue;
+      record.slices[slug2] = { ...record.slices[slug2], claim: { holder: claim.holder, label: claim.label, ...claim.host ? { host: claim.host } : {}, ...claim.model ? { model: claim.model } : {}, activity: claim.activity, claimedAt: claim.claimedAt, renewedAt: claim.renewedAt, expiresAt: claim.expiresAt } };
+      listed[slug2] = { label: claim.label, ...claim.host ? { host: claim.host } : {}, ...claim.model ? { model: claim.model } : {}, activity: claim.activity, expiresAt: claim.expiresAt, heldHere: claim.holder === holder };
     }
   }
   if (report) adoptClaims(resolved.root, resolved.initiative, claims, now);
   const lost = report ? takeLostClaims(resolved.root, resolved.initiative, claims, now) : [];
-  return { loaded: { ...loaded, record }, claims, fields: { ...(Object.keys(listed).length ? { claims: listed } : {}), ...(lost.length ? { lostClaims: lost } : {}), ...(problems.length ? { claimProblems: problems } : {}) } };
+  return { loaded: { ...loaded, record }, claims, fields: { ...Object.keys(listed).length ? { claims: listed } : {}, ...lost.length ? { lostClaims: lost } : {}, ...problems.length ? { claimProblems: problems } : {} } };
 }
-
-/** An initiative read with each slice's live claim in the record view, for readers such as the review browser. */
-export async function readInitiativeWithClaims(projectRoot, initiative) {
+async function readInitiativeWithClaims(projectRoot, initiative) {
   const { resolved, loaded } = await readInitiative(projectRoot, initiative);
   return { resolved, loaded: (await claimsView(resolved, loaded, { report: false })).loaded };
 }
-
-// Work on a slice belongs to the holder whose live claim covers it, so an agent that never claimed the slice, or whose claim lapsed, was released, or was replaced, is refused before it changes anything.
-// These operations are such work; set_status is too when it moves a slice out of in-progress, and every other operation that changes a slice is refused only while another holder's claim covers it.
-const CLAIMED_WORK = new Set(["propose_design", "accept_proposal", "restore_tests", "report_contract_defects"]);
-// These operations change no slice's work, or take the claim themselves.
-const UNCLAIMED_OPERATIONS = new Set(["create", "claim", "release_claim", "import_map", "regenerate_markdown", "remove_records"]);
-
-const claimCovers = (slices, claim, slug) => {
-  for (let current = slug, depth = 0; current !== null && current !== undefined && depth < 1000; current = slices[current]?.parent, depth += 1) if (current === claim.slug) return true;
+const CLAIMED_WORK = /* @__PURE__ */ new Set(["propose_design", "accept_proposal", "restore_tests", "report_contract_defects"]);
+const UNCLAIMED_OPERATIONS = /* @__PURE__ */ new Set(["create", "claim", "release_claim", "import_map", "regenerate_markdown", "remove_records"]);
+const claimCovers = (slices, claim, slug2) => {
+  for (let current = slug2, depth = 0; current !== null && current !== void 0 && depth < 1e3; current = slices[current]?.parent, depth += 1) if (current === claim.slug) return true;
   return false;
 };
-
-// A slug that only a pending proposal creates belongs to the scope that proposed it, such as a part that a design view describes before its proposal is accepted.
-function workSlug(record, slug) {
-  if (Object.hasOwn(record.slices, slug)) return slug;
+function workSlug(record, slug2) {
+  if (Object.hasOwn(record.slices, slug2)) return slug2;
   for (const [scope, proposal] of Object.entries(record.proposals ?? {})) {
     const created = (proposal?.operations ?? []).flatMap((operation) => operation.op === "split" ? (operation.children ?? []).map((child) => child.slug) : operation.op === "add_fix" ? [operation.fix?.slug] : []);
-    if (created.includes(slug) && Object.hasOwn(record.slices, scope)) return scope;
+    if (created.includes(slug2) && Object.hasOwn(record.slices, scope)) return scope;
   }
   return null;
 }
-
-/** The work a tool call does on an initiative's slices: { slug, own } for each slice it changes, where own means the caller must hold a live claim that covers the slice. */
-export function initiativeWork(operations, record) {
+function initiativeWork(operations, record) {
   const work = [];
   for (const operation of Array.isArray(operations) ? operations : []) {
     if (!operation || UNCLAIMED_OPERATIONS.has(operation.op)) continue;
-    const slug = operation.op === "split" ? operation.parent : operation.slug;
-    if (typeof slug !== "string") continue;
-    const status = record?.slices?.[slug]?.status;
-    const own = CLAIMED_WORK.has(operation.op) || (operation.op === "set_status" && operation.status !== "in-progress" && status === "in-progress");
-    work.push({ slug, op: operation.op, own });
+    const slug2 = operation.op === "split" ? operation.parent : operation.slug;
+    if (typeof slug2 !== "string") continue;
+    const status = record?.slices?.[slug2]?.status;
+    const own = CLAIMED_WORK.has(operation.op) || operation.op === "set_status" && operation.status !== "in-progress" && status === "in-progress";
+    work.push({ slug: slug2, op: operation.op, own });
   }
   return work;
 }
-
-/**
- * Refuse a tool call that works on slices without the caller's claim: slice_claimed while another holder's live claim covers a slice it changes,
- * and claim_required while a slice it works on has no live claim of the caller on the slice or an ancestor.
- * work lists { slug, own, op }, and claimedHere the slugs the same call claims or starts first, which count as the caller's.
- * Records that cannot be read, a shipped initiative, and a slug the record does not hold are left to the tool, which refuses them with its own error.
- */
-export async function requireClaimedWork({ projectRoot, initiative, tool, work, claimedHere = [] }) {
+async function requireClaimedWork({ projectRoot, initiative, tool, work, claimedHere = [] }) {
   if (!work.length) return;
   try {
     await refuseShipped(projectRoot, initiative);
@@ -486,26 +405,20 @@ export async function requireClaimedWork({ projectRoot, initiative, tool, work, 
   const holder = claimHolder();
   const now = Date.now();
   for (const item of work) {
-    const slug = workSlug(record, item.slug);
-    if (slug === null) continue;
-    if (claimedHere.some((claimed) => claimCovers(record.slices, { slug: claimed }, slug))) continue;
-    const blocking = blockingClaim(record.slices, claims, slug, holder, now);
-    if (blocking) throw fail("slice_claimed", claimedMessage(slug, blocking), { claim: claimView(blocking) });
+    const slug2 = workSlug(record, item.slug);
+    if (slug2 === null) continue;
+    if (claimedHere.some((claimed) => claimCovers(record.slices, { slug: claimed }, slug2))) continue;
+    const blocking = blockingClaim(record.slices, claims, slug2, holder, now);
+    if (blocking) throw fail("slice_claimed", claimedMessage(slug2, blocking), { claim: claimView(blocking) });
     if (!item.own) continue;
-    const covering = [...claims.values()].filter((claim) => claim.holder === holder && claimCovers(record.slices, claim, slug));
+    const covering = [...claims.values()].filter((claim) => claim.holder === holder && claimCovers(record.slices, claim, slug2));
     if (covering.some((claim) => isLive(claim, now))) continue;
     const lapsed = covering.sort((a, b) => Date.parse(b.expiresAt) - Date.parse(a.expiresAt))[0];
-    const why = lapsed ? `This session's claim on ${lapsed.slug} expired at ${lapsed.expiresAt}` : `No live claim of this session covers ${slug}`;
-    throw fail("claim_required", `${why}, so ${tool}${item.op ? ` ${item.op}` : ""} was not applied: work on a slice needs its holder's live claim. Call update_initiative with a claim operation for ${slug}, or for the scope that contains it, then call again; Prism refuses the claim with slice_claimed when another agent took the slice meanwhile.`, { slice: slug, ...(lapsed ? { claim: claimView(lapsed) } : {}) });
+    const why = lapsed ? `This session's claim on ${lapsed.slug} expired at ${lapsed.expiresAt}` : `No live claim of this session covers ${slug2}`;
+    throw fail("claim_required", `${why}, so ${tool}${item.op ? ` ${item.op}` : ""} was not applied: work on a slice needs its holder's live claim. Call update_initiative with a claim operation for ${slug2}, or for the scope that contains it, then call again; Prism refuses the claim with slice_claimed when another agent took the slice meanwhile.`, { slice: slug2, ...lapsed ? { claim: claimView(lapsed) } : {} });
   }
 }
-
-/** The slugs an update claims or starts itself, which its other operations may work on. */
-export const claimedByUpdate = (operations) => (Array.isArray(operations) ? operations : [])
-  .filter((operation) => operation?.op === "claim" || (operation?.op === "set_status" && operation.status === "in-progress"))
-  .map((operation) => operation.slug)
-  .filter((slug) => typeof slug === "string");
-
+const claimedByUpdate = (operations) => (Array.isArray(operations) ? operations : []).filter((operation) => operation?.op === "claim" || operation?.op === "set_status" && operation.status === "in-progress").map((operation) => operation.slug).filter((slug2) => typeof slug2 === "string");
 function markdown(record) {
   const analysis = analyzeInitiative(record.slices);
   const lines = [`# Initiative: ${record.id}`, "", generatedNotice(RECORD_NAME), ""];
@@ -523,60 +436,45 @@ function markdown(record) {
     for (const child of analysis.children[slugValue]) visit(child, depth + 1);
   };
   visit(analysis.root, 0);
-  return `${lines.join("\n")}\n`;
+  return `${lines.join("\n")}
+`;
 }
-
-// Requirement files cite obligations as <file>.md§<n>, so that form is accepted and stored as <requirements dir>/<file>.md#<n>.
-// The roadmap validates its references the same way, so an initiative created from a roadmap item never refuses them.
-export function normalizeRequirementReference(requirementsDirectory, reference) {
+function normalizeRequirementReference(requirementsDirectory, reference) {
   const cited = /^([^\s/#§]+\.md)§([^\s#§]+)$/.exec(reference);
   if (cited && requirementsDirectory) return { reference: `${requirementsDirectory}/${cited[1]}#${cited[2]}` };
   if (!/^[^\s#]+#[^\s#]+$/.test(reference)) {
-    return { problem: `Invalid requirement reference ${JSON.stringify(reference)}: use <requirements path>.md#<number>, such as ${requirementsDirectory ?? "docs/requirements"}/capability.md#1, or <file>.md§<number>.` };
+    return { problem: `Invalid requirement reference ${JSON.stringify(reference)}: use <requirements path>.md#<number>, such as ${requirementsDirectory ?? "docs/requirements"}/capability.md#1, or <file>.md\xA7<number>.` };
   }
   return { reference };
 }
-
 function normalizeRequirements(resolved, references) {
   return references.map((reference) => {
-    const normalized = normalizeRequirementReference(resolved.requirementsDirectory, reference);
-    if (normalized.problem) throw fail("validation_failed", normalized.problem);
-    return normalized.reference;
+    const normalized2 = normalizeRequirementReference(resolved.requirementsDirectory, reference);
+    if (normalized2.problem) throw fail("validation_failed", normalized2.problem);
+    return normalized2.reference;
   });
 }
-
-// The initiative directory is the root slice's folder; every other slice folder sits directly under it.
-export function sliceFolder(directory, slices, slugValue) {
+function sliceFolder(directory, slices, slugValue) {
   return slices?.[slugValue]?.parent === null ? directory : `${directory}/${slugValue}`;
 }
-
-// A plan folder's location stays within the limits that let every machine share each file Prism keeps for it, and initiative.md is the longest name Prism writes in a plan folder.
 const LONGEST_PLAN_FILE = PROJECTION_NAME;
-
-/**
- * With a store, an initiative identifier or slice slug names a plan folder there, so it is refused before any record names it, and before its design is proposed or accepted,
- * when that folder would break the artifact name form, collide in letter case with another initiative's or slice's plan folder or a stored plan artifact, or hold too long a location.
- * slug null checks the initiative's own folder; names lists further slugs that the operation records, and siblings the other plan folders the same operation creates.
- */
-async function checkPlanFolders(resolved, slices, slug, { names = [], siblings = [], initiative = true } = {}) {
+async function checkPlanFolders(resolved, slices, slug2, { names = [], siblings = [], initiative = true } = {}) {
   if (!resolved.store) return;
-  const root = slug === null || slices?.[slug]?.parent === null;
+  const root = slug2 === null || slices?.[slug2]?.parent === null;
   if (!root && initiative) await checkPlanFolders(resolved, slices, null);
-  const folder = root ? resolved.directory : sliceFolder(resolved.directory, slices, slug);
-  const own = root ? [resolved.initiative] : [slug];
+  const folder = root ? resolved.directory : sliceFolder(resolved.directory, slices, slug2);
+  const own = root ? [resolved.initiative] : [slug2];
   const invalid = [...own, ...names].find((name) => !wellFormedName(name));
-  if (invalid !== undefined) {
+  if (invalid !== void 0) {
     throw new ArtifactError("artifact_name_invalid", `The ${own.includes(invalid) && root ? "initiative identifier" : "slice slug"} ${JSON.stringify(invalid)} names a plan folder in the record store, which does not accept that name: ${ARTIFACT_NAME_FORM}. Choose an identifier of that form; nothing changed.`, { invalidName: invalid, path: folder });
   }
-  const others = root
-    ? (await listInitiatives(resolved.root)).filter((id) => id !== resolved.initiative).map((id) => initiativeDirectory(resolved.config, id))
-    : [...Object.keys(slices ?? {}).filter((key) => key !== slug && slices[key]?.parent !== null).map((key) => `${resolved.directory}/${key}`), ...siblings];
+  const others = root ? (await listInitiatives(resolved.root)).filter((id) => id !== resolved.initiative).map((id) => initiativeDirectory(resolved.config, id)) : [...Object.keys(slices ?? {}).filter((key) => key !== slug2 && slices[key]?.parent !== null).map((key) => `${resolved.directory}/${key}`), ...siblings];
   let other = others.find((candidate) => collideInLetterCase(folder, candidate));
-  if (other === undefined) {
-    const stored = (await listStoreArtifacts(resolved.root, resolved.config.paths.plans)) ?? [];
+  if (other === void 0) {
+    const stored = await listStoreArtifacts(resolved.root, resolved.config.paths.plans) ?? [];
     other = stored.filter((entry) => entry.kind === "plans").map((entry) => entry.path).find((file) => collideInLetterCase(folder, file));
   }
-  if (other !== undefined) {
+  if (other !== void 0) {
     throw new ArtifactError("artifact_name_conflict", `The plan folder ${folder} differs only in letter case from ${other}, and the two would be one folder on a file system that ignores letter case, as macOS and Windows do by default; nothing changed. Choose another ${root ? "initiative identifier" : "slice slug"}.`, { path: other });
   }
   const { location } = await storeArtifactLocation(resolved.root, `${folder}/${LONGEST_PLAN_FILE}`);
@@ -585,52 +483,46 @@ async function checkPlanFolders(resolved, slices, slug, { names = [], siblings =
     throw new ArtifactError("artifact_path_too_long", `${location}, the location of ${folder}/${LONGEST_PLAN_FILE} in the record store, ${excess}, so some machine could not write it or its comments; nothing changed. Choose a shorter ${root ? "initiative identifier" : "slice slug"}.`, locationLimits(location));
   }
 }
-
-// With a store, a path under the configured artifact paths lives in the store, where no test command runs it, so it is never a frozen test.
-function checkFrozenTestPaths(resolved, slug, files) {
+function checkFrozenTestPaths(resolved, slug2, files) {
   if (!resolved.store) return;
   const kinds = artifactKinds(resolved.config);
   const stored = files.filter((file) => {
-    const normalized = path.posix.normalize(String(file).replaceAll("\\", "/")).replace(/\/+$/, "");
-    return artifactAddressOf(kinds, normalized) !== null;
+    const normalized2 = path.posix.normalize(String(file).replaceAll("\\", "/")).replace(/\/+$/, "");
+    return artifactAddressOf(kinds, normalized2) !== null;
   });
-  if (stored.length) throw fail("frozen_test_in_store", `The design of ${slug} was not accepted: ${stored.join(", ")} ${stored.length === 1 ? "is a descriptive artifact path" : "are descriptive artifact paths"}, which live in the record store, where verification never runs them. Keep each frozen test in the checkout, outside the configured Requirements, ADRs, and Plans folders and the Glossary and Roadmap files.`, { slice: slug, paths: stored });
+  if (stored.length) throw fail("frozen_test_in_store", `The design of ${slug2} was not accepted: ${stored.join(", ")} ${stored.length === 1 ? "is a descriptive artifact path" : "are descriptive artifact paths"}, which live in the record store, where verification never runs them. Keep each frozen test in the checkout, outside the configured Requirements, ADRs, and Plans folders and the Glossary and Roadmap files.`, { slice: slug2, paths: stored });
 }
-
 async function sliceOutcome(resolved, slices, slugValue) {
   try {
     const source = await readArtifactText(resolved.root, `${sliceFolder(resolved.directory, slices, slugValue)}/slice.md`) ?? "";
     const section = source.split(/^## Outcome\s*$/m)[1]?.split(/^#{1,2} /m)[0] ?? "";
     const sentence = section.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
-    return sentence || undefined;
+    return sentence || void 0;
   } catch {
-    return undefined;
+    return void 0;
   }
 }
-
-// A started slice's start content: its content tree, when Prism recorded it, and the ## Components declaration in force then.
 const START_FIELDS = ["startTree", "startRecordedAt", "startDeclaration"];
-const startOf = (design) => Object.fromEntries(START_FIELDS.filter((key) => design?.[key] !== undefined).map((key) => [key, design[key]]));
-
-/**
- * The start content of a slice, hashed as a verification run hashes the project so the two trees compare path by path, with its time and the declaration in force, or null when Git cannot hash the work tree.
- * Starting a slice reads no components for a refusal, so an invalid declaration, or one without the slice's component, records the content without a declaration.
- */
+const startOf = (design) => Object.fromEntries(START_FIELDS.filter((key) => design?.[key] !== void 0).map((key) => [key, design[key]]));
 async function startContent(root, identity) {
   const { contentTree, startDeclaration } = await import("./slice-gate.mjs");
   let config;
-  try { config = await readWorkflowConfig(root); }
-  catch { return null; }
+  try {
+    config = await readWorkflowConfig(root);
+  } catch {
+    return null;
+  }
   const startTree = await contentTree(root, config).catch(() => null);
   if (!startTree) return null;
   let declared = null;
   try {
     const declaration = readComponents(config);
     if (findComponent(declaration, identity)) declared = startDeclaration(declaration);
-  } catch { declared = null; }
-  return { startTree, startRecordedAt: new Date().toISOString(), ...(declared ? { startDeclaration: declared } : {}) };
+  } catch {
+    declared = null;
+  }
+  return { startTree, startRecordedAt: (/* @__PURE__ */ new Date()).toISOString(), ...declared ? { startDeclaration: declared } : {} };
 }
-
 async function completionGate(resolved, slugValue) {
   const { checkSliceGate } = await import("./slice-gate.mjs");
   try {
@@ -639,26 +531,18 @@ async function completionGate(resolved, slugValue) {
     return { ready: false, problems: [{ code: error.code ?? "evidence_missing", message: error.message }] };
   }
 }
-
-// The source at design acceptance is the baseline that the slice's derived change map compares with its verified result.
-// Capture is best effort: without a baseline the derived change map is unavailable, and nothing else depends on it.
 async function captureBaseline(root, initiative, slice) {
-  try { return (await conservationStore.capture(root, { initiative, slice })).snapshotId; }
-  catch { return null; }
+  try {
+    return (await conservationStore.capture(root, { initiative, slice })).snapshotId;
+  } catch {
+    return null;
+  }
 }
-
-const STARTED = new Set(["in-progress", "blocked"]);
-
-// A frozen test file belongs to one unfinished slice, because each slice's tests go in place only when that slice starts.
-// A staged slice owns its files outright, since staging takes them out of the work tree, so it never shares one even with a done slice.
+const STARTED = /* @__PURE__ */ new Set(["in-progress", "blocked"]);
 function claimedTests(slices, slugValue, frozenTests, staging) {
   return frozenTests.map((item) => item.path).filter((file) => Object.entries(slices).some(([key, other]) => key !== slugValue && (staging || other.status !== "done") && other.design?.frozenTests.some((test) => test.path === file)));
 }
-
 const normalized = (value) => value.toLowerCase().replace(/[`*_]/g, "").replace(/\s+/g, " ").trim();
-
-// Models judging a scope's size split it long before one contract stopped working, so a split into parts
-// that each get their own contract needs evidence that the server can check.
 async function splitEvidence(resolved, slices, operation, effects) {
   const refuse = (reason) => fail("split_unjustified", `The split of ${operation.parent} was not recorded: ${reason}`);
   const evidence = operation.evidence;
@@ -678,8 +562,6 @@ async function splitEvidence(resolved, slices, operation, effects) {
     if (!section.split(/\r?\n/).some((line) => /unprobed/i.test(line) && normalized(line).includes(quoted))) throw refuse(`the Assumptions of its slice.md list no Unprobed assumption that contains ${JSON.stringify(evidence.assumption)}.`);
     return { kind: evidence.kind, assumption: evidence.assumption, settledBy: evidence.settledBy };
   }
-  // Only the review browser records a gate answer, so an answered gate is the person's own call.
-  // A proposed split waits for that answer: accept_proposal names the gate where the person approved it.
   const gateId = evidence.gate ?? effects.gate;
   if (!gateId) {
     if (effects.dryRun) return { kind: evidence.kind };
@@ -689,18 +571,15 @@ async function splitEvidence(resolved, slices, operation, effects) {
   const gate = (Array.isArray(state?.pending) ? state.pending : []).find((item) => item?.id === gateId);
   if (!gate?.answer) throw refuse(`the user gate ${gateId} is not pending with an answer from the person.`);
   if (gate.answer.choice === "request-changes") throw refuse(`the person requested changes at ${gateId}.`);
-  if (gate.slice !== undefined && gate.slice !== operation.parent) throw refuse(`the user gate ${gateId} is about ${gate.slice}.`);
+  if (gate.slice !== void 0 && gate.slice !== operation.parent) throw refuse(`the user gate ${gateId} is about ${gate.slice}.`);
   return { kind: evidence.kind, gate: gateId };
 }
-
-// One implementer reads the contract and the frozen tests of its slices, so a fit design above the budget splits instead.
-// The contract is the slice.md of the scope that this update splits into its slice plan, or of the accepted slice itself.
 async function checkContractBudget(resolved, slices, operations) {
   const planOf = new Map(operations.filter((operation) => operation.op === "split").flatMap((operation) => operation.children.map((child) => [child.slug, operation.parent])));
-  const contracts = new Map();
+  const contracts = /* @__PURE__ */ new Map();
   for (const operation of operations.filter((item) => item.op === "accept_design")) {
     const scope = planOf.get(operation.slug) ?? operation.slug;
-    if (!contracts.has(scope)) contracts.set(scope, new Set([`${sliceFolder(resolved.directory, slices, scope)}/slice.md`]));
+    if (!contracts.has(scope)) contracts.set(scope, /* @__PURE__ */ new Set([`${sliceFolder(resolved.directory, slices, scope)}/slice.md`]));
     for (const file of operation.frozenTests) contracts.get(scope).add(file);
   }
   for (const [scope, files] of contracts) {
@@ -711,21 +590,15 @@ async function checkContractBudget(resolved, slices, operations) {
     }
   }
 }
-
-// The slugs a proposal changes outside its scope: it may split only the scope and change only the scope, the slices inside it, and the parts it creates.
 function proposalOutside(slices, scope, operations) {
   const created = new Set(operations.flatMap((item) => item.op === "split" ? item.children.map((child) => child.slug) : item.op === "add_fix" ? [item.fix.slug] : []));
   const inside = (key) => {
     if (created.has(key)) return true;
-    for (let current = key, depth = 0; current !== null && current !== undefined && depth < 1000; current = slices[current]?.parent, depth += 1) if (current === scope) return true;
+    for (let current = key, depth = 0; current !== null && current !== void 0 && depth < 1e3; current = slices[current]?.parent, depth += 1) if (current === scope) return true;
     return false;
   };
-  return [...new Set(operations.flatMap((item) => item.op === "split" ? (item.parent === scope ? [] : [item.parent]) : inside(item.slug) ? [] : [item.slug]))];
+  return [...new Set(operations.flatMap((item) => item.op === "split" ? item.parent === scope ? [] : [item.parent] : inside(item.slug) ? [] : [item.slug]))];
 }
-
-// Claim operations read and change the claim records, never the initiative record.
-// While an update is planned, a claim is checked against every live claim of another holder on the slice, its ancestors, and its descendants, and an expired claim of
-// another holder is replaced and named; when the update is applied, its claims are already in place and only the claims it ends are noted.
 function takeClaim(record, slugValue, activity, effects, operation) {
   const claims = effects.claims;
   if (claims.mode !== "plan") return;
@@ -738,44 +611,35 @@ function takeClaim(record, slugValue, activity, effects, operation) {
   }
   claims.files.set(slugValue, newClaim(previous, { slug: slugValue, holder: claims.holder, label: claims.label, host: claims.host, model: claims.model, activity, now: claims.now }));
 }
-
 function endClaim(slugValue, effects) {
   const claims = effects.claims;
   if (!claims?.files.has(slugValue)) return;
   if (claims.mode === "plan") claims.files.delete(slugValue);
   else claims.ended.add(slugValue);
 }
-
-// An accepted design records the component that holds the slice, so every accept_design of an update reads the repository's declaration once, refusing an invalid one.
 async function declarationOf(resolved, effects) {
   effects.components ??= readWorkflowConfig(resolved.root).then((config) => ({ config, declaration: readComponents(config) }));
   return effects.components;
 }
-
-// A repository that declares no components is one root component, which a design may leave unnamed; otherwise each design names a component of this repository, bare or qualified.
 async function designComponent(resolved, operation, effects) {
   const { config, declaration } = await declarationOf(resolved, effects);
   const given = operation.component;
-  const found = given === undefined ? (declaration.declared.length ? null : declaration.root) : findComponent(declaration, given);
-  if (found === null || (!declaration.declared.length && found !== declaration.root)) {
+  const found = given === void 0 ? declaration.declared.length ? null : declaration.root : findComponent(declaration, given);
+  if (found === null || !declaration.declared.length && found !== declaration.root) {
     const identities = declaration.components.map((item) => item.identity);
-    throw fail("component_unknown", `The design of ${operation.slug} was not accepted: ${given === undefined ? "it names no component" : `${given} is not a component of this repository`}. Name one of ${identities.join(", ")} as its component.`, { slice: operation.slug, component: given ?? null, components: identities });
+    throw fail("component_unknown", `The design of ${operation.slug} was not accepted: ${given === void 0 ? "it names no component" : `${given} is not a component of this repository`}. Name one of ${identities.join(", ")} as its component.`, { slice: operation.slug, component: given ?? null, components: identities });
   }
   return { component: found, declaration, config };
 }
-
-// Prism's own files belong to no component: .prism, the plans folder, and the roadmap record and projection.
 function prismOwned(config, file) {
   const within = (folder) => folder !== null && folder !== "" && (file === folder || file.startsWith(`${folder}/`));
   const roadmap = roadmapPaths(config);
-  return within(".prism") || within(config.paths.plans) || (roadmap !== null && (file === roadmap.record || file === roadmap.projection));
+  return within(".prism") || within(config.paths.plans) || roadmap !== null && (file === roadmap.record || file === roadmap.projection);
 }
-
-function checkBoundary({ component, declaration, config }, slug, files) {
+function checkBoundary({ component, declaration, config }, slug2, files) {
   const crossing = [...new Set(files.map((file) => file.replace(/\/$/, "")))].filter((file) => !prismOwned(config, file) && componentOf(declaration, file) !== component && !underSharedPath(declaration, file)).sort();
-  if (crossing.length) throw fail("component_boundary", `The design of ${slug} was not accepted: its planned changes and frozen tests leave its component ${component.identity} at ${crossing.join(", ")}. Keep each slice inside one component or under a shared path.`, { slice: slug, component: component.identity, paths: crossing });
+  if (crossing.length) throw fail("component_boundary", `The design of ${slug2} was not accepted: its planned changes and frozen tests leave its component ${component.identity} at ${crossing.join(", ")}. Keep each slice inside one component or under a shared path.`, { slice: slug2, component: component.identity, paths: crossing });
 }
-
 async function applyOperation(resolved, record, operation, effects) {
   const slices = record.slices;
   const requireSlice = (slugValue) => {
@@ -788,10 +652,9 @@ async function applyOperation(resolved, record, operation, effects) {
   switch (operation.op) {
     case "create":
       await checkPlanFolders(resolved, slices, null, { names: [operation.slug] });
-      slices[operation.slug] = { title: operation.title, ...(operation.outcome ? { outcome: operation.outcome } : {}), status: "not-started", parent: null, requirements: normalizeRequirements(resolved, operation.requirements), dependencies: [] };
+      slices[operation.slug] = { title: operation.title, ...operation.outcome ? { outcome: operation.outcome } : {}, status: "not-started", parent: null, requirements: normalizeRequirements(resolved, operation.requirements), dependencies: [] };
       break;
     case "import_map": {
-      // With a store, a legacy map under the configured plans folder is read from the store, like every plan file.
       const stored = resolved.store && await inArtifactStore(resolved.root, operation.path);
       const source = stored ? await readArtifactText(resolved.root, operation.path) : await readFile((await resolveArtifactPath(resolved.root, operation.path, false, path.posix.basename(operation.path))).target, "utf8");
       if (source === null) throw fail("validation_failed", `The map ${operation.path} does not exist in the record store.`);
@@ -801,7 +664,7 @@ async function applyOperation(resolved, record, operation, effects) {
       for (const key of Object.keys(imported.slices)) if (imported.slices[key]?.parent !== null) await checkPlanFolders(resolved, imported.slices, key, { initiative: false });
       for (const [key, slice] of Object.entries(imported.slices)) {
         const outcome = await sliceOutcome(resolved, imported.slices, key);
-        slices[key] = { ...slice, ...(outcome ? { outcome } : {}) };
+        slices[key] = { ...slice, ...outcome ? { outcome } : {} };
       }
       break;
     }
@@ -816,9 +679,8 @@ async function applyOperation(resolved, record, operation, effects) {
         await checkPlanFolders(resolved, slices, child.slug, { siblings });
       }
       for (const child of operation.children) {
-        slices[child.slug] = { title: child.title, ...(child.outcome ? { outcome: child.outcome } : {}), status: "not-started", parent: operation.parent, requirements: normalizeRequirements(resolved, child.requirements), dependencies: [] };
+        slices[child.slug] = { title: child.title, ...child.outcome ? { outcome: child.outcome } : {}, status: "not-started", parent: operation.parent, requirements: normalizeRequirements(resolved, child.requirements), dependencies: [] };
       }
-      // A split whose every part takes its design in the same update is a contract's slice plan; any other split needs evidence.
       const evidence = operation.children.every((child) => effects.accepted.has(child.slug)) ? null : await splitEvidence(resolved, slices, operation, effects);
       parent.status = "split";
       delete parent.design;
@@ -829,28 +691,21 @@ async function applyOperation(resolved, record, operation, effects) {
     case "set_status": {
       const slice = requireSlice(operation.slug);
       if (slice.status === "split") throw fail("validation_failed", "A split parent keeps the split status permanently.");
-      // A done slice keeps the evidence of its passing verification, so a defect in it is fixed as new work.
       if (slice.status === "done" && operation.status !== "done") throw fail("slice_done", `The slice ${operation.slug} is done and stays done; report a defect with report_defect and design a fix as new work.`, { slice: operation.slug });
-      // A slice starts only after every slice it depends on, directly or through an ancestor, is done.
       if (operation.status === "in-progress" && slice.status === "not-started") {
         const analysis = analyzeInitiative(slices);
         const waiting = (analysis.effectiveDependencies[operation.slug] ?? []).filter((target) => !analysis.complete[target]);
         if (waiting.length) throw fail("dependencies_incomplete", `The slice ${operation.slug} cannot start before the slices it depends on are done: ${waiting.join(", ")}.`, { slice: operation.slug, waiting });
       }
-      // Starting a slice claims it, and a slice that leaves in-progress ends its claim.
       if (operation.status === "in-progress") takeClaim(record, operation.slug, "implementation", effects, operation);
       else endClaim(operation.slug, effects);
       if (operation.status === "in-progress" && slice.design?.staged) {
-        // Tests staged earlier in the same update are still in the work tree, so only earlier updates' tests need installing.
         if (!effects.staged.some((item) => item.slice === operation.slug) && !effects.dryRun) effects.installed.push(...await installFrozenTests(resolved.root, resolved.initiative, operation.slug, slice.design.frozenTests));
         const baselineId = effects.dryRun ? null : await captureBaseline(resolved.root, resolved.initiative, operation.slug);
         delete slice.design.staged;
         if (baselineId) slice.design.baselineId = baselineId;
         else delete slice.design.baselineId;
       }
-      // A slice that records a component keeps the project's content at its start, with its frozen tests in place, so verification can find the changes that leave the component.
-      // A slice restarted after a block, or already in progress, keeps the content it started from, and a work tree that Git cannot hash records none.
-      // The content stays under this checkout's local ref once the record is written, so git gc keeps it.
       if (operation.status === "in-progress" && slice.status !== "in-progress" && slice.component && slice.design && !slice.design.startTree && !effects.dryRun) {
         const start = await startContent(resolved.root, slice.component);
         if (start) {
@@ -858,13 +713,10 @@ async function applyOperation(resolved, record, operation, effects) {
           effects.refs.push({ slice: operation.slug, start: start.startTree });
         }
       }
-      // A slice back at not-started drops its start content and its refs, so starting it again records new start content.
       if (operation.status === "not-started" && (slice.design?.startTree || STARTED.has(slice.status))) {
         if (slice.design) for (const key of START_FIELDS) delete slice.design[key];
         if (!effects.dryRun) effects.refs.push({ slice: operation.slug, drop: true });
       }
-      // A started slice that returns to not-started stages its frozen tests again, so other slices' verification never runs them,
-      // unless another slice shares a test file, which staging would take from that slice too.
       if (operation.status === "not-started" && STARTED.has(slice.status) && slice.design && !slice.design.staged && !claimedTests(slices, operation.slug, slice.design.frozenTests, true).length) {
         if (!effects.dryRun) effects.staged.push(await restageFrozenTests(resolved.root, resolved.initiative, operation.slug, slice.design.frozenTests));
         slice.design.staged = true;
@@ -885,8 +737,8 @@ async function applyOperation(resolved, record, operation, effects) {
       break;
     case "update_slice": {
       const slice = requireSlice(operation.slug);
-      if (operation.title !== undefined) slice.title = operation.title;
-      if (operation.outcome !== undefined) slice.outcome = operation.outcome;
+      if (operation.title !== void 0) slice.title = operation.title;
+      if (operation.outcome !== void 0) slice.outcome = operation.outcome;
       break;
     }
     case "accept_design": {
@@ -901,11 +753,10 @@ async function applyOperation(resolved, record, operation, effects) {
       const staging = !STARTED.has(slice.status);
       const claimed = claimedTests(slices, operation.slug, frozenTests, staging);
       if (claimed.length) throw fail("validation_failed", `${claimed.join(", ")} already belongs to another slice${staging ? "" : " that is not done"}; give each slice its own test files.`);
-      // A slice's views sit in its folder and each contract's views, its overview among them, in the folder of the slice that owns the contract; each folder is checked once per update.
       const folders = [];
-      for (let key = operation.slug; key !== null && key !== undefined; key = slices[key]?.parent) folders.push(sliceFolder(resolved.directory, slices, key));
+      for (let key = operation.slug; key !== null && key !== void 0; key = slices[key]?.parent) folders.push(sliceFolder(resolved.directory, slices, key));
       const views = [];
-      const checked = new Map();
+      const checked = /* @__PURE__ */ new Map();
       for (const folder of new Set(folders.filter((item) => !effects.checkedFolders.has(item)))) {
         effects.checkedFolders.add(folder);
         checked.set(folder, effects.viewCache.get(folder) ?? await checkFolderViews(resolved.root, folder, await viewScope(resolved)));
@@ -913,11 +764,8 @@ async function applyOperation(resolved, record, operation, effects) {
       }
       const problems = viewProblems(views);
       if (problems.length) throw fail("view_problems", `The design of ${operation.slug} was not accepted: ${problems.join(" ")}`, { problems });
-      // A dense view of the slice's own folder suggests a slice too large to stay whole, so the design says why it stays whole; an ancestor's views are not the slice's.
       const ownFolder = folders[0];
-      const ownViews = listedViews(checked.get(ownFolder) ?? effects.viewCache.get(ownFolder) ?? await checkFolderViews(resolved.root, ownFolder, await viewScope(resolved)))
-        .map((view) => ({ ...view, dense: isDense(view.kind, view) }))
-        .sort((left, right) => left.path.localeCompare(right.path));
+      const ownViews = listedViews(checked.get(ownFolder) ?? effects.viewCache.get(ownFolder) ?? await checkFolderViews(resolved.root, ownFolder, await viewScope(resolved))).map((view) => ({ ...view, dense: isDense(view.kind, view) })).sort((left, right) => left.path.localeCompare(right.path));
       const dense = ownViews.filter((view) => view.dense);
       if (dense.length) {
         const ownDesign = await readArtifactText(resolved.root, `${ownFolder}/slice.md`).catch(() => null);
@@ -928,17 +776,17 @@ async function applyOperation(resolved, record, operation, effects) {
           throw fail("split_assessment_missing", `The design of ${operation.slug} was not accepted: ${named} A view this dense suggests the slice may be too large to stay whole, so ${ownFolder}/slice.md either splits the slice or says why it stays whole in a ## Split assessment item \`<file>\`: <why the slice stays whole> for each such view.`, { slice: operation.slug, views: unassessed.map(({ path: file, kind, elements, relations }) => ({ path: file, kind, elements, relations })) });
         }
       }
-      // The person reads Changes as the plan, so a line Prism cannot read is refused here, while design can still fix it.
-      const designFile = (slug) => `${sliceFolder(resolved.directory, slices, slug)}/slice.md`;
-      const designOf = (slug) => readArtifactText(resolved.root, designFile(slug)).catch((error) => { if (resolved.store && error?.name === "ArtifactError") throw error; return null; });
+      const designFile = (slug2) => `${sliceFolder(resolved.directory, slices, slug2)}/slice.md`;
+      const designOf = (slug2) => readArtifactText(resolved.root, designFile(slug2)).catch((error) => {
+        if (resolved.store && error?.name === "ArtifactError") throw error;
+        return null;
+      });
       const designText = await designOf(operation.slug);
-      // With a store a design lives only there, so a copy that only the checkout holds is refused rather than read or silently ignored.
       if (designText === null && resolved.store && await readFile(path.join(resolved.root, designFile(operation.slug))).then(() => true, () => false)) {
         throw fail("artifact_not_found", `The design of ${operation.slug} was not accepted: the record store holds no ${designFile(operation.slug)}, while the checkout holds a file at that path, which Prism does not read in a project with a record store. Write the design with update_artifact, then accept it again.`, { slice: operation.slug, path: designFile(operation.slug) });
       }
-      // A slice of a split scope cites the Contract of the nearest ancestor design that has one.
       let contractText = designText;
-      for (let parent = slices[operation.slug]?.parent, seen = new Set([operation.slug]); designText !== null && !contractClauses(contractText ?? "").length && parent && !seen.has(parent); parent = slices[parent]?.parent) {
+      for (let parent = slices[operation.slug]?.parent, seen = /* @__PURE__ */ new Set([operation.slug]); designText !== null && !contractClauses(contractText ?? "").length && parent && !seen.has(parent); parent = slices[parent]?.parent) {
         seen.add(parent);
         contractText = await designOf(parent);
       }
@@ -947,19 +795,17 @@ async function applyOperation(resolved, record, operation, effects) {
       if (changeProblems.length) throw fail("validation_failed", `The design of ${operation.slug} was not accepted: ${changeProblems.join(" ")}`, { problems: changeProblems });
       checkBoundary(component, operation.slug, [...planned.changes.map((change) => change.path), ...frozenTests.map((test) => test.path)]);
       effects.views.push(...views);
-      const acceptedAt = new Date().toISOString();
-      // A new design answers the contract defects reported against the old one, and names the slice's component anew.
+      const acceptedAt = (/* @__PURE__ */ new Date()).toISOString();
       delete slice.contractDefects;
       slice.component = component.component.identity;
       if (effects.dryRun) {
-        slice.design = { acceptedAt, frozenTests, review, views: ownViews, ...(staging ? { staged: true } : {}) };
+        slice.design = { acceptedAt, frozenTests, review, views: ownViews, ...staging ? { staged: true } : {} };
         break;
       }
       effects.staged = effects.staged.filter((item) => item.slice !== operation.slug);
       if (!staging) {
         const baselineId = await captureBaseline(resolved.root, resolved.initiative, operation.slug);
-        // A new design of a started slice keeps the content the slice started from, so the changes made before the revision still count.
-        slice.design = { acceptedAt, frozenTests, review, views: ownViews, ...(baselineId ? { baselineId } : {}), ...startOf(slice.design) };
+        slice.design = { acceptedAt, frozenTests, review, views: ownViews, ...baselineId ? { baselineId } : {}, ...startOf(slice.design) };
       } else {
         effects.staged.push(await stageFrozenTests(resolved.root, operation.slug, frozenTests));
         slice.design = { acceptedAt, frozenTests, review, views: ownViews, staged: true };
@@ -967,34 +813,29 @@ async function applyOperation(resolved, record, operation, effects) {
       break;
     }
     case "restore_tests": {
-      // A design revision needs the staged tests of the slices it revises in the work tree; accepting each design again stages them again.
       requireSlice(operation.slug);
       const leaves = Object.keys(slices).filter((key) => {
-        for (let current = key; current !== null && current !== undefined; current = slices[current]?.parent) if (current === operation.slug) return true;
+        for (let current = key; current !== null && current !== void 0; current = slices[current]?.parent) if (current === operation.slug) return true;
         return false;
       }).filter((key) => slices[key].design?.staged);
       if (!effects.dryRun) for (const key of leaves) effects.installed.push(...await installFrozenTests(resolved.root, resolved.initiative, key, slices[key].design.frozenTests));
       break;
     }
     case "report_contract_defects": {
-      // An implementer that finds the contract wrong stops, and the slice waits for design with the defects on its record.
       const slice = requireSlice(operation.slug);
       if (!STARTED.has(slice.status) || !slice.design) throw fail("validation_failed", `Contract defects are reported for a started slice with an accepted design, and ${operation.slug} is ${slice.status}.`);
-      const reportedAt = new Date().toISOString();
+      const reportedAt = (/* @__PURE__ */ new Date()).toISOString();
       slice.contractDefects = operation.defects.map((item) => ({ clause: item.clause, reason: item.reason, reportedAt }));
       slice.status = "blocked";
       endClaim(operation.slug, effects);
       break;
     }
     case "claim": {
-      // Design claims its scope before it starts, and the claim ends when its proposal is accepted; a slice in progress is claimed for implementation,
-      // so an agent whose claim lapsed takes the slice back unless another agent took it meanwhile.
       const slice = requireSlice(operation.slug);
       takeClaim(record, operation.slug, slice.status === "in-progress" ? "implementation" : "design", effects, operation);
       break;
     }
     case "release_claim": {
-      // Anyone may end a claim, such as one whose holder stopped working, and the history keeps who released whose claim.
       requireSlice(operation.slug);
       const claims = effects.claims;
       if (claims.mode !== "plan") break;
@@ -1007,17 +848,15 @@ async function applyOperation(resolved, record, operation, effects) {
       break;
     }
     case "propose_design": {
-      // Design proposes its result itself, so Prism's refusals reach the designer while it can still fix them;
-      // the proposal is checked on a copy of the record and waits for the orchestrator to accept it after the design gate.
       const scope = requireSlice(operation.slug);
       if (scope.status === "done") checkFixProposal(operation);
       await checkPlanFolders(resolved, slices, operation.slug);
       const outside = proposalOutside(slices, operation.slug, operation.operations);
       if (outside.length) throw fail("validation_failed", `A design proposal changes only its scope ${operation.slug} and the slices inside it, not ${outside.join(", ")}.`);
-      const trial = { slices: Object.assign(Object.create(null), structuredClone(slices)) };
+      const trial = { slices: Object.assign(/* @__PURE__ */ Object.create(null), structuredClone(slices)) };
       const accepted = new Set(operation.operations.filter((item) => item.op === "accept_design").map((item) => item.slug));
       await checkOverview(resolved, slices, operation);
-      const trialEffects = { staged: [], installed: [], refs: [], views: [], checkedFolders: new Set(), viewCache: effects.viewCache, accepted, applied: [], dryRun: true, components: effects.components, proposal: operation.slug };
+      const trialEffects = { staged: [], installed: [], refs: [], views: [], checkedFolders: /* @__PURE__ */ new Set(), viewCache: effects.viewCache, accepted, applied: [], dryRun: true, components: effects.components, proposal: operation.slug };
       for (const inner of operation.operations) await applyOperation(resolved, trial, inner, trialEffects);
       try {
         analyzeInitiative(trial.slices);
@@ -1025,7 +864,7 @@ async function applyOperation(resolved, record, operation, effects) {
         throw fail("invalid_initiative", `The design proposal of ${operation.slug} was not recorded: ${error.message}`, { errors: [error.message] });
       }
       await checkContractBudget(resolved, trial.slices, operation.operations);
-      record.proposals[operation.slug] = { operations: structuredClone(operation.operations), proposedAt: new Date().toISOString(), ...(effects.actor ? { actor: effects.actor } : {}) };
+      record.proposals[operation.slug] = { operations: structuredClone(operation.operations), proposedAt: (/* @__PURE__ */ new Date()).toISOString(), ...effects.actor ? { actor: effects.actor } : {} };
       effects.views.push(...trialEffects.views);
       break;
     }
@@ -1033,9 +872,8 @@ async function applyOperation(resolved, record, operation, effects) {
       const proposal = record.proposals[operation.slug];
       if (!proposal) throw fail("validation_failed", `The scope ${operation.slug} has no pending design proposal.`);
       const required = new Set(operation.reviewRequired);
-      // The review setting at acceptance decides which marks count: all marks every design, recommended adds design's own recommendation.
       const policy = await reviewPolicy(resolved, effects);
-      const marked = (inner) => policy === "all" || required.has(inner.slug) || (policy === "recommended" && inner.review === "required");
+      const marked = (inner) => policy === "all" || required.has(inner.slug) || policy === "recommended" && inner.review === "required";
       const replay = proposal.operations.map((inner) => inner.op === "accept_design" ? { ...inner, review: marked(inner) ? "required" : "none" } : inner);
       const unmarked = [...required].filter((key) => !replay.some((inner) => inner.op === "accept_design" && inner.slug === key));
       if (unmarked.length) throw fail("validation_failed", `${unmarked.join(", ")} takes no design in this proposal, so it cannot be marked for review.`);
@@ -1052,16 +890,14 @@ async function applyOperation(resolved, record, operation, effects) {
       break;
     }
     case "report_defect": {
-      // A defect found in done work is recorded on the done slice, which keeps its status, design, frozen tests, runs, and review.
       const slice = requireSlice(operation.slug);
       if (slice.status !== "done") throw fail("validation_failed", `A defect is reported on a done slice, and ${operation.slug} is ${slice.status}, so its work is fixed in place.`);
       const defects = slice.defects ?? [];
       const highest = defects.reduce((max, item) => Math.max(max, Number(DEFECT_ID.test(item?.id ?? "") ? item.id.slice(1) : 0)), 0);
-      slice.defects = [...defects, { id: `d${highest + 1}`, requirements: normalizeRequirements(resolved, operation.requirements), summary: operation.summary, reportedAt: new Date().toISOString() }];
+      slice.defects = [...defects, { id: `d${highest + 1}`, requirements: normalizeRequirements(resolved, operation.requirements), summary: operation.summary, reportedAt: (/* @__PURE__ */ new Date()).toISOString() }];
       break;
     }
     case "add_fix": {
-      // A fix to done work is a new slice below the done slice, added only through that scope's design proposal.
       if (effects.proposal !== operation.slug) throw fail("validation_failed", "add_fix stands only inside the propose_design of the done scope that it names.");
       const fixed = requireSlice(operation.slug);
       if (fixed.status !== "done") throw fail("validation_failed", `add_fix fixes a done slice, and ${operation.slug} is ${fixed.status}.`);
@@ -1085,8 +921,6 @@ async function applyOperation(resolved, record, operation, effects) {
       throw fail("validation_failed", `Unsupported operation ${operation.op}.`);
   }
 }
-
-// A done scope takes one fix as its design: one add_fix naming the scope, the fix slice's dependencies and title or outcome, and the fix slice's accepted design.
 function checkFixProposal(operation) {
   const refuse = (reason) => fail("validation_failed", `The design proposal of the done slice ${operation.slug} was not recorded: ${reason}`);
   const fixes = operation.operations.filter((item) => item.op === "add_fix");
@@ -1096,8 +930,6 @@ function checkFixProposal(operation) {
   if (other.length) throw refuse(`it takes only set_dependencies, update_slice, and accept_design of the fix slice ${fixSlug}, not ${other.map((item) => `${item.op} of ${item.slug ?? item.parent}`).join(", ")}.`);
   if (operation.operations.filter((item) => item.op === "accept_design").length !== 1) throw refuse(`it takes exactly one accept_design of the fix slice ${fixSlug}.`);
 }
-
-// Coordination cleanup removes an initiative's records only after the roadmap keeps its superseded decision; a shipped initiative keeps them as history.
 async function removeRecords(input) {
   const { readRoadmap } = await import("./roadmap.mjs");
   const resolved = await resolveInitiative(input.projectRoot, input.initiative);
@@ -1111,16 +943,9 @@ async function removeRecords(input) {
   await removeInitiativeRecords(resolved.root, input.initiative);
   return { initiative: input.initiative, removed: true, decision: decision.kind };
 }
-
-// The folders whose slice.md may hold a view's governing contract end at the initiative's folder, and a staged frozen test may be an api view.
 async function viewScope(resolved) {
   return { top: resolved.directory, initiative: resolved.initiative, plans: (await readWorkflowConfig(resolved.root)).paths?.plans ?? null };
 }
-
-/**
- * A proposal that plans more than one slice carries an overview: the scope folder's Views section declares overview.puml as a component view, and it names every planned slice's slug.
- * A one-slice plan and a split into parts need none.
- */
 async function checkOverview(resolved, slices, operation) {
   const planned = [...new Set(operation.operations.filter((item) => item.op === "accept_design").map((item) => item.slug))];
   if (planned.length < 2) return;
@@ -1132,20 +957,15 @@ async function checkOverview(resolved, slices, operation) {
   if (!view) throw refuse(`the Views section of ${folder}/slice.md declares ${overview}, a component view that names every planned slice: ${planned.join(", ")}.`);
   if (view.kind !== "component") throw refuse(`${overview} must be a component view, and ${folder}/slice.md declares it as ${view.kind}.`);
   const source = await readArtifactText(resolved.root, overview).catch(() => null);
-  // A missing or unreadable overview is refused by the design check with the other views.
   if (source === null || drawnKind(overview, source) !== "component" && drawnKind(overview, source) !== "deployment") return;
   const named = (slugValue) => new RegExp(`(?:^|[^A-Za-z0-9_-])${slugValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^A-Za-z0-9_-])`, "m").test(source.replace(/^\s*'.*$/gm, ""));
   const missing = planned.filter((slugValue) => !named(slugValue));
   if (missing.length) throw refuse(`${overview} names every planned slice by its slug, as an element name, alias, or label, and it leaves out ${missing.join(", ")}.`, { missing });
 }
-
-// Parsing views takes about a second per folder, so it runs before the record lock, which other writers wait on only briefly.
-// The folders come from the record as it is now plus this update's splits; a folder the record changes under it is checked again inside the lock.
 async function precheckViews(resolved, input) {
-  const cache = new Map();
+  const cache = /* @__PURE__ */ new Map();
   if (!input.some((operation) => ["accept_design", "propose_design", "accept_proposal"].includes(operation.op))) return cache;
   const current = await loadRecord(resolved).catch(() => null);
-  // A proposal's operations are checked when it is proposed and again when it is accepted.
   const operations = input.flatMap((operation) => operation.op === "propose_design" ? operation.operations : operation.op === "accept_proposal" ? current?.record?.proposals?.[operation.slug]?.operations ?? [] : [operation]);
   const accepted = operations.filter((operation) => operation.op === "accept_design").map((operation) => operation.slug);
   const parents = new Map(Object.entries(current?.record?.slices ?? {}).map(([key, slice]) => [key, slice?.parent ?? null]));
@@ -1154,9 +974,9 @@ async function precheckViews(resolved, input) {
     if (operation.op === "split") for (const child of operation.children) parents.set(child.slug, operation.parent);
     if (operation.op === "add_fix") parents.set(operation.fix.slug, operation.slug);
   }
-  const folders = new Set();
-  for (const slug of accepted) {
-    for (let key = slug, depth = 0; key !== null && key !== undefined && depth < 100; key = parents.get(key), depth += 1) {
+  const folders = /* @__PURE__ */ new Set();
+  for (const slug2 of accepted) {
+    for (let key = slug2, depth = 0; key !== null && key !== void 0 && depth < 100; key = parents.get(key), depth += 1) {
       folders.add(parents.has(key) && parents.get(key) === null ? resolved.directory : `${resolved.directory}/${key}`);
     }
   }
@@ -1164,77 +984,55 @@ async function precheckViews(resolved, input) {
   for (const folder of folders) cache.set(folder, await checkFolderViews(resolved.root, folder, scope));
   return cache;
 }
-
-export async function updateInitiative(input) {
+async function updateInitiative(input) {
   validateInput(UPDATE_INITIATIVE_SCHEMA, input);
-  // A shipped initiative's state is history, so every operation, remove_records included, is refused before the revision and claim checks.
   await refuseShipped(input.projectRoot, input.initiative);
   const result = input.operations.some(takesClaims) ? await claimingUpdate(input) : await finishUpdate(await writeInitiative(input));
-  // An agent that claims a scope or starts a slice learns the settings it works under, including the ones the person set.
   if (result.removed || !input.operations.some((operation) => operation.op === "claim" || operation.op === "set_status")) return result;
   const state = await readCoordinationState({ projectRoot: input.projectRoot, initiative: input.initiative }).catch(() => null);
   return { ...result, settings: effectiveSettings(state?.valid ? state.state : null) };
 }
-
-// The initiative's review setting, read once per update when a design is accepted; an unset or unreadable setting keeps the marks as given.
 async function reviewPolicy(resolved, effects) {
-  if (effects.reviewPolicy === undefined) {
+  if (effects.reviewPolicy === void 0) {
     const state = await readCoordinationState({ projectRoot: resolved.root, initiative: resolved.initiative }).catch(() => null);
     effects.reviewPolicy = effectiveSettings(state?.valid ? state.state : null).review;
   }
   return effects.reviewPolicy;
 }
-
-// An update that takes or releases a claim runs in two phases: its claim records first, confirmed with the store's remote, then the rest of the update.
-const takesClaims = (operation) => operation.op === "claim" || operation.op === "release_claim" || (operation.op === "set_status" && operation.status === "in-progress");
-
-// A claim records the harness of the server's client, and the session's main agent model only when the call is positively that agent's.
+const takesClaims = (operation) => operation.op === "claim" || operation.op === "release_claim" || operation.op === "set_status" && operation.status === "in-progress";
 async function claimContext(resolved, mode, label = null) {
   const { claims } = await readClaims(resolved);
   const holder = claimHolder();
   const model = mode === "plan" && callIsMainAgent() ? await readAgentModel(holder) : null;
-  return { mode, holder, label, host: claimHost(), model, now: Date.now(), files: claims, initial: new Map(claims), expired: [], released: [], releasedSlugs: new Set(), ended: new Set() };
+  return { mode, holder, label, host: claimHost(), model, now: Date.now(), files: claims, initial: new Map(claims), expired: [], released: [], releasedSlugs: /* @__PURE__ */ new Set(), ended: /* @__PURE__ */ new Set() };
 }
-
-// Claim records change one process at a time per initiative, so two local starts never both pass the check for overlapping claims.
 async function withClaimsLock(resolved, action) {
   const folder = path.dirname((await locateRecord(resolved.root, { kind: "claim", initiative: resolved.initiative, slice: "x" })).target);
   await mkdir(path.dirname(folder), { recursive: true });
   return withArtifactLock(folder, () => withFileLock(folder, action, fail));
 }
-
-/**
- * Run an action while holding the locks under which an initiative's open work is written: its claims lock, its initiative record lock, and its coordination state lock, in that order.
- * Ship holds them while it reads open work and writes its decision, so a writer that adds a gate, a claim, or a proposal either lands before ship reads it or re-checks the decision after ship.
- * No path takes these locks while it holds the roadmap lock, so ship takes them before the roadmap lock.
- */
-export async function withInitiativeWriteLocks(projectRoot, initiative, action) {
+async function withInitiativeWriteLocks(projectRoot, initiative, action) {
   if (!SLUG_PATTERN.test(initiative ?? "")) throw fail("invalid_path", "The initiative identifier must use letters, digits, hyphens, or underscores.");
   const resolved = { root: projectRoot, initiative };
   return withClaimsLock(resolved, () => withRecordLock(projectRoot, { kind: "initiative", initiative }, () => withRecordLock(projectRoot, { kind: "state", initiative }, action, fail), fail));
 }
-
-const claimKey = (resolved, slug) => ({ kind: "claim", initiative: resolved.initiative, slice: slug });
-
-async function readClaim(resolved, slug) {
-  // A claim above its bound reads as a damaged claim, which holds no claim.
-  const { bytes } = await readRecord(resolved.root, claimKey(resolved, slug)).catch((error) => { if (error.tooLarge) return { bytes: null }; throw error; });
-  return bytes === null ? null : parseClaim(slug, bytes).claim ?? null;
+const claimKey = (resolved, slug2) => ({ kind: "claim", initiative: resolved.initiative, slice: slug2 });
+async function readClaim(resolved, slug2) {
+  const { bytes } = await readRecord(resolved.root, claimKey(resolved, slug2)).catch((error) => {
+    if (error.tooLarge) return { bytes: null };
+    throw error;
+  });
+  return bytes === null ? null : parseClaim(slug2, bytes).claim ?? null;
 }
-
-// Every change to a claim record holds that record's own lock, the one the store's sync takes before it replaces the file, so a merge never overwrites a claim change it did not see.
-// The claims lock is always taken first and one record lock at a time, so the sync, which takes only record locks, cannot deadlock with it.
-// The action gets the record's current claim and returns the claim to write, null to remove the record, or undefined to leave it.
-async function changeClaim(resolved, slug, decide) {
-  return withRecordLock(resolved.root, claimKey(resolved, slug), async () => {
-    const current = await readClaim(resolved, slug);
+async function changeClaim(resolved, slug2, decide) {
+  return withRecordLock(resolved.root, claimKey(resolved, slug2), async () => {
+    const current = await readClaim(resolved, slug2);
     const next = await decide(current);
-    if (next === null) await removeRecord(resolved.root, claimKey(resolved, slug));
-    else if (next !== undefined) await writeRecord(resolved.root, claimKey(resolved, slug), serializeClaim(next));
+    if (next === null) await removeRecord(resolved.root, claimKey(resolved, slug2));
+    else if (next !== void 0) await writeRecord(resolved.root, claimKey(resolved, slug2), serializeClaim(next));
     return next;
   }, fail);
 }
-
 async function prepare(input) {
   const standalone = input.operations.find((operation) => STANDALONE.has(operation.op));
   if (standalone && input.operations.length > 1) throw fail("validation_failed", `${standalone.op} must be the only operation of its update.`);
@@ -1246,15 +1044,11 @@ async function prepare(input) {
   await mkdir(path.dirname(resolved.target), { recursive: true });
   return { resolved, viewCache };
 }
-
-// An identifier whose records a file system that ignores letter case finds in another initiative's folder writes nothing there:
-// with a store it is refused as that initiative's plan folder is, and otherwise as the found record's revision is.
 async function checkSpelling(resolved, current) {
-  if (current.spelledAs === undefined) return;
+  if (current.spelledAs === void 0) return;
   await checkPlanFolders(resolved, {}, null);
   throw fail("revision_conflict", `The initiative ${resolved.initiative} differs only in letter case from the initiative ${current.spelledAs}, whose records this file system, which ignores letter case, finds under the same name; nothing changed. Choose another initiative identifier.`, { initiative: current.spelledAs });
 }
-
 function checkRevision(current, input) {
   if (current.revision !== input.expectedRevision) {
     throw fail(input.expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("initiative record", input.expectedRevision, current.revision), { currentRevision: current.revision });
@@ -1263,12 +1057,7 @@ function checkRevision(current, input) {
     throw fail("invalid_initiative", "The existing initiative record is invalid and was not changed.", { errors: current.errors });
   }
 }
-
-const workingCopy = (current, resolved) => current.record
-  ? { id: current.record.id, slices: Object.assign(Object.create(null), structuredClone(current.record.slices)), proposals: Object.assign(Object.create(null), structuredClone(current.record.proposals ?? {})), history: [...current.record.history] }
-  : { id: resolved.initiative, slices: Object.create(null), proposals: Object.create(null), history: [] };
-
-// Apply every operation to a working copy and check the result as a whole: graph analysis and the contract budget.
+const workingCopy = (current, resolved) => current.record ? { id: current.record.id, slices: Object.assign(/* @__PURE__ */ Object.create(null), structuredClone(current.record.slices)), proposals: Object.assign(/* @__PURE__ */ Object.create(null), structuredClone(current.record.proposals ?? {})), history: [...current.record.history] } : { id: resolved.initiative, slices: /* @__PURE__ */ Object.create(null), proposals: /* @__PURE__ */ Object.create(null), history: [] };
 async function applyAll(resolved, record, input, effects) {
   for (const operation of input.operations) {
     await applyOperation(resolved, record, operation, effects);
@@ -1281,36 +1070,29 @@ async function applyAll(resolved, record, input, effects) {
     throw fail("invalid_initiative", `The proposed initiative record is invalid and was not written: ${error.message}`, { errors: [error.message] });
   }
 }
-
-const newEffects = (input, viewCache, claims, notes, dryRun) => ({ staged: [], installed: [], refs: [], views: [], checkedFolders: new Set(), viewCache, accepted: new Set(input.operations.filter((operation) => operation.op === "accept_design").map((operation) => operation.slug)), applied: [], actor: input.actor, claims, notes, dryRun });
-
-// The initiative write: revision check, record lock, validation, history, and projection; the claims it ends are noted for removal after the write.
+const newEffects = (input, viewCache, claims, notes, dryRun) => ({ staged: [], installed: [], refs: [], views: [], checkedFolders: /* @__PURE__ */ new Set(), viewCache, accepted: new Set(input.operations.filter((operation) => operation.op === "accept_design").map((operation) => operation.slug)), applied: [], actor: input.actor, claims, notes, dryRun });
 async function writeInitiative(input, plan = null) {
   const prepared = plan?.prepared ?? await prepare(input);
   if (prepared.removed) return { removed: prepared.removed };
   const { resolved, viewCache } = prepared;
   const written = await withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
-    // A ship that landed after the first check refuses the update too, so the record never changes after the initiative shipped.
     await refuseShipped(input.projectRoot, input.initiative);
     const current = await loadRecord(resolved);
     await checkSpelling(resolved, current);
     checkRevision(current, input);
     const record = workingCopy(current, resolved);
-    const effects = newEffects(input, viewCache, await claimContext(resolved, "apply"), plan?.notes ?? new Map(), false);
+    const effects = newEffects(input, viewCache, await claimContext(resolved, "apply"), plan?.notes ?? /* @__PURE__ */ new Map(), false);
     await applyAll(resolved, record, input, effects);
-    const at = new Date().toISOString();
+    const at = (/* @__PURE__ */ new Date()).toISOString();
     const actor = input.actor ?? "agent";
-    // Taking a claim writes no history; replacing another holder's expired claim and releasing a claim do.
     const recorded = input.operations.filter((operation) => operation.op !== "regenerate_markdown" && (operation.op !== "claim" || effects.notes.has(operation)));
-    for (const operation of recorded) record.history.push({ actor, operation: operation.op, ...(operation.slug ? { slug: operation.slug } : operation.parent ? { slug: operation.parent } : {}), at, ...effects.notes.get(operation) });
+    for (const operation of recorded) record.history.push({ actor, operation: operation.op, ...operation.slug ? { slug: operation.slug } : operation.parent ? { slug: operation.parent } : {}, at, ...effects.notes.get(operation) });
     const contents = serialize(record);
     const changed = recorded.length > 0 && (!current.exists || contents !== current.text);
     if (changed) await writeRecord(resolved.root, { kind: "initiative", initiative: resolved.initiative }, contents);
     if (changed && resolved.store && input.operations[0]?.op === "accept_proposal") await acceptPlanVersions(resolved, record, effects.accepted, at);
-    // Staged tests leave the work tree only after the initiative record is written, and only for slices still staged at the end of the update.
     const withdrawn = [];
     for (const staged of effects.staged) if (record.slices[staged.slice]?.design?.staged) withdrawn.push(...await withdrawFrozenTests(resolved.root, resolved.initiative, staged));
-    // The slices' local refs follow the written record, in the order the update set and dropped them.
     if (changed && effects.refs.length) {
       const { dropSliceRefs, setSliceRef } = await import("./slice-gate.mjs");
       for (const item of effects.refs) {
@@ -1320,32 +1102,23 @@ async function writeInitiative(input, plan = null) {
     }
     let projectionStale = false;
     try {
-      // With a store, an initiative whose plan folder the store refuses gets no view there.
       await checkPlanFolders(resolved, record.slices, null);
       projectionStale = !(await writeProjection(resolved.root, resolved.projectionPath, markdown(canonicalRecord(record)), RECORD_NAME)).written;
     } catch {
       projectionStale = true;
     }
     const updated = await loadRecord(resolved);
-    return { result: { ...publicResult(resolved, updated), created: !current.exists, previousRevision: current.revision, projectionStale, withdrawn, installed: effects.installed, views: effects.views }, ended: [...effects.claims.ended].map((slug) => effects.claims.files.get(slug)) };
+    return { result: { ...publicResult(resolved, updated), created: !current.exists, previousRevision: current.revision, projectionStale, withdrawn, installed: effects.installed, views: effects.views }, ended: [...effects.claims.ended].map((slug2) => effects.claims.files.get(slug2)) };
   }, fail));
   return { ...written, resolved };
 }
-
-/**
- * With a store, the accept_proposal that accepts slices' designs keeps the bytes of the store artifacts in their folders as each one's accepted version,
- * so a reviewer later sees what changed since; a root slice's folder holds the other slices' folders, whose files only their own acceptance keeps.
- * The record is already written, so a store that refuses this leaves the acceptance in place and those versions unkept.
- */
 async function acceptPlanVersions(resolved, record, accepted, at) {
-  const slugs = [...accepted].filter((slug) => Object.hasOwn(record.slices, slug));
+  const slugs = [...accepted].filter((slug2) => Object.hasOwn(record.slices, slug2));
   if (!slugs.length) return;
-  const folders = slugs.map((slug) => sliceFolder(resolved.directory, record.slices, slug));
-  const exclude = Object.keys(record.slices).filter((slug) => record.slices[slug].parent !== null && !accepted.has(slug)).map((slug) => sliceFolder(resolved.directory, record.slices, slug));
+  const folders = slugs.map((slug2) => sliceFolder(resolved.directory, record.slices, slug2));
+  const exclude = Object.keys(record.slices).filter((slug2) => record.slices[slug2].parent !== null && !accepted.has(slug2)).map((slug2) => sliceFolder(resolved.directory, record.slices, slug2));
   await acceptArtifactVersions(resolved.root, folders, { exclude, event: { event: "design_accepted", initiative: resolved.initiative, slices: slugs, at } }).catch(() => []);
 }
-
-// After the initiative write, the claims the update ended are removed, unless another attempt replaced them meanwhile.
 async function finishUpdate(written, plan = null) {
   if (written.removed) return written.removed;
   const { resolved } = written;
@@ -1353,7 +1126,7 @@ async function finishUpdate(written, plan = null) {
   const ended = written.ended.filter((claim) => !taken.has(claim.slug));
   if (ended.length) {
     await withClaimsLock(resolved, async () => {
-      for (const claim of ended) await changeClaim(resolved, claim.slug, (current) => current?.nonce === claim.nonce ? null : undefined);
+      for (const claim of ended) await changeClaim(resolved, claim.slug, (current) => current?.nonce === claim.nonce ? null : void 0);
     });
   }
   for (const claim of ended) dropClaim(resolved.root, resolved.initiative, claim.slug);
@@ -1364,15 +1137,9 @@ async function finishUpdate(written, plan = null) {
     ...written.result,
     record: view.loaded.record,
     claims: { taken: (plan?.writes ?? []).map((item) => claimView(item.claim)), expired: plan?.expired ?? [], released: plan?.released ?? [], ended: ended.map(claimView), confirmation: plan?.confirmation ?? null },
-    ...(view.fields.lostClaims ? { lostClaims: view.fields.lostClaims } : {})
+    ...view.fields.lostClaims ? { lostClaims: view.fields.lostClaims } : {}
   };
 }
-
-/**
- * An update that takes or releases claims. It is checked whole without writing anything, its claim records are written with a fresh nonce for each claim taken,
- * and where the store syncs it waits for a sync of its own and confirms that each record still holds this attempt's nonce, or is still absent for a release.
- * A refusal undoes only this attempt's claim records; otherwise the rest of the update is written with the caller's revision, and a failure there undoes the claims too.
- */
 async function claimingUpdate(input) {
   const prepared = await prepare(input);
   const { resolved, viewCache } = prepared;
@@ -1385,16 +1152,15 @@ async function claimingUpdate(input) {
     checkRevision(current, input);
     const record = workingCopy(current, resolved);
     const claims = await claimContext(resolved, "plan", label);
-    const effects = newEffects(input, viewCache, claims, new Map(), true);
+    const effects = newEffects(input, viewCache, claims, /* @__PURE__ */ new Map(), true);
     await applyAll(resolved, record, input, effects);
     const writes = [];
     const releases = [];
-    for (const slug of new Set([...claims.initial.keys(), ...claims.files.keys()])) {
-      const before = claims.initial.get(slug), after = claims.files.get(slug);
-      if (after && after.nonce !== before?.nonce) writes.push({ slug, claim: after, previous: before ?? null });
-      else if (!after && before && claims.releasedSlugs.has(slug)) releases.push({ slug, previous: before });
+    for (const slug2 of /* @__PURE__ */ new Set([...claims.initial.keys(), ...claims.files.keys()])) {
+      const before = claims.initial.get(slug2), after = claims.files.get(slug2);
+      if (after && after.nonce !== before?.nonce) writes.push({ slug: slug2, claim: after, previous: before ?? null });
+      else if (!after && before && claims.releasedSlugs.has(slug2)) releases.push({ slug: slug2, previous: before });
     }
-    // A claim this process already holds keeps being renewed while the attempt that replaces it waits for confirmation.
     for (const item of writes) pendClaim(resolved.root, resolved.initiative, item.slug, item.claim.nonce);
     for (const item of writes) await changeClaim(resolved, item.slug, () => item.claim);
     for (const item of releases) await changeClaim(resolved, item.slug, () => null);
@@ -1403,7 +1169,6 @@ async function claimingUpdate(input) {
   });
   plan.confirmation = await confirmClaims(resolved, store, plan);
   if (!plan.needsWrite) {
-    // A ship decision that arrived while the claims were written or synced withdraws them, so a shipped initiative keeps no new claim.
     try {
       await refuseShipped(input.projectRoot, input.initiative);
     } catch (error) {
@@ -1422,12 +1187,6 @@ async function claimingUpdate(input) {
   }
   return finishUpdate(written, plan);
 }
-
-/**
- * Confirm an update's claim records with the store's remote. Without sync, or where nothing else shares the store, they hold locally.
- * Otherwise the update waits for a sync of its own: another holder's record or an overlapping live claim that won refuses it with slice_claimed,
- * and a remote that cannot be reached refuses it with claim_unconfirmed; a refusal undoes only this attempt's claim records.
- */
 async function confirmClaims(resolved, store, plan) {
   if (!store.sync) return "local";
   const status = await syncRecordStoreNow(store.base);
@@ -1456,61 +1215,49 @@ async function confirmClaims(resolved, store, plan) {
   }
   return "sync";
 }
-
-// Undo an attempt's claim records: a claim record that still holds this attempt's nonce goes back to this holder's own earlier live claim or is removed,
-// and a released claim whose record is still absent is put back.
 async function undoClaims(resolved, plan) {
   await withClaimsLock(resolved, async () => {
     const now = Date.now();
     for (const item of plan.writes) {
-      await changeClaim(resolved, item.slug, (current) => current?.nonce !== item.claim.nonce ? undefined : item.previous?.holder === plan.holder && isLive(item.previous, now) ? item.previous : null);
+      await changeClaim(resolved, item.slug, (current) => current?.nonce !== item.claim.nonce ? void 0 : item.previous?.holder === plan.holder && isLive(item.previous, now) ? item.previous : null);
       settleClaim(resolved.root, resolved.initiative, item.slug, item.claim.nonce);
     }
-    for (const item of plan.releases) await changeClaim(resolved, item.slug, async (current) => current === null && (await readRecord(resolved.root, claimKey(resolved, item.slug))).bytes === null ? item.previous : undefined);
+    for (const item of plan.releases) await changeClaim(resolved, item.slug, async (current) => current === null && (await readRecord(resolved.root, claimKey(resolved, item.slug))).bytes === null ? item.previous : void 0);
   });
 }
-
-/** Renew one claim this process holds by rewriting only its claim record; returns { renewed } or { lost } with the reason. */
-export async function renewClaim(entry) {
+async function renewClaim(entry) {
   const resolved = await resolveInitiative(entry.root, entry.initiative);
   const model = entry.main ? await readAgentModel(entry.holder) : null;
   return withClaimsLock(resolved, async () => {
     let decided;
     await changeClaim(resolved, entry.slug, (current) => {
       decided = renewal(entry, current, Date.now(), model);
-      return decided.lost ? undefined : decided.claim;
+      return decided.lost ? void 0 : decided.claim;
     });
     return decided.lost ? decided : { renewed: decided.claim };
   });
 }
-
-// The slugs an update names, so its acknowledgement reports only what the caller touched.
 function touchedSlugs(operations, slices) {
   const within = (scope) => Object.keys(slices).filter((key) => {
-    for (let current = key, depth = 0; current !== null && current !== undefined && depth < 1000; current = slices[current]?.parent, depth += 1) if (current === scope) return true;
+    for (let current = key, depth = 0; current !== null && current !== void 0 && depth < 1e3; current = slices[current]?.parent, depth += 1) if (current === scope) return true;
     return false;
   });
   return [...new Set(operations.flatMap((operation) => operation.op === "split" ? [operation.parent, ...operation.children.map((child) => child.slug)] : operation.op === "accept_proposal" ? within(operation.slug) : operation.slug ? [operation.slug] : []))];
 }
-
-/**
- * What an agent needs back from an update: the new revision and the state of the slices it touched, not the whole record,
- * which get_initiative reads when it is needed.
- */
-export function initiativeAcknowledgement(result, operations) {
+function initiativeAcknowledgement(result, operations) {
   if (result.removed) return result;
   const slices = result.record?.slices ?? {};
   const touched = Object.fromEntries(touchedSlugs(operations, slices).filter((key) => slices[key]).map((key) => [key, {
     status: slices[key].status,
-    ...(slices[key].design ? { design: slices[key].design.staged ? "staged" : "accepted", frozenTests: slices[key].design.frozenTests.length, review: slices[key].design.review } : {}),
-    ...(slices[key].splitEvidence ? { splitEvidence: slices[key].splitEvidence.kind } : {}),
-    ...(result.record?.proposals?.[key] ? { proposal: "pending" } : {}),
-    ...(slices[key].contractDefects ? { contractDefects: slices[key].contractDefects.length } : {}),
-    ...(slices[key].defects?.length ? { defects: slices[key].defects.map((item) => item.id) } : {}),
-    ...(slices[key].fixes ? { fixes: slices[key].fixes } : {}),
+    ...slices[key].design ? { design: slices[key].design.staged ? "staged" : "accepted", frozenTests: slices[key].design.frozenTests.length, review: slices[key].design.review } : {},
+    ...slices[key].splitEvidence ? { splitEvidence: slices[key].splitEvidence.kind } : {},
+    ...result.record?.proposals?.[key] ? { proposal: "pending" } : {},
+    ...slices[key].contractDefects ? { contractDefects: slices[key].contractDefects.length } : {},
+    ...slices[key].defects?.length ? { defects: slices[key].defects.map((item) => item.id) } : {},
+    ...slices[key].fixes ? { fixes: slices[key].fixes } : {},
     // A new design answers the defects but does not restart the slice, because restarting takes an implementation claim.
-    ...(slices[key].status === "blocked" && slices[key].design && !slices[key].contractDefects ? { next: "The design answers the contract defects, and the slice stays blocked until set_status in-progress restarts it." } : {}),
-    ...(slices[key].claim ? { claim: { label: slices[key].claim.label, activity: slices[key].claim.activity, expiresAt: slices[key].claim.expiresAt } } : {})
+    ...slices[key].status === "blocked" && slices[key].design && !slices[key].contractDefects ? { next: "The design answers the contract defects, and the slice stays blocked until set_status in-progress restarts it." } : {},
+    ...slices[key].claim ? { claim: { label: slices[key].claim.label, activity: slices[key].claim.activity, expiresAt: slices[key].claim.expiresAt } } : {}
   }]));
   const claims = result.claims ?? { taken: [], expired: [], released: [] };
   const listed = listedViews(result.views ?? []);
@@ -1519,24 +1266,23 @@ export function initiativeAcknowledgement(result, operations) {
     initiative: result.initiative,
     revision: result.revision,
     previousRevision: result.previousRevision,
-    ...(result.created ? { created: true } : {}),
-    ...(result.valid ? {} : { valid: false, errors: result.errors }),
+    ...result.created ? { created: true } : {},
+    ...result.valid ? {} : { valid: false, errors: result.errors },
     slices: touched,
-    ...(result.derived?.readyToShip ? { readyToShip: true } : {}),
-    ...(result.withdrawn.length ? { stagedTests: result.withdrawn } : {}),
-    ...(result.installed.length ? { installedTests: result.installed } : {}),
-    ...(listed.length ? { views: listed } : {}),
-    ...(unchecked.length ? { viewsUnchecked: unchecked } : {}),
-    ...(result.projectionStale ? { projectionStale: true } : {}),
-    ...(claims.taken.length ? { claimConfirmation: claims.confirmation } : {}),
-    ...(claims.expired.length ? { replacedClaims: claims.expired } : {}),
-    ...(claims.released.length ? { releasedClaims: claims.released } : {}),
-    ...(result.lostClaims ? { lostClaims: result.lostClaims } : {}),
-    ...(result.settings ? { settings: result.settings } : {})
+    ...result.derived?.readyToShip ? { readyToShip: true } : {},
+    ...result.withdrawn.length ? { stagedTests: result.withdrawn } : {},
+    ...result.installed.length ? { installedTests: result.installed } : {},
+    ...listed.length ? { views: listed } : {},
+    ...unchecked.length ? { viewsUnchecked: unchecked } : {},
+    ...result.projectionStale ? { projectionStale: true } : {},
+    ...claims.taken.length ? { claimConfirmation: claims.confirmation } : {},
+    ...claims.expired.length ? { replacedClaims: claims.expired } : {},
+    ...claims.released.length ? { releasedClaims: claims.released } : {},
+    ...result.lostClaims ? { lostClaims: result.lostClaims } : {},
+    ...result.settings ? { settings: result.settings } : {}
   };
 }
-
-export const INITIATIVE_TOOLS = [
+const INITIATIVE_TOOLS = [
   {
     name: "get_initiative",
     description: "Read an initiative's MCP-managed slice record with derived leaves, effective dependencies, completion, design candidates, fixes (each slice with fix slices mapped to their slugs), unfinishedFixes ({ slice, defect, fix, status } for each defect whose fix slice is missing, with fix null and status not-designed, or not done), deferredFindings (each slice whose review deferred findings, mapped to { id, severity, title, gate, followUp, wave } per deferred finding), and readiness to ship, which unfinished fixes hold false, plus run totals computed from run records for each slice, each split parent with its descendants, and the initiative, and each live claim: on its slice in the record view and under claims with its label, activity, and expiry, where heldHere marks this server's claims; lostClaims lists, once, claims this server held that expired or were released or taken over. Reads never create files. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit.",
@@ -1545,8 +1291,34 @@ export const INITIATIVE_TOOLS = [
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts, while a started slice set back to not-started stages them again; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. report_contract_defects, which verify_slice sends for an implementer, blocks a started slice and keeps the defects on it until its next accepted design, which clears them but leaves the slice blocked until set_status in-progress restarts it. Accepting a design also checks the views of the slice's folder and each ancestor's folder, which each folder's slice.md declares in a ## Views section, one item per view: `<file>` <kind> (§<n>, …): <question?>, where kind is one of sequence, activity, state, component, data-model, deployment, wireframe, code, or api, and only an api view may name a project-relative path outside the folder; it refuses with view_problems an undeclared PlantUML file, a Views line of another form, an unknown kind, a missing question, a view that cites no clause or a clause beyond the governing contract, a view file that does not exist, a view whose source draws another kind than it declares, a PlantUML view that does not parse, an api view that is not JSON holding an OpenAPI 3.0 or 3.1 document with info and paths or an AsyncAPI 2 or 3 document with info and channels, and a view beyond a readability limit of its kind: a sequence of more than 10 participants or 30 messages, an activity of more than 30 actions and decisions, a state view of more than 20 states or 40 transitions, a component, deployment, code, or data-model view of more than 30 elements or 50 relations, a wireframe of more than 60 widgets, or an api view of more than 30 operations; the result lists the checked views as views ({ path, kind, elements, relations }) and the views whose check could not run as viewsUnchecked. When no view problem remains, a view of the slice's own folder whose count exceeds two thirds of a limit of its kind is dense, and accept_design refuses it with split_assessment_missing unless that folder's slice.md has a ## Split assessment item `<file>`: <why the slice stays whole> for it; the accepted design records the views of the slice's own folder as design.views ([{ path, kind, elements, relations, dense }], sorted by path), and an ancestor's views are not the slice's. A propose_design that accepts the designs of more than one slice is refused with overview_missing, data.path naming <scope folder>/overview.puml, unless the scope folder's Views section declares overview.puml as a component view that names every planned slice's slug, and data.missing lists the slugs it leaves out; a refused proposal records nothing. Accepting a design also refuses a slice.md Changes line that is not add, change, or remove followed by comma-separated paths in backticks and a colon with the note. accept_design takes the slice's component, bare or as <repository>/<component>, records it as <repository>/<component>, and may leave it out only in a repository that declares no components under ## Components in .prism/workflow.md, which records the root component; acceptance refuses an invalid declaration with component_invalid, component_overlap, component_dependency_unknown, or component_cycle, a component that is not this repository's with component_unknown, listing its components, and a slice whose Changes paths or frozen tests belong to another component and lie under no shared path with component_boundary, listing the paths. set_status in-progress refuses to start a not-started slice with dependencies_incomplete, naming them, until every slice it depends on directly or through an ancestor is done. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. A slice has at most one holder, the host session that claimed it, or the Prism server process when the host names no session, across every checkout and machine that shares the records: set_status in-progress takes an implementation claim, claim takes a design claim on a scope before design starts, or an implementation claim on a slice that is in-progress, such as after the caller's claim lapsed, and a claim covers the slice's descendants. An agent's call that works on a slice, namely propose_design, accept_proposal, restore_tests, report_contract_defects, set_status moving a slice out of in-progress, verify_slice except a dependents' run, update_review, update_change_map, and update_design_view, is refused with claim_required before it changes anything unless a live claim of the caller is on the slice or an ancestor, saying whether its own claim expired; an operation may work on a slice that an earlier operation of the same update claims or starts. Any other change to a slice is refused with slice_claimed while another holder's live claim covers it. Taking a claim is refused with slice_claimed, naming the holder's label, activity, and expiry, while another holder's live claim covers the slice, an ancestor, or a descendant; an expired claim is replaced and the result names it under replacedClaims. An update that takes or releases claims is checked whole, writes its claims first, and where store sync is on waits for a sync before anything else is written: another machine's claim or renewal that won refuses it with slice_claimed, and an unreachable remote refuses it with claim_unconfirmed; a refused update applies none of its operations. The holding server renews its live claims every 10 minutes, a server the host restarts in the same session renews them after its first read or update of the initiative, a claim expires 30 minutes after its last renewal, and an expired claim is never renewed. A claim ends when its slice leaves in-progress, when the scope's proposal is accepted, or through release_claim, which anyone may send and which the history records. A defect in done work is fixed as new work: report_defect ({ slug, requirements, summary }) records a defect d<n> on a done slice and refuses any other slice with validation_failed; claim takes a design claim on a done slice; propose_design on a done scope takes exactly one add_fix ({ slug, defects, fix: { slug, title, outcome, requirements } }) naming that scope, set_dependencies and update_slice on the fix slug, and one accept_design of the fix slug, refusing with validation_failed any other operation, a defect the scope does not hold or another fix slice names, and a used slug, while add_fix outside propose_design refuses too; accept_proposal adds the fix as a not-started slice below the done slice, with fixes { slice, defects }, whose slice.md sits in its own folder, and leaves the done slice's records unchanged. A fix slice is a leaf of the done slice's ancestors, cannot split, starts after the dependencies of the done slice and its ancestors, and holds the dependents of the done slice until it is done. set_status changing a done slice to another status refuses with slice_done. With a record store named in .prism/workflow.md, Prism reads each slice.md and PlantUML file from the store, never from the checkout, and writes initiative.md there: accepting a design whose slice.md only the checkout holds is refused with artifact_not_found, a frozen test under the configured Requirements, ADRs, or Plans folder or at the Glossary or Roadmap path with frozen_test_in_store, and create, import_map, split, add_fix, propose_design, and accept_design refuse a slug whose plan folder breaks the artifact name form with artifact_name_invalid, differs only in letter case from another initiative's or slice's plan folder or a stored plan file with artifact_name_conflict and data.path, or whose location in the store with /initiative.md holds more than " + ARTIFACT_LOCATION_BYTES_MAX + " bytes, or a name of more than " + STORE_NAME_BYTES_MAX + ", with artifact_path_too_long and data.location. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. A shipped initiative's state is history: every operation on it, remove_records included, is refused with initiative_shipped, naming the initiative and its ship time, before every check except argument validation, and changes no record, while a roadmap record that cannot be read or parsed refuses it with invalid_roadmap; start new work on it as a new initiative. After the roadmap records the initiative as superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts, while a started slice set back to not-started stages them again; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. report_contract_defects, which verify_slice sends for an implementer, blocks a started slice and keeps the defects on it until its next accepted design, which clears them but leaves the slice blocked until set_status in-progress restarts it. Accepting a design also checks the views of the slice's folder and each ancestor's folder, which each folder's slice.md declares in a ## Views section, one item per view: `<file>` <kind> (\xA7<n>, \u2026): <question?>, where kind is one of sequence, activity, state, component, data-model, deployment, wireframe, code, or api, and only an api view may name a project-relative path outside the folder; it refuses with view_problems an undeclared PlantUML file, a Views line of another form, an unknown kind, a missing question, a view that cites no clause or a clause beyond the governing contract, a view file that does not exist, a view whose source draws another kind than it declares, a PlantUML view that does not parse, an api view that is not JSON holding an OpenAPI 3.0 or 3.1 document with info and paths or an AsyncAPI 2 or 3 document with info and channels, and a view beyond a readability limit of its kind: a sequence of more than 10 participants or 30 messages, an activity of more than 30 actions and decisions, a state view of more than 20 states or 40 transitions, a component, deployment, code, or data-model view of more than 30 elements or 50 relations, a wireframe of more than 60 widgets, or an api view of more than 30 operations; the result lists the checked views as views ({ path, kind, elements, relations }) and the views whose check could not run as viewsUnchecked. When no view problem remains, a view of the slice's own folder whose count exceeds two thirds of a limit of its kind is dense, and accept_design refuses it with split_assessment_missing unless that folder's slice.md has a ## Split assessment item `<file>`: <why the slice stays whole> for it; the accepted design records the views of the slice's own folder as design.views ([{ path, kind, elements, relations, dense }], sorted by path), and an ancestor's views are not the slice's. A propose_design that accepts the designs of more than one slice is refused with overview_missing, data.path naming <scope folder>/overview.puml, unless the scope folder's Views section declares overview.puml as a component view that names every planned slice's slug, and data.missing lists the slugs it leaves out; a refused proposal records nothing. Accepting a design also refuses a slice.md Changes line that is not add, change, or remove followed by comma-separated paths in backticks and a colon with the note. accept_design takes the slice's component, bare or as <repository>/<component>, records it as <repository>/<component>, and may leave it out only in a repository that declares no components under ## Components in .prism/workflow.md, which records the root component; acceptance refuses an invalid declaration with component_invalid, component_overlap, component_dependency_unknown, or component_cycle, a component that is not this repository's with component_unknown, listing its components, and a slice whose Changes paths or frozen tests belong to another component and lie under no shared path with component_boundary, listing the paths. set_status in-progress refuses to start a not-started slice with dependencies_incomplete, naming them, until every slice it depends on directly or through an ancestor is done. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. A slice has at most one holder, the host session that claimed it, or the Prism server process when the host names no session, across every checkout and machine that shares the records: set_status in-progress takes an implementation claim, claim takes a design claim on a scope before design starts, or an implementation claim on a slice that is in-progress, such as after the caller's claim lapsed, and a claim covers the slice's descendants. An agent's call that works on a slice, namely propose_design, accept_proposal, restore_tests, report_contract_defects, set_status moving a slice out of in-progress, verify_slice except a dependents' run, update_review, update_change_map, and update_design_view, is refused with claim_required before it changes anything unless a live claim of the caller is on the slice or an ancestor, saying whether its own claim expired; an operation may work on a slice that an earlier operation of the same update claims or starts. Any other change to a slice is refused with slice_claimed while another holder's live claim covers it. Taking a claim is refused with slice_claimed, naming the holder's label, activity, and expiry, while another holder's live claim covers the slice, an ancestor, or a descendant; an expired claim is replaced and the result names it under replacedClaims. An update that takes or releases claims is checked whole, writes its claims first, and where store sync is on waits for a sync before anything else is written: another machine's claim or renewal that won refuses it with slice_claimed, and an unreachable remote refuses it with claim_unconfirmed; a refused update applies none of its operations. The holding server renews its live claims every 10 minutes, a server the host restarts in the same session renews them after its first read or update of the initiative, a claim expires 30 minutes after its last renewal, and an expired claim is never renewed. A claim ends when its slice leaves in-progress, when the scope's proposal is accepted, or through release_claim, which anyone may send and which the history records. A defect in done work is fixed as new work: report_defect ({ slug, requirements, summary }) records a defect d<n> on a done slice and refuses any other slice with validation_failed; claim takes a design claim on a done slice; propose_design on a done scope takes exactly one add_fix ({ slug, defects, fix: { slug, title, outcome, requirements } }) naming that scope, set_dependencies and update_slice on the fix slug, and one accept_design of the fix slug, refusing with validation_failed any other operation, a defect the scope does not hold or another fix slice names, and a used slug, while add_fix outside propose_design refuses too; accept_proposal adds the fix as a not-started slice below the done slice, with fixes { slice, defects }, whose slice.md sits in its own folder, and leaves the done slice's records unchanged. A fix slice is a leaf of the done slice's ancestors, cannot split, starts after the dependencies of the done slice and its ancestors, and holds the dependents of the done slice until it is done. set_status changing a done slice to another status refuses with slice_done. With a record store named in .prism/workflow.md, Prism reads each slice.md and PlantUML file from the store, never from the checkout, and writes initiative.md there: accepting a design whose slice.md only the checkout holds is refused with artifact_not_found, a frozen test under the configured Requirements, ADRs, or Plans folder or at the Glossary or Roadmap path with frozen_test_in_store, and create, import_map, split, add_fix, propose_design, and accept_design refuse a slug whose plan folder breaks the artifact name form with artifact_name_invalid, differs only in letter case from another initiative's or slice's plan folder or a stored plan file with artifact_name_conflict and data.path, or whose location in the store with /initiative.md holds more than " + ARTIFACT_LOCATION_BYTES_MAX + " bytes, or a name of more than " + STORE_NAME_BYTES_MAX + ", with artifact_path_too_long and data.location. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. A shipped initiative's state is history: every operation on it, remove_records included, is refused with initiative_shipped, naming the initiative and its ship time, before every check except argument validation, and changes no record, while a roadmap record that cannot be read or parsed refuses it with invalid_roadmap; start new work on it as a new initiative. After the roadmap records the initiative as superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }
 ];
+export {
+  GET_INITIATIVE_SCHEMA,
+  INITIATIVE_TOOLS,
+  InitiativeError,
+  SPLIT_EVIDENCE_KINDS,
+  UPDATE_INITIATIVE_SCHEMA,
+  claimedByUpdate,
+  fitScopes,
+  getInitiative,
+  initiativeAcknowledgement,
+  initiativeWork,
+  mergeInitiativeRecord,
+  normalizeRequirementReference,
+  readInitiative,
+  readInitiativeWithClaims,
+  renewClaim,
+  requireClaimedWork,
+  resolveInitiative,
+  scopeDependents,
+  scopeLeaves,
+  sliceFolder,
+  unfinishedFixes,
+  unfinishedFixesMessage,
+  updateInitiative,
+  withInitiativeWriteLocks
+};

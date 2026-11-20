@@ -1,11 +1,8 @@
-// prism-button: one native button around its content, in the kit's variants and sizes.
+// Generated from src/server/review/public/kit/elements/prism-button.ts by scripts/native-build/compile.mjs.
 import { Base, setAttribute, shadow } from "./base.js";
 import { watchShortening, unwatchShortening } from "../shorten.js";
-
-// Attributes a menu, popover, or page sets on the kit button that reach the native button inside it.
 const FORWARDED = ["aria-haspopup", "aria-expanded", "aria-controls", "aria-describedby", "aria-keyshortcuts"];
-
-export class PrismButton extends Base {
+class PrismButton extends Base {
   static tag = "prism-button";
   static styles = ["prism-button.css"];
   static observedAttributes = ["disabled", "pressed", "label", "text", ...FORWARDED];
@@ -21,15 +18,13 @@ export class PrismButton extends Base {
       { name: "text", values: ["text"], default: "", description: "The words of a button without content of its own, drawn inside its native button, so the button's own text is its words, as a script that reads a row's actions by their text expects." },
       { name: "tip", values: ["text"], default: "", description: "A short description the kit tooltip shows on hover and keyboard focus." },
       { name: "shrink", values: ["boolean"], default: "false", description: "Lays the content out in a row where icons, avatars, and badges keep their size and only the span of text shortens to an ellipsis, so a trailing icon stays inside a narrow button." },
-      { name: "slot=\"badge\"", values: ["children"], default: "", description: "A prism-badge on the button's top end corner, such as a count on an icon button." }
+      { name: 'slot="badge"', values: ["children"], default: "", description: "A prism-badge on the button's top end corner, such as a count on an icon button." }
     ],
     states: ["default", "primary", "ghost", "danger", "chrome", "status", "search", "round", "square", "small", "disabled", "pressed", "icon-only", "badge", "menu", "shrink", "text"],
     keyboard: ["Enter and Space activate the button.", "A disabled button is skipped by Tab."]
   };
-
   constructor() {
     super();
-    // A subclass, such as prism-agent-summary, adopts its own list of stylesheets.
     this.root = shadow(this, this.constructor.styles ?? PrismButton.styles, `<button type="button" part="control"><span class="content" part="content"><slot></slot></span></button><span class="badge" part="badge" hidden><slot name="badge"></slot></span>`, { delegatesFocus: true });
     this.control = this.root.querySelector("button");
     this.words = this.root.querySelector(".content > slot");
@@ -38,7 +33,6 @@ export class PrismButton extends Base {
     badgeSlot.addEventListener("slotchange", () => {
       badge.hidden = badgeSlot.assignedElements().length === 0;
     });
-    // A disabled button sends no click, also when the click lands on the element's own box.
     this.addEventListener("click", (event) => {
       if (this.hasAttribute("disabled")) {
         event.preventDefault();
@@ -46,52 +40,44 @@ export class PrismButton extends Base {
       }
     }, { capture: true });
   }
-
   connectedCallback() {
     this.sync();
     watchShortening(this, this.root.querySelector(".content"), { focusable: () => true });
   }
-
   disconnectedCallback() {
     unwatchShortening(this);
   }
-
   attributeChangedCallback() {
     this.sync();
   }
-
   get disabled() {
     return this.hasAttribute("disabled");
   }
-
   set disabled(value) {
     this.toggleAttribute("disabled", Boolean(value));
   }
-
   get pressed() {
     return this.hasAttribute("pressed") && this.getAttribute("pressed") !== "false";
   }
-
   set pressed(value) {
     this.setAttribute("pressed", value ? "" : "false");
   }
-
   focus(options) {
     this.control.focus(options);
   }
-
   click() {
     this.control.click();
   }
-
   sync() {
     const control = this.control;
     control.disabled = this.hasAttribute("disabled");
     setAttribute(control, "aria-pressed", this.hasAttribute("pressed") ? String(this.pressed) : null);
     setAttribute(control, "aria-label", this.getAttribute("label") || null);
-    // The text attribute is the slot's fallback, which shows only while the button has no content of its own.
     const words = this.getAttribute("text") ?? "";
     if (this.words.textContent !== words) this.words.textContent = words;
     for (const name of FORWARDED) setAttribute(control, name, this.getAttribute(name));
   }
 }
+export {
+  PrismButton
+};

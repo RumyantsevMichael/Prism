@@ -1,8 +1,6 @@
-// prism-lib-table: a library table in light DOM, one bordered list of records: a head row of column names, rows of cells, and group heads with a count
-// and where the group comes from, and details a row unfolds under itself, written with the kit's .prism-lib-* classes; the page sets the columns with --prism-lib-columns.
+// Generated from src/server/review/public/kit/elements/prism-lib-table.ts by scripts/native-build/compile.mjs.
 import { Base } from "./base.js";
-
-export class PrismLibTable extends Base {
+class PrismLibTable extends Base {
   static tag = "prism-lib-table";
   static catalog = {
     purpose: "A library table: one bordered list of records with a head row, rows whose cells line up in the columns the page sets in --prism-lib-columns, and group heads with a count and, when the group comes from somewhere, its source; in a phone-width window, or when the table itself is narrower than 600px, a record keeps its title on its own line and the rest on the line below.",
@@ -20,3 +18,6 @@ export class PrismLibTable extends Base {
     keyboard: ["The table is not a control; Tab reaches the links in its rows."]
   };
 }
+export {
+  PrismLibTable
+};

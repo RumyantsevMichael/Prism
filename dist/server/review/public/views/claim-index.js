@@ -1,18 +1,11 @@
+// Generated from src/server/review/public/views/claim-index.ts by scripts/native-build/compile.mjs.
 import { createPoller } from "./poller.js";
-
-// Every live and expired claim of the project's initiatives, as the server reads them from the initiative records.
-// The sidebar, the command palette, and the views read the same index, so a claim shows the same everywhere and never offers an action.
-
-const REFRESH_MS = 10000;
-
-/** Whether a claim's lease has passed at `now`, which a live claim can do while the page stays open. */
-export function isExpired(claim, now = Date.now()) {
+const REFRESH_MS = 1e4;
+function isExpired(claim, now = Date.now()) {
   const end = Date.parse(claim?.expiresAt);
-  return claim?.expired === true || (Number.isFinite(end) && end <= now);
+  return claim?.expired === true || Number.isFinite(end) && end <= now;
 }
-
-/** A read-only prism-claim for a claim in one of its variants. */
-export function claimElement(claim, variant = "inline", attributes = {}) {
+function claimElement(claim, variant = "inline", attributes = {}) {
   const element = document.createElement("prism-claim");
   element.setAttribute("variant", variant);
   element.setAttribute("label", claim.label);
@@ -22,15 +15,10 @@ export function claimElement(claim, variant = "inline", attributes = {}) {
   }
   return element;
 }
-
-/**
- * Reads the claims of every initiative from `/api/claims` in one request, now and ten seconds after each answer while the tab is shown,
- * and calls `onChange` when what it holds changes; a failed read keeps the claims it had.
- */
-export function createClaimIndex({ fetchJson, onChange = () => {} }) {
+function createClaimIndex({ fetchJson, onChange = () => {
+} }) {
   let claims = [];
   let snapshot = "[]";
-
   async function load() {
     const next = (await fetchJson("./api/claims")).claims ?? [];
     const text = JSON.stringify(next);
@@ -39,15 +27,14 @@ export function createClaimIndex({ fetchJson, onChange = () => {} }) {
     claims = next;
     onChange();
   }
-
-  const poller = createPoller({ run: () => load().catch(() => {}), interval: REFRESH_MS });
+  const poller = createPoller({ run: () => load().catch(() => {
+  }), interval: REFRESH_MS });
   let started = false;
   function refresh() {
     if (started) return poller.now();
     started = true;
     return poller.start();
   }
-
   const ordered = (list) => [...list].sort((left, right) => Date.parse(left.expiresAt) - Date.parse(right.expiresAt));
   return {
     refresh,
@@ -59,3 +46,8 @@ export function createClaimIndex({ fetchJson, onChange = () => {} }) {
     expired: (now = Date.now()) => ordered(claims.filter((claim) => isExpired(claim, now))).reverse()
   };
 }
+export {
+  claimElement,
+  createClaimIndex,
+  isExpired
+};

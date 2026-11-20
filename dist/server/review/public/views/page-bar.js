@@ -1,10 +1,5 @@
-// The page bar at the top of the main island: Back and Forward through the pages visited in this browser tab, the trail of the page's place,
-// initiative, and slice by title, and the page's own actions at its end.
-// Every control of the bar is an icon button at the control height; an action the bar knows by name, such as Copy link, takes its icon and keeps its name as its label.
-
-// The glyph of each page action the bar draws as an icon; any other action keeps its text.
+// Generated from src/server/review/public/views/page-bar.ts by scripts/native-build/compile.mjs.
 const ACTION_ICONS = { "Copy link": "copy", "Side panel": "panel", "Details and settings": "more" };
-
 function iconButton(id, label, icon) {
   const button = document.createElement("prism-button");
   if (id) button.id = id;
@@ -17,13 +12,8 @@ function iconButton(id, label, icon) {
   button.append(glyph);
   return button;
 }
-
-/**
- * Builds the bar inside `root`. `onBack` and `onForward` move through the history; `onOpen(ref, event)` opens a crumb's page,
- * and `onPlace(name)` makes the place of the trail's first crumb current.
- * Returns setHistory({ back, forward }), setTrail([{ ref, label, place }], current), and setActions([nodes]).
- */
-export function createPageBar({ root, onBack, onForward, onOpen, onPlace = () => {} }) {
+function createPageBar({ root, onBack, onForward, onOpen, onPlace = () => {
+} }) {
   const history = document.createElement("div");
   history.className = "page-bar-history";
   const back = iconButton("page-back", "Back", "chevron-left");
@@ -35,27 +25,21 @@ export function createPageBar({ root, onBack, onForward, onOpen, onPlace = () =>
   history.append(back, forward);
   const trail = document.createElement("prism-breadcrumbs");
   trail.className = "page-bar-trail";
-  // In a phone-width window the bar reads Back, Forward, then the page alone.
   trail.setAttribute("current-only", "narrow");
   const actions = document.createElement("div");
   actions.className = "page-bar-actions";
   root.replaceChildren(history, trail, actions);
   let shown = "";
-
   function setHistory({ back: canBack, forward: canForward }) {
     back.toggleAttribute("disabled", !canBack);
     forward.toggleAttribute("disabled", !canForward);
   }
-
-  // The address of the open page with a place chosen, which the place's crumb links to.
   function placeAddress(current, place) {
     const query = new URLSearchParams();
     if (current) query.set("artifact", current);
     query.set("place", place);
     return `./review?${query}`;
   }
-
-  // A crumb that carries a place names it and chooses it without leaving the page; a Shift click or a middle-click opens the page with that place in the browser.
   function setTrail(crumbs, current = null) {
     const key = JSON.stringify([crumbs, current]);
     if (key === shown) return;
@@ -74,7 +58,6 @@ export function createPageBar({ root, onBack, onForward, onOpen, onPlace = () =>
       } else if (crumb.ref) {
         link.href = `./review?artifact=${encodeURIComponent(crumb.ref)}`;
         link.addEventListener("click", (event) => {
-          // A Shift click or a middle-click is the browser's: it opens the crumb in a new window or browser tab; a Ctrl or Cmd click keeps a review tab.
           if (event.shiftKey || event.button !== 0) return;
           event.preventDefault();
           onOpen(crumb.ref, event);
@@ -84,8 +67,6 @@ export function createPageBar({ root, onBack, onForward, onOpen, onPlace = () =>
       return link;
     }));
   }
-
-  // A text action the bar knows becomes an icon button of the same name; its clicks, pressed state, and disabled state stay its own.
   function asIcon(action) {
     const name = action.tagName === "PRISM-BUTTON" && !action.hasAttribute("label") ? action.textContent.trim() : "";
     const glyph = ACTION_ICONS[name];
@@ -99,12 +80,13 @@ export function createPageBar({ root, onBack, onForward, onOpen, onPlace = () =>
     action.replaceChildren(symbol);
     return action;
   }
-
   function setActions(nodes) {
     actions.replaceChildren(...nodes.map(asIcon));
     actions.hidden = nodes.length === 0;
   }
-
   setActions([]);
   return { setHistory, setTrail, setActions };
 }
+export {
+  createPageBar
+};

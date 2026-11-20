@@ -1,3 +1,4 @@
+// Generated from src/server/workflow/decision-history.mts by scripts/native-build/compile.mjs.
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, readdir, realpath, rm, lstat } from "node:fs/promises";
 import { readCoordinationState } from "./state.mjs";
@@ -8,7 +9,6 @@ import path from "node:path";
 import { readHostSessionFacts } from "../session/host-session-facts.mjs";
 import { SESSION_TRACE_MAX_AGE_MS, SESSION_TRACE_MAX_DIRECTORY_BYTES } from "../session/session-trace-store.mjs";
 import { parseStoreJson } from "./store-json.mjs";
-
 const DIRECTORY = "decision-history";
 const MAX_RECORD_BYTES = 8192;
 const MAX_RECORDS = 4096;
@@ -16,65 +16,56 @@ const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const CODE = /^[a-z][a-z0-9_-]{0,63}$/;
 const ID = /^[A-Za-z0-9._-]{1,80}$/;
 const DIGEST = /^[a-f0-9]{64}$/;
-const KINDS = new Set(["context_plan", "repository_fit", "design_fit", "review", "pause"]);
-const OUTCOMES = new Set(["FIT", "SPLIT", "BLOCKED", "UNCERTAIN", "UNSUPPORTED", "SUCCESS", "FAILURE", "CLEAN", "FINDINGS", "PAUSED"]);
-const READABILITY = new Set(["readable", "difficult", "unreadable", "not_assessed"]);
+const KINDS = /* @__PURE__ */ new Set(["context_plan", "repository_fit", "design_fit", "review", "pause"]);
+const OUTCOMES = /* @__PURE__ */ new Set(["FIT", "SPLIT", "BLOCKED", "UNCERTAIN", "UNSUPPORTED", "SUCCESS", "FAILURE", "CLEAN", "FINDINGS", "PAUSED"]);
+const READABILITY = /* @__PURE__ */ new Set(["readable", "difficult", "unreadable", "not_assessed"]);
 const DECISION_KEYS = ["kind", "outcome", "reasonCodes", "evidencePaths", "counts", "estimate", "requestedProvider", "selectedProvider", "readability", "splitAssessment", "reviewPhase", "findingIds", "dispositions", "stateRevision", "recoveryDigest", "activeSlices", "agentLabel"];
-const locks = new Map();
-
+const locks = /* @__PURE__ */ new Map();
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
 }
-
 function assertRecord(value, name) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${name} must be an object.`);
 }
-
 function assertKeys(value, allowed, name) {
   assertRecord(value, name);
   for (const key of Object.keys(value)) if (!allowed.includes(key)) throw new Error(`${name}.${key} is not allowed.`);
 }
-
 function codes(values, name) {
   if (!Array.isArray(values) || values.length > 32 || values.some((value) => typeof value !== "string" || !CODE.test(value))) {
     throw new Error(`${name} must contain at most 32 reason codes.`);
   }
   return [...new Set(values)];
 }
-
 function ids(values, name) {
   if (!Array.isArray(values) || values.length > 64 || values.some((value) => typeof value !== "string" || !ID.test(value))) {
     throw new Error(`${name} must contain at most 64 identifiers.`);
   }
   return [...new Set(values)];
 }
-
 function relativePaths(values) {
-  if (!Array.isArray(values) || values.length > 16 || values.some((value) => (
-    typeof value !== "string" || value.length > 240 || !value || path.isAbsolute(value)
-    || value.split(/[\\/]/).some((part) => part === ".." || part === "." || !part)
-  ))) throw new Error("evidencePaths must contain safe project-relative paths.");
+  if (!Array.isArray(values) || values.length > 16 || values.some((value) => typeof value !== "string" || value.length > 240 || !value || path.isAbsolute(value) || value.split(/[\\/]/).some((part) => part === ".." || part === "." || !part))) throw new Error("evidencePaths must contain safe project-relative paths.");
   return [...new Set(values)];
 }
-
 function counts(value) {
   assertKeys(value, ["must", "likely", "possible", "elements", "links", "notes", "verifiedTokens"], "counts");
   for (const count of Object.values(value)) if (!Number.isSafeInteger(count) || count < 0) throw new Error("counts must be nonnegative integers.");
   return value;
 }
-
 function estimate(value) {
   assertKeys(value, ["lower", "expected", "upper"], "estimate");
   for (const count of Object.values(value)) if (count !== null && (!Number.isSafeInteger(count) || count < 0)) throw new Error("estimate values must be nonnegative integers or null.");
   return value;
 }
-
-export function normalizeDecision(input, { allowHistoricalGap = false } = {}) {
+function normalizeDecision(input, { allowHistoricalGap = false } = {}) {
   assertKeys(input, DECISION_KEYS, "decision");
   if (!KINDS.has(input.kind) || !OUTCOMES.has(input.outcome)) throw new Error("The decision kind or outcome is invalid.");
   const allowedOutcomes = {
-    context_plan: ["SUCCESS", "FAILURE"], repository_fit: ["FIT", "SPLIT", "UNCERTAIN", "UNSUPPORTED"],
-    design_fit: ["FIT", "SPLIT", "BLOCKED"], review: ["CLEAN", "FINDINGS"], pause: ["PAUSED"]
+    context_plan: ["SUCCESS", "FAILURE"],
+    repository_fit: ["FIT", "SPLIT", "UNCERTAIN", "UNSUPPORTED"],
+    design_fit: ["FIT", "SPLIT", "BLOCKED"],
+    review: ["CLEAN", "FINDINGS"],
+    pause: ["PAUSED"]
   };
   if (!allowedOutcomes[input.kind].includes(input.outcome)) throw new Error("The decision outcome does not match its kind.");
   const result = {
@@ -83,77 +74,73 @@ export function normalizeDecision(input, { allowHistoricalGap = false } = {}) {
     reasonCodes: codes(input.reasonCodes || [], "reasonCodes"),
     evidencePaths: relativePaths(input.evidencePaths || [])
   };
-  if (input.counts !== undefined) result.counts = counts(input.counts);
-  if (input.estimate !== undefined) result.estimate = estimate(input.estimate);
+  if (input.counts !== void 0) result.counts = counts(input.counts);
+  if (input.estimate !== void 0) result.estimate = estimate(input.estimate);
   for (const key of ["requestedProvider", "selectedProvider"]) {
-    if (input[key] !== undefined && input[key] !== null) {
+    if (input[key] !== void 0 && input[key] !== null) {
       if (!["auto", "native", "codegraph", "codenib"].includes(input[key])) throw new Error(`${key} is invalid.`);
       result[key] = input[key];
     }
   }
-  if (input.readability !== undefined) {
+  if (input.readability !== void 0) {
     if (!READABILITY.has(input.readability)) throw new Error("readability is invalid.");
     result.readability = input.readability;
   }
-  if (input.splitAssessment !== undefined) {
-    if (!new Set(["split", "keep", "undecided"]).has(input.splitAssessment)) throw new Error("splitAssessment is invalid.");
+  if (input.splitAssessment !== void 0) {
+    if (!(/* @__PURE__ */ new Set(["split", "keep", "undecided"])).has(input.splitAssessment)) throw new Error("splitAssessment is invalid.");
     result.splitAssessment = input.splitAssessment;
   }
-  if (input.kind === "design_fit" && input.outcome === "FIT" && (!input.readability || (input.readability === "not_assessed" && !allowHistoricalGap))) {
+  if (input.kind === "design_fit" && input.outcome === "FIT" && (!input.readability || input.readability === "not_assessed" && !allowHistoricalGap)) {
     throw new Error("A FIT decision requires a diagram readability judgment.");
   }
-  if (input.kind === "design_fit" && input.readability === "unreadable" && input.splitAssessment === undefined) {
+  if (input.kind === "design_fit" && input.readability === "unreadable" && input.splitAssessment === void 0) {
     throw new Error("An unreadable diagram requires a split assessment.");
   }
-  if (input.findingIds !== undefined) result.findingIds = ids(input.findingIds, "findingIds");
-  if (input.reviewPhase !== undefined) {
+  if (input.findingIds !== void 0) result.findingIds = ids(input.findingIds, "findingIds");
+  if (input.reviewPhase !== void 0) {
     if (input.kind !== "review" || !["design_audit", "implementation_review", "security_review"].includes(input.reviewPhase)) throw new Error("reviewPhase is invalid.");
     result.reviewPhase = input.reviewPhase;
   }
-  if (input.kind === "review" && input.reviewPhase === undefined) throw new Error("A review decision requires its phase.");
-  if (input.dispositions !== undefined) result.dispositions = codes(input.dispositions, "dispositions");
-  if (input.activeSlices !== undefined) result.activeSlices = ids(input.activeSlices, "activeSlices");
-  if (input.stateRevision !== undefined) {
+  if (input.kind === "review" && input.reviewPhase === void 0) throw new Error("A review decision requires its phase.");
+  if (input.dispositions !== void 0) result.dispositions = codes(input.dispositions, "dispositions");
+  if (input.activeSlices !== void 0) result.activeSlices = ids(input.activeSlices, "activeSlices");
+  if (input.stateRevision !== void 0) {
     if (typeof input.stateRevision !== "string" || !DIGEST.test(input.stateRevision)) throw new Error("stateRevision is invalid.");
     result.stateRevision = input.stateRevision;
   }
-  if (input.recoveryDigest !== undefined) {
+  if (input.recoveryDigest !== void 0) {
     if (input.kind !== "pause" || typeof input.recoveryDigest !== "string" || !DIGEST.test(input.recoveryDigest)) throw new Error("recoveryDigest is invalid.");
     result.recoveryDigest = input.recoveryDigest;
   }
-  if (input.agentLabel !== undefined) {
+  if (input.agentLabel !== void 0) {
     if (typeof input.agentLabel !== "string" || !ID.test(input.agentLabel)) throw new Error("agentLabel is invalid.");
     result.agentLabel = input.agentLabel;
   }
   if (Buffer.byteLength(JSON.stringify(result)) > MAX_RECORD_BYTES) throw new Error("The decision record is too large.");
   return result;
 }
-
 function validateStoredRecord(record, projectDigest) {
   assertKeys(record, ["schemaVersion", "id", "occurredAt", "projectDigest", "source", "actor", ...DECISION_KEYS], "storedDecision");
-  if (record.schemaVersion !== 1 || typeof record.id !== "string" || !/^[a-f0-9-]{36}$/.test(record.id)
-    || record.projectDigest !== projectDigest || !["mcp", "agent_checkpoint", "audit_reconstruction"].includes(record.source)
-    || typeof record.occurredAt !== "string" || !Number.isFinite(Date.parse(record.occurredAt))) {
+  if (record.schemaVersion !== 1 || typeof record.id !== "string" || !/^[a-f0-9-]{36}$/.test(record.id) || record.projectDigest !== projectDigest || !["mcp", "agent_checkpoint", "audit_reconstruction"].includes(record.source) || typeof record.occurredAt !== "string" || !Number.isFinite(Date.parse(record.occurredAt))) {
     throw new Error("The stored decision record is invalid.");
   }
   assertKeys(record.actor, ["status", "sessionDigest", "reasonCode"], "storedDecision.actor");
-  if (!(["verified_host_session", "unverified"].includes(record.actor.status))) throw new Error("The stored decision actor is invalid.");
+  if (!["verified_host_session", "unverified"].includes(record.actor.status)) throw new Error("The stored decision actor is invalid.");
   if (record.actor.status === "verified_host_session" && !DIGEST.test(record.actor.sessionDigest || "")) throw new Error("The stored decision session is invalid.");
   const decision = Object.fromEntries(DECISION_KEYS.filter((key) => Object.hasOwn(record, key)).map((key) => [key, record[key]]));
   normalizeDecision(decision, { allowHistoricalGap: record.source === "audit_reconstruction" });
   return record;
 }
-
 async function rootAndDirectory({ projectRoot, dataDirectory, create = false }) {
   if (!path.isAbsolute(projectRoot || "") || !path.isAbsolute(dataDirectory || "")) throw new Error("Absolute projectRoot and dataDirectory values are required.");
   const root = await realpath(projectRoot);
-  if (create) await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
+  if (create) await mkdir(dataDirectory, { recursive: true, mode: 448 });
   const dataRoot = await realpath(dataDirectory).catch((error) => {
     if (!create && error?.code === "ENOENT") return path.resolve(dataDirectory);
     throw error;
   });
   const directory = path.join(dataRoot, DIRECTORY);
-  if (create) await mkdir(directory, { recursive: true, mode: 0o700 });
+  if (create) await mkdir(directory, { recursive: true, mode: 448 });
   const info = await lstat(directory).catch((error) => {
     if (!create && error?.code === "ENOENT") return null;
     throw error;
@@ -162,7 +149,6 @@ async function rootAndDirectory({ projectRoot, dataDirectory, create = false }) 
   if (!info.isDirectory() || info.isSymbolicLink() || await realpath(directory) !== directory) throw new Error("The decision directory is unsafe.");
   return { root, directory, projectDigest: digest(root) };
 }
-
 async function readJsonFile(file, fallback) {
   try {
     const info = await lstat(file);
@@ -173,16 +159,17 @@ async function readJsonFile(file, fallback) {
     throw error;
   }
 }
-
 async function atomicJson(file, value) {
-  await writeAtomically(file, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+  await writeAtomically(file, `${JSON.stringify(value)}
+`, { mode: 384 });
 }
-
 async function withLock(directory, key, work) {
   const identity = `${directory}/${key}`;
   const previous = locks.get(identity) || Promise.resolve();
   let release;
-  const next = new Promise((resolve) => { release = resolve; });
+  const next = new Promise((resolve) => {
+    release = resolve;
+  });
   locks.set(identity, next);
   await previous;
   const lockPath = path.join(directory, `${key}.lock`);
@@ -190,12 +177,12 @@ async function withLock(directory, key, work) {
   try {
     for (let attempt = 0; attempt < 20; attempt += 1) {
       try {
-        handle = await open(lockPath, "wx", 0o600);
+        handle = await open(lockPath, "wx", 384);
         break;
       } catch (error) {
         if (error?.code !== "EEXIST") throw error;
         const info = await lstat(lockPath).catch(() => null);
-        if (info && Date.now() - info.mtimeMs > 30_000) await rm(lockPath, { force: true });
+        if (info && Date.now() - info.mtimeMs > 3e4) await rm(lockPath, { force: true });
         else await new Promise((resolve) => setTimeout(resolve, 25));
       }
     }
@@ -210,28 +197,22 @@ async function withLock(directory, key, work) {
     if (locks.get(identity) === next) locks.delete(identity);
   }
 }
-
 async function enabled(directory, projectDigest) {
   const config = await readJsonFile(path.join(directory, `${projectDigest}.config.json`), { enabled: false });
   if (typeof config?.enabled !== "boolean") throw new Error("The decision setting is invalid.");
   return config.enabled;
 }
-
-export async function setDecisionRecording({ projectRoot, dataDirectory, enabled: value }) {
+async function setDecisionRecording({ projectRoot, dataDirectory, enabled: value }) {
   if (typeof value !== "boolean") throw new Error("enabled must be a boolean.");
   const { directory, projectDigest } = await rootAndDirectory({ projectRoot, dataDirectory, create: true });
   await withLock(directory, projectDigest, () => atomicJson(path.join(directory, `${projectDigest}.config.json`), { enabled: value }));
   return { enabled: value, projectDigest };
 }
-
 async function attribution({ root, dataDirectory, correlationKey }) {
   if (!correlationKey) return { status: "unverified", reasonCode: "missing_correlation_key" };
   const facts = await readHostSessionFacts({ projectRoot: root, dataDirectory, correlationKey });
-  return facts.status === "SUPPORTED"
-    ? { status: "verified_host_session", sessionDigest: correlationKey }
-    : { status: "unverified", reasonCode: String(facts.reasonCode || "unavailable").toLowerCase() };
+  return facts.status === "SUPPORTED" ? { status: "verified_host_session", sessionDigest: correlationKey } : { status: "unverified", reasonCode: String(facts.reasonCode || "unavailable").toLowerCase() };
 }
-
 async function prune(directory) {
   const entries = (await readdir(directory)).filter((name) => DIGEST.test(name.slice(0, 64)) && name.endsWith(".events.json"));
   const files = [];
@@ -249,17 +230,16 @@ async function prune(directory) {
     total -= file.size;
   }
 }
-
-export async function appendDecision({ projectRoot, dataDirectory, correlationKey, decision, source = "mcp", occurredAt }) {
+async function appendDecision({ projectRoot, dataDirectory, correlationKey, decision, source = "mcp", occurredAt }) {
   if (!["mcp", "agent_checkpoint", "audit_reconstruction"].includes(source)) throw new Error("The decision source is invalid.");
-  if (occurredAt !== undefined && (source !== "audit_reconstruction" || typeof occurredAt !== "string" || !Number.isFinite(Date.parse(occurredAt)) || Date.parse(occurredAt) > Date.now())) {
+  if (occurredAt !== void 0 && (source !== "audit_reconstruction" || typeof occurredAt !== "string" || !Number.isFinite(Date.parse(occurredAt)) || Date.parse(occurredAt) > Date.now())) {
     throw new Error("A historical occurrence time is valid only for audit reconstruction.");
   }
   const normalized = normalizeDecision(decision, { allowHistoricalGap: source === "audit_reconstruction" });
   const { root, directory, projectDigest } = await rootAndDirectory({ projectRoot, dataDirectory });
   if (!await enabled(directory, projectDigest)) return { status: "disabled" };
   const actor = await attribution({ root, dataDirectory, correlationKey });
-  const record = { schemaVersion: 1, id: randomUUID(), occurredAt: occurredAt || new Date().toISOString(), projectDigest, source, actor, ...normalized };
+  const record = { schemaVersion: 1, id: randomUUID(), occurredAt: occurredAt || (/* @__PURE__ */ new Date()).toISOString(), projectDigest, source, actor, ...normalized };
   const file = path.join(directory, `${projectDigest}.events.json`);
   return withLock(directory, projectDigest, async () => {
     if (!await enabled(directory, projectDigest)) return { status: "disabled" };
@@ -276,18 +256,16 @@ export async function appendDecision({ projectRoot, dataDirectory, correlationKe
     return { status: "recorded", id: record.id, actor };
   });
 }
-
-export async function readDecisionHistory({ projectRoot, dataDirectory, correlationKey, initiative, recoveryPaths = [] }) {
+async function readDecisionHistory({ projectRoot, dataDirectory, correlationKey, initiative, recoveryPaths = [] }) {
   const { root, directory, projectDigest } = await rootAndDirectory({ projectRoot, dataDirectory });
   const isEnabled = await enabled(directory, projectDigest);
   const file = path.join(directory, `${projectDigest}.events.json`);
   const current = await readJsonFile(file, { records: [] });
   if (!Array.isArray(current.records)) throw new Error("The decision history is invalid.");
-  if (current.droppedCount !== undefined && (!Number.isSafeInteger(current.droppedCount) || current.droppedCount < 0)) throw new Error("The decision history is invalid.");
+  if (current.droppedCount !== void 0 && (!Number.isSafeInteger(current.droppedCount) || current.droppedCount < 0)) throw new Error("The decision history is invalid.");
   const cutoff = Date.now() - SESSION_TRACE_MAX_AGE_MS;
   const validated = current.records.map((item) => validateStoredRecord(item, projectDigest));
-  const records = validated.filter((item) => Date.parse(item.occurredAt) >= cutoff)
-    .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
+  const records = validated.filter((item) => Date.parse(item.occurredAt) >= cutoff).sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
   const actor = await attribution({ root, dataDirectory, correlationKey });
   const coverageGaps = [];
   if (!isEnabled) coverageGaps.push("recording_disabled");
@@ -298,17 +276,15 @@ export async function readDecisionHistory({ projectRoot, dataDirectory, correlat
   if (records.some((item) => item.agentLabel)) coverageGaps.push("subagent_attribution_unverified");
   if (records.some((item) => item.kind === "design_fit" && item.readability === "not_assessed")) coverageGaps.push("legacy_fit_readability_unobserved");
   let recovery = [];
-  if (initiative !== undefined) {
+  if (initiative !== void 0) {
     const state = await readCoordinationState({ projectRoot: root, initiative });
     if (!state.valid || !state.exists) throw new Error("The coordination state is missing or invalid.");
-    const directory = initiativeDirectory(await readWorkflowConfig(root), initiative);
-    if (directory === null) throw new Error("The workflow config disables the plans path, so recovery notes have no location.");
-    recovery = await assessRecovery({ root, state, directory, recoveryPaths: relativePaths(recoveryPaths), records });
+    const directory2 = initiativeDirectory(await readWorkflowConfig(root), initiative);
+    if (directory2 === null) throw new Error("The workflow config disables the plans path, so recovery notes have no location.");
+    recovery = await assessRecovery({ root, state, directory: directory2, recoveryPaths: relativePaths(recoveryPaths), records });
   }
   return { enabled: isEnabled, projectDigest, records, coverageGaps: [...new Set(coverageGaps)], recovery };
 }
-
-// Recovery evidence in coordination state is relative to the initiative's plans folder, where recovery notes live.
 async function assessRecovery({ root, state, directory, recoveryPaths, records }) {
   const active = new Set(state.state.active.map((item) => item.slice));
   const stateDirectory = directory;
@@ -318,7 +294,7 @@ async function assessRecovery({ root, state, directory, recoveryPaths, records }
     if (relative.startsWith("../") || path.isAbsolute(relative)) throw new Error("A state recovery path leaves the project root.");
     return relative;
   });
-  const paths = [...new Set([...recoveryPaths, ...stateRecoveryPaths])];
+  const paths = [.../* @__PURE__ */ new Set([...recoveryPaths, ...stateRecoveryPaths])];
   const result = [];
   for (const recoveryPath of paths) {
     const owner = path.basename(path.dirname(recoveryPath));
@@ -330,7 +306,6 @@ async function assessRecovery({ root, state, directory, recoveryPaths, records }
     if (!absolute.startsWith(`${root}${path.sep}`)) throw new Error("The recovery path leaves the project root.");
     let content;
     try {
-      // With a record store the note lives there, beside the initiative's other plan files.
       if (await inArtifactStore(root, recoveryPath)) {
         content = await readArtifactBytes(root, recoveryPath);
         if (content === null) throw Object.assign(new Error("The recovery note is missing."), { code: "ENOENT" });
@@ -352,3 +327,9 @@ async function assessRecovery({ root, state, directory, recoveryPaths, records }
   }
   return result;
 }
+export {
+  appendDecision,
+  normalizeDecision,
+  readDecisionHistory,
+  setDecisionRecording
+};

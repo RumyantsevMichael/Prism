@@ -1,12 +1,10 @@
+// Generated from src/server/workflow/workflow-config.mts by scripts/native-build/compile.mjs.
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { isRemoteStore } from "./remote-url.mjs";
-
 const CONFIG_PATH = path.join(".prism", "workflow.md");
 const CONFIG_MAX_BYTES = 256 * 1024;
-
-// Labels match on the text before any parenthesized note, so "Plans (scratch)" and "Plans (coordination scratch)" both name the plans path.
-const PATH_KEYS = new Map([
+const PATH_KEYS = /* @__PURE__ */ new Map([
   ["requirements", "requirements"],
   ["adrs", "adrs"],
   ["plans", "plans"],
@@ -16,8 +14,7 @@ const PATH_KEYS = new Map([
   ["user guide", "userGuide"],
   ["product strategy", "productStrategy"]
 ]);
-
-export const DEFAULT_PATHS = Object.freeze({
+const DEFAULT_PATHS = Object.freeze({
   requirements: "docs/requirements",
   adrs: "docs/ADRs",
   plans: "docs/plans",
@@ -27,11 +24,9 @@ export const DEFAULT_PATHS = Object.freeze({
   userGuide: "docs/user-guide",
   productStrategy: null
 });
-
-// Each section keeps its raw lines too, with their indentation, for readers such as the component reader that give nested items a meaning of their own.
 function sections(markdown) {
-  const result = new Map();
-  const lines = new Map();
+  const result = /* @__PURE__ */ new Map();
+  const lines = /* @__PURE__ */ new Map();
   let current = null;
   let fence = null;
   for (const line of markdown.split(/\r?\n/)) {
@@ -66,7 +61,6 @@ function sections(markdown) {
   }
   return { entries: result, lines };
 }
-
 function normalizePath(value, label, diagnostics) {
   if (!value || /^n\/a$/i.test(value)) {
     return null;
@@ -82,18 +76,15 @@ function normalizePath(value, label, diagnostics) {
   }
   return normalized === "." ? "" : normalized;
 }
-
-// Unlike Paths, the record store may leave the project root, so its value stays as written; the record store resolves and checks it.
 function workspaceValue(parsed, key) {
   const entry = (parsed.get("Workspace") ?? []).find(({ label }) => label.replace(/\s*\(.*\)\s*$/, "").trim().toLowerCase() === key);
   return !entry?.value || /^n\/a$/i.test(entry.value) ? null : entry.value;
 }
-
-export function parseWorkflowConfig(markdown) {
+function parseWorkflowConfig(markdown) {
   const diagnostics = [];
   const { entries: parsed, lines } = sections(markdown ?? "");
   const paths = { ...DEFAULT_PATHS };
-  const configured = new Set();
+  const configured = /* @__PURE__ */ new Set();
   if (!parsed.has("Paths")) {
     diagnostics.push({ code: "paths_missing", message: "The workflow config has no Paths section, so defaults apply." });
   }
@@ -111,17 +102,13 @@ export function parseWorkflowConfig(markdown) {
     paths[key] = normalizePath(value, label, diagnostics);
   }
   const values = Object.fromEntries([...parsed].map(([name, entries]) => [name, Object.fromEntries(entries.map((entry) => [entry.label, entry.value]))]));
-  // A store named by its remote syncs unless Store sync is off, while a path store syncs only when Store sync is on.
   const store = workspaceValue(parsed, "store");
   const sync = workspaceValue(parsed, "store sync") ?? "";
-  // A repository name only names a checkout to its record store, so without a store the Repository line is ignored.
   const repository = store === null ? null : workspaceValue(parsed, "repository");
-  // Only the sections whose nesting a reader interprets keep their raw lines, so the parsed result stays small.
   const raw = Object.fromEntries(["Components", "Workspace"].filter((name) => lines.has(name)).map((name) => [name, lines.get(name)]));
   return { paths, configured: [...configured].sort(), sections: values, lines: raw, workspace: { store, repository, sync: isRemoteStore(store) ? !/^off$/i.test(sync) : /^on$/i.test(sync) }, diagnostics };
 }
-
-export async function readWorkflowConfig(projectRoot) {
+async function readWorkflowConfig(projectRoot) {
   let markdown = "";
   let exists = true;
   try {
@@ -142,20 +129,16 @@ export async function readWorkflowConfig(projectRoot) {
   }
   return { exists, ...result };
 }
-
-// Run statistics are collected unless "Collection: off" sits under "## Run statistics"; a config that cannot be read reports unknown.
-export function runStatisticsCollection(config) {
+function runStatisticsCollection(config) {
   if (!config || typeof config !== "object" || !config.sections || typeof config.sections !== "object") {
     return "unknown";
   }
   const sectionName = Object.keys(config.sections).find((name) => name.toLowerCase() === "run statistics");
   const entries = sectionName ? config.sections[sectionName] ?? {} : {};
   const label = Object.keys(entries).find((name) => name.trim().toLowerCase() === "collection");
-  return label !== undefined && String(entries[label]).trim().toLowerCase() === "off" ? "off" : "on";
+  return label !== void 0 && String(entries[label]).trim().toLowerCase() === "off" ? "off" : "on";
 }
-
-// The roadmap record sits beside the configured roadmap projection and shares its base name.
-export function roadmapPaths(config) {
+function roadmapPaths(config) {
   const projection = config.paths.roadmap;
   if (!projection) {
     return null;
@@ -163,24 +146,21 @@ export function roadmapPaths(config) {
   const base = projection.endsWith(".md") ? projection.slice(0, -3) : projection;
   return { record: `${base}.json`, projection: projection.endsWith(".md") ? projection : `${base}.md` };
 }
-
-export function initiativeDirectory(config, initiative) {
+function initiativeDirectory(config, initiative) {
   return config.paths.plans === null ? null : path.posix.join(config.paths.plans, initiative);
 }
-
-// The configured paths whose files are descriptive artifacts: three folders and two files, each with the kind it names.
 const ARTIFACT_KIND_SHAPES = Object.freeze([["requirements", true], ["adrs", true], ["plans", true], ["glossary", false], ["roadmap", false]]);
-
-/**
- * The configured artifact kinds of a parsed workflow configuration: { kinds, excluded }.
- * kinds lists { kind, path, folder } for each configured kind, a key set to n/a left out, longest path first so the first kind that contains a path names it;
- * excluded lists the configured feature file and user guide folders, whose files stay in the checkout even inside an artifact folder.
- */
-export function artifactKinds(config) {
-  const kinds = ARTIFACT_KIND_SHAPES
-    .filter(([kind]) => typeof config?.paths?.[kind] === "string")
-    .map(([kind, folder]) => ({ kind, path: config.paths[kind], folder }))
-    .sort((left, right) => right.path.length - left.path.length);
+function artifactKinds(config) {
+  const kinds = ARTIFACT_KIND_SHAPES.filter(([kind]) => typeof config?.paths?.[kind] === "string").map(([kind, folder]) => ({ kind, path: config.paths[kind], folder })).sort((left, right) => right.path.length - left.path.length);
   const excluded = [config?.paths?.features, config?.paths?.userGuide].filter((value) => typeof value === "string");
   return { kinds, excluded };
 }
+export {
+  DEFAULT_PATHS,
+  artifactKinds,
+  initiativeDirectory,
+  parseWorkflowConfig,
+  readWorkflowConfig,
+  roadmapPaths,
+  runStatisticsCollection
+};

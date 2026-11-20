@@ -1,26 +1,17 @@
+// Generated from src/server/review/write-sessions.mts by scripts/native-build/compile.mjs.
 import { createHash, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
-
-// A grant opens one tab that Prism itself opened: valid once and only for this long after issue.
-const GRANT_MS = 120 * 1000;
-// The shared app keeps the digests of its newest write sessions, so a handoff successor accepts the tabs the person already has.
+const GRANT_MS = 120 * 1e3;
 const KEPT_TOKENS = 100;
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
-export const WRITE_SESSIONS_FILE = "write-sessions.json";
-
+const WRITE_SESSIONS_FILE = "write-sessions.json";
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const credential = () => randomBytes(32).toString("base64url");
-
-/**
- * The write sessions of one review server or app: one-time grants for the URL Prism opens, exchanged for tokens a tab keeps.
- * Only SHA-256 digests of grants and tokens are held, in memory and, with a directory, in its private file, so no file reveals a credential.
- * restore accepts the digests the directory's file holds, which only an app that starts from a handoff does; any other start begins with none and clears the file.
- */
-export async function createWriteSessions({ directory = null, restore = false, now = Date.now } = {}) {
-  const grants = new Map();
+async function createWriteSessions({ directory = null, restore = false, now = Date.now } = {}) {
+  const grants = /* @__PURE__ */ new Map();
   let tokens = [];
   const file = directory ? path.join(directory, WRITE_SESSIONS_FILE) : null;
   if (file && restore) {
@@ -30,17 +21,17 @@ export async function createWriteSessions({ directory = null, restore = false, n
   let saving = Promise.resolve();
   function save() {
     if (!file) return saving;
-    const text = `${JSON.stringify({ schemaVersion: 1, tokens }, null, 2)}\n`;
-    saving = saving.then(() => writeAtomically(file, text, { mode: 0o600 })).catch(() => {});
+    const text = `${JSON.stringify({ schemaVersion: 1, tokens }, null, 2)}
+`;
+    saving = saving.then(() => writeAtomically(file, text, { mode: 384 })).catch(() => {
+    });
     return saving;
   }
   await save();
-
   function sweep() {
     const at = now();
     for (const [key, expiresAt] of grants) if (expiresAt <= at) grants.delete(key);
   }
-
   return {
     // A new grant for one browser open; the caller adds it to the URL fragment it opens and nowhere else.
     issueGrant() {
@@ -64,11 +55,14 @@ export async function createWriteSessions({ directory = null, restore = false, n
     }
   };
 }
-
-/** The URL that Prism opens: the review URL with the grant in its fragment, which never reaches a server. */
-export function withWriteGrant(url, grant) {
+function withWriteGrant(url, grant) {
   if (!grant) return url;
   const value = new URL(url);
   value.hash = `write=${grant}`;
   return value.href;
 }
+export {
+  WRITE_SESSIONS_FILE,
+  createWriteSessions,
+  withWriteGrant
+};
