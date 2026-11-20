@@ -1,6 +1,9 @@
 // Build a demo project whose JSON artifacts come from the real Prism MCP tools, for trying the review browser views.
-// Usage: node scripts/review-demo/seed.mjs [project-directory]
+// Usage: node scripts/review-demo/seed.mjs [project-directory] [--agents <review app folder>]
+// With --agents it also writes agents at work: claims with their harnesses and models, and sessions launched on this computer,
+// whose records it keeps in the launches folder of that review app folder, for the Agents page.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ROOT, prepareProject, startTools } from "./project.mjs";
@@ -8,7 +11,11 @@ import { appendRecord } from "../../dist/server/workflow/record-store.mjs";
 import { runRecord, segment } from "../../test/server/fixtures/run-records.mjs";
 
 const examples = JSON.parse(await readFile(path.join(ROOT, "test/server/fixtures/change-map.json"), "utf8"));
-const { realRoot, dataDir, write } = await prepareProject(process.argv[2], "prism-review-demo-");
+const args = process.argv.slice(2);
+const agentsAt = args.indexOf("--agents");
+const agentsFolder = agentsAt >= 0 ? path.resolve(args[agentsAt + 1] ?? "") : null;
+if (agentsAt >= 0) args.splice(agentsAt, 2);
+const { realRoot, dataDir, write } = await prepareProject(args[0], "prism-review-demo-");
 // The project is a Git repository, as a real one is, so the review browser lists its source files.
 execFileSync("git", ["init", "--quiet"], { cwd: realRoot, stdio: "ignore" });
 
@@ -155,7 +162,7 @@ try {
       { op: "ask", kind: "decision", slice: "connection-retries", question: "The design deletes the only handler that retries dropped connections (finding F2). Approve requirement 2 for this slice now, or drop connection retries until their slice starts?", context: "The connection slice replaces the old socket wrapper. That wrapper also held `retryOnDrop`, the only code that reconnects after a dropped connection, and the new design has no replacement because requirement 2 (retries) is still Draft.\n\nIf retries are dropped, a client that loses Wi-Fi for five seconds sees **Connection lost** and must reload, where today it reconnects silently.", artifacts: [reviewPath, "docs/requirements/retries.md"], recommended: { reason: "Approve requirement 2 now: users rely on silent reconnects today, and adding them back later means reopening this slice's contract." } }
     ]
   } });
-  await call("update_coordination_state", { projectRoot: realRoot, initiative: "activity-reports", expectedRevision: null, changes: {
+  const reportsState = await call("update_coordination_state", { projectRoot: realRoot, initiative: "activity-reports", expectedRevision: null, changes: {
     settings: { autonomy: "conservative", agentFlow: "multi" },
     gateOperations: [{ op: "ask", kind: "decision", slice: "authorize", question: "Should a report download require a fresh login, or is an active session enough?", context: "Reports hold invoice totals and customer addresses. The requirement says downloads need an authorized user but not how recent the sign-in must be.\n\nExample: a user signs in on Monday, leaves the tab open, and downloads a report on Friday.", artifacts: ["docs/requirements/reports.md"], options: [{ id: "fresh-login", label: "Require a fresh login", consequence: "The Friday download asks for the password again; the slice adds a re-authentication step." }, { id: "active-session", label: "Accept the active session", consequence: "The Friday download works at once; the slice reuses the existing session check." }], recommended: { option: "fresh-login", reason: "Reports carry customer data, and a re-authentication step costs one prompt per download." } }]
   } });
@@ -167,7 +174,47 @@ try {
     await applyAction({ projectRoot: realRoot, target, action: id, input: { value }, revision: action.revision });
   }
 
+  if (agentsFolder) await seedAgents(reportsState.openedGates?.[0]?.id ?? null);
+
   process.stdout.write(`Demo project: ${realRoot}\nPrivate evidence: ${dataDir}\n\nStart the review browser with:\n  cd ${realRoot} && PLUGIN_DATA=${dataDir} ${path.join(ROOT, "bin/prism")} review\n`);
 } finally {
   close();
+}
+
+// Agents at work for the Agents page: claims of other sessions, live and expired, with the harness and model each records, written as a Prism server
+// writes them, and sessions launched on this computer whose runs have ended, so nothing in the demo runs or can be stopped.
+async function seedAgents(waitedGate) {
+  const { createLaunchFolder, prepareLaunchesDirectory, storeLocation, writeGateRecord, writeLaunchRecord } = await import("../../dist/server/session/launch-records.mjs");
+  const env = { ...process.env, PRISM_REVIEW_APP_DIR: agentsFolder };
+  const now = Date.now();
+  const at = (minutes) => new Date(now + minutes * 60000).toISOString();
+  const holderOf = (session) => `session-${createHash("sha256").update(session).digest("hex").slice(0, 16)}`;
+  const claim = (initiative, slug, { label, host = null, model = null, activity = "implementation", minutesLeft, holder = null }) => write(`.prism/initiatives/${initiative}/claims/${slug}.json`, `${JSON.stringify({
+    schemaVersion: 1, slug, holder: holder ?? `session-${createHash("sha256").update(`${initiative}/${slug}`).digest("hex").slice(0, 16)}`, label, ...(host ? { host } : {}), ...(model ? { model } : {}),
+    activity, claimedAt: at(minutesLeft - 60), renewedAt: at(minutesLeft - 30), expiresAt: at(minutesLeft), nonce: "0123456789abcdef01234567"
+  }, null, 2)}\n`);
+  await claim("activity-reports", "download", { label: "Dana on studio-mac", host: "Codex", model: "gpt-5.5", activity: "design", minutesLeft: 22 });
+  await claim("retry-hardening", "timeout-retries", { label: "Michael on mbp", host: "Claude Code", minutesLeft: 30 });
+  await claim("retry-hardening", "retry-metrics", { label: "Sam on ci-runner-04", host: "Claude Code", model: "claude-sonnet-5-5", minutesLeft: 17 });
+  await claim("retry-hardening", "retry-dashboard", { label: "Claude on vm", minutesLeft: 9 });
+  await claim("retry-hardening", "connection-retries", { label: "Michael on work-mac", host: "Claude Code", model: "claude-opus-5", activity: "design", minutesLeft: -120 });
+
+  await prepareLaunchesDirectory(env);
+  const store = await storeLocation(realRoot);
+  const ended = ({ minutesAgo, ran, model, exit = { code: 0, signal: null }, ...rest }) => ({
+    number: 1, cause: "launch", token: createHash("sha256").update(`${minutesAgo}/${model}`).digest("hex").slice(0, 32), supervisorPid: 0, hostPid: 0,
+    startedAt: at(-minutesAgo - ran), heartbeatAt: at(-minutesAgo), outputAt: at(-minutesAgo), model, endedAt: at(-minutesAgo), exit,
+    refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: 10000, stopRequestedAt: null, ...rest
+  });
+  const launch = async (number, initiative, host, hostSessionId, run, gates = null) => {
+    const id = `launch-${createHash("sha256").update(`demo-${number}`).digest("hex").slice(0, 16)}`;
+    const folder = await createLaunchFolder(env, id);
+    await writeLaunchRecord(folder, { id, initiative, host, checkout: realRoot, store, createdAt: run.startedAt, hostSessionId, runs: [run] });
+    if (gates) await writeGateRecord(folder, gates);
+  };
+  await launch(1, "search-indexing", "codex", "019a2f4e-5b1c-7d20-9e8f-3a4b5c6d7e8f", ended({ minutesAgo: 4, ran: 0.15, model: "gpt-5.5-codex", exit: { code: 1, signal: null }, hostError: "the model is not offered for this account." }));
+  const waiting = "6b1f0c3e-2d4a-4e5b-8c7d-9e0f1a2b3c4d";
+  await launch(2, "activity-reports", "claude-code", waiting, ended({ minutesAgo: 2, ran: 41, model: "claude-fable-5-2" }), waitedGate ? { marks: [{ gate: waitedGate, at: at(-2) }], answers: [] } : null);
+  await claim("activity-reports", "authorize", { label: "Claude on this computer", host: "Claude Code", model: "claude-fable-5-2", activity: "design", minutesLeft: 26, holder: holderOf(waiting) });
+  await launch(3, "retry-hardening", "claude-code", "a7c9e1f3-5b7d-4f9a-8c2e-4d6f8a0b2c4e", ended({ minutesAgo: 6, ran: 12, model: "claude-opus-5-5", refusals: [{ tool: "Bash", reason: "Denied by auto mode." }], refusalCount: 1 }));
 }

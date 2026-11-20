@@ -1,0 +1,135 @@
+import { card, escapeHtml } from "./util.js";
+
+// Columns in display order; durations format as hours, minutes, and seconds, and counts in compact notation.
+// Active time and tokens each head a group of columns, so the header names a group once and each column by its part.
+const MEASURES = [
+  ["runs", "Runs", "count", ""],
+  ["wallTimeMs", "Wall time", "duration", ""],
+  ["elapsedActiveTimeMs", "Elapsed", "duration", "Active time"],
+  ["summedActiveTimeMs", "Summed", "duration", "Active time"],
+  ["inputTokens", "Input", "count", "Tokens"],
+  ["cacheWriteTokens", "Cache write", "count", "Tokens"],
+  ["cacheReadTokens", "Cache read", "count", "Tokens"],
+  ["outputTokens", "Output", "count", "Tokens"],
+  ["toolCalls", "Tool calls", "count", ""]
+];
+const SCOPE_LABELS: Record<string, any> = { wave: "This wave", slice: "This slice", descendants: "With descendants", initiative: "This initiative" };
+const UNAVAILABLE = { value: null, coverage: "unavailable" };
+// An exact value carries no visible mark; every other coverage marks its value, and the legend under the table names the marks.
+const MARKS: Record<string, any> = { approximate: "≈", partial: "≥" };
+const COVERAGE_NAMES: Record<string, any> = { exact: "exact", approximate: "approximate", partial: "partial, some records could not be read", unavailable: "unavailable" };
+const compact = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+
+function formatDuration(ms: number) {
+  if (ms > 0 && ms < 1000) return "&lt; 1 s";
+  const seconds = Math.round(ms / 1000);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds % 60;
+  if (hours > 0) return minutes > 0 ? `${hours} h ${minutes} min` : `${hours} h`;
+  if (minutes > 0) return rest > 0 ? `${minutes} min ${rest} s` : `${minutes} min`;
+  return `${rest} s`;
+}
+
+// An unavailable measure shows a dash, never 0; every other cell shows its value, including a real 0, and its tip gives the full count and its coverage.
+function cell([key, label, format, group]: any, measure = UNAVAILABLE) {
+  const unavailable = measure.coverage === "unavailable" || typeof measure.value !== "number";
+  const coverage = unavailable ? "unavailable" : measure.coverage;
+  const value = unavailable ? "—" : format === "duration" ? formatDuration((measure.value as any)) : compact.format(measure.value as any);
+  const full = !unavailable && format === "count" && String(measure.value) !== value ? String(measure.value) : value;
+  const mark = MARKS[coverage] ? `<span class="prism-table-mark" aria-hidden="true">${MARKS[coverage]}</span>` : "";
+  const name = group ? `${group}, ${label.toLowerCase()}` : label;
+  const tip = `${name}: ${full}, ${COVERAGE_NAMES[coverage] ?? coverage}`;
+  const shown = unavailable ? `<span class="run-total-value">${value}</span>` : `<data class="run-total-value" value="${measure.value}" tip="${tip}">${value}</data>`;
+  return `<td class="run-total${unavailable ? " is-unavailable" : ""}" data-measure="${key}" data-coverage="${escapeHtml(coverage)}" data-value="${value}" data-label="${name}">${mark}${shown}<span class="sr-only">, ${escapeHtml(COVERAGE_NAMES[coverage] ?? coverage)}</span></td>`;
+}
+
+function headHtml() {
+  const groups = [];
+  for (const [, label, , group] of MEASURES) {
+    const last: any = groups.at(-1);
+    if (group && last?.group === group) last.span += 1;
+    else groups.push({ group, label, span: 1 });
+  }
+  const top = groups.map(({ group, label, span }) => group ? `<th scope="colgroup" colspan="${span}">${group}</th>` : `<th scope="col" rowspan="2">${label}</th>`).join("");
+  const parts = MEASURES.filter(([, , , group]) => group).map(([, label]) => `<th scope="col">${label}</th>`).join("");
+  return `<thead><tr><td rowspan="2"></td>${top}</tr><tr>${parts}</tr></thead>`;
+}
+
+// A scope with no recorded run says so across the row instead of showing zero cost.
+function rowHtml({ totals, scope }: { totals: any; scope: any }) {
+  const label = `<th scope="row">${SCOPE_LABELS[scope]}</th>`;
+  if (noRuns(totals)) return `<tr class="run-totals-empty" data-run-totals="${scope}">${label}<td class="prism-table-note" colspan="${MEASURES.length}">No run recorded yet.</td></tr>`;
+  return `<tr class="run-totals" data-run-totals="${scope}">${label}${MEASURES.map((entry) => cell((entry as any), totals[entry[0]])).join("")}</tr>`;
+}
+
+function noRuns(totals: any) {
+  return totals.runs?.value === 0 && totals.runs.coverage === "exact";
+}
+
+/** Whether `totals` holds at least one run, or may: totals that are known to have none hold no run. */
+export function hasRuns(totals: any) {
+  return Boolean(totals) && !noRuns(totals);
+}
+
+/**
+ * Renders the run totals of one or more scopes (wave, slice, descendants, or initiative) as one compact table, a row per scope,
+ * or one line when no scope has a recorded run; "" without totals.
+ */
+export function runTotalsTableHtml(scopes: any, { caption = false }: any = {}) {
+  const shown = scopes.filter(({ totals }: { totals: any }) => totals);
+  if (!shown.length) return "";
+  if (shown.every(({ totals }: { totals: any }) => noRuns(totals))) return `<p class="run-totals-empty" data-run-totals="${shown[0].scope}">No run recorded yet.</p>`;
+  const idle = shown.find(({ totals }: { totals: any }) => !noRuns(totals)).totals.idleThresholdMs;
+  return `<div class="run-totals-block${caption ? " is-captioned" : ""}">${caption ? '<p class="label-caps">Run totals</p>' : ""}
+    <prism-table><table aria-label="Run totals">${headHtml()}<tbody>${shown.map(rowHtml).join("")}</tbody></table></prism-table>
+    <p class="run-totals-note">≈ approximate · ≥ partial, some records could not be read · — unavailable; unmarked values are exact. Active time excludes idle gaps over ${formatDuration(idle)}.</p>
+  </div>`;
+}
+
+/**
+ * One line that sums up a scope's runs for a page head, such as "3 h 55 min active · 19.4M tokens", marking a value that is not exact,
+ * or "No runs yet" when none was recorded; "" without totals.
+ */
+export function runTotalsSummary(totals: any) {
+  if (!totals) return "";
+  if (noRuns(totals)) return "No runs yet";
+  const marked = (coverage: any, text: string) => `${MARKS[coverage] ? `${MARKS[coverage]} ` : ""}${text}`;
+  const parts = [];
+  const active = totals.elapsedActiveTimeMs;
+  if (typeof active?.value === "number" && active.coverage !== "unavailable") parts.push(marked(active.coverage, `${formatDuration(active.value)} active`));
+  const tokens = ["inputTokens", "cacheWriteTokens", "cacheReadTokens", "outputTokens"].map((key) => totals[key]).filter((measure) => typeof measure?.value === "number" && measure.coverage !== "unavailable");
+  if (tokens.length) {
+    const exact = tokens.length === 4 && tokens.every((measure) => measure.coverage === "exact");
+    parts.push(marked(exact ? "exact" : tokens.some((measure) => measure.coverage === "approximate") && tokens.length === 4 ? "approximate" : "partial", `${compact.format(tokens.reduce((sum, measure) => sum + measure.value, 0))} tokens`));
+  }
+  const runs = totals.runs;
+  return parts.join(" · ") || (typeof runs?.value === "number" ? `${runs.value} ${runs.value === 1 ? "run" : "runs"}` : "Run totals");
+}
+
+/** Renders one totals object for a scope (wave, slice, descendants, or initiative) under its caption, or "" without totals. */
+export function runTotalsHtml(totals: any, scope: any) {
+  return runTotalsTableHtml([{ totals, scope }], { caption: true });
+}
+
+/**
+ * Selects one wave's totals: its entry, the no-run state when the slice's run count is exact, otherwise every measure
+ * unavailable, because an unreadable record may hold the wave's runs; `null` without slice totals.
+ */
+export function waveRunTotals(runTotals: any, waveId: any) {
+  if (!runTotals) return null;
+  const entry = runTotals.waves.find((item: any) => item.wave === waveId);
+  if (entry) return entry.totals;
+  const none = runTotals.slice.runs.coverage === "exact";
+  return {
+    ...Object.fromEntries(MEASURES.map(([key]) => [key, UNAVAILABLE])),
+    ...(none ? { runs: { value: 0, coverage: "exact" } } : {}),
+    idleThresholdMs: runTotals.slice.idleThresholdMs
+  };
+}
+
+/** Renders the slice page's run-totals card, adding the descendants scope for a slice with children, or "" without totals. */
+export function sliceRunTotalsHtml(runTotals: any, hasChildren: any) {
+  if (!runTotals) return "";
+  return card("Run totals", runTotalsTableHtml([{ totals: runTotals.slice, scope: "slice" }, ...(hasChildren ? [{ totals: runTotals.withDescendants, scope: "descendants" }] : [])]));
+}

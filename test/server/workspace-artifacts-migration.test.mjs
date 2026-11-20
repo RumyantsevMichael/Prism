@@ -42,7 +42,8 @@ const scoped = (store, location) => path.join(store, "artifacts", "repositories"
 
 async function ledgerFiles(store) {
   const folder = path.join(store, "artifact-migrations");
-  const names = await readdir(folder).catch(() => []);
+  // An atomic write leaves a hidden temporary file until it renames it, so only the ledger entries themselves are read.
+  const names = (await readdir(folder).catch(() => [])).filter((name) => name.endsWith(".json") && !name.startsWith("."));
   return Promise.all(names.sort().map(async (name) => JSON.parse(await readFile(path.join(folder, name), "utf8"))));
 }
 

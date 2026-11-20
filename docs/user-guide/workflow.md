@@ -144,7 +144,9 @@ A run lists at most 2000 files and sets `filesTruncated` to `true` when more cha
 The run's `checkout` names the repository, `origin` remote, branch, head commit, whether the work tree was dirty, and `host`, this machine's host name up to its first `.`.
 
 When you `ship` an initiative, Prism first fetches `origin` in the shipping checkout, and goes on with what it has when the fetch fails.
-The decision then records `slices` with `{ repository, verified, shipped }` for each done leaf slice that has a passing run: `verified` is the head commit of the slice's latest passing run, and `shipped` is the oldest of the 1000 newest commits on the first-parent history of the default branch whose tree holds every file the run listed at its blob and none of its removed paths.
+The decision then records `slices` with `{ repository, verified, shipped }` for each done leaf slice that has a passing run: `verified` is the head commit of the slice's latest passing run, and `shipped` is the oldest of the 1000 newest commits on the first-parent history of the default branch, leaving out those the verified commit was built on, whose tree holds every file the run listed and none of its removed paths.
+A file counts as held at the blob the run listed or at a later version that a commit descending from the verified commit gives it, so a squash merge of a branch whose later slices or fixes changed the file still records the squash commit.
+Those later versions come from the refs of the shipping checkout, such as the slice's branch, so ship from a checkout that still has that branch, locally or on origin.
 The default branch is `origin/HEAD`, else `origin/main`, else `origin/master`, so a squash merge or a force push that keeps the verified files still leads to them.
 `shipped` is null when the run was in another repository, when the run listed no files, or when no commit qualifies, as when you ship before the slice's branch merges, and the `ship` result lists those slices under `noShipCommit`.
 `get_roadmap` lists `initiatives` with each one's `id` and `decision`, so a shipped initiative's `slices` read without the whole record.
@@ -272,6 +274,9 @@ A link counts only as Markdown reads it, so a path in a code span, a code block,
 A link in a slice's `slice.md` names an ADR of the workspace scope or of that slice's own repository and its components, whichever repository's checkout ships.
 When two or more of those scopes hold an ADR at the linked path, the one in the scope of that `slice.md` counts, and when none of them is that scope, `ship` refuses with `adr_ambiguous`, naming the path and the scopes, and changes nothing.
 While a linked Proposed ADR waits for your answer to an approval, `ship` refuses with `adr_pending`, naming each such ADR and its question, and changes nothing, so a ship never closes a question you have not answered.
+A Proposed ADR that cites one of the initiative's requirement files in a Markdown link, and that no `slice.md` of the initiative links, would stay Proposed after the ship without you seeing it at the review.
+So `ship` refuses with `adr_unlinked`, naming each such ADR and the requirement files it cites, and `get_roadmap` reports `readyToShip` `false` with an `adr_unlinked` diagnostic, until an agent links the ADR from the `slice.md` that relies on it and asks you a new correctness review.
+An ADR that a `slice.md` of another plan links belongs to that initiative and does not stop this ship.
 A `slice.md` that Prism cannot read for its links, because it holds more than 1 MiB or nests its Markdown deeper than Prism reads, refuses the ship with `artifact_too_large` until an agent shortens it.
 The result lists the accepted ADRs under `acceptedAdrs` with their path, scope, and the verified commits, an ADR with another recorded status stays as it is, and `get_artifact` returns an accepted ADR's acceptance.
 So a ready-to-ship initiative of a project with a record store still waits for your correctness review, and its ship can still be refused for the reasons above.
@@ -484,4 +489,6 @@ In Codex the offer needs Prism's hooks to be trusted through `/hooks`, like gate
 Prism no longer reads `.claude/workflow-config.md`, and `prism:setup` migrates its values into `.prism/workflow.md` without changing the old file.
 On resume, orchestration imports a legacy `map.puml` into the initiative record.
 `prism:setup` proposes a roadmap record from a legacy roadmap and replaces the hand-written roadmap Markdown only after you accept it.
+An initiative that the legacy roadmap lists as shipped is recorded as shipped before Prism, without the ship gate, since it has no slices or verification runs to confirm, and the setup report names each one.
+The roadmap shows it as shipped before Prism, and its plan documents stay unchanged.
 See [Upgrading to managed records](upgrading-to-managed-records.md) for everything that changed in Prism 0.10.0.

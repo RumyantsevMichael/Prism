@@ -925,9 +925,11 @@ test("present_review gathers the presented tabs into the tab group the agent nam
   const browser = await browserStub(context);
   const mcp = mcpProcess(context, root, undefined, browser.environment);
 
-  await initialize(mcp);
+  // The group records the agent that opened it with the harness its client names, and never the session that holds its claims.
+  mcp.send({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "some-harness", title: "Some Harness" } } });
+  assert.equal((await mcp.next()).id, 1);
   const review = await callTool(mcp, 2, "present_review", { projectRoot: root, artifact: "docs/artifact.md", group: "Retry requests" });
-  assert.deepEqual(review.result.structuredContent.groups, [{ name: "Retry requests", tabs: ["docs/artifact.md"], collapsed: false }]);
+  assert.deepEqual(review.result.structuredContent.groups, [{ name: "Retry requests", tabs: ["docs/artifact.md"], collapsed: false, opener: { agent: true, host: "Some Harness" } }]);
   const refused = await callTool(mcp, 3, "present_review", { projectRoot: root, artifact: "docs/artifact.md", group: "x".repeat(61) });
   assert.match(JSON.stringify(refused), /tab group name/);
 });

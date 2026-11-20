@@ -328,7 +328,7 @@ async function codexTurn() {
 // Capacity needs Codex's effective settings, which the server reads from a Codex app server within a short bound.
 // The same read is repeated here with that bound and with a long one and the times are logged, so the log shows how close the read comes to its bound and, when capacity is unavailable, whether the read was too slow or failed.
 async function configReadDiagnosis(project, environment) {
-  const { inspectCodexEffectiveConfig } = await import(pathToFileURL(path.join(checkout, "src/server/session/host-adapters/codex-config.mjs")).href);
+  const { inspectCodexEffectiveConfig } = await import(pathToFileURL(path.join(checkout, "dist/server/session/host-adapters/codex-config.mjs")).href);
   const attempt = async (timeoutMs) => {
     const started = Date.now();
     const result = timeoutMs ? await inspectCodexEffectiveConfig({ cwd: project, environment, timeoutMs }) : await inspectCodexEffectiveConfig({ cwd: project, environment });

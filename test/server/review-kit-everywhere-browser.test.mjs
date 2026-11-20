@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { contrastFailures, demoProject, launch, movingElements, openPage, reviewUrl, ROOT, serveProject, skip, stateFileNames, useAppDirectory, waitForView, writeClaim } from "./fixtures/kit-browser.mjs";
-import { repainted } from "./fixtures/wait.mjs";
+import { repainted, settled } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §5, §8, §11, §13.
 // Contract: docs/plans/review-app-ui-kit/slice.md clauses 7, 8, 9, 21, 24, 62, and 69.
@@ -134,22 +134,30 @@ test("clauses 9, 21, 24: comfortable density makes every kit control of the page
     await choose(base, { density });
     const page = await openPage(browser, reviewUrl(base, "slice:retry-hardening/timeout-retries"));
     await waitForView(page);
-    heights[density] = await page.evaluate(() => {
+    // A control that a later load adds, such as a sidebar row, is counted only once two readings a repaint apart list the same controls.
+    const measure = () => page.evaluate(() => {
       const root = getComputedStyle(document.documentElement);
       const sizes = ["--prism-control-height", "--prism-control-height-sm", "--prism-row-height", "--prism-subtab-height"].map((name) => Math.round(parseFloat(root.getPropertyValue(name))));
       return [...document.querySelectorAll("prism-button, prism-tab, prism-tree-item, prism-menu-item, prism-list-item")].filter((element) => element.getClientRects().length).map((element) => {
         // An expanded tree item holds its child items, so its own row is the control that is measured.
         const own = element.shadowRoot?.firstElementChild ?? element.querySelector(":scope > .prism-tree-row") ?? element;
         const height = Math.round(Math.min(element.getBoundingClientRect().height, own.getBoundingClientRect().height || Infinity));
-        return { tag: element.tagName.toLowerCase(), height, sized: sizes.includes(height) || sizes.includes(Math.round(element.getBoundingClientRect().height)) };
+        const label = (element.getAttribute("aria-label") ?? element.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 40);
+        return { tag: element.tagName.toLowerCase(), label, height, sized: sizes.includes(height) || sizes.includes(Math.round(element.getBoundingClientRect().height)) };
       });
     });
+    const tags = (items) => JSON.stringify(items.map((item) => [item.tag, item.label]));
+    heights[density] = (await settled(async () => {
+      const before = await measure();
+      await repainted(page);
+      return [before, await measure()];
+    }, ([before, after]) => tags(before) === tags(after)))[1];
     await page.context().close();
   }
   assert.ok(heights.compact.length >= 3, "the page shows kit controls");
   assert.deepEqual(heights.compact.filter((item) => !item.sized), [], "every compact control takes its height from a size token");
   assert.deepEqual(heights.comfortable.filter((item) => !item.sized), [], "every comfortable control takes its height from a size token");
-  assert.equal(heights.comfortable.length, heights.compact.length, "both densities show the same controls");
+  assert.deepEqual(heights.comfortable.map((item) => `${item.tag} ${item.label}`), heights.compact.map((item) => `${item.tag} ${item.label}`), "both densities show the same controls");
   heights.compact.forEach((item, index) => assert.ok(heights.comfortable[index].height > item.height, `${item.tag} ${index} is taller in comfortable density`));
   for (const ref of ["attention", "roadmap", "slice:retry-hardening/timeout-retries"]) {
     const page = await openPage(browser, reviewUrl(base, ref), { reducedMotion: "reduce" });
@@ -174,7 +182,7 @@ test("clause 69: no page or overlay of the review app names Prism's own files", 
     for (const failure of await stateFileNames(page)) failures.push(`${ref}: ${failure}`);
     await page.locator("header").getByRole("button", { name: /working/ }).click();
     await repainted(page);
-    for (const failure of await stateFileNames(page)) failures.push(`${ref} with Who's working open: ${failure}`);
+    for (const failure of await stateFileNames(page)) failures.push(`${ref} with the agents menu open: ${failure}`);
     await page.keyboard.press("Escape");
     await page.context().close();
   }

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { mock } from "node:test";
 
-// The confirmation's guarantees under timing and other processes: the cool-down runs from the dialog's end,
+// The confirmation's guarantees under timing and other processes: the cool-down and the launch window run from the dialog's end,
 // a dialog that ignores a polite stop is still ended, and only one dialog of this machine is open at a time.
 // Stub dialog programs on PATH stand in for zenity and kdialog; no real dialog is shown.
 const module = () => import("../../dist/server/session/launch-confirmation.mjs");
@@ -50,6 +50,19 @@ test("the cool-down runs 30 seconds from when the dialog was declined, not from 
   const declinedAt = Date.now();
   assert.equal((await rejection(confirmLaunch(request(env, declinedAt + 29000)))).code, "confirmation_cooldown");
   assert.equal(asked(), 1, "no dialog during the cool-down");
+});
+
+test("the launch window runs 30 minutes from when the dialog was confirmed, not from when it was requested", { skip: posixOnly }, async (t) => {
+  const { env, asked } = await dialogs(t, "zenity", { code: 0, waitMs: 1500 });
+  const { confirmLaunch } = await module();
+  const requestedAt = Date.now();
+  const opened = await confirmLaunch(request(env, requestedAt));
+  const confirmedAt = Date.now();
+  assert.equal(opened.asked, true);
+  const endsAt = Date.parse(opened.windowEndsAt);
+  assert.ok(endsAt >= requestedAt + 1500 + 30 * 60000 && endsAt <= confirmedAt + 30 * 60000, `the window ends 30 minutes after the dialog ended, not at ${opened.windowEndsAt}`);
+  assert.equal((await confirmLaunch(request(env, endsAt - 1))).asked, false, "a launch just before the window ends shows no dialog");
+  assert.equal(asked(), 1);
 });
 
 test("two launches requested at the same moment in one process show only one dialog", { skip: posixOnly }, async (t) => {

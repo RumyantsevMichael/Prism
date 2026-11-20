@@ -12,6 +12,8 @@ test.after(() => rm(environment, { recursive: true, force: true }));
 
 // On Windows a running git fetch holds the store's files open, and renaming the folder fails with EBUSY until it ends, so the move is retried until it goes through.
 const move = (from, to) => settled(() => rename(from, to).then(() => true));
+// A store sync runs Git several times, which takes a Windows runner seconds each, so a wait for what a sync does uses the whole default budget.
+const WAIT_FOR_SYNC_MS = 30000;
 
 // A page of the workspace: its events stream stays connected until close().
 function openPage(context, prism, id) {
@@ -40,7 +42,7 @@ test("clause 22: an open page makes the app fetch the store on its own timer, an
   const { where, store, prism, id, clone } = await addedWorkspace(context);
   const close = openPage(context, prism, id);
   await pushToRemote(where, store.bare, { "artifacts/requirements/first.md": "# First\n" });
-  await eventually(() => fetched(clone, "artifacts/requirements/first.md"), 10000, "the first push reaching the clone");
+  await eventually(() => fetched(clone, "artifacts/requirements/first.md"), WAIT_FOR_SYNC_MS, "the first push reaching the clone");
   close();
   await new Promise((resolve) => setTimeout(resolve, 600));
   await pushToRemote(where, store.bare, { "artifacts/requirements/second.md": "# Second\n" });
@@ -94,17 +96,17 @@ test("clause 23: failed fetches back off by doubling up to the maximum, and a su
   assert.ok(observed[0] >= 600, `the wait after a failure is twice the interval or more: ${observed.join(", ")}`);
   assert.equal(observed.at(-1), 1200, `the waits stop at the maximum: ${observed.join(", ")}`);
   await move(`${store.bare}.away`, store.bare);
-  const restored = await eventually(async () => { const state = await sync(); return state.state === "ok" && state; }, 10000, "a fetch succeeding again");
+  const restored = await eventually(async () => { const state = await sync(); return state.state === "ok" && state; }, WAIT_FOR_SYNC_MS, "a fetch succeeding again");
   assert.ok(Date.parse(restored.nextFetchAt) - Date.parse(restored.lastAttemptAt) <= 300 + 200, "the wait is the interval again");
 });
 
 test("clause 24: an unreachable store shows its last synced copy with the time of that sync and Git's reason", async (context) => {
   const { store, prism, id, sync } = await addedWorkspace(context);
   openPage(context, prism, id);
-  const first = await eventually(async () => { const state = await sync(); return state?.state === "ok" && state.lastSyncedAt && state; }, 10000, "a first fetch");
+  const first = await eventually(async () => { const state = await sync(); return state?.state === "ok" && state.lastSyncedAt && state; }, WAIT_FOR_SYNC_MS, "a first fetch");
   await move(store.bare, `${store.bare}.away`);
   context.after(() => move(`${store.bare}.away`, store.bare).catch(() => {}));
-  const unreachable = await eventually(async () => { const state = await sync(); return state.state === "unreachable" && state; }, 10000, "the store becoming unreachable");
+  const unreachable = await eventually(async () => { const state = await sync(); return state.state === "unreachable" && state; }, WAIT_FOR_SYNC_MS, "the store becoming unreachable");
   assert.ok(Date.parse(unreachable.lastSyncedAt) >= Date.parse(first.lastSyncedAt), "the time of the last fetch that succeeded");
   assert.ok(unreachable.message.includes(`example.invalid/${store.owner}/store`), unreachable.message);
   const index = await prism.get(`/w/${id}/api/index`);
@@ -119,7 +121,7 @@ test("clause 25: a gate answer on a store-only workspace is committed and pushed
   ok(await agent.call("update_initiative", { initiative: "reports", expectedRevision: null, operations: [{ op: "create", slug: "reports", title: "Reports", requirements: ["r.md#1"] }] }));
   const asked = ok(await agent.call("update_coordination_state", { initiative: "reports", expectedRevision: null, changes: { gateOperations: [{ op: "ask", kind: "visual-review", question: "Review the design.", artifacts: [] }] } }));
   const gate = asked.openedGates[0].id;
-  await eventually(() => git(store.bare, "log", "--all", "-p").includes(gate), 15000, "the gate reaching the remote");
+  await eventually(() => git(store.bare, "log", "--all", "-p").includes(gate), WAIT_FOR_SYNC_MS, "the gate reaching the remote");
   // The app keeps its own copy of the store, so the checkout's machine is another machine here.
   const app = { parent: where.parent, app: path.join(where.parent, "app-b"), sync: "on" };
   const prism = await startApp(context, app, { workspaceFetchMs: 300 });
@@ -132,5 +134,5 @@ test("clause 25: a gate answer on a store-only workspace is committed and pushed
   const action = listed.json.actions.find((item) => item.id === "gate.answer");
   const applied = await prism.post(`/w/${id}/api/actions/apply`, { action: "gate.answer", target, input: { choice: "approve" }, revision: action.revision });
   assert.equal(applied.status, 200, applied.body);
-  await eventually(() => /answeredAt/.test(git(store.bare, "log", "-1", "-p", "main")), 15000, "the answer reaching the remote");
+  await eventually(() => /answeredAt/.test(git(store.bare, "log", "-1", "-p", "main")), WAIT_FOR_SYNC_MS, "the answer reaching the remote");
 });

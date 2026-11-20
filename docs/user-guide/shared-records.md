@@ -56,7 +56,9 @@ An agent's edit of a `Status:` line is kept, but Prism still reads the file with
 To approve a requirement, or an amendment of an Approved one, the agent asks for your approval with the `ask_approval` operation of `update_artifact`, and the question appears on [Attention](review-browser.md#attention).
 Approving writes the status, `Approved` unless the agent asked for another such as `Withdrawn`, into the file's `Status:` line, sets its `Approved:` line to the day you answered, and records your checkout's Git `user.name` and your machine's host name as the approver.
 Request changes with a note when the file needs another revision, and the agent revises it and asks again.
-An ADR becomes `Accepted` only when its initiative ships, never through an approval, which can still give it another status, such as `Superseded`.
+An ADR becomes `Accepted` when its initiative ships, and an approval can still give it another status, such as `Superseded`.
+An ADR that an initiative realized but whose ship left it `Proposed`, as a ship did before it checked for unlinked ADRs, becomes `Accepted` only through an approval that names that shipped initiative: `update_artifact` `ask_approval` with `shipped` set to the initiative's id.
+Prism asks it only when a `slice.md` of that initiative links the ADR or the ADR links one of the initiative's requirement files, and your approval in the review browser records the acceptance with that initiative and the commits its ship recorded, while the shipped initiative itself stays as it was.
 [Review a file in the record store](review-browser.md#review-a-file-in-the-record-store) shows a file's changes since you last accepted it and its comments.
 
 ### Shipping accepts ADRs
@@ -473,7 +475,11 @@ Work on a slice needs the claim of the session doing it: proposing or accepting 
 The refusal says whether the session's claim expired or it never had one, and the agent claims the slice with `update_initiative` `claim`, which takes an implementation claim on a slice in progress and a design claim on any other slice, then carries on.
 A dependents' run of a finished scope needs no claim.
 A claim names its holder by the store's Git `user.name` and the host name, such as `Michael Rumyantsev on MacBookPro`, or by the host name alone when the store has no `user.name`.
-`get_initiative` lists each live claim under `claims`.
+A claim also records the harness its agent runs in, as `host`, by the title the MCP client gives Prism, such as `Claude Code`, or else by its name, such as `codex-mcp-client`, and records none when the client names itself in neither.
+A claim records the model of its agent, as `model`, only when the session's main agent took it and Prism's session-facts hook observed that agent's model, such as `claude-opus-5-5`.
+A sub-agent's claim records no model, and nor does a call that Prism cannot attribute to the main agent, such as a Claude Code call whose tool use Prism's hook did not record or a Codex call whose metadata names no thread.
+Each renewal of a main agent's claim writes the session's model as it is then, so a change of model reaches the claim within one renewal.
+`get_initiative` lists each live claim under `claims`, with its `host` and `model` when the claim records them.
 The review browser shows each claim's holder, activity, and time left on the slice board, the slice list, and the slice page, and marks the slices inside a scope that a design claim covers.
 A claim that lapsed without a release shows as expired until someone claims or releases the slice.
 

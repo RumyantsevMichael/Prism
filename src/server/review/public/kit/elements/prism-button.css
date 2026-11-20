@@ -331,7 +331,7 @@ button:disabled[aria-pressed="true"],
   margin-inline-end: 0;
 }
 
-/* shape round: a pill, as Who's working and a filter of a list are; an unpressed filter stays quiet. */
+/* shape round: a pill, as the agents button and a filter of a list are; an unpressed filter stays quiet. */
 :host([shape="round"]) button {
   border-radius: var(--prism-radius-round);
 }

@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { access, mkdir, mkdtemp, readdir, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { FILES, entry, fakeRuntime, manifestPath, project, settled, workflow } from "./fixtures/component-indexes.mjs";
+import { FILES, entry, fakeRuntime, manifestPath, project, settled, workflow, oncePrepared } from "./fixtures/component-indexes.mjs";
 import { READY_WAIT_MS } from "./fixtures/wait.mjs";
 
 // Review findings of the component-index-preparation slice: searches beside a long build, a component that another session prepares,
@@ -17,7 +17,11 @@ const { componentSources, indexComponents } = await import("../../dist/server/re
 const { resetBackgroundPreparation, startBackgroundPreparation, startIndexRebuild } = await import("../../dist/server/repository-intelligence/background-preparation.mjs");
 const { conservationStore } = await import("../../dist/server/conservation/conservation-store.mjs");
 
-const search = (root, runtime, input = {}, waitMs = READY_WAIT_MS) => provider.searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
+// Without a wait of its own, a search repeats until no component prepares, since one call waits at most 10 seconds.
+const search = (root, runtime, input = {}, waitMs) => {
+  const once = () => provider.searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs: waitMs ?? READY_WAIT_MS });
+  return waitMs === undefined ? oncePrepared(once) : once();
+};
 const NET = { name: "net", identity: "root/net", folder: "packages/net" };
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const within = (promise, ms, what) => Promise.race([promise, delay(ms).then(() => { throw new Error(`${what} did not answer within ${ms} ms.`); })]);
@@ -70,7 +74,7 @@ async function serialRuntime(t, directory, storage, options = {}) {
 test("CC-1: a search of a ready component answers while another component's build holds the build helper", { skip: process.platform === "win32" }, async (t) => {
   const { directory, root, storage } = await project(t);
   const runtime = await serialRuntime(t, directory, storage);
-  assert.equal((await search(root, runtime, { filters: { paths: ["packages/net"] } }, 10000)).status, "ready");
+  assert.equal((await search(root, runtime, { filters: { paths: ["packages/net"] } })).status, "ready");
   assert.equal(entry(await search(root, runtime, { filters: { paths: ["packages/app"] } }, 0), "root/app").status, "preparing");
   const started = Date.now();
   const found = await within(search(root, runtime, { filters: { paths: ["packages/net"] } }), 8000, "The search of packages/net");
@@ -83,7 +87,7 @@ test("CC-1: a search of a ready component answers while another component's buil
 test("CC-1: a build that stalls does not fail a concurrent search of another component", { skip: process.platform === "win32" }, async (t) => {
   const { directory, root, storage } = await project(t);
   const runtime = await serialRuntime(t, directory, storage, { stallMs: 2500 });
-  assert.equal((await search(root, runtime, { filters: { paths: ["packages/net"] } }, 10000)).status, "ready");
+  assert.equal((await search(root, runtime, { filters: { paths: ["packages/net"] } })).status, "ready");
   await search(root, runtime, { filters: { paths: ["packages/app"] } }, 0);
   // The search is still answering when the build of packages/app, which reports no progress, reaches its stall period.
   await delay(2000);

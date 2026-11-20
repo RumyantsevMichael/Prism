@@ -46,6 +46,8 @@ test("clause 27: the strip of tabs keeps its preview, a double click to keep it,
   assert.deepEqual(await tabs(page), ["initiative:activity-reports(p)", "decisions*"], "Ctrl-click kept a tab");
   await page.getByRole("tab", { name: /^Export activity reports/ }).dblclick();
   assert.deepEqual(await settled(() => tabs(page), ["initiative:activity-reports*", "decisions"]), ["initiative:activity-reports*", "decisions"], "a double click kept the preview tab");
+  // The strip keeps the tab at once and saves the session after it, so a reload before the server holds that save would bring the preview back.
+  assert.equal(await settled(async () => (await (await fetch(`${base}/api/session`)).json()).previewTab, null), null, "the server holds the kept tab");
   await page.reload();
   // The page draws the tabs once the review server answers with the session, which takes longer than a second on a slow disk.
   await page.waitForFunction(() => document.querySelectorAll("#open-tabs prism-doc-tab").length > 0, null, { timeout: 15000 }).catch(() => {});
@@ -57,7 +59,7 @@ test("clause 27: the strip of tabs keeps its preview, a double click to keep it,
   assert.deepEqual(page.errors, []);
 });
 
-test("clause 27: Back, Forward, Alt+arrows, Who's working, the project menu, and the connection banner keep working", { skip, timeout: 90000 }, async (context) => {
+test("clause 27: Back, Forward, Alt+arrows, the agents menu, the project menu, and the connection banner keep working", { skip, timeout: 90000 }, async (context) => {
   const { base, browser, close } = await placesDemo(context);
   const page = await open(browser, base, "attention");
   await choosePlace(page, "Roadmap");
@@ -71,7 +73,7 @@ test("clause 27: Back, Forward, Alt+arrows, Who's working, the project menu, and
   await page.locator("#page-bar").getByRole("button", { name: "Forward" }).click();
   await settledOn(page, "roadmap");
   await page.locator("header").getByRole("button", { name: /working/ }).click();
-  await page.getByRole("dialog", { name: "Who's working" }).waitFor({ timeout: 3000 });
+  await page.getByRole("dialog", { name: "Agents" }).waitFor({ timeout: 3000 });
   await page.keyboard.press("Escape");
   await page.locator("header [aria-haspopup=menu]").first().click();
   await page.getByRole("menu").first().waitFor({ timeout: 3000 });

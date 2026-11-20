@@ -36,8 +36,8 @@
         <prism-kbd class="topbar-search-keys">Ctrl K</prism-kbd>
       </prism-button>
       <div class="topbar-end">
-        <prism-button id="presence-button" class="topbar-presence" variant="chrome" shape="round">0 working</prism-button>
-        <prism-popover id="presence" for="presence-button" heading="Who's working"></prism-popover>
+        <prism-agent-summary id="agents-button" class="topbar-agents" variant="chrome" shape="round" working="0"></prism-agent-summary>
+        <prism-popover id="agents" for="agents-button" heading="Agents"></prism-popover>
         <prism-rail-item id="attention-button" class="topbar-attention" value="attention" label="Attention" icon="bell" size="sm"></prism-rail-item>
       </div>
     </header>

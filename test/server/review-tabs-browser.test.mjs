@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { demoProject, launch, openPage, reviewUrl, shownTooltip, skip, useAppDirectory, waitForView } from "./fixtures/kit-browser.mjs";
+import { demoProject, launch, openPage, reviewUrl, shownTooltip, skip, useAppDirectory, waitForView, writeClaim } from "./fixtures/kit-browser.mjs";
 import { pause, settled as reading } from "./fixtures/wait.mjs";
 
 // The strip of open documents at the top of the main island, run on the real review page over the demo project:
@@ -179,6 +179,14 @@ test("an agent presentation of several artifacts opens each as a marked tab, foc
   assert.deepEqual(await tabs(page), ["attention(p)", `${presented[0]}*(a)`, `${presented[1]}(a)`, `${presented[2]}(a)`], "every presented artifact has its own tab, and the first shows");
   assert.equal(await page.getByRole("tab", { name: /presented by the agent/ }).count(), 3, "each agent tab says it was presented by the agent");
   assert.equal(await tab(page, presented[1]).evaluate((host) => host.shadowRoot.querySelector(".mark").checkVisibility()), true, "each agent tab shows the agent mark");
+  // The mark takes the room before the title, as wide as the close button's room at its end, and the title starts where every tab's title starts.
+  const marks = await tab(page, presented[1]).evaluate((host) => {
+    const box = (selector) => host.shadowRoot.querySelector(selector).getBoundingClientRect();
+    return { markInLead: box(".lead").left <= box(".mark").left && box(".mark").right <= box(".lead").right, leadWidth: Math.round(box(".lead").width), closeWidth: Math.round(box(".close").width), textAfterLead: box(".text").left >= box(".lead").right };
+  });
+  assert.deepEqual(marks, { markInLead: true, leadWidth: marks.closeWidth, closeWidth: marks.closeWidth, textAfterLead: true });
+  const titleStart = (ref) => tab(page, ref).evaluate((host) => host.shadowRoot.querySelector(".text").getBoundingClientRect().left - host.getBoundingClientRect().left);
+  assert.equal(await titleStart(presented[1]), await titleStart("attention"), "an agent tab's title starts where a tab without the mark starts its title");
   await page.getByRole("tab", { name: /presented by the agent/ }).nth(1).hover();
   assert.match(await reading(async () => await shownTooltip(page) ?? "", (tip) => /Presented by the agent\./.test(tip)), /Presented by the agent\./);
   const other = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
@@ -301,6 +309,44 @@ test("dragging a tab or Ctrl+Shift+arrows move it, Escape puts a dragged tab bac
   await tab(page, "requirements").click();
   await settled(page, base, "requirements");
   assert.deepEqual(page.errors, []);
+});
+
+test("a group an agent opened shows the claim that agent held, or its harness and model, before the group's name", { skip, timeout: 90000 }, async (context) => {
+  await useAppDirectory(context);
+  const root = await demoProject(context);
+  if (!process.env.PLUGIN_DATA) process.env.PLUGIN_DATA = path.join(path.dirname(root), "data");
+  await writeClaim(root, "retry-hardening", "timeout-retries", { label: "Dana on studio", host: "Some Harness", model: "a-model", holder: "session-1111111111111111", minutesLeft: 24 });
+  const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
+  const review = await startReviewServer({ projectRoot: root, openBrowser: async () => false });
+  context.after(() => review.close());
+  const base = review.baseUrl.replace(/\/$/, "");
+  await review.open(["roadmap", "requirements"], { group: "Retry requests", by: { holder: "session-1111111111111111", host: "Some Harness", model: "a-model" } });
+  await review.open(["decisions"], { group: "Unclaimed", by: { holder: "session-2222222222222222", host: "Other Harness" } });
+  const page = await openPage(await launch(context), reviewUrl(base, "roadmap"), { viewport: { width: 1440, height: 900 } });
+  await waitForView(page);
+  const head = (name) => page.locator(`#open-tabs prism-doc-tab-group[name="${name}"]`);
+  await page.waitForFunction(() => document.querySelector('#open-tabs prism-doc-tab-group[name="Retry requests"] prism-claim[slot="opener"]'), null, { timeout: 15000 });
+  // The claimed group shows that claim's avatar with its live dot in the room before the name, and the other its harness's agent avatar.
+  const shown = await head("Retry requests").evaluate((host) => {
+    const claim = host.querySelector('[slot="opener"]');
+    const lead = host.shadowRoot.querySelector(".lead").getBoundingClientRect();
+    const avatar = claim.getBoundingClientRect();
+    return { tag: claim.tagName, live: claim.querySelector("prism-avatar").hasAttribute("live"), inLead: lead.left <= avatar.left && avatar.right <= lead.right, beforeName: avatar.right <= host.shadowRoot.querySelector(".name").getBoundingClientRect().left, label: host.shadowRoot.querySelector(".head").getAttribute("aria-label") };
+  });
+  assert.deepEqual(shown, { tag: "PRISM-CLAIM", live: true, inLead: true, beforeName: true, label: "Retry requests, group of 2 tabs, opened by Some Harness · a-model, implementing Retry timed-out requests until a total deadline" });
+  assert.match(await head("Retry requests").locator("prism-claim").getAttribute("tip"), /Dana on studio · Some Harness · a-model · implementation · 2\d min left/);
+  const other = await head("Unclaimed").evaluate((host) => {
+    const avatar = host.querySelector('[slot="opener"]');
+    return { tag: avatar.tagName, kind: avatar.getAttribute("kind"), tip: avatar.getAttribute("tip") };
+  });
+  assert.deepEqual(other, { tag: "PRISM-AVATAR", kind: "agent", tip: "Opened by Other Harness" });
+  // Collapsing the group keeps its avatar, and the avatar's element stays the same while nothing about the claim changes.
+  await page.evaluate(() => { window.openerElement = document.querySelector('#open-tabs prism-doc-tab-group[name="Retry requests"] [slot="opener"]'); });
+  await head("Retry requests").click();
+  await page.waitForFunction(() => document.querySelector('#open-tabs prism-doc-tab-group[name="Retry requests"]')?.hasAttribute("collapsed"));
+  assert.equal(await page.evaluate(() => document.querySelector('#open-tabs prism-doc-tab-group[name="Retry requests"] [slot="opener"]') === window.openerElement), true);
+  // The avatar sits beside the name, which stays the head's only text.
+  assert.equal(await head("Retry requests").evaluate((host) => [...host.childNodes].filter((node) => node.nodeType === 3).map((node) => node.textContent).join("")), "Retry requests");
 });
 
 test("a named tab group shows its head before its tabs, collapses, takes and lets go of tabs by drag and Ctrl+Shift+arrows, moves whole, and closes its tabs", { skip, timeout: 90000 }, async (context) => {

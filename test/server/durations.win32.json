@@ -96,8 +96,6 @@
   "launch-stop.test.mjs": 1,
   "launch-supervisor-review.test.mjs": 1,
   "launched-sessions.test.mjs": 1,
-  "launches-place-browser.test.mjs": 1,
-  "launches-place-view.test.mjs": 1,
   "log.test.mjs": 2,
   "machine-checkouts-list.test.mjs": 1,
   "machine-checkouts.test.mjs": 15,

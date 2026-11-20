@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { access, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import {
   appendRecord, ensureRecords, forgetMigrations, isManagedRecordFile, keyOfPath, listInitiatives, listRecordEntries,
-  listSliceRecords, outsideToolCall, readRecord, recordPath, removeInitiativeRecords, sameRecord, sliceDocumentFolder, takeMigrationReports, writeRecord
+  listSliceRecords, readRecord, recordPath, removeInitiativeRecords, sameRecord, sliceDocumentFolder, takeMigrationReports, writeRecord
 } from "../../dist/server/workflow/record-store.mjs";
 
 async function project(context, config = "## Paths\n- Plans (scratch): docs/plans/\n- Roadmap: docs/roadmap.md\n") {
@@ -98,14 +100,21 @@ test("reads find legacy records where they are, and the first write moves them a
   assert.deepEqual(await takeMigrationReports(roots), [], "a move is reported once");
 });
 
-test("a move into the project's .prism outside a tool call writes nothing beside it and waits for this process's next result", async (context) => {
+test("a move into the project's .prism outside a tool call is reported by the checkout's next tool call, in any process, once, with nothing beside it in the checkout", async (context) => {
   const root = await project(context);
+  const other = await project(context);
   await put(root, "docs/plans/reports/state.json", "state bytes");
-  await takeMigrationReports(new Set([root]));
-  await outsideToolCall(() => writeRecord(root, { kind: "state", initiative: "other" }, "{}\n"));
-  assert.equal(await exists(path.join(root, ".prism/.prism-sync")), false, "a note in .prism would change the checkout");
+  await takeMigrationReports(new Set([root, other]));
+  // The shared review app runs in a process of its own, so the move there is made by another process, whose memory no tool call of this one reads.
+  const script = `const { outsideToolCall, writeRecord } = await import(${JSON.stringify(new URL("../../dist/server/workflow/record-store.mjs", import.meta.url).href)});
+await outsideToolCall(() => writeRecord(${JSON.stringify(root)}, { kind: "state", initiative: "other" }, "{}\\n"));`;
+  await promisify(execFile)(process.execPath, ["--input-type=module", "-e", script]);
+  assert.equal(await readFile(path.join(root, ".prism/initiatives/reports/state.json"), "utf8"), "state bytes");
+  assert.deepEqual((await readdir(path.join(root, ".prism"), { recursive: true })).filter((file) => !/^(?:initiatives\b|workflow\.md$|\.gitignore$|\.gitattributes$)/.test(file)), [], "a note in .prism would change the checkout");
+  assert.deepEqual(await takeMigrationReports(new Set([other])), [], "another checkout's tool call does not take the report");
   const reports = await takeMigrationReports(new Set([root]));
-  assert.deepEqual(reports.map((report) => report.moved.map((move) => move.from)), [["docs/plans/reports/state.json"]]);
+  assert.deepEqual(reports.map((report) => [report.root, report.store, report.moved.map((move) => move.from)]), [[root, undefined, ["docs/plans/reports/state.json"]]]);
+  assert.deepEqual(await takeMigrationReports(new Set([root])), [], "a move is reported once");
 });
 
 test("removes a legacy copy that matches the record already in .prism", async (context) => {
