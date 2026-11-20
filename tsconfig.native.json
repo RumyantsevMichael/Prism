@@ -8,9 +8,10 @@
     "checkJs": false,
     "noEmit": true,
     "skipLibCheck": true,
+    "lib": ["ES2024", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
     "types": ["node"],
     "typeRoots": ["./scripts/native-build/node_modules/@types"],
     "useUnknownInCatchVariables": false
   },
-  "include": ["src/native-runtime/*.mts", "src/server/**/*.mts"]
+  "include": ["src/native-runtime/*.mts", "src/hooks/*.mts", "src/server/**/*.mts", "src/server/**/*.ts"]
 }

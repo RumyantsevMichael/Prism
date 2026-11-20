@@ -150,6 +150,9 @@ Those later versions come from the refs of the shipping checkout, such as the sl
 The default branch is `origin/HEAD`, else `origin/main`, else `origin/master`, so a squash merge or a force push that keeps the verified files still leads to them.
 `shipped` is null when the run was in another repository, when the run listed no files, or when no commit qualifies, as when you ship before the slice's branch merges, and the `ship` result lists those slices under `noShipCommit`.
 `get_roadmap` lists `initiatives` with each one's `id` and `decision`, so a shipped initiative's `slices` read without the whole record.
+`get_roadmap` with `initiative` returns only that entry, its decision, and its derived state, without the other entries or the record's history, and refuses an id the roadmap does not hold with `unknown_initiative`.
+`update_roadmap` answers with the new revision, `touched` with the ids its operations named, and only those entries, beside its ship results, so read the whole roadmap with `get_roadmap`.
+`update_coordination_state` answers with the new revision, the opened gates, and the state without the person's history and setting marks and without each pending gate's context and artifacts, which `get_coordination_state` returns.
 
 ## Components
 

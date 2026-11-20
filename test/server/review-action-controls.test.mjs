@@ -23,8 +23,9 @@ test.after(() => rm(privateData, { recursive: true, force: true }));
 const target = `initiative:${INITIATIVE}`;
 const choice = (name, values, extra = {}) => ({ name, kind: "choice", label: name === "value" ? "Value" : name, options: values.map((value) => ({ value, label: value })), required: true, requiredWhen: null, maxLength: null, multiline: null, ...extra });
 const text = (name, label, extra = {}) => ({ name, kind: "text", label, options: null, required: false, requiredWhen: null, maxLength: 200, multiline: false, ...extra });
-const push = { id: "initiative.push", label: "Push", group: "Initiative settings", target, value: "off", fields: [{ ...choice("value", ["off", "on"]), kind: "toggle" }], effect: "Applies to child sessions started after the change.", available: true, reason: null, confirm: { field: "value", values: ["on"], message: "Agents will push finished slices beyond this machine." }, revision: "r1" };
-const models = { id: "initiative.models", label: "Models", group: "Initiative settings", target, value: "host defaults", fields: [choice("mode", ["host defaults", "custom"]), text("delivery", "Delivery", { requiredWhen: { field: "mode", values: ["custom"] } }), text("review", "Review", { requiredWhen: { field: "mode", values: ["custom"] } }), text("securityReview", "Security review", { requiredWhen: { field: "mode", values: ["custom"] } }), text("examples", "Examples")], effect: "Applies to child sessions started after the change.", available: true, reason: null, confirm: null, revision: "r1" };
+const push = { id: "initiative.push", label: "Push", group: "Initiative settings", target, value: "off", fields: [{ ...choice("value", ["off", "on"]), kind: "toggle" }], effect: "Applies to agents started after the change.", available: true, reason: null, confirm: { field: "value", values: ["on"], message: "Agents will push finished slices beyond this machine." }, revision: "r1" };
+// A synthetic action whose text fields a choice makes required, as no shipped setting does any longer.
+const conditional = { id: "example.conditional", label: "Conditional", group: "Example", target, value: "none", fields: [choice("mode", ["none", "custom"]), text("first", "First", { requiredWhen: { field: "mode", values: ["custom"] } }), text("second", "Second", { requiredWhen: { field: "mode", values: ["custom"] } }), text("third", "Third", { requiredWhen: { field: "mode", values: ["custom"] } }), text("optional", "Optional")], effect: "Applies to agents started after the change.", available: true, reason: null, confirm: null, revision: "r1" };
 
 test("a control is ready only for a changed, complete input of an available action, and names its confirmation", () => {
   assert.deepEqual(actionFormState(push, { values: {} }), { input: { value: "off" }, ready: false, confirm: null, hint: "" }, "the current value is not a change");
@@ -35,11 +36,11 @@ test("a control is ready only for a changed, complete input of an available acti
 });
 
 test("a required field follows the field it depends on, and the hint names the first empty one", () => {
-  const custom = actionFormState(models, { values: { mode: "custom", review: "sonnet" } });
+  const custom = actionFormState(conditional, { values: { mode: "custom", second: "sonnet" } });
   assert.equal(custom.ready, false);
-  assert.equal(custom.hint, "Fill in Delivery.");
+  assert.equal(custom.hint, "Fill in First.");
   assert.equal(custom.input.mode, "custom");
-  const complete = actionFormState(models, { values: { mode: "custom", delivery: "opus", review: "sonnet", securityReview: "opus" } });
+  const complete = actionFormState(conditional, { values: { mode: "custom", first: "opus", second: "sonnet", third: "opus" } });
   assert.deepEqual([complete.ready, complete.hint, complete.confirm], [true, "", null]);
   const answer = { id: "gate.answer", label: "Answer", group: "Gate", target: "gate:reports/gate-00000001", value: null, fields: [choice("choice", ["approve", "request-changes"]), text("note", "Note", { maxLength: 4000, multiline: true, requiredWhen: { field: "choice", values: ["request-changes"] } })], effect: "Reaches the agent that asked.", available: true, reason: null, confirm: null, revision: "r1" };
   assert.deepEqual([actionFormState(answer, { values: { choice: "request-changes" } }).ready, actionFormState(answer, { values: { choice: "request-changes" } }).hint], [false, "Fill in Note."]);

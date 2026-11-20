@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { withoutCredentials } from "../../src/server/workflow/remote-url.mjs";
+import { withoutCredentials } from "../../dist/server/workflow/remote-url.mjs";
 
 // A Git error names the remote it failed on, and every part of that URL that can carry a token stays out of the message.
 test("a Git error loses the query string and fragment of a remote URL", () => {

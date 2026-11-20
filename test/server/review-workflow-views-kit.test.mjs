@@ -10,16 +10,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const PUBLIC = "src/server/review/public";
 const FILES = [
-  "views/attention.js",
-  "views/roadmap.js",
-  "views/initiative.js",
-  "views/slice.js",
-  "views/claims.js",
-  "views/components.js",
-  "views/run-totals.js",
-  "views/code-location.js",
-  "views/library.js",
-  "views/util.js",
+  "views/attention.ts",
+  "views/roadmap.ts",
+  "views/initiative.ts",
+  "views/slice.ts",
+  "views/claims.ts",
+  "views/components.ts",
+  "views/run-totals.ts",
+  "views/code-location.ts",
+  "views/library.ts",
+  "views/util.ts",
   "styles/workflow-views.css"
 ];
 

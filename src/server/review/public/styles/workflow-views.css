@@ -1295,7 +1295,7 @@ a.inspect-tile:focus-visible {
   flex: none;
 }
 
-/* The latest launched run sits above the launch actions, its reason wrapping under its state. */
+/* The latest launched run leads the run configuration, its reason wrapping under its state. */
 .initiative-latest-run {
   display: grid;
   gap: var(--prism-space-2);
@@ -1334,6 +1334,15 @@ a.inspect-tile:focus-visible {
 .initiative-settings-lead {
   margin: 0 0 var(--prism-space-4);
   color: var(--prism-color-ink-muted);
+}
+
+/* A launch held by a choice or a host, or refused, says why above the settings. */
+.initiative-launch-note {
+  margin: 0 0 var(--prism-space-4);
+}
+
+.initiative-launch-note[hidden] {
+  display: none;
 }
 
 .slice-columns {

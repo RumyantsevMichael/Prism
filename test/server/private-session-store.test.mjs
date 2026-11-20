@@ -73,8 +73,8 @@ const sharedSafetyNames = [
 ];
 
 for (const [storeFile, retiredCopies] of [
-  ["src/server/session/session-trace-store.mjs", ["resolveTraceDirectory", "assertTraceDirectory", "UnsafeSessionTracePathError"]],
-  ["src/server/session/host-session-facts.mjs", ["resolveFactDirectory", "assertFactDirectory", "UnsafeHostFactPathError"]]
+  ["src/server/session/session-trace-store.mts", ["resolveTraceDirectory", "assertTraceDirectory", "UnsafeSessionTracePathError"]],
+  ["src/server/session/host-session-facts.mts", ["resolveFactDirectory", "assertFactDirectory", "UnsafeHostFactPathError"]]
 ]) {
   test(`${path.basename(storeFile)} uses the shared store safety unit instead of a private copy`, async () => {
     const source = await readFile(path.join(repositoryRoot, storeFile), "utf8");

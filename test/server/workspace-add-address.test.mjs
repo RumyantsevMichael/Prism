@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { addressWithoutCredentials, isRemoteStore, storeIdentity } from "../../src/server/workflow/remote-url.mjs";
+import { addressWithoutCredentials, isRemoteStore, storeIdentity } from "../../dist/server/workflow/remote-url.mjs";
 
 // Taking a credential out of a store address never turns it into another store.
 test("a token URL loses only its user information and names the same store", async () => {

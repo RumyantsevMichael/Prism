@@ -377,6 +377,11 @@ test('review independence and required lanes survive reassignment and correction
  await assert.rejects(act('coord',[wave('early',[['functional','r1']],'implementation-review')]),unaudited);
  await act('r1',[{op:'submit_lane',lane:'functional',status:'CLEAN'}]);await act('r2',[{op:'submit_lane',lane:'security',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
  await assert.rejects(act('coord',[wave('correction',[['functional','r1']])]),{code:'gate_blocked'});
+ // A refused carry names the condition that failed and what differs.
+ const widened={...wave('correction',[['functional','r1'],['security','r2']]),lanes:[{id:'functional',reviewer:'r1',coverage:['src','docs']},{id:'security',reviewer:'r2',coverage:['src']}]};
+ await assert.rejects(act('coord',[widened,{op:'carry_lane',lane:'functional',fromWave:'audit'}]),error=>error.code==='gate_blocked'&&error.problems[0].code==='carry_lane_changed'&&error.problems[0].field==='coverage'&&canonical(error.problems[0].added)===canonical(['docs'])&&/adding docs/.test(error.message));
+ await assert.rejects(act('coord',[wave('correction',[['functional','r3'],['security','r2']]),{op:'carry_lane',lane:'functional',fromWave:'audit'}]),error=>error.problems[0].code==='carry_lane_changed'&&error.problems[0].field==='reviewer');
+ await assert.rejects(act('coord',[wave('correction',[['functional','r1'],['security','r2']]),{op:'carry_lane',lane:'functional',fromWave:'missing'}]),error=>error.problems[0].code==='carry_source_missing');
  await act('coord',[wave('correction',[['functional','r1'],['security','r2']]),{op:'carry_lane',lane:'functional',fromWave:'audit'},{op:'carry_lane',lane:'security',fromWave:'audit'},{op:'accept_wave'}]);
  await act('coord',[wave('implementation',[['functional','r1']],'implementation-review')]);await act('r1',[{op:'submit_lane',lane:'functional',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
  assert.equal((await checkReviewGate({projectRoot:f.root,...f.key,gate:'completion'})).ready,true);

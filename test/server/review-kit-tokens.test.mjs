@@ -242,9 +242,11 @@ test("clause 5: the build copies the kit and the area stylesheets to dist unchan
     const source = path.join(ROOT, "src/server/review/public", folder);
     const built = path.join(ROOT, "dist/server/review/public", folder);
     const listed = await files(source).catch(() => []);
-    if (folder === "kit") assert.ok(listed.includes("tokens.css") && listed.includes("kit.js") && listed.includes("boot.js") && listed.includes("kit.css"), "src holds the kit");
-    assert.deepEqual(await files(built).catch(() => []), listed, `dist holds the same ${folder}/ files as src`);
-    for (const file of listed) assert.ok((await readFile(path.join(built, file))).equals(await readFile(path.join(source, file))), `dist holds ${folder}/${file} byte for byte`);
+    if (folder === "kit") assert.ok(listed.includes("tokens.css") && listed.includes("kit.ts") && listed.includes("boot.ts") && listed.includes("kit.css"), "src holds the kit");
+    // A TypeScript source ships as the JavaScript the build compiles from it; every other file ships as it is.
+    const shipped = (file) => file.replace(/\.ts$/, ".js");
+    assert.deepEqual(await files(built).catch(() => []), listed.map(shipped).sort(), `dist holds the same ${folder}/ files as src`);
+    for (const file of listed.filter((name) => !name.endsWith(".ts"))) assert.ok((await readFile(path.join(built, file))).equals(await readFile(path.join(source, file))), `dist holds ${folder}/${file} byte for byte`);
   }
 });
 

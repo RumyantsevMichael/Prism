@@ -34,6 +34,11 @@ The **Settings** button, the gear at the start of the status bar, or Ctrl+, (Cmd
 A choice applies at once, and System follows the operating system again.
 **Layout** shows or hides the sidebar on windows wider than 1100 pixels and returns the sidebar to its default width.
 **Record store** says where the project's records live and opens the store's details.
+**Prism's own runs** chooses, once for this computer, the host and model of the runs that Prism starts on its own, such as a run that moves records to a new format.
+Its **Host** select offers **Any available host** and every host Prism supports, a host this computer lacks shown as unavailable with its reason, and its **Model** picker offers the models, efforts, and provider that the chosen host reports, as the models of an initiative's **Settings** do, or a model name typed as written.
+**Any available host** starts each run on the first host Prism finds with that host's default model, so its **Model** picker takes no choice.
+**Apply** stores the choice in `prism-runs.json` in the review app folder, readable only by you, and only a tab that Prism opened can apply it; a run already started keeps its own host and model.
+When the chosen host is no longer found, or the stored choice cannot be read, a run starts on the first host Prism finds with its default model and says why, and with no host found it does not start.
 **About Prism** names the version of Prism that runs the review app, and **Open the catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
 The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
 
@@ -211,12 +216,21 @@ An initiative has these settings, each with its default and the moment an agent 
 
 | Setting | Values | Default | Takes effect |
 | --- | --- | --- | --- |
+| Host | Each host Prism supports, Claude Code and Codex | None stored, shown as the first host found on this computer | For launches started after the change; a running or resumed session keeps the host it started on. |
 | Autonomy | `conservative`, `broad`, `full` | `conservative` | Decides which later gates wait for you; a gate already open keeps waiting for you. |
-| Commit | `off`, `on` | `on` with `full` autonomy, otherwise `off` | For child sessions started after the change. |
-| Push | `off`, `on` | `off` | For child sessions started after the change. |
+| Commit | `off`, `on` | `on` with `full` autonomy, otherwise `off` | For agents started after the change. |
+| Push | `off`, `on` | `off` | For agents started after the change. |
 | Continuation | `auto`, `stepwise` | `auto` | When the slice in progress finishes. |
-| Review | `marked`, `recommended`, `all` | `marked` | Sets the review mark of slices whose design is not yet accepted. |
-| Models | `host defaults`, or a delivery, review, and security review model with an optional examples model | `host defaults` | For child sessions started after the change. |
+| Review | `marked`, `recommended`, `all` | `marked` | Sets the review mark of slices whose design is not yet accepted; a slice whose design is already accepted keeps its review. |
+| Models | For each host, a provider and the model and effort of the coordinator, design and implementation, code review, security review, and design gate summary agents | The host's own default for each | The coordinator's for launches started after the change, and each agent's for agents started after it. |
+
+Choosing a host that is not found on this computer is refused with its reason, such as `Claude Code was not found: no claude executable on PATH.`
+A change to Models names one host and keeps the choices of every other host.
+It takes only a provider, model, or effort that the host reports, its default, or a model name you typed, which Prism cannot check; a value the host does not offer is refused with a reason such as `Claude Code on this computer does not offer the model claude-opus-3.`
+While the host cannot report its options, Models takes only the host's defaults and typed model names.
+An initiative's earlier Models value keeps its meaning: `host defaults` reads as the host's default for every choice, and named delivery, review, security review, and examples models read as typed models of the design and implementation, code review, security review, and design gate summary agents of every host.
+A named model that is no model name, such as `Claude Opus 4.1`, is kept as an earlier model name, and that agent runs with the host's default model instead, because Prism never passes the name to a host.
+A Models change that still holds it is refused with a reason such as `Prism kept the earlier model name Claude Opus 4.1, which Claude Code cannot take as a model.`, and choosing another model, the host's default, or a model name you type replaces it.
 
 Turning autonomy to `full`, commit on, or push on asks you to confirm first, because it lets agents act further without you.
 
@@ -230,10 +244,19 @@ Index actions are not part of an initiative, so shipping one leaves them availab
 An initiative whose record cannot be read and that the roadmap does not list has no settings, so its page offers none.
 On a slice page the card names the initiative above its title, because the settings belong to the whole initiative and a change there applies to every slice.
 Each setting shows its options as a button group, the sentence on when a change takes effect, and for an on or off setting what the picked option does.
+**Host** is one select of every host Prism supports, as found on this computer; a host this computer lacks shows as `<host>: unavailable` and cannot be chosen, and its reason, such as `Codex was not found: no codex executable on PATH.`, shows below the select.
+**Models** follows the host that the select shows, and switching the host shows the choices kept for that host, so switching back shows the first host's choices as they were.
+It shows a **Provider** picker when the host reports providers, as Codex does, and then one picker for the **Coordinator** and one for each kind of agent: **Design and implementation**, **Code review**, **Security review**, and **Design gate summary**.
+Each picker shows the chosen model and effort, such as **Fable 5.2 · High effort**, or **Host default** and **Host default effort** for the host's own choice.
+While the review app asks the host for its options, each picker reads **Reading <host>’s models…**; a host that does not answer shows its reason, such as `Claude Code did not report its run options: it gave no answer within 20 seconds.`, and its pickers still offer the host's default and a model name you type.
+A model picker opens a list you can filter, with **Host default**, the models the host reports with their descriptions, and **Other model…** last, and below the list the effort levels of the chosen model, which change when you choose another model.
+A host or provider that reports no models says so, such as `Codex reported no models.`, and offers only the host's default and **Other model…**.
+**Other model…** shows a **Model name** field: Enter takes a name of letters, digits, and `. _ - : / @ [ ] +` that starts with a letter or digit, and the picker then says `Prism cannot check a model you typed; Claude Code receives it as written.`
+A choice the host does not offer, such as a saved model this computer's host no longer lists or an effort the newly chosen model does not take, shows as **Not offered** with its reason until you choose a value the host offers.
+An earlier model name that Prism kept shows as not offered in the same way, and **Apply** sends it back as it was, so the change is refused until you choose another model for that agent.
 In the dialog, the options you pick wait for **Apply**, which counts them, such as **Apply 2 changes**, and applies them one by one; it stops at a change that is refused or that you do not confirm, and closes once all of them applied.
 **Cancel**, Esc, or **Close** closes the dialog and drops the changes you have not applied.
-On a slice page's card, picking an option applies it at once, except for Models, whose model names you type and then send with **Apply** or Enter; **Reset** drops what you typed.
-Choosing **Custom** for Models shows the delivery, review, security review, and examples model fields, and **Apply** stays disabled with a hint such as `Fill in Delivery model.` until every required name is filled in.
+On a slice page's card, picking an option applies it at once.
 A change that needs your confirmation opens a dialog that says what it lets agents do, with **Confirm** and **Cancel**; Esc or **Cancel** leaves the setting as it was.
 Every control works with Tab, Enter, and Space.
 When an agent or another tab changed the setting after the page showed it, the page refuses your change, shows the current value, and says `Someone changed this since you opened it; it now shows the current value.`
@@ -253,14 +276,29 @@ It works on the initiative as an agent you started in a terminal would, and you 
 
 ### Launch an initiative
 
-**Launch** at the top of the initiative page opens **Launch an orchestration** with **Launch with Claude Code** and **Launch with Codex**, each started with its own **Launch** button; a slice page offers no launch.
-A launch action is unavailable with a reason such as `Claude Code was not found: no claude executable on PATH.` while its host's executable, `claude` or `codex`, is not on the review app's `PATH`, and with `A launched session of <initiative> is running on this machine.` while a launched session of the initiative runs on this computer.
+**Launch** at the top of the initiative page opens the run configuration, a dialog named **Launch <initiative>**; a slice page offers no launch.
+It shows the latest run when there is one, then **Host**, **How the run works** with **Autonomy**, **Commit**, **Push**, **Continuation**, and **Review**, and **Models** with the coordinator and each kind of agent, each set to the initiative's current value as **Settings** shows it.
+Each option says what it does when you point at it, and the chosen option's effect shows under its group.
+Opening the dialog starts nothing.
+Changing **Host** shows the choices kept for that host and renames the launch button, such as **Launch with Codex**, and a host this computer lacks shows as unavailable with its reason and cannot be chosen.
+**Cancel**, Escape, and the close button discard the dialog's changes and launch nothing.
+**Launch with <host>** saves every changed choice as the initiative's settings, asking you in the page first for a risky one such as **Push** on, and then starts the session, so the initiative's history records the settings before the launch.
+While a choice is not offered, the button is disabled and the dialog names the field and its reason, such as `Code review: Claude Code on this computer does not offer the model claude-opus-3.`, until you choose a value the host offers.
+A refused or declined launch, such as `You declined the launch.`, shows its message in the dialog and keeps it open, with the settings already saved.
+With no host stored, the launch runs the first host found on this computer.
+The launch is unavailable, and the dialog still shows the settings with its launch button disabled, with `No host that Prism supports was found on this computer. Prism supports Claude Code and Codex.` while neither `claude` nor `codex` is on the review app's `PATH`, with a reason such as `Codex was not found: no codex executable on PATH.` while the initiative's host is missing, and with `A launched session of <initiative> is running on this machine.` while a launched session of the initiative runs on this computer.
+It is also unavailable with `This initiative's saved settings cannot be read, so Prism cannot tell which host, models, and efforts to launch with.` while the initiative's coordination state cannot be read, so nothing starts with another host or other choices than the ones you saved.
+Before it asks you anything, the launch checks the provider and every model and effort that **Models** keeps for the host against what the host on this computer reports, and refuses the first one the host does not offer with its field and reason, such as `Coordinator: Claude Code on this computer does not offer the model claude-opus-3.` or `Design and implementation: Prism kept the earlier model name Claude Opus 4.1, which Claude Code cannot take as a model.`; a launch whose choices are all host defaults asks the host nothing.
+When the host cannot report its options, the launch is refused with the field that needed them and the host's reason, such as `Coordinator: Claude Code did not report its run options: it gave no answer within 20 seconds.`, so you can retry once the host answers instead of replacing a choice it may still offer.
+The session runs with the coordinator's model and effort: Claude Code receives them as `--model <model>` and `--effort <effort>`, and Codex starts its thread with the model and provider and its turn with the effort, and each is left out for the host's default.
+A model name you typed reaches the host only as that model, and the session's prompt stays `/prism:orchestrate <initiative>`.
+A resume runs with the provider, model, and effort that the session was launched with, not with the settings at the time of the resume.
 Checkouts whose records live in the same place, such as two checkouts of one shared store, count as one initiative here, so only one launched session of an initiative runs on this computer at a time.
 Like every action, a launch needs a tab that can make changes.
 
 The initiative page also shows how the initiative's latest launched session on this computer stands.
-While that session failed, is blocked, waits for you, or runs, the page head shows `Last run failed`, `Last run blocked`, `Waiting for you`, or `Running` beside **Launch**, and pressing it opens **Launch an orchestration**; in a tab that cannot make changes the state stands beside **Open in Agents**, which opens the Agents page.
-At the top of **Launch an orchestration**, **Latest run** names the session's host and state, with its reason, such as `Claude Code reported an error:` and the host's own message or `Codex ended with exit code 1.`, and **Open in Agents** opens the Agents page.
+While that session failed, is blocked, waits for you, or runs, the page head shows `Last run failed`, `Last run blocked`, `Waiting for you`, or `Running` beside **Launch**, and pressing it opens the run configuration; in a tab that cannot make changes the state stands beside **Open in Agents**, which opens the Agents page.
+At the top of the run configuration, **Latest run** names the session's host and state, with its reason, such as `Claude Code reported an error:` and the host's own message or `Codex ended with exit code 1.`, and **Open in Agents** opens the Agents page.
 The page reads this every few seconds, so a session that fails moments after it starts shows there without a reload.
 
 Before anything starts, Prism asks you in a dialog of the operating system, outside the browser, so a script that drives the page cannot launch on its own.
@@ -287,6 +325,18 @@ A session keeps running when the review app exits, idles out, restarts, or is re
 Each launched session keeps its record in `launches/<launch id>/` in the review app folder, readable only by you, and Prism removes it 14 days after the session's last run ended.
 The host's session id stays in that record on this computer: no shared record, history entry, or log holds it, and only this computer's page shows it, in the command that continues the session in a terminal.
 Each run also keeps the model its host reports as soon as the host names it, from Claude Code's first `init` event or from the result of Codex's thread start or resume, and a launched session names the model of its latest run; a run whose host names no model, or a value longer than 128 characters or holding a control character, keeps none.
+
+### How the review app reads a host's models
+
+The review app offers only the models, providers, and effort levels that a host on this computer reports, so it asks the host itself, and only for a tab that can make changes.
+Claude Code is asked as `claude -p --verbose --no-session-persistence --settings {"disableAllHooks":true} --strict-mcp-config --mcp-config {"mcpServers":{}} --input-format stream-json --output-format stream-json` with one `initialize` request and no prompt.
+Codex is asked through `codex app-server` for its providers and its visible models, without opening a thread.
+Either way, the host runs in the checkout's folder without the variables of an agent session, starts no model turn, so it spends no usage, keeps no session in its history, and runs none of your hooks or MCP servers.
+The review app closes the host's input once it has the answer, and ends a host that still runs 5 seconds later.
+A host that gives no answer within 20 seconds is ended and reported as `<host> did not report its run options: it gave no answer within 20 seconds.`; set `PRISM_RUN_OPTIONS_TIMEOUT_MS` for the review app to wait from 200 to 60000 milliseconds instead.
+A host that sends more than 4 MiB, or lists more than 1000 models or 100 providers, is reported as failed with that reason, and the review app shows at most 100 characters of each name, 300 of each description, and 16 effort levels for a model.
+A host's answer is kept for 10 minutes per checkout, and per provider for Codex, while an answer that failed is asked for again next time.
+The review app leaves out every option that it does not know or that changes how the host grants permissions, so those stay at the host's own values.
 
 ### The Agents page
 
@@ -624,6 +674,8 @@ Each run records only a fingerprint of each file, its Git blob hash, and never i
 While the repository's code content is on, the page reads each file at the verified commit when a branch of the repository holds that commit.
 After a squash merge or force push removes the verified commit, the page reads the files at the commit of the default branch that Prism recorded when the initiative shipped.
 Each file is marked **same as verified** when its content at that commit is the content the run tested, and **changed after verification** when it differs, as for a file the run tested with an uncommitted change.
+**On branches** names the branches that hold that commit, up to five besides the default branch.
+When the default branch does not hold it, as for a feature branch not merged yet or a ship commit that a force push took off the default branch, the card says **not on the default branch yet**, unless the commit recorded at ship is on the default branch, as after a squash merge that kept the feature branch.
 When neither commit is in the repository's code clone, or the repository's code content is off or unreachable, each file is **not available** and the card says why; a slice without a passing run has no verified files yet.
 
 Work on a slice that exists only on the machine that holds it, unpushed or uncommitted, shows only as its presence under **Work in progress**, such as `in progress in feature-x on vm, not pushed`, named from the slice's latest verification run and its live claim, and never as its content.

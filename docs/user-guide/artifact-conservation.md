@@ -25,6 +25,10 @@ Pass `wave` to `get_review` to keep only the findings that wave raised, that wav
 `check_review_gate` explains prerequisites; the write operations enforce the same checks.
 For an unaccepted wave it also lists the assessments that can carry forward from the previous wave and a ready-to-fill skeleton for the rest.
 In a correction wave it also lists, for each lane, the files whose bytes changed since the previous wave of the same mode, which the reviewer re-reads in full instead of the whole slice.
+For completion of a slice whose accepted design requires review, `check_review_gate` reports `review_stale` exactly when `set_status done` would refuse on it: the accepted wave reviewed another tree than the latest verification run tested, and `paths` names what changed between them.
+`start_wave` takes `lanesFrom`, the id of an earlier wave whose lanes it copies with their reviewers and coverage, so a lane meant to carry forward keeps them exactly.
+A refused `carry_lane` names the first condition that failed in `problems`: `carry_source_missing`, `carry_source_not_clean`, `carry_findings_changed`, `carry_inputs_changed` with the `input` and, for a changed tree, its `paths`, `carry_lane_changed` with the `field` and the coverage `added` and `removed`, or `carry_reviewer_exchanged`.
+A change refused because the actor is not the review's coordinator or delivery worker names the id the review records.
 A missing semantic runtime can return lexical exploration results but cannot satisfy an addition's semantic evidence requirement.
 Preparation starts automatically when a search or comparison needs native analysis.
 In a repository that declares components, a baseline's analysis is prepared per component, as [Index a repository per component](repository-intelligence.md#index-a-repository-per-component) describes, and a component whose files are unchanged reuses its index.

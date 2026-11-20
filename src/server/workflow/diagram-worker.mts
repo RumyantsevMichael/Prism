@@ -1,0 +1,121 @@
+// Parses PlantUML sources with the vendored browser runtime in a worker thread, so its browser globals never reach the server.
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import vm from "node:vm";
+import { parentPort, workerData } from "node:worker_threads";
+
+const vendor = workerData.vendorDirectory;
+
+// Just enough of a DOM for the runtime to draw an SVG string: text is measured by length, which counts and errors do not depend on.
+class Element {
+  declare children: any;
+  declare text: any;
+  declare attributes: any;
+  constructor(tagName: any) { Object.assign(this, { tagName, attributes: new Map(), children: [], text: "", style: {}, parentNode: null }); }
+  get ownerDocument() { return (globalThis as any).document; }
+  get firstChild() { return this.children[0] ?? null; }
+  get textContent() { return this.text + this.children.map((child: any) => child.textContent).join(""); }
+  set textContent(value) { this.text = String(value); this.children = []; }
+  setAttribute(name: string, value: any) { this.attributes.set(name, String(value)); }
+  setAttributeNS(_namespace: any, name: string, value: any) { this.setAttribute(name, value); }
+  getAttribute(name: string) { return this.attributes.get(name) ?? null; }
+  appendChild(child: any) { child.parentNode = this; this.children.push(child); return child; }
+  insertBefore(child: any) { return this.appendChild(child); }
+  removeChild(child: any) { this.children = this.children.filter((item: any) => item !== child); return child; }
+  getBBox() { return { width: this.textContent.length * 7, height: 16, x: 0, y: -12 }; }
+  getContext() { return { font: "", measureText: (value: any) => ({ width: String(value).length * 7 }), createImageData: (width: any, height: any) => ({ data: new Uint8ClampedArray(width * height * 4) }), putImageData() {} }; }
+  toDataURL() { return "data:,"; }
+}
+
+const escape = (value: any) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+const serialize = (element: any) => `<${element.tagName}${[...element.attributes].map(([name, value]) => ` ${name}="${escape(value)}"`).join("")}>${escape(element.text)}${element.children.map(serialize).join("")}</${element.tagName}>`;
+
+(globalThis as any).require = createRequire(import.meta.url);
+(globalThis as any).__filename = path.join(vendor, "viz-global.js");
+(globalThis as any).window = globalThis;
+(globalThis as any).self = globalThis;
+vm.runInThisContext(readFileSync(path.join(vendor, "viz-global.js"), "utf8"));
+// The runtime loads a standard library such as C4 on its first include, which a browser does with a script tag.
+(globalThis as any).PLANTUML_STDLIB_LOADER = (name: string, ok: any, fail: any) => {
+  const file = path.join(vendor, path.basename(String(name)));
+  try { vm.runInThisContext(readFileSync(file, "utf8")); ok(); }
+  catch { fail(`The standard library ${name} is not available.`); }
+  return true;
+};
+(globalThis as any).document = {
+  createElementNS: (_namespace: any, tagName: any) => new Element(tagName),
+  createElement: (tagName: any) => new Element(tagName),
+  createProcessingInstruction: (target: any, data: any) => Object.assign(new Element(`?${target}`), { text: data }),
+  createTextNode: (value: any) => Object.assign(new Element("#text"), { text: value }),
+  body: new Element("body"),
+  head: new Element("head")
+};
+(globalThis as any).XMLSerializer = class { serializeToString(element: any) { return serialize(element); } };
+console.log = () => {};
+const { renderToString } = await import(pathToFileURL(path.join(vendor, "plantuml.js")).href);
+
+const RENDER_TIMEOUT_MS = 20000;
+const render = (source: any) => new Promise<any>((resolve) => {
+  const timer = setTimeout(() => resolve({ error: "The diagram did not finish parsing." }), RENDER_TIMEOUT_MS);
+  const settle = (value: any) => { clearTimeout(timer); resolve(value); };
+  try { renderToString(source.split(/\r?\n/), (svg: any) => settle({ svg }), (error: any) => settle({ error: String(error) })); }
+  catch (error) { settle({ error: String(error) }); }
+});
+
+const unescape = (value: any) => value.replace(/&lt;/g, "<").replace(/&quot;/g, "\"").replace(/&amp;/g, "&");
+const texts = (svg: any, pattern: any) => [...svg.matchAll(pattern)].map((match) => unescape(match[1]).trim()).filter(Boolean);
+
+const UNRECOGNIZED = "PlantUML does not recognize the diagram; it needs @startuml and a supported diagram type.";
+
+const count = (svg: any, pattern: any) => (svg.match(pattern) ?? []).length;
+
+// An activity draws an action as a rounded box with its own fill, unlike a fork bar, and a decision as a hexagon of six distinct corners, unlike a merge.
+function activityCounts(svg: any) {
+  const actions = [...svg.matchAll(/<rect [^>]*>/g)].filter(([tag]) => / rx="/.test(tag) && /fill="([^"]*)"/.exec(tag)?.[1] !== /stroke="([^"]*)"/.exec(tag)?.[1]).length;
+  const decisions = [...svg.matchAll(/<polygon points="([^"]*)" fill="([^"]*)" stroke="([^"]*)"/g)].filter(([, points, fill, stroke]) => {
+    const corners = points.trim().split(/\s+/);
+    return fill !== stroke && corners.length === 7 && new Set(corners.slice(0, 6)).size === 6;
+  }).length;
+  return { elements: actions + decisions, relations: 0 };
+}
+
+// What each drawn kind counts: participants and messages of a sequence, actions and decisions of an activity,
+// states without the [*] pseudostates and transitions of a state machine, and elements and relations of any other diagram.
+function counts(svg: any, kind: any) {
+  if (kind === "sequence") return { elements: count(svg, /<g class="participant participant-head"/g), relations: new Set(svg.match(/<g class="message"[^>]*\bid="[^"]*"/g)?.map((tag: any) => /\bid="([^"]*)"/.exec(tag)![1]) ?? []).size };
+  if (kind === "activity") return activityCounts(svg);
+  if (kind === "state") return { elements: count(svg, /<g class="entity"/g), relations: count(svg, /<g class="link"/g) };
+  const entities = count(svg, /<g class="(?:entity|cluster)"/g);
+  const participants = count(svg, /<g><title>/g);
+  // A diagram that marks no elements has its boxes stand in for them.
+  const boxes = count(svg, /<rect /g);
+  return { elements: entities || participants || boxes, relations: count(svg, /<g class="link"/g) };
+}
+
+// PlantUML draws a syntax or include error as a diagram that names its source line, and an unknown diagram type as one that says so.
+function summarize(svg: any, kind: any) {
+  const located = /\[From [^\]]*\(line (\d+)\)/.exec(svg);
+  if (located || /Diagram not supported/.test(svg)) {
+    const errors = texts(svg, /<text[^>]*fill="#FF0000"[^>]*>([^<]*)/g);
+    const fallback = located ? "PlantUML reported an error." : UNRECOGNIZED;
+    return { valid: false, line: Number(located?.[1]) || null, message: errors.join(" ") || fallback };
+  }
+  return { valid: true, ...counts(svg, kind) };
+}
+
+// The runtime draws a source without a start line as a diagram, and raises a Java exception for an unknown diagram type or a malformed Salt grid.
+// Both are sources that do not parse; any other failure, such as a timeout, leaves the source unchecked.
+function check(source: any, kind: any, outcome: any) {
+  if (!/^\s*@start[a-z]+/im.test(source)) return { checked: true, valid: false, line: null, message: UNRECOGNIZED };
+  if (!outcome.error) return { checked: true, ...summarize(outcome.svg, kind) };
+  if (/Unsupported diagram type/.test(outcome.error)) return { checked: true, valid: false, line: null, message: UNRECOGNIZED };
+  const thrown = /^java\.[\w.]*?(\w+(?:Exception|Error))(?::\s*(.*))?/.exec(outcome.error);
+  if (thrown) return { checked: true, valid: false, line: null, message: `PlantUML could not read it (${thrown[1]}${thrown[2] ? `: ${thrown[2]}` : ""}).`.slice(0, 300) };
+  return { checked: false, message: outcome.error.slice(0, 300) };
+}
+
+const results = [];
+for (const item of workerData.sources) results.push({ path: item.path, ...check(item.source, item.kind, await render(item.source)) });
+parentPort!.postMessage(results);
