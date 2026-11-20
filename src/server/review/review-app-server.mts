@@ -331,6 +331,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
           defaultFile: (repository: string, file: string) => code.defaultFile(view.id, repository, file),
           defaultFiles: (repository: string) => code.defaultFiles(view.id, repository),
           reachable: (repository: string, commit: string) => code.reachable(view.id, repository, commit),
+          branchesHolding: (repository: string, commit: string) => code.branchesHolding(view.id, repository, commit),
           blobs: (repository: string, commit: string, paths: string[]) => code.blobs(view.id, repository, commit, paths),
           components: (repository: string) => code.components(view.id, repository)
         } } });
