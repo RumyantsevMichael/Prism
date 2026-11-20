@@ -278,11 +278,11 @@ test("clause 11: update_coordination_state takes the host and the per-host model
   const tools = await listTools(t);
   const update = tools.find((tool) => tool.name === "update_coordination_state");
   const settings = update.inputSchema.properties.changes.properties.settings;
-  assert.deepEqual(settings.properties.host, { type: "string", enum: ["claude-code", "codex"] });
+  assert.deepEqual(settings.properties.host, { type: "string", ...{ anyOf: [{ enum: ["claude-code", "codex"] }, { pattern: "^acp-[a-z0-9][a-z0-9-]{0,39}$" }] } });
   const modelsSchema = settings.properties.models;
   const objectForm = (modelsSchema.oneOf ?? [modelsSchema]).find((entry) => entry.type === "object" && entry.propertyNames);
   assert.ok(objectForm, "models takes an object keyed by host");
-  assert.deepEqual(objectForm.propertyNames, { enum: ["claude-code", "codex"] });
+  assert.deepEqual(objectForm.propertyNames, { anyOf: [{ enum: ["claude-code", "codex"] }, { pattern: "^acp-[a-z0-9][a-z0-9-]{0,39}$" }] });
   const entry = objectForm.additionalProperties;
   assert.deepEqual(Object.keys(entry.properties).sort(), ["codeReview", "coordinator", "designImplementation", "gateSummary", "provider", "securityReview"]);
   assert.equal(entry.additionalProperties, false);

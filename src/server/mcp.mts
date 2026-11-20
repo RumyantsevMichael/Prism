@@ -55,6 +55,7 @@ import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, s
 import { callAgent, callAgentRole, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
+import { ACP_HOST_PATTERN } from "./session/acp-agents.mjs";
 import { HOSTS } from "./session/launch-hosts.mjs";
 import { EFFORT_PATTERN, MODEL_PATTERN, PROVIDER_PATTERN, RUN_KINDS } from "./session/run-options.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
@@ -416,7 +417,9 @@ function stateErrorData(error: any) {
 // Hosts show agents the error message but not the error data, so the message also lists the problems that the data holds.
 // A problem that the message already states is not listed again.
 // The settings.models entry of one host: a provider and one run choice per kind, each part left out for the host default.
+// A host is Claude Code, Codex, or an ACP agent by its acp-<id> name, which the host list of the machine that runs it resolves.
 const RUN_HOST_NAMES = HOSTS.map(({ host }) => host);
+const RUN_HOST_SCHEMA = { anyOf: [{ enum: RUN_HOST_NAMES }, { pattern: ACP_HOST_PATTERN.source }] };
 const RUN_CHOICE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -839,7 +842,7 @@ const tools = [
               type: "object",
               additionalProperties: false,
               properties: {
-                host: { type: "string", enum: RUN_HOST_NAMES },
+                host: { type: "string", ...RUN_HOST_SCHEMA },
                 autonomy: { type: "string", enum: ["conservative", "broad", "full"] },
                 commit: { type: "string", enum: ["on", "off"] },
                 push: { type: "string", enum: ["on", "off"] },
@@ -851,7 +854,7 @@ const tools = [
                     {
                       type: "object",
                       description: "The choices kept for each host; a part left out is the host's default, and an earlier { delivery, review, securityReview, examples } value is stored as typed choices of every host, with a name breaking the model rule kept as { earlier }.",
-                      propertyNames: { enum: RUN_HOST_NAMES },
+                      propertyNames: RUN_HOST_SCHEMA,
                       additionalProperties: RUN_HOST_ENTRY_SCHEMA
                     }
                   ]
