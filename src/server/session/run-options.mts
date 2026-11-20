@@ -96,8 +96,14 @@ function checkedSelection({ host, purpose, provider = null, model = null, effort
   return { definition, purpose, provider, model, effort, typed: typed === true && model !== null };
 }
 
+const LAUNCH_FIELDS = ["command", "args", "env", "prompt", "cwd"];
+
 /** The selection of a GET api/run-options query; a refused query throws a RunOptionsError. */
 export function runOptionsQuery(searchParams: any) {
+  // A host's command, arguments, environment, prompt, and folder come only from Prism's own host definitions and the agents'
+  // declarations and install records, so a query that names one is refused before anything starts.
+  const launchField = LAUNCH_FIELDS.find((name) => searchParams.has(name));
+  if (launchField) throw new RunOptionsError(400, "invalid_input", `${launchField} cannot be set from the review page: a host's command, arguments, environment, prompt, and folder come only from Prism and the agent's declaration or install record.`, launchField);
   const value = (name: any) => (searchParams.has(name) ? searchParams.get(name) : null);
   const selection = { host: value("host") ?? "", purpose: value("for"), provider: value("provider"), model: value("model"), effort: value("effort"), typed: value("typed") === "1" };
   checkedSelection(selection);
