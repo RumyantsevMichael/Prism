@@ -457,7 +457,7 @@ const SPECIMENS: Record<string, any> = {
     empty: pickerOf({ caption: "The host reported no models", options: "", extra: `<p slot="empty">The host reported no models.</p>`, value: "", display: "Host default", detail: "Host default effort" }),
     busy: pickerOf({ busy: true, display: "Reading the host’s models…", detail: "" }),
     invalid: pickerOf({ invalid: true, error: "Not offered: this host does not offer the model old-model." }),
-    disabled: pickerOf({ disabled: true, hint: "Any available host takes only the host's default model." }),
+    disabled: pickerOf({ disabled: true, hint: "Any available host chooses its model itself." }),
     "long-text": pickerOf({ label: LONG, heading: LONG, display: LONG, detail: LONG, hint: LONG, options: `<prism-list-item value="long">${LONG}<span slot="detail">${LONG}</span></prism-list-item>`, value: "long" }),
     "unbroken-name": pickerOf({ label: UNBROKEN, heading: UNBROKEN, display: UNBROKEN, detail: "High effort", options: `<prism-list-item value="u">${UNBROKEN}<span slot="detail">${UNBROKEN}</span></prism-list-item>`, value: "u" })
   },

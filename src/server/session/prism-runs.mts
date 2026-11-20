@@ -8,12 +8,13 @@ import { EFFORT_PATTERN, hostAvailability, hostDefinition, MODEL_PATTERN, PROVID
 
 // The host and model of Prism's own runs on this computer, such as the runs that move records to a new format: one choice per
 // computer, kept in the review app folder because a host must be installed and signed in where it runs, and read by the code
-// that starts those runs through prismRunLaunch. The choice is { host, provider, model, effort, typed, at, by }, where host is a
-// supported host or AUTOMATIC for the first host found with its defaults; a file that is missing reads as no choice, and a file
+// that starts those runs through prismRunLaunch, and for a format migration run through migrationRunHost. The choice is { host, provider, model, effort, typed, at, by },
+// where host is a supported host or AUTOMATIC, which chooses no host and no model, so a migration run then starts as with no choice, with Codex and gpt-6-luna
+// where Codex lists it and otherwise on the first host found with a small model; a file that is missing reads as no choice, and a file
 // that cannot be read, or holds a value that breaks a name rule, reads as unreadable and is never passed on.
 
 export const PRISM_RUNS_FILE = "prism-runs.json";
-/** The host value that starts each run on the first host found, with that host's defaults. */
+/** The host value that chooses no host and no model, so each run starts as with no stored choice. */
 export const AUTOMATIC = "automatic";
 export const AUTOMATIC_LABEL = "Any available host";
 /** A choice of the host default for the provider, the model, and the effort. */
@@ -118,8 +119,9 @@ function whyMissing(availability: any) {
 /**
  * The host and coordinator choice that a run of Prism's own starts with on this computer: { host, coordinator: { provider, model,
  * effort, typed }, reason }, or null when no supported host is found. A stored choice whose host is found answers it with reason
- * null; no choice, or AUTOMATIC, answers the first host found with its defaults; a chosen host that is not found, or a choice that
- * cannot be read, answers the first host found with its defaults and the reason why. checkout is the checkout the run starts in.
+ * null; no choice, or AUTOMATIC, answers the first host found with the host defaults, which a format migration run does not use, since
+ * migrationRunHost then chooses Codex with gpt-6-luna where Codex lists it or the first host found with a small model; a chosen host that is not found,
+ * or a choice that cannot be read, answers the first host found with its defaults and the reason why. checkout is the checkout the run starts in.
  */
 export async function prismRunLaunch({ checkout = null, env = process.env }: { checkout?: string | null; env?: NodeJS.ProcessEnv } = {}) {
   void checkout;
