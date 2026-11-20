@@ -63,7 +63,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
     await failStart("The session never reported its host session id, so it cannot be resumed.");
     return;
   }
-  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, model: record.model ?? null });
+  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, model: record.model ?? null, access: record.access ?? "full" });
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
@@ -76,6 +76,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
       initiative: record.initiative,
       migrationRun: record.migrationRun ?? null,
       model: record.model ?? null,
+      access: record.access ?? "full",
       checkout: record.checkout,
       hostSessionId: record.hostSessionId,
       resume,
@@ -231,6 +232,7 @@ async function reportRunEnd(folder, token) {
   if (!run?.endedAt || record.runs.at(-1) !== run) return;
   const view = launchView(record);
   const exit = run.exit?.signal ? `signal ${run.exit.signal}` : `exit code ${run.exit?.code ?? "unknown"}`;
+  // The same reason as launchEndReason gives, read here from the run this supervisor ran.
   const reason = view.reason ?? (view.state === "stopped" ? `${view.hostLabel} was stopped.` : `${view.hostLabel} ended with ${exit}.`);
   const { sessionEnded } = await import("../workflow/migration-runs.mjs");
   await sessionEnded(record.checkout, record.migrationRun, { launch: record.id, reason });

@@ -26,6 +26,14 @@ export const STRIPPED_VARIABLES = Object.freeze([
 const CLAUDE_FLAGS = Object.freeze(["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "none"]);
 // The permission policy of every Codex thread that Prism starts or resumes: the host's automatic review decides, and Prism grants nothing.
 const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" });
+// A launch's access: "full" for an initiative's orchestration, and "read-only" for a format migration run, whose session reads artifact text that others wrote
+// and needs only Prism's tools, file reads, and `git log`. A read-only Claude Code run has only the reading built-in tools and denies every tool that it does not allow,
+// and a read-only Codex thread runs in the read-only sandbox, while Prism's tools run in Prism's own server outside it.
+export const LAUNCH_ACCESS = Object.freeze(["full", "read-only"]);
+const PRISM_TOOLS = "mcp__plugin_prism_prism-review__*";
+const CLAUDE_READ_ONLY = Object.freeze(["--input-format", "stream-json", "--output-format", "stream-json", "--tools", "Read,Grep,Glob,Bash", "--allowedTools", `Read,Grep,Glob,Bash(git log:*),${PRISM_TOOLS}`, "--permission-mode", "dontAsk", "--permission-prompts", "none"]);
+const CODEX_READ_ONLY = Object.freeze({ ...CODEX_POLICY, sandbox: "read-only" });
+const readOnly = (access) => access === "read-only";
 const CODEX_CLIENT = Object.freeze({ clientInfo: { name: "prism-launch", version: "1" }, capabilities: { experimentalApi: true } });
 // The answer to every request that a Codex app-server sends Prism, such as an approval or a question.
 export const HOST_REQUEST_REFUSAL = Object.freeze({ code: -32601, message: "Prism answers no host requests." });
@@ -129,11 +137,11 @@ const MODEL_PATTERN = /^[0-9A-Za-z_.][0-9A-Za-z_.:/[\]-]{0,127}$/;
 const modelOf = (model) => (typeof model === "string" && MODEL_PATTERN.test(model) ? model : null);
 
 /** The arguments of a run: Claude Code's launch or resume form with its session id and, when the launch names one, its model, or Codex's app server. */
-export function hostArguments({ host, hostSessionId, resume, model = null }) {
+export function hostArguments({ host, hostSessionId, resume, model = null, access = "full" }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
     const chosen = modelOf(model);
-    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS, ...(chosen ? ["--model", chosen] : [])];
+    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...(readOnly(access) ? CLAUDE_READ_ONLY : CLAUDE_FLAGS), ...(chosen ? ["--model", chosen] : [])];
   }
   if (host === "codex") return ["app-server"];
   throw new Error(`Unknown host ${host}.`);
@@ -154,12 +162,13 @@ export function claudePrompt(subject) {
 }
 
 /** The Codex request that opens the run's thread: thread/start for a launch, thread/resume with the kept thread id for a resume, each with the launch's model when it names one. */
-export function codexThreadRequest({ checkout, hostSessionId, resume, model = null }) {
+export function codexThreadRequest({ checkout, hostSessionId, resume, model = null, access = "full" }) {
   const chosen = modelOf(model);
+  const policy = readOnly(access) ? CODEX_READ_ONLY : CODEX_POLICY;
   const modelField = chosen ? { model: chosen } : {};
-  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY, ...modelField } };
+  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...policy, ...modelField } };
   if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
-  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY, ...modelField } };
+  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...policy, ...modelField } };
 }
 
 /** The Codex request that starts the run's one turn: the initiative's orchestrate, or the format migration run's migrate-artifact. */
@@ -270,7 +279,7 @@ const digestKey = (id) => createHash("sha256").update(Buffer.from(id, "utf16le")
  * `interrupt()` stops the run the way the host's own Stop button does: it sends the host's interrupt while the input is open and
  * closes the input once the host has answered it, or at once for a Codex run that has not sent turn/start yet.
  */
-export function hostConversation(host, { initiative = null, migrationRun = null, model = null, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {} }) {
+export function hostConversation(host, { initiative = null, migrationRun = null, model = null, access = "full", checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {} }) {
   const facts = { hostSessionId: null, turnId: null, refusals: [], refusalCount: 0, hostError: null };
   let inputOpen = true;
   const redact = (value) => redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId);
@@ -378,7 +387,7 @@ export function hostConversation(host, { initiative = null, migrationRun = null,
     const answered = (method, result) => {
       if (method === "initialize") {
         write({ jsonrpc: "2.0", method: "initialized", params: {} });
-        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, model });
+        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, model, access });
         request(open, params);
         return;
       }

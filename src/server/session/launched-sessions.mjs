@@ -149,13 +149,13 @@ export async function startLaunch({ projectRoot, initiative, host, env = process
  * Starts the first run of a format migration run's session in the checkout, without a confirmation: { launch }, its view in state running.
  * The record names the run under migrationRun and no initiative, and the host uses the model given, or its own default model for null.
  */
-export async function startMigrationLaunch({ projectRoot, migrationRun, host, model = null, env = process.env }) {
+export async function startMigrationLaunch({ projectRoot, migrationRun, host, model = null, access = "read-only", env = process.env }) {
   if (!hostDefinition(host)) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code and codex.`);
   if (typeof migrationRun !== "string" || !/^run-[0-9a-f]{16}$/.test(migrationRun)) throw refuse("unknown_migration_run", `No format migration run ${String(migrationRun)} exists.`);
-  return launchSession({ checkout: await realpath(projectRoot), subject: { initiative: null, migrationRun }, host, model, env });
+  return launchSession({ checkout: await realpath(projectRoot), subject: { initiative: null, migrationRun }, host, model, access: access === "full" ? "full" : "read-only", env });
 }
 
-async function launchSession({ checkout, subject, host, model, env }) {
+async function launchSession({ checkout, subject, host, model, access = "full", env }) {
   const resolved = await resolveHost(host, env);
   if (!resolved.available) throw refuse("host_unavailable", resolved.reason);
   const store = await storeLocation(checkout);
@@ -166,7 +166,7 @@ async function launchSession({ checkout, subject, host, model, env }) {
     const record = {
       id,
       initiative: subject.initiative,
-      ...(subject.migrationRun ? { migrationRun: subject.migrationRun, model: model ?? null } : {}),
+      ...(subject.migrationRun ? { migrationRun: subject.migrationRun, model: model ?? null, access } : {}),
       host,
       checkout,
       store,
@@ -232,6 +232,23 @@ export async function launchRunStatus({ id, env = process.env }) {
 export async function initiativeRunning({ projectRoot, initiative, env = process.env }) {
   const store = await storeLocation(await realpath(projectRoot));
   return otherRunning(env, { initiative, store });
+}
+
+/**
+ * Why a launch of this machine no longer runs: the lost supervision, or how its last run ended, as its launch view states it;
+ * null while a run runs or starts, and for a launch that this machine does not hold.
+ */
+export async function launchEndReason({ id, env = process.env }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return null;
+  const record = await readLaunchRecord(launchFolder(env, id));
+  if (!record) return null;
+  const status = lastRunStatus(record);
+  if (status === "lost") return SUPERVISION_LOST;
+  if (status !== "ended") return null;
+  const view = launchView(record);
+  const run = record.runs.at(-1);
+  const exit = run.exit?.signal ? `signal ${run.exit.signal}` : `exit code ${run.exit?.code ?? "unknown"}`;
+  return view.reason ?? (view.state === "stopped" ? `${view.hostLabel} was stopped.` : `${view.hostLabel} ended with ${exit}.`);
 }
 
 /** Whether a session of the format migration run, in the record store of projectRoot, runs on this machine. */

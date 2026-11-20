@@ -259,6 +259,7 @@ A computer that cannot show the dialog refuses every launch with `This computer 
 
 Claude Code runs as `claude -p --verbose --session-id <session id> --input-format stream-json --output-format stream-json --permission-mode auto --permission-prompts none` with the prompt `/prism:orchestrate <initiative>`.
 Codex runs as `codex app-server` with the approval policy `on-request`, the automatic approval reviewer, and the `workspace-write` sandbox, and the prompt `$prism:orchestrate <initiative>`.
+A format migration run's session reads only: Claude Code runs with `--tools Read,Grep,Glob,Bash --allowedTools Read,Grep,Glob,Bash(git log:*),mcp__plugin_prism_prism-review__* --permission-mode dontAsk` in place of the automatic permission mode, and the prompt `/prism:migrate-artifact <run id>`, and Codex runs in the `read-only` sandbox with the prompt `$prism:migrate-artifact <run id>`.
 Each runs in the checkout's folder with the review app's environment, without the variables of an agent session that the review app may have inherited, and with `PRISM_LAUNCH` set to the launch's id.
 The host's own permission handling and the project's own host settings apply: Prism grants no permission and answers no question of the host itself, so an action the host's automatic handling refuses ends as a refusal that the session shows.
 A session keeps running when the review app exits, idles out, restarts, or is replaced by a newer release, because a supervisor process of its own starts and watches the host.

@@ -149,8 +149,11 @@ Once the host started, the run is `running` and `get_migration_run` names the se
 When no host is available, the run waits as `waiting-for-host` with the reason `No host is available on this machine:` and each host's reason, and the next check of the project on a computer where a host is available launches it.
 When a run's session ends, by its exit, a host error, or a stop, while the run is still `starting`, `running`, or `continuing`, the run fails with `The run's session ended before the run finished:` and the session's last reason, and applies nothing.
 A session that ends after its run asked its question leaves the run `asking`.
-Once the person answers, Prism continues the run, resuming its session with the same prompt, or launching a new one on an available host when it cannot be resumed.
-A failed run can run again as a new run with the cause `rerun`, which holds the artifacts of the failed run's set that still break their format.
+Continuing a run once the person answers is Planned: Prism will resume its session with the same prompt, or launch a new one on an available host when it cannot be resumed.
+Running a failed run again is Planned: it will start a new run with the cause `rerun` that holds the artifacts of the failed run's set that still break their format.
+An artifact has at most one open run: when it changes into a newer version that still breaks its format, its open run fails with a reason that names it, Prism stops that run's session on this computer, and a new run migrates the new version.
+A run whose session's supervision was lost, or whose session ended without reporting it, fails with that reason at the next check on the computer that ran it, and a run that never launched its session within 5 minutes fails with `The run's session never started:` and why.
+A run's session reads only: Claude Code gets its reading tools, `git log`, and Prism's tools, and denies every other tool, and Codex runs in its read-only sandbox, so a session cannot change files or run other commands while it reads artifact text that others wrote.
 No Prism tool that an agent calls starts, continues, or runs again a run's session.
 
 The session of a run follows the `migrate-artifact` skill and proposes one format migration for each artifact of the set with `propose_migration`, passing the run, the type, the source and the target, the whole migrated content, a summary of what changes and why, and leftovers: each statement of the source that the content does not keep, with a proposed home such as the project instructions.

@@ -162,16 +162,17 @@ const LAUNCH_ENDED = "The run's session ended before the run finished: ";
 const LAUNCHED_FROM = new Set(["starting", "waiting-for-host"]);
 
 /**
- * The host and model of a format migration run's session on this machine: { host, model, reason }, with the first available host of Claude Code and Codex,
+ * The host, model, and access of a format migration run's session on this machine: { host, model, access, reason }, with the first available host of Claude Code and Codex,
  * in that order, and model null, so the host uses its own default model; when no host is available, host is null and reason says why for each host.
- * This is the only choice of a run's host and model, so the machine's launch settings replace this function alone.
+ * The access is read-only: the session reads artifact text that others wrote, so it gets Prism's tools, file reads, and `git log`, and nothing that writes or runs.
+ * This is the only choice of a run's host, model, and access, so the machine's launch settings replace this function alone.
  */
 export async function migrationRunHost(env = process.env) {
   const { hostAvailability } = await import("../session/launch-hosts.mjs");
   const hosts = await hostAvailability({ env });
   const found = hosts.find((entry) => entry.available);
-  if (found) return { host: found.host, model: null, reason: null };
-  return { host: null, model: null, reason: `No host is available on this machine: ${hosts.map((entry) => entry.reason).join(" ")}` };
+  if (found) return { host: found.host, model: null, access: "read-only", reason: null };
+  return { host: null, model: null, access: "read-only", reason: `No host is available on this machine: ${hosts.map((entry) => entry.reason).join(" ")}` };
 }
 
 // Record a run's launch, its status, or both, unless the run ended: the status changes only from one of `from`, so a run that asked or failed meanwhile keeps that.
@@ -213,7 +214,7 @@ export async function launchMigrationRun(projectRoot, id, { env = process.env, s
   const { startMigrationLaunch } = await import("../session/launched-sessions.mjs");
   let started;
   try {
-    started = await startMigrationLaunch({ projectRoot: root, migrationRun: id, host: choice.host, model: choice.model, env });
+    started = await startMigrationLaunch({ projectRoot: root, migrationRun: id, host: choice.host, model: choice.model, access: choice.access, env });
   } catch (error) {
     if (error?.code === "launch_running") return readRun(root, id);
     if (error?.code === "host_unavailable") return recordLaunch(root, id, { status: "waiting-for-host", reason: `No host is available on this machine: ${error.message}`, from: new Set([...from, "starting"]) });
@@ -246,7 +247,7 @@ export async function continueMigrationRun(projectRoot, id, { env = process.env 
   const record = await storeRefusing(() => withRunLock(root, id, async () => {
     const current = await storedRun(root, id);
     if (ENDED.has(current.status)) throw closed(current);
-    const next = { ...current, status: "continuing", reason: null };
+    const next = { ...current, status: "continuing", reason: null, continuingAt: new Date().toISOString() };
     await writeRun(root, next);
     return next;
   }));
@@ -346,8 +347,13 @@ export function startMigrationRuns(projectRoot, checked) {
 async function startRuns(projectRoot, checked) {
   const root = await realpath(projectRoot);
   let waiting = [];
+  let superseded = [];
   const started = await withRecordLock(root, START_LOCK, async () => {
-    const runs = await allRuns(root);
+    let runs = await allRuns(root);
+    // An artifact has at most one open run: a run whose artifact has a newer nonconforming version ends, so the new run of its set takes over.
+    superseded = await supersedeRuns(root, runs, checked);
+    const ended = new Set(superseded.map((run) => run.id));
+    runs = (await failOrphanedRuns(root, runs.filter((run) => !ended.has(run.id)))).filter((run) => !ended.has(run.id));
     waiting = runs.filter((run) => run.status === "waiting-for-host");
     const sets = findMigrationSets(runs, checked);
     const written = [];
@@ -361,44 +367,123 @@ async function startRuns(projectRoot, checked) {
     }
     return written;
   }, fail);
+  for (const run of superseded) if (run.launch?.id) stopRunSession(run.launch.id).catch(() => {});
   if (started.length) trackLaunches(root, confirmRuns(root, started)).catch(() => {});
   if (waiting.length && launcher) trackLaunches(root, relaunchWaiting(root, waiting)).catch(() => {});
   return started;
 }
 
-// A check on this machine launches each run that waits for a host: the run is starting again under its lock, so one check alone launches it.
+const LIVE_STATUSES = new Set(["starting", "running", "waiting-for-host", "asking", "continuing"]);
+const SUPERSEDED = "An artifact of the run changed into a newer version that breaks its format, so a new run migrates that version: ";
+// A run that is starting gets this long to launch its session before Prism takes its starter for gone.
+const START_LEASE_MS = 5 * 60 * 1000;
+const STARTER_GONE = "The run's session never started: the process that started the run ended before it launched the session.";
+
+// End a live run with a reason, applying nothing, unless it ended meanwhile; returns the ended record, or null.
+async function endRun(root, id, reason, statuses = LIVE_STATUSES) {
+  return withRunLock(root, id, async () => {
+    const record = await readRun(root, id);
+    if (!record || !statuses.has(record.status)) return null;
+    const now = new Date().toISOString();
+    const next = { ...record, status: "failed", failure: { reason: failureReason(reason), at: now }, endedAt: now, reason: null };
+    await writeRun(root, next);
+    return next;
+  });
+}
+
+// The live runs that hold an artifact whose current version is another one that breaks the format: each ends, naming the artifacts, and its session stops.
+async function supersedeRuns(root, runs, checked) {
+  const current = new Map();
+  for (const artifact of checked) if (!artifact.conforms && MIGRATED_TYPES.has(artifact.type)) current.set(JSON.stringify([artifact.type, artifact.formatVersion, artifact.path, labelOf(artifact.scope)]), artifact.version);
+  const ended = [];
+  for (const run of runs) {
+    if (!LIVE_STATUSES.has(run.status)) continue;
+    const changed = run.set.artifacts.filter((artifact) => {
+      const version = current.get(JSON.stringify([run.set.type, run.set.formatVersion, artifact.path, labelOf(artifact.scope)]));
+      return version !== undefined && version !== artifact.version;
+    });
+    if (!changed.length) continue;
+    const record = await endRun(root, run.id, `${SUPERSEDED}${changed.map(artifactName).join(", ")}.`);
+    if (record) ended.push(record);
+  }
+  return ended;
+}
+
+// Each open run whose owner is gone fails, so its set can run again: a session of this machine whose supervision was lost or that ended
+// without reporting it, and a run that stayed starting without a launch past its lease. Returns the runs as they now stand.
+async function failOrphanedRuns(root, runs) {
+  const { launchEndReason } = await import("../session/launched-sessions.mjs");
+  const now = Date.now();
+  const standing = [];
+  for (const run of runs) {
+    let reason = null;
+    // A continuation that is resuming its session gets the same lease, since its session's last run ended before the resume starts the next.
+    const resuming = run.status === "continuing" && now - Date.parse(run.continuingAt ?? "") <= START_LEASE_MS;
+    if (OPEN_STATUSES.has(run.status) && run.launch?.id && !resuming) {
+      const ended = await launchEndReason({ id: run.launch.id }).catch(() => null);
+      if (ended) reason = `${LAUNCH_ENDED}${ended}`;
+    } else if (run.status === "starting" && !run.launch && now - Date.parse(run.startingAt ?? run.startedAt) > START_LEASE_MS) {
+      reason = STARTER_GONE;
+    }
+    const record = reason ? await endRun(root, run.id, reason, reason === STARTER_GONE ? new Set(["starting"]) : OPEN_STATUSES) : null;
+    standing.push(record ?? run);
+  }
+  return standing;
+}
+
+// Stop a superseded run's session on this machine, apart from the check; a session elsewhere finds its run ended at its next call.
+async function stopRunSession(id) {
+  const { stopLaunch } = await import("../session/launched-sessions.mjs");
+  await stopLaunch({ id });
+}
+
+// A check on this machine launches each run that waits for a host: the run is starting again under its lock with a nonce of this claim,
+// and with store sync on the claim is confirmed with the store's remote as a new run is, so one machine alone launches it.
 async function relaunchWaiting(root, waiting) {
+  const claimed = [];
   for (const run of waiting) {
-    const claimed = await withRunLock(root, run.id, async () => {
+    const claim = await withRunLock(root, run.id, async () => {
       const current = await readRun(root, run.id);
       if (current?.status !== "waiting-for-host") return null;
       const choice = await migrationRunHost();
       if (!choice.host) return null;
-      const next = { ...current, status: "starting", reason: null };
+      const next = { ...current, status: "starting", reason: null, waitedFor: current.reason ?? null, startingAt: new Date().toISOString(), nonce: randomBytes(8).toString("hex") };
       await writeRun(root, next);
       return next;
     });
-    if (claimed && launcher) await Promise.resolve().then(() => launcher({ projectRoot: root, run: claimed })).catch(() => {});
+    if (claim) claimed.push(claim);
   }
+  if (claimed.length) await confirmRuns(root, claimed, launcher, { withdraw: backToWaiting });
 }
 
-async function confirmRuns(root, started, launch = launcher) {
+// A claim that an unreachable remote could not confirm waits for a host again, for the next check.
+async function backToWaiting(root, record) {
+  await withRunLock(root, record.id, async () => {
+    const current = await readRun(root, record.id);
+    if (current?.nonce === record.nonce && current.status === "starting" && !current.launch) await writeRun(root, { ...current, status: "waiting-for-host", reason: record.waitedFor ?? "No host is available on this machine." });
+  });
+}
+
+// A new run that an unreachable remote could not confirm is withdrawn, and the next check starts its set again.
+async function withdrawRun(root, record) {
+  await withRunLock(root, record.id, async () => {
+    const current = await readRun(root, record.id);
+    if (current?.nonce === record.nonce && current.status === "starting" && !current.migrations.length) await removeRecord(root, runKey(record.id));
+  });
+}
+
+async function confirmRuns(root, started, launch = launcher, { withdraw = withdrawRun } = {}) {
   const { storeSyncBase } = await import("./store-artifacts.mjs");
   const store = await storeSyncBase(root).catch(() => null);
   let confirmed = started;
   if (store?.sync) {
     const status = await syncRecordStoreNow(store.base);
     if (!LOCAL_SYNC.has(status.state) && status.state !== "ok" && status.state !== "conflicts") {
-      // An unreachable remote starts nothing now: each run this start wrote is withdrawn, and the next check starts its set again.
-      for (const record of started) {
-        await withRunLock(root, record.id, async () => {
-          const current = await readRun(root, record.id);
-          if (current?.nonce === record.nonce && current.status === "starting" && !current.migrations.length) await removeRecord(root, runKey(record.id));
-        });
-      }
+      // An unreachable remote starts nothing now.
+      for (const record of started) await withdraw(root, record);
       return [];
     }
-    // A run of the same set that another machine recorded first is the one that stands, and this machine launches no second session for it.
+    // A run, or a claim of a waiting run, that another machine recorded first is the one that stands, and this machine launches no second session for it.
     confirmed = [];
     for (const record of started) if ((await readRun(root, record.id))?.nonce === record.nonce) confirmed.push(record);
   }
