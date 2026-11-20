@@ -114,7 +114,7 @@ test("clauses 26, 29: the review ledger groups deferred findings after verified 
   await detail.getByText("#101").waitFor({ timeout: 5000 });
   assert.match(await detail.innerText(), new RegExp(gate));
   const { checkKitUsage } = await import(pathToFileURL(path.join(ROOT, "scripts/review-kit/kit-guard.mjs")).href);
-  const findings = await checkKitUsage({ root: ROOT, files: ["src/server/review/public/views/review-ledger.js", "src/server/review/public/views/slice.js", "src/server/review/public/styles/record-views.css", "src/server/review/public/styles/workflow-views.css"] });
+  const findings = await checkKitUsage({ root: ROOT, files: ["src/server/review/public/views/review-ledger.ts", "src/server/review/public/views/slice.ts", "src/server/review/public/styles/record-views.css", "src/server/review/public/styles/workflow-views.css"] });
   assert.deepEqual(findings.map((finding) => `${finding.file}:${finding.line}: ${finding.rule} ${finding.value}`), []);
   assert.deepEqual(page.errors, []);
 });
