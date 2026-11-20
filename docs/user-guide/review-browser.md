@@ -277,6 +277,7 @@ Every host list reads the declarations and installs again on each request, so an
 The **Host** setting lists Claude Code, then Codex, then the installed agents in the order they were installed, then the declared ones in file order, each as `acp-<id>` with its label.
 Prism's own runs do not run on ACP agents, so **Prism's own runs** lists each of them as unavailable.
 Launching a session on an ACP agent is Planned: until then, **Launch** names the agent and says that Prism does not run launched sessions on it yet.
+Reading an ACP agent's models and efforts is Planned: until then, its model and effort pickers keep the host defaults and show `Prism does not read the run options of <label> yet, so only its host defaults can be chosen.`
 
 Declare agents in `acp-agents.json`, which Prism only reads and never writes:
 

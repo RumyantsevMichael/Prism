@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, builtinHost, HOSTS, lineSplitter, MODEL_PATTERN, PROVIDER_PATTERN, resolveHost, strippedEnvironment } from "./launch-hosts.mjs";
+import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, hostDefinition, hostDefinitions, lineSplitter, MODEL_PATTERN, PROVIDER_PATTERN, resolveHost, strippedEnvironment } from "./launch-hosts.mjs";
 
 // The run options of a host, read from the host itself and mapped into one ordered shape: provider, model, and effort, each with
 // the host default first as a null value. Prism reads a host's report with no model turn and no kept session, keeps a report for
@@ -82,14 +82,19 @@ export class RunOptionsError extends Error {
   }
 }
 
-const supportedHosts = () => {
-  const names = HOSTS.map(({ host }) => host);
-  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names.join("");
+// The hosts that the host list offers now, Claude Code, Codex, and each ACP agent, so an unknown host's refusal names every one.
+const supportedHosts = (env: NodeJS.ProcessEnv) => {
+  const names = hostDefinitions(env).map(({ host }) => host);
+  if (names.length < 3) return names.join(" and ");
+  return `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
 };
 
-function checkedSelection({ host, purpose, provider = null, model = null, effort = null, typed = false }: any) {
-  const definition = builtinHost(host);
-  if (!definition) throw new RunOptionsError(400, "unknown_host", `Prism supports no host ${host}; it supports ${supportedHosts()}.`);
+/** Why an ACP agent's run options are not reported: Prism lists the agent as a host before it reads the agent's models and efforts. */
+export const acpOptionsPending = (label: string) => `Prism does not read the run options of ${label} yet, so only its host defaults can be chosen.`;
+
+function checkedSelection({ host, purpose, provider = null, model = null, effort = null, typed = false }: any, env: NodeJS.ProcessEnv) {
+  const definition = typeof host === "string" ? hostDefinition(host, env) : null;
+  if (!definition) throw new RunOptionsError(400, "unknown_host", `Prism supports no host ${host}; it supports ${supportedHosts(env)}.`);
   if (!PURPOSES.includes(purpose)) throw new RunOptionsError(400, "invalid_request", "for must be coordinator or agents.");
   const breach = nameRuleBreach({ provider, model, effort });
   if (breach) throw new RunOptionsError(400, "invalid_input", breach.message, breach.field);
@@ -99,14 +104,14 @@ function checkedSelection({ host, purpose, provider = null, model = null, effort
 const LAUNCH_FIELDS = ["command", "args", "env", "prompt", "cwd"];
 
 /** The selection of a GET api/run-options query; a refused query throws a RunOptionsError. */
-export function runOptionsQuery(searchParams: any) {
+export function runOptionsQuery(searchParams: any, env: NodeJS.ProcessEnv = process.env) {
   // A host's command, arguments, environment, prompt, and folder come only from Prism's own host definitions and the agents'
   // declarations and install records, so a query that names one is refused before anything starts.
   const launchField = LAUNCH_FIELDS.find((name) => searchParams.has(name));
   if (launchField) throw new RunOptionsError(400, "invalid_input", `${launchField} cannot be set from the review page: a host's command, arguments, environment, prompt, and folder come only from Prism and the agent's declaration or install record.`, launchField);
   const value = (name: any) => (searchParams.has(name) ? searchParams.get(name) : null);
   const selection = { host: value("host") ?? "", purpose: value("for"), provider: value("provider"), model: value("model"), effort: value("effort"), typed: value("typed") === "1" };
-  checkedSelection(selection);
+  checkedSelection(selection, env);
   return selection;
 }
 
@@ -478,14 +483,16 @@ function buildReport(definition: any, { purpose, provider, model, effort, typed 
 
 /**
  * The run options of a host for a purpose, `coordinator` or `agents`, with the selection marked: { host, label, state, reason,
- * options }, state being `ready`, `failed`, or `unavailable` for a host not found on this computer, which starts nothing.
+ * options }, state being `ready`, `failed`, or `unavailable` for a host not found on this computer or an ACP agent, which starts nothing.
  * A host, purpose, or name that breaks its rule throws a RunOptionsError and starts nothing.
  */
 export async function readRunOptions({ host, purpose, provider = null, model = null, effort = null, typed = false, checkout, env = process.env }: any) {
-  const selection = checkedSelection({ host, purpose, provider, model, effort, typed });
+  const selection = checkedSelection({ host, purpose, provider, model, effort, typed }, env);
   const { definition } = selection;
   const resolved = (await resolveHost(definition.host, env))!;
-  if (!resolved.available) return { host: definition.host, label: definition.label, state: "unavailable", reason: resolved.reason, options: [] };
+  if (!resolved?.available) return { host: definition.host, label: definition.label, state: "unavailable", reason: resolved?.reason ?? `${definition.label} was not found.`, options: [] };
+  // An ACP agent starts no read yet, so a model or effort it would have to offer is refused with this reason rather than taken unchecked.
+  if (definition.acp) return { host: definition.host, label: definition.label, state: "unavailable", reason: acpOptionsPending(definition.label), options: [] };
   // Only Codex has providers, so a Claude Code report is one per executable and checkout.
   const raw = await keptReport(resolved, { checkout, env, provider: definition.host === "codex" ? selection.provider : null });
   return buildReport(definition, selection, raw);
