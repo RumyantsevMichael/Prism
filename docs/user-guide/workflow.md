@@ -144,7 +144,11 @@ A run is never a roadmap entry, an initiative, a slice, a claim, or a gate.
 
 Prism launches each new run's session on this computer at once, without asking, as a [launched session](review-browser.md#launched-sessions) of the checkout whose check found the set.
 The host and model are the ones that **Prism's own runs** in the review app's [Settings](review-browser.md#layout) chose for this computer.
-Without that choice, with **Any available host**, or when the chosen host is not found or the choice cannot be read, the host is the first of Claude Code and Codex whose executable, `claude` or `codex`, is on the `PATH` of the Prism server that started the run, and it uses its own default model.
+A host is available when its executable, `claude` or `codex`, is on the `PATH` of the Prism server that started the run.
+Without that choice, or with **Any available host**, the run starts with Codex and its `gpt-6-luna` model when Codex is available and lists that model, even when Claude Code is available too.
+Prism reads Codex's models for that as the review app reads them, in a Codex app server of its own that starts no session, and a read that fails or takes too long counts as a list without `gpt-6-luna`.
+Otherwise the run starts on the first available of Claude Code and Codex with a small model: Claude Code with `haiku`, and Codex with the first model it lists whose name ends in `-luna` or `-mini`, or with its own default model when it lists none.
+When the chosen host is not found or the choice cannot be read, the run starts on the first available of Claude Code and Codex with that host's own default model, and says why.
 The session's only prompt is `/prism:migrate-artifact <run id>` for Claude Code, or `$prism:migrate-artifact <run id>` for Codex, so no artifact text reaches its command line or prompt.
 Once the host started, the run is `running` and `get_migration_run` names the session as `launch` with its id and host, and no second session of the run starts while it runs.
 When no host is available, the run waits as `waiting-for-host` with the reason `No host is available on this machine:` and each host's reason, and the next check of the project on a computer where a host is available launches it.

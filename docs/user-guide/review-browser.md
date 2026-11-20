@@ -36,7 +36,7 @@ A choice applies at once, and System follows the operating system again.
 **Record store** says where the project's records live and opens the store's details.
 **Prism's own runs** chooses, once for this computer, the host and model of the runs that Prism starts on its own, such as a run that moves records to a new format.
 Its **Host** select offers **Any available host** and every host Prism supports, a host this computer lacks shown as unavailable with its reason, and its **Model** picker offers the models, efforts, and provider that the chosen host reports, as the models of an initiative's **Settings** do, or a model name typed as written.
-**Any available host** starts each run on the first host Prism finds with that host's default model, so its **Model** picker takes no choice.
+**Any available host**, like no stored choice, starts each run with Codex and its GPT-6 Luna model where Codex lists it, and otherwise on the first host Prism finds on this computer with a small model, Claude Code's `haiku` or Codex's first listed model whose name ends in `-luna` or `-mini`, so its **Model** picker takes no choice.
 **Apply** stores the choice in `prism-runs.json` in the review app folder, readable only by you, and only a tab that Prism opened can apply it; a run already started keeps its own host and model.
 When the chosen host is no longer found, or the stored choice cannot be read, a run starts on the first host Prism finds with its default model and says why, and with no host found it does not start.
 **About Prism** names the version of Prism that runs the review app, and **Open the catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
