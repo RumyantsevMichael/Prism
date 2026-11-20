@@ -26,7 +26,7 @@ test("uses host-specific portable MCP launch paths", async () => {
     cwd: ".",
     env: { NODE_USE_ENV_PROXY: "1" },
     // Codex passes a plugin's MCP server only basic variables, so the app folder settings, the launch, and a migration run's scope must be forwarded by name.
-    env_vars: ["PRISM_REVIEW_APP_DIR", "XDG_STATE_HOME", "LOCALAPPDATA", "PRISM_LAUNCH", "PRISM_MIGRATION_RUN"]
+    env_vars: ["PRISM_REVIEW_APP_DIR", "XDG_STATE_HOME", "LOCALAPPDATA", "PRISM_LAUNCH", "PRISM_MIGRATION_RUN", "PRISM_MIGRATION_PROJECT"]
   });
 });
 

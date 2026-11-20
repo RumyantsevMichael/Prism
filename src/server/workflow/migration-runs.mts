@@ -5,6 +5,7 @@ import { writeAtomically } from "./artifact-store.mjs";
 import { listFormatMigrationRecords, locateRecord, readRecord, removeRecord, withRecordLock, writeRecord } from "./record-store.mjs";
 import { syncRecordStoreNow } from "./record-store-sync.mjs";
 import { parseStoreJson } from "./store-json.mjs";
+import { readWorkflowConfig } from "./workflow-config.mjs";
 
 // Format migration runs: Prism starts one run by itself for each set of nonconforming requirement files, ADRs, or glossaries of one type in one scope,
 // the run's session proposes one format migration per artifact of the set, and finishing the run applies all of them or none, or asks the person once.
@@ -565,7 +566,40 @@ export async function getMigrationRun(input: any) {
   runInput(input, "get_migration_run", ["run"]);
   const root = await realpath(input.projectRoot);
   const record = await storedRun(root, input.run);
-  return { run: await storeRefusing(() => shownRun(root, record)) };
+  const shown = await storeRefusing(() => shownRun(root, record));
+  // The run's session reads no file of the checkout and runs no Git command, so the run names the configured paths and each source's Git history.
+  const config = await readWorkflowConfig(root);
+  const { requirements, adrs, glossary, features } = config.paths;
+  const artifacts = await Promise.all(shown.set.artifacts.map(async (artifact: any) => ({ ...artifact, history: await artifactHistory(root, artifact) })));
+  return { run: { ...shown, set: { ...shown.set, artifacts }, settings: { paths: { requirements, adrs, glossary, features }, store: (config.workspace?.store ?? null) !== null } } };
+}
+
+const HISTORY_MAX = 100;
+
+/**
+ * The commits that changed an artifact of a run's set in the repository that holds it, the checkout for a checkout file and the record store for a store artifact,
+ * as [{ date, subject }], newest first and at most HISTORY_MAX, following renames, or [] where that folder is no Git repository or the file has no history.
+ */
+async function artifactHistory(root: string, artifact: any) {
+  let file: string | null = null;
+  try {
+    if (artifact.scope === null || artifact.scope === undefined) file = path.join(root, ...String(artifact.path).split("/"));
+    else {
+      const { storeArtifactFile } = await import("./store-artifacts.mjs");
+      file = await storeArtifactFile(root, artifact.path, scopeInputOf(artifact.scope));
+    }
+  } catch {
+    file = null;
+  }
+  if (!file) return [];
+  const { execFile } = await import("node:child_process");
+  const output: string = await new Promise((resolve) => {
+    execFile("git", ["-C", path.dirname(file!), "log", "--follow", `--max-count=${HISTORY_MAX}`, "--format=%aI%x1f%s", "--", path.basename(file!)], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout) => resolve(error ? "" : stdout));
+  });
+  return output.split("\n").filter(Boolean).slice(0, HISTORY_MAX).map((line) => {
+    const [date, ...subject] = line.split("\u001f");
+    return { date, subject: subject.join("\u001f") };
+  }).filter((commit) => Number.isFinite(Date.parse(commit.date)));
 }
 
 // ---- Status ----

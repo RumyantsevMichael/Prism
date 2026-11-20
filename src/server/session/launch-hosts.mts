@@ -48,23 +48,27 @@ export const STRIPPED_VARIABLES = Object.freeze([
 const CLAUDE_FLAGS = Object.freeze(["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "none"]);
 // The permission policy of every Codex thread that Prism starts or resumes: the host's automatic review decides, and Prism grants nothing.
 const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" });
-// A launch's access: "full" for an initiative's orchestration, and "read-only" for a format migration run, whose session reads artifact text that others wrote
-// and needs only the run's own Prism tools, file reads in the folders it reads, and `git log`. A read-only Claude Code run has only the reading built-in tools,
-// allows only `git log` and the run's Prism tools, reads only in its checkout and the added folders without asking, and denies every other call, since nothing asks;
-// a read-only Codex thread runs in the read-only sandbox, readable only in those folders and the platform's own, and never asks to run a command outside it.
-// Prism's server, which the session starts with PRISM_MIGRATION_RUN naming the run, lists and takes only the run's tools for the run's artifacts.
+// A launch's access: "full" for an initiative's orchestration, and "read-only" for a format migration run, whose session reads artifact text that others wrote,
+// works in an empty folder of its own outside the checkout, and reads nothing of the checkout: it gets the run's sources, the project's paths, and the sources'
+// Git history through the run's own Prism tools. A read-only Claude Code run has only Read, Grep, and Glob, allows only the run's Prism tools and no shell,
+// reads only in its working folder and the added folders without asking, and denies every other call, since nothing asks; a read-only Codex thread runs in the
+// read-only sandbox, readable only in those folders and the platform's own, and never asks to run a command outside it.
+// Prism's server, which the session starts with PRISM_MIGRATION_RUN naming the run and PRISM_MIGRATION_PROJECT naming the checkout,
+// lists and takes only the run's tools for that run's project and artifacts.
 export const LAUNCH_ACCESS = Object.freeze(["full", "read-only"]);
 /** The variable that scopes the Prism server a migration run's session starts to that run. */
 export const MIGRATION_SCOPE_VARIABLE = "PRISM_MIGRATION_RUN";
+/** The variable that names that server's project, the checkout's real path, since the session works outside it. */
+export const MIGRATION_PROJECT_VARIABLE = "PRISM_MIGRATION_PROJECT";
 /** The Prism tools that a format migration run's session calls, and the only ones its Prism server lists and takes. */
 export const MIGRATION_RUN_TOOLS = Object.freeze(["get_migration_run", "get_artifact", "propose_migration", "finish_migration_run", "fail_migration_run"]);
 const PRISM_TOOL_PREFIX = "mcp__plugin_prism_prism-review__";
-const CLAUDE_READ_ONLY_TOOLS = ["Bash(git log:*)", ...MIGRATION_RUN_TOOLS.map((tool) => `${PRISM_TOOL_PREFIX}${tool}`)].join(",");
-const claudeReadOnly = (readRoots: string[]) => ["--input-format", "stream-json", "--output-format", "stream-json", "--tools", "Read,Grep,Glob,Bash", "--allowedTools", CLAUDE_READ_ONLY_TOOLS,
+const CLAUDE_READ_ONLY_TOOLS = MIGRATION_RUN_TOOLS.map((tool) => `${PRISM_TOOL_PREFIX}${tool}`).join(",");
+const claudeReadOnly = (readRoots: string[]) => ["--input-format", "stream-json", "--output-format", "stream-json", "--tools", "Read,Grep,Glob", "--allowedTools", CLAUDE_READ_ONLY_TOOLS,
   ...(readRoots.length ? ["--add-dir", ...readRoots] : []), "--permission-mode", "dontAsk", "--permission-prompts", "none"];
 const CODEX_READ_ONLY = Object.freeze({ approvalPolicy: "never", sandbox: "read-only" });
-/** The sandbox of a read-only Codex turn: reads only in the checkout, the given folders, and the platform's own. */
-const codexReadOnlySandbox = (checkout: string, readRoots: string[]) => ({ type: "readOnly", access: { type: "restricted", includePlatformDefaults: true, readableRoots: [checkout, ...readRoots] } });
+/** The sandbox of a read-only Codex turn: reads only in the run's working folder, the given folders, and the platform's own. */
+const codexReadOnlySandbox = (folder: string, readRoots: string[]) => ({ type: "readOnly", access: { type: "restricted", includePlatformDefaults: true, readableRoots: [folder, ...readRoots] } });
 const rootsOf = (readRoots: unknown): string[] => (Array.isArray(readRoots) ? readRoots.filter((root) => typeof root === "string" && path.isAbsolute(root)) : []);
 const readOnly = (access: unknown) => access === "read-only";
 const CODEX_CLIENT = Object.freeze({ clientInfo: { name: "prism-launch", version: "1" }, capabilities: { experimentalApi: true } });
@@ -244,7 +248,7 @@ export function codexThreadRequest({ checkout, hostSessionId, resume, coordinato
 
 /**
  * The Codex request that starts the run's one turn: the initiative's orchestrate, or the format migration run's migrate-artifact,
- * whose read-only turn reads only in the checkout, the given folders, and the platform's own, with the effort of the coordinator's
+ * whose read-only turn reads only in its working folder, the given folders, and the platform's own, with the effort of the coordinator's
  * choice, left out for the host default.
  */
 export function codexTurnRequest({ threadId, initiative = null, migrationRun = null, coordinator = null, access = "full", checkout = null, readRoots = [] }: { threadId: string; initiative?: string | null; migrationRun?: string | null; coordinator?: unknown; access?: string; checkout?: string | null; readRoots?: string[] }) {
@@ -272,16 +276,17 @@ export function resumeCommandOf(host: string, hostSessionId: unknown) {
 /** The starter's environment without the host session variables, as a launched run and a read of run options see it. */
 export function strippedEnvironment(env: NodeJS.ProcessEnv) {
   const result: NodeJS.ProcessEnv = { ...env };
-  for (const name of [...STRIPPED_VARIABLES, MIGRATION_SCOPE_VARIABLE]) delete result[name];
+  for (const name of [...STRIPPED_VARIABLES, MIGRATION_SCOPE_VARIABLE, MIGRATION_PROJECT_VARIABLE]) delete result[name];
   return result;
 }
 
 /**
  * The environment of a run: the starter's own, without the host session variables, with PRISM_LAUNCH naming the launch,
- * and with PRISM_MIGRATION_RUN naming a format migration run's id only for that run's launch.
+ * and only for a format migration run's launch with PRISM_MIGRATION_RUN naming the run and PRISM_MIGRATION_PROJECT its checkout.
  */
-export function hostEnvironment(env: NodeJS.ProcessEnv, launchId: string, migrationRun: string | null = null) {
-  return { ...strippedEnvironment(env), PRISM_LAUNCH: launchId, ...(typeof migrationRun === "string" && migrationRun ? { [MIGRATION_SCOPE_VARIABLE]: migrationRun } : {}) };
+export function hostEnvironment(env: NodeJS.ProcessEnv, launchId: string, migrationRun: string | null = null, project: string | null = null) {
+  const scoped = typeof migrationRun === "string" && migrationRun ? { [MIGRATION_SCOPE_VARIABLE]: migrationRun, ...(typeof project === "string" && project ? { [MIGRATION_PROJECT_VARIABLE]: project } : {}) } : {};
+  return { ...strippedEnvironment(env), PRISM_LAUNCH: launchId, ...scoped };
 }
 
 /** Splits a byte stream into lines, dropping every line longer than maxBytes, MAX_LINE_BYTES unless given. */

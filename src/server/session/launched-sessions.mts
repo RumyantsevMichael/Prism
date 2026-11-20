@@ -15,6 +15,7 @@ import {
   LaunchError,
   SUPERVISION_LOST,
   createLaunchFolder,
+  createLaunchWorkFolder,
   expired,
   GATE_ID_PATTERN,
   gateFacts,
@@ -90,8 +91,8 @@ async function otherRunning(env: NodeJS.ProcessEnv, { initiative = null, migrati
 async function startRun({ folder, record, env, cause }: { folder: string; record: any; env: NodeJS.ProcessEnv; cause: any }) {
   const token = randomBytes(8).toString("hex");
   const supervisor = spawn(process.execPath, [SUPERVISOR, folder, cause, token], {
-    cwd: record.checkout,
-    env: hostEnvironment(env, record.id, record.migrationRun ?? null),
+    cwd: record.workdir ?? record.checkout,
+    env: hostEnvironment(env, record.id, record.migrationRun ?? null, record.migrationRun ? record.checkout : null),
     detached: true,
     stdio: "ignore",
     windowsHide: true
@@ -157,7 +158,8 @@ export async function startLaunch({ projectRoot, initiative, host, coordinator =
 }
 
 /**
- * Starts the first run of a format migration run's session in the checkout, without a confirmation: { launch }, its view in state running.
+ * Starts the first run of a format migration run's session, without a confirmation, in an empty working folder of the launch's own outside the checkout,
+ * which the record keeps as workdir beside the checkout and which ends with the launch: { launch }, its view in state running.
  * The record names the run under migrationRun and no initiative, and the host runs with the coordinator's choice
  * { provider, model, effort, typed }, each part null for the host default, which the record keeps for every resume.
  */
@@ -174,8 +176,8 @@ export async function startMigrationLaunch({ projectRoot, migrationRun, host, co
 const PRISM_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
 /**
- * The folders besides its checkout where a format migration run's session may read: this Prism's own folder and the host's plugin cache,
- * where the host keeps the skills it runs, each by its real path when it exists and lies outside the checkout.
+ * The folders besides its working folder where a format migration run's session may read: this Prism's own folder and the host's plugin cache,
+ * where the host keeps the skills it runs and their references, each by its real path when it exists and is not the checkout, inside it, or holding it.
  */
 export async function migrationReadRoots(checkout: string, host: string, env: NodeJS.ProcessEnv = process.env) {
   const home = os.homedir();
@@ -190,7 +192,8 @@ export async function migrationReadRoots(checkout: string, host: string, env: No
       continue;
     }
     const inside = (folder: string) => real === folder || real.startsWith(`${folder}${path.sep}`);
-    if (!inside(checkout) && !roots.some(inside)) roots.push(real);
+    const holds = (folder: string) => folder.startsWith(`${real}${path.sep}`);
+    if (!inside(checkout) && !holds(checkout) && !roots.some(inside)) roots.push(real);
   }
   return roots;
 }
@@ -203,10 +206,17 @@ async function launchSession({ checkout, subject, host, coordinator, access = "f
     if (await otherRunning(env, { ...subject, store })) throw refuse("launch_running", subjectRunningMessage(subject));
     const id = newLaunchId();
     const folder = await createLaunchFolder(env, id);
+    let workdir: string | null = null;
+    try {
+      if (subject.migrationRun) workdir = await createLaunchWorkFolder(env, id, checkout);
+    } catch (error) {
+      await removeLaunchFolder(folder);
+      throw error;
+    }
     const record = {
       id,
       initiative: subject.initiative,
-      ...(subject.migrationRun ? { migrationRun: subject.migrationRun, access, readRoots } : {}),
+      ...(subject.migrationRun ? { migrationRun: subject.migrationRun, access, readRoots, workdir } : {}),
       host,
       checkout,
       store,
@@ -219,7 +229,7 @@ async function launchSession({ checkout, subject, host, coordinator, access = "f
     try {
       return { launch: await startRun({ folder, record, env, cause: "launch" }) };
     } catch (error) {
-      await removeLaunchFolder(folder);
+      await removeLaunchFolder(folder, record);
       throw error;
     }
   });
@@ -491,7 +501,7 @@ export async function listLaunches({ projectRoot, env = process.env, now = Date.
     for (const { folder } of candidates) {
       const current = await readLaunchRecord(folder);
       if (!current) continue;
-      if (expired(current, at)) await removeLaunchFolder(folder);
+      if (expired(current, at)) await removeLaunchFolder(folder, current);
       else still.push({ folder, record: current });
     }
     return still;

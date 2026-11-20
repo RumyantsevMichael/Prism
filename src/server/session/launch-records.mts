@@ -59,6 +59,17 @@ export function launchFolder(env: NodeJS.ProcessEnv, id: string) {
   return path.join(launchesDirectory(env), id);
 }
 
+// The folder that holds the working folders of format migration runs' launches, beside the launches folder, so no launch record's folder holds one.
+const WORK_FOLDERS = "launch-work";
+export function launchWorkDirectory(env = process.env) {
+  return path.join(reviewAppDirectory(env), WORK_FOLDERS);
+}
+
+const touches = (folder: string, other: string) => {
+  const inside = (child: string, parent: string) => child === parent || child.startsWith(`${parent}${path.sep}`);
+  return inside(folder, other) || inside(other, folder);
+};
+
 async function privateDirectory(directory: string) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const info = await lstat(directory);
@@ -81,6 +92,24 @@ export async function createLaunchFolder(env: NodeJS.ProcessEnv, id: string) {
   const folder = launchFolder(env, id);
   await mkdir(folder, { mode: 0o700 });
   if (process.platform !== "win32") await chmod(folder, 0o700);
+  return folder;
+}
+
+/**
+ * Creates the empty private working folder of a format migration run's launch, named by the launch alone, by its real path:
+ * it lies outside the launch's own folder, and it is refused when it is the checkout, lies inside it, or holds it.
+ */
+export async function createLaunchWorkFolder(env: NodeJS.ProcessEnv, id: string, checkout: string) {
+  await prepareLaunchesDirectory(env);
+  await privateDirectory(launchWorkDirectory(env));
+  const created = path.join(launchWorkDirectory(env), id);
+  await mkdir(created, { mode: 0o700 });
+  if (process.platform !== "win32") await chmod(created, 0o700);
+  const folder = await realpath(created);
+  if (touches(folder, checkout)) {
+    await rm(created, { recursive: true, force: true });
+    throw new LaunchError("launch_failed", `The working folder ${folder} of a format migration run's session would reach the checkout ${checkout}; keep the review app folder outside the project.`);
+  }
   return folder;
 }
 
@@ -350,6 +379,9 @@ export function expired(record: any, now = Date.now()) {
   return Number.isFinite(end) && now - end! > RETENTION_MS;
 }
 
-export async function removeLaunchFolder(folder: string) {
+/** Removes a launch's folder, and the working folder of a format migration run's launch with it, which ends with the launch. */
+export async function removeLaunchFolder(folder: string, record: any = null) {
+  const work = record?.workdir;
+  if (typeof work === "string" && path.isAbsolute(work) && path.basename(work) === record.id && path.basename(path.dirname(work)) === WORK_FOLDERS) await rm(work, { recursive: true, force: true });
   await rm(folder, { recursive: true, force: true });
 }

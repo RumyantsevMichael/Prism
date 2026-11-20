@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The detached supervisor of one run of a launched session: node launch-supervisor.mjs <launch folder> <cause> <token>.
-// It starts the run's host in the checkout with its own environment, which the starter prepared, holds the host's standard input,
+// It starts the run's host in the checkout, or a format migration run's host in the launch's own working folder outside it, with its own environment, which the starter prepared, holds the host's standard input,
 // gives the host its prompt there and closes it once the host's work is over, reads the host's output, renews the heartbeat in the
 // launch record, and records the run's end with the host's exit code and signal.
 // It watches its launch folder for a stop request that names its run, and then sends the host the interrupt of the host's own Stop
@@ -69,6 +69,12 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     await failStart("The session's recorded model choice is not one Prism can pass to a host.");
     return;
   }
+  // A format migration run's session works only in the launch's own folder, never in the checkout.
+  const workFolder = typeof record.migrationRun === "string" ? record.workdir : record.checkout;
+  if (typeof workFolder !== "string" || !workFolder) {
+    await failStart("The format migration run's launch has no working folder of its own, so its session cannot start.");
+    return;
+  }
   const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator, access: record.access ?? "full", readRoots: record.readRoots ?? [] });
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
@@ -83,7 +89,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
       migrationRun: record.migrationRun ?? null,
       access: record.access ?? "full",
       readRoots: record.readRoots ?? [],
-      checkout: record.checkout,
+      checkout: workFolder,
       hostSessionId: record.hostSessionId,
       resume,
       coordinator,
@@ -214,7 +220,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     if (!current || tokenVoided(current, token)) return null;
     let child;
     try {
-      child = (spawn as any)(resolved.command, [...resolved.prefix, ...args], { cwd: record.checkout, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      child = (spawn as any)(resolved.command, [...resolved.prefix, ...args], { cwd: workFolder, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     } catch (error) {
       await failStart(`${resolved.label} could not be started: ${error.message}`);
       return null;

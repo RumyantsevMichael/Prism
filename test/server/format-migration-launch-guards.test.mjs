@@ -23,22 +23,27 @@ const launchRecord = async (hosts, id) => JSON.parse(await readFile(path.join(ho
 const PRISM_ROOT = await realpath(fileURLToPath(new URL("../..", import.meta.url)));
 const RUN_TOOLS = ["get_migration_run", "get_artifact", "propose_migration", "finish_migration_run", "fail_migration_run"];
 
-test("a run's Claude Code session has only the reading tools, git log, and the run's Prism tools, reads only in its folders, and denies the rest", { skip: posixOnly }, async (context) => {
+test("a run's Claude Code session works in its own folder with only the reading tools and the run's Prism tools, reads only in its folders, and denies the rest", { skip: posixOnly }, async (context) => {
   const { root, call, hosts } = await runCheckout(context, BROKEN);
   const run = await runFor(call, PATHS.requirements);
   await running(call, run);
   const [started] = await waitFor(() => hosts.runs("claude").length ? hosts.runs("claude") : null, { what: "the Claude Code stub" });
   const after = (flag) => started.argv[started.argv.indexOf(flag) + 1];
   assert.equal(after("--permission-mode"), "dontAsk");
-  assert.equal(after("--tools"), "Read,Grep,Glob,Bash");
-  // No bare Read, Grep, or Glob is allowed, so a read outside the checkout and the added folders asks, and nothing asks.
-  assert.equal(after("--allowedTools"), ["Bash(git log:*)", ...RUN_TOOLS.map((tool) => `mcp__plugin_prism_prism-review__${tool}`)].join(","));
+  assert.equal(after("--tools"), "Read,Grep,Glob");
+  // No bare Read, Grep, or Glob is allowed, so a read outside the working folder and the added folders asks, and nothing asks.
+  assert.equal(after("--allowedTools"), RUN_TOOLS.map((tool) => `mcp__plugin_prism_prism-review__${tool}`).join(","));
   const added = started.argv.slice(started.argv.indexOf("--add-dir") + 1, started.argv.indexOf("--permission-mode"));
   assert.ok(added.includes(PRISM_ROOT), "Prism's own folder, which holds the format references, is readable");
   assert.ok(added.every((folder) => path.isAbsolute(folder) && folder !== os.homedir()), `only fixed folders are added: ${added}`);
-  assert.equal(started.cwd, await realpath(root));
+  const checkout = await realpath(root);
+  const launch = await launchRecord(hosts, (await readRun(call, run)).launch.id);
+  assert.equal(started.cwd, launch.workdir, "the session works in its launch's own folder");
+  assert.equal(launch.checkout, checkout, "the launch still names the checkout");
+  assert.equal(path.basename(started.cwd), launch.id, "the folder is named by the launch alone");
   assert.equal(started.argv.includes("auto"), false);
   assert.equal(started.env.PRISM_MIGRATION_RUN, run, "the session's Prism server serves the run only");
+  assert.equal(started.env.PRISM_MIGRATION_PROJECT, checkout, "and takes its project from the launch");
 });
 
 test("a run's Codex thread runs in the read-only sandbox, readable only in its folders, and never asks to leave it", { skip: posixOnly }, async (context) => {
@@ -54,9 +59,13 @@ test("a run's Codex thread runs in the read-only sandbox, readable only in its f
   const { type, access } = turn.params.sandboxPolicy;
   assert.equal(type, "readOnly");
   assert.equal(access.type, "restricted");
-  assert.equal(access.readableRoots[0], await realpath(root));
+  const launch = await launchRecord(hosts, (await readRun(call, run)).launch.id);
+  assert.equal(thread.params.cwd, launch.workdir);
+  assert.equal(access.readableRoots[0], launch.workdir);
   assert.ok(access.readableRoots.includes(PRISM_ROOT));
+  assert.equal(access.readableRoots.includes(await realpath(root)), false);
   assert.equal(started.env.PRISM_MIGRATION_RUN, run);
+  assert.equal(started.env.PRISM_MIGRATION_PROJECT, await realpath(root));
 });
 
 test("a Prism server that a run's session starts lists and takes only the run's tools, for that run and its artifacts", { skip: posixOnly }, async (context) => {

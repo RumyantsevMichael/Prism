@@ -55,7 +55,7 @@ import { reportFormatFinding } from "./workflow/format-findings.mjs";
 import { ArtifactCitationError } from "./workflow/artifact-citations.mjs";
 import { proposeMigration } from "./workflow/format-migrations.mjs";
 import { failMigrationRun, finishMigrationRun, getMigrationRun, launchRunSession, setRunLauncher } from "./workflow/migration-runs.mjs";
-import { migrationScopeOf, scopeRefusal, scopedTools } from "./workflow/migration-scope.mjs";
+import { migrationProjectOf, migrationScopeOf, scopedCheckoutArtifact, scopedProjectRoot, scopeRefusal, scopedTools } from "./workflow/migration-scope.mjs";
 import { ARTIFACT_TYPES } from "./workflow/artifact-formats.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
@@ -151,6 +151,13 @@ async function requestedProjectRoot(argumentsValue: any) {
     throw projectRootRefusal("The projectRoot argument must be an absolute path.");
   }
   const resolvedRoot = await realpath(projectRoot);
+  // A format migration run's session works in a folder of its own outside the checkout, so its scoped server serves only the project that the launch names,
+  // and lists, prepares, or opens nothing for it.
+  if (MIGRATION_PROJECT !== null) {
+    if (resolvedRoot !== await realpath(MIGRATION_PROJECT)) throw projectRootRefusal(`The projectRoot argument ${resolvedRoot} is not the project of this format migration run's session.`);
+    nameToolCallRoot(resolvedRoot);
+    return resolvedRoot;
+  }
   // A session that starts in a folder holding several checkouts side by side names the checkout it works in, so a project root below the start folder is served,
   // and one outside it is refused, so a session reaches only the folders it started over.
   if (hostProjectRoot && hasSuppliedProjectRoot) {
@@ -621,7 +628,7 @@ const tools = [
   },
   {
     name: "get_migration_run",
-    description: "Read a format migration run, which Prism starts by itself for each set of nonconforming requirement files, ADRs, or glossaries of one type in one scope: its id, set { type, scope, formatVersion, artifacts: [{ path, scope, version, findings }] } with each artifact's current findings, cause (format-update or findings), status (starting, running, waiting-for-host, asking, continuing, applied, or failed), startedAt, endedAt, migrations as propose_migration returned them, question (null, or { points, askedAt } with each asked point, its migration, artifact, kind, detail, and recommendation), answers (null, or the person's answer to each point by id { choice, value, by, at }), result (null, or one entry per applied migration { migration, source, target, diff, summary, settled, answered }), and failure (null, or { reason, at }). A run is never a roadmap entry, initiative, slice, claim, or gate; Prism launches its session itself, and launch { id, host } names it once it started. An unknown run is refused with migration_run_unknown. This tool changes nothing and starts no session.",
+    description: "Read a format migration run, which Prism starts by itself for each set of nonconforming requirement files, ADRs, or glossaries of one type in one scope: its id, set { type, scope, formatVersion, artifacts: [{ path, scope, version, findings, history }] } with each artifact's current findings and history, the commits that changed it in the repository that holds it, the checkout for a checkout file and the record store for a store artifact, as [{ date, subject }], newest first and at most 100, or [] outside Git; settings { paths: { requirements, adrs, glossary, features }, store }, the configured paths and whether a record store is configured; cause (format-update or findings), status (starting, running, waiting-for-host, asking, continuing, applied, or failed), startedAt, endedAt, migrations as propose_migration returned them, question (null, or { points, askedAt } with each asked point, its migration, artifact, kind, detail, and recommendation), answers (null, or the person's answer to each point by id { choice, value, by, at }), result (null, or one entry per applied migration { migration, source, target, diff, summary, settled, answered }), and failure (null, or { reason, at }). A run is never a roadmap entry, initiative, slice, claim, or gate; Prism launches its session itself, and launch { id, host } names it once it started. An unknown run is refused with migration_run_unknown. This tool changes nothing and starts no session.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1751,13 +1758,31 @@ async function requireCallClaims(name: string, argumentsValue: any) {
   await requireClaimedWork({ projectRoot, initiative: argumentsValue.initiative, tool: name, work: [{ slug: argumentsValue.slice, own: true }] });
 }
 
-// The format migration run that this server serves only, when a run's launched session started it, else null.
+// The format migration run that this server serves only, when a run's launched session started it, else null, and the project that its launch names.
 const MIGRATION_SCOPE = migrationScopeOf(process.env);
+const MIGRATION_PROJECT = migrationScopeOf(process.env) === null ? null : migrationProjectOf(process.env);
+const SCOPE_REFUSAL = Symbol("scope refusal");
+const scopeAnswer = (refused: any) => ({ content: [{ type: "text", text: refused.message }], structuredContent: refused, isError: true });
+
+// A call's arguments under a run's scope: with the launch's project as projectRoot, or carrying the refusal of a projectRoot that names another folder.
+async function scopedArguments(argumentsValue: any) {
+  if (MIGRATION_SCOPE === null) return argumentsValue;
+  const given = argumentsValue && typeof argumentsValue === "object" ? argumentsValue : {};
+  const scoped = await scopedProjectRoot(MIGRATION_SCOPE, MIGRATION_PROJECT, given, () => requestedProjectRoot(given));
+  return scoped.refusal ? { ...given, [SCOPE_REFUSAL]: scoped.refusal } : { ...given, projectRoot: scoped.root };
+}
 
 async function callTool(name: string, argumentsValue: any = {}, metadata: any, requestId: any) {
   if (MIGRATION_SCOPE !== null) {
-    const refused = await scopeRefusal(MIGRATION_SCOPE, name, argumentsValue, await requestedProjectRoot(argumentsValue));
-    if (refused) return { content: [{ type: "text", text: refused.message }], structuredContent: refused, isError: true };
+    if (argumentsValue?.[SCOPE_REFUSAL]) return scopeAnswer(argumentsValue[SCOPE_REFUSAL]);
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const refused = await scopeRefusal(MIGRATION_SCOPE, name, argumentsValue, projectRoot);
+    if (refused) return scopeAnswer(refused);
+    if (name === "get_artifact") {
+      const served = await scopedCheckoutArtifact(MIGRATION_SCOPE, argumentsValue, projectRoot);
+      if (served?.refusal) return scopeAnswer(served.refusal);
+      if (served?.artifact) return { content: [{ type: "text", text: JSON.stringify(served.artifact) }], structuredContent: served.artifact };
+    }
   }
   await requireCallClaims(name, argumentsValue);
   if (name === "wait_for_user_gate") {
@@ -1849,7 +1874,10 @@ async function callTool(name: string, argumentsValue: any = {}, metadata: any, r
 // A host that names the project at start gets it listed in the review app and its native index preparing before any tool call, without
 // delaying initialize, and opens the review browser when nobody watches one; a host that names no project still gets a running app.
 // Its repository name is checked in the background too, so an accepted checkout is recorded in this machine's checkout list before any tool call.
-if (process.env.CLAUDE_PROJECT_DIR) {
+// A run's scoped server works for its launch's project only, so its session's own working folder is never listed, prepared, or opened.
+if (MIGRATION_SCOPE !== null) {
+  // Nothing to start: the run's tools read the launch's project when called.
+} else if (process.env.CLAUDE_PROJECT_DIR) {
   void realpath(process.env.CLAUDE_PROJECT_DIR).then(async (root) => {
     void startBackgroundPreparation(root);
     void recordStoreOf(root).catch(() => {});
@@ -1888,7 +1916,9 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/call") {
       callsInProgress.add(request.id);
       const meta = request.params?._meta;
-      const { name, arguments: argumentsValue } = request.params ?? {};
+      const { name } = request.params ?? {};
+      // A run's scoped server takes every call's project from the launch, so the notes and person changes of the call name it too.
+      const argumentsValue = await scopedArguments(request.params?.arguments);
       callNames.set(request.id, name);
       const started = performance.now(), done = log.doing(`call:${request.id}`, String(name));
       const call = toolCallContext();

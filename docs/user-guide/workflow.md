@@ -155,8 +155,9 @@ Running a failed run again is Planned: it will start a new run with the cause `r
 An artifact has at most one open run: when it changes into a newer version that still breaks its format, its open run fails with a reason that names it, Prism stops that run's session on this computer, and a new run migrates the new version.
 A run whose session's supervision was lost, or whose session ended without reporting it, fails with that reason at the next check on the computer that ran it, and a run that never launched its session within 5 minutes fails with `The run's session never started:` and why.
 A run's session reads only, because it reads artifact text that others wrote.
-It reads files only in the checkout, in Prism's own folder, and in the host's plugin cache: Claude Code gets its reading tools and `git log` and denies every other tool, and Codex runs in its read-only sandbox and never asks to run a command outside it.
-Of Prism's tools, the session can call only the run's own: reading the run, reading the run's artifacts and others under the same configured path, proposing the run's format migrations, and finishing or failing the run.
+It works in an empty folder of its own outside the checkout and reads no file of the checkout, so it cannot copy a file such as `.env` or `.git/config` into the record store.
+Beside its own folder it reads files only in Prism's own folder and in the host's plugin cache, where the format references are: Claude Code gets only its reading tools and runs no shell command, and Codex runs in its read-only sandbox and never asks to run a command outside it.
+Of Prism's tools, the session can call only the run's own: reading the run, with the project's configured paths and each source's Git history, reading the run's artifacts and others under the same configured path, in the record store or the checkout, proposing the run's format migrations, and finishing or failing the run.
 Prism refuses every other tool, such as changing an artifact, the roadmap, an initiative, or a review, to that session, so nothing written into an artifact can make the session change them.
 No Prism tool that an agent calls starts, continues, or runs again a run's session.
 
