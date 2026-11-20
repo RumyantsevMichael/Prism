@@ -277,7 +277,14 @@ Every host list reads the declarations and installs again on each request, so an
 The **Host** setting lists Claude Code, then Codex, then the installed agents in the order they were installed, then the declared ones in file order, each as `acp-<id>` with its label.
 Prism's own runs do not run on ACP agents, so **Prism's own runs** lists each of them as unavailable.
 Launching a session on an ACP agent is Planned: until then, **Launch** names the agent and says that Prism does not run launched sessions on it yet.
-Reading an ACP agent's models and efforts is Planned: until then, its model and effort pickers keep the host defaults and show `Prism does not read the run options of <label> yet, so only its host defaults can be chosen.`
+
+To show an ACP agent's models and efforts, the review app starts the agent's own command in the checkout, opens one session with Prism's tools, reads the options the agent reports, and closes the session without sending it any prompt.
+The **Coordinator** picker lists the agent's models in the agent's order and the efforts of the chosen model lowest first, each after **Host default**, and leaves out every other option the agent reports, such as its mode.
+The pickers of the other agents offer only **Host default** and say `<label> chooses the models of its own child agents.`, because the protocol gives Prism no way to choose them.
+An agent that speaks another protocol version shows `<label> speaks ACP version <n>, and Prism speaks version 1.`
+An agent whose session does not start Prism's tools shows `<label> did not start Prism's tools, so it cannot run Prism's workflow.`
+An agent that needs you to sign in shows `<label> needs you to sign in before it can run:` and the sign-in methods it names; Prism never signs in for you, so sign in with the agent's own command in a terminal, and the pickers read the agent again the next time they open.
+While the initiative's ACP host shows one of these reasons, **Launch** is unavailable with that reason and asks you nothing.
 
 Declare agents in `acp-agents.json`, which Prism only reads and never writes:
 

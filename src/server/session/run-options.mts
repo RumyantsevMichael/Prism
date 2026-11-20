@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { acpReasons, readAcpOptions } from "./host-adapters/acp.mjs";
 import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, hostDefinition, hostDefinitions, lineSplitter, MODEL_PATTERN, PROVIDER_PATTERN, resolveHost, strippedEnvironment } from "./launch-hosts.mjs";
 
 // The run options of a host, read from the host itself and mapped into one ordered shape: provider, model, and effort, each with
@@ -89,9 +90,6 @@ const supportedHosts = (env: NodeJS.ProcessEnv) => {
   return `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
 };
 
-/** Why an ACP agent's run options are not reported: Prism lists the agent as a host before it reads the agent's models and efforts. */
-export const acpOptionsPending = (label: string) => `Prism does not read the run options of ${label} yet, so only its host defaults can be chosen.`;
-
 function checkedSelection({ host, purpose, provider = null, model = null, effort = null, typed = false }: any, env: NodeJS.ProcessEnv) {
   const definition = typeof host === "string" ? hostDefinition(host, env) : null;
   if (!definition) throw new RunOptionsError(400, "unknown_host", `Prism supports no host ${host}; it supports ${supportedHosts(env)}.`);
@@ -153,12 +151,14 @@ export function forgetRunOptions() {
   reports.clear();
 }
 
-function keptReport(resolved: any, { checkout, env, provider }: any) {
-  const key = JSON.stringify([resolved.host, resolved.executable, checkout, provider]);
+// An ACP agent's report is kept per command, arguments, and environment too, and per model, since its efforts follow the model set.
+function keptReport(resolved: any, { checkout, env, provider, acp = null, model = null }: any) {
+  const key = JSON.stringify([resolved.host, resolved.executable, checkout, provider, ...(acp ? [acp.args, acp.env, model] : [])]);
   const kept = reports.get(key);
   if (kept && (kept.expires === null || Date.now() < kept.expires)) return kept.promise;
   const entry: { expires: number | null; promise: Promise<any> | null } = { expires: null, promise: null };
-  entry.promise = readHost(resolved, { checkout, env, provider }).then((raw: any) => {
+  const read = acp ? readAcpOptions({ label: resolved.label, command: resolved.command, prefix: resolved.prefix, acp }, { checkout, env, model, timeoutMs: readTimeoutMs(env) }) : readHost(resolved, { checkout, env, provider });
+  entry.promise = read.then((raw: any) => {
     if (reports.get(key) === entry) {
       if (raw.state === "ready" && !raw.modelsError) entry.expires = Date.now() + REPORT_TTL_MS;
       else reports.delete(key);
@@ -481,9 +481,38 @@ function buildReport(definition: any, { purpose, provider, model, effort, typed 
   return { host, label, state: ready ? "ready" : "failed", reason, options };
 }
 
+// An ACP agent's report: its model and thought_level options as model and effort, each led by the host default, for the coordinator,
+// and only the host defaults for child agents, whose models ACP gives a client no way to choose. A report that is not ready
+// offers only the host defaults, so a chosen value is refused as not offered.
+function buildAcpReport(definition: any, { purpose, model, effort, typed }: any, raw: any) {
+  const { host, label } = definition;
+  const ready = raw.state === "ready";
+  const coordinator = purpose === "coordinator";
+  const models = ready && coordinator ? raw.model?.values ?? [] : [];
+  const efforts = ready && coordinator ? rankEfforts(raw.effort?.values ?? []).slice(0, MAX_MODEL_LEVELS).map(({ value }) => {
+    const listed = raw.effort.values.find((entry: any) => entry.value === value);
+    return { value, name: listed?.name || effortName(value), description: listed?.description ?? "" };
+  }) : [];
+  const childNote = acpReasons.childModels(label);
+  const listed = model === null ? null : models.find((entry: any) => entry.value === model) ?? null;
+  let modelChoice;
+  if (model === null || listed) modelChoice = offered(model);
+  else if (typed && coordinator) modelChoice = { value: model, state: "typed", reason: choiceReasons.typed(label) };
+  else modelChoice = notOffered(model, choiceReasons.model(label, model));
+  const modelName = listed?.name ?? model ?? (ready ? raw.model?.current : null) ?? "The host's default model";
+  const effortChoice = effort === null || efforts.some((entry: any) => entry.value === effort) ? offered(effort) : notOffered(effort, choiceReasons.effort(modelName, effort));
+  const options = [
+    { id: "model", name: "Model", kind: "model", values: [hostDefault(coordinator ? (ready ? raw.model?.current ?? "" : "") : childNote), ...models], chosen: modelChoice, reportedNone: ready && coordinator && models.length === 0 },
+    { id: "effort", name: "Effort", kind: "effort", values: [hostDefault(coordinator ? (ready && raw.effort?.current ? `${raw.effort.current}, the agent's current effort.` : "") : childNote), ...efforts], chosen: effortChoice }
+  ];
+  const reason = ready ? null : raw.reason ?? `${label} did not report its run options: ${hostText(raw.message) || "it gave no reason"}.`;
+  return { host, label, state: ready ? "ready" : raw.state === "sign-in" ? "sign-in" : "failed", reason, options };
+}
+
 /**
  * The run options of a host for a purpose, `coordinator` or `agents`, with the selection marked: { host, label, state, reason,
- * options }, state being `ready`, `failed`, or `unavailable` for a host not found on this computer or an ACP agent, which starts nothing.
+ * options }, state being `ready`, `failed`, `sign-in` for an ACP agent that needs the person to sign in, or `unavailable` for a host
+ * not found on this computer, which starts nothing.
  * A host, purpose, or name that breaks its rule throws a RunOptionsError and starts nothing.
  */
 export async function readRunOptions({ host, purpose, provider = null, model = null, effort = null, typed = false, checkout, env = process.env }: any) {
@@ -491,8 +520,12 @@ export async function readRunOptions({ host, purpose, provider = null, model = n
   const { definition } = selection;
   const resolved = (await resolveHost(definition.host, env))!;
   if (!resolved?.available) return { host: definition.host, label: definition.label, state: "unavailable", reason: resolved?.reason ?? `${definition.label} was not found.`, options: [] };
-  // An ACP agent starts no read yet, so a model or effort it would have to offer is refused with this reason rather than taken unchecked.
-  if (definition.acp) return { host: definition.host, label: definition.label, state: "unavailable", reason: acpOptionsPending(definition.label), options: [] };
+  if (definition.acp) {
+    // Child agents take only the host default, so their report needs no model set; the coordinator's sets the selected model.
+    const acp = definition.acp as any;
+    const raw = await keptReport(resolved, { checkout, env, provider: null, acp: { args: acp.args, env: acp.env }, model: selection.purpose === "coordinator" ? selection.model : null });
+    return buildAcpReport(definition, selection, raw);
+  }
   // Only Codex has providers, so a Claude Code report is one per executable and checkout.
   const raw = await keptReport(resolved, { checkout, env, provider: definition.host === "codex" ? selection.provider : null });
   return buildReport(definition, selection, raw);

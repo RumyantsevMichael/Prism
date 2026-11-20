@@ -202,7 +202,14 @@ async function readTarget(projectRoot: string, parsed: any, indexer: any, state 
     context.hosts = await hostAvailability({ env });
     context.readOptions = readOptions ?? runOptionsReader(projectRoot, env);
   }
-  if (parsed.kind === "initiative") context.launchRunning = await initiativeRunning({ projectRoot, initiative: parsed.initiative, env });
+  if (parsed.kind === "initiative") {
+    context.launchRunning = await initiativeRunning({ projectRoot, initiative: parsed.initiative, env });
+    // An ACP host that needs a sign-in or cannot run Prism's workflow makes the launch unavailable with its report's reason.
+    const host = launchHostOf(context);
+    if (isAcpHost(host) && context.hosts.find((item: any) => item.host === host)?.available && !(context.coordination.exists && !context.coordination.valid)) {
+      context.launchReport = await context.readOptions({ host, purpose: "coordinator" });
+    }
+  }
   if (parsed.kind === "slice" && !(record?.slices && Object.hasOwn(record.slices, parsed.slice))) throw unknownTarget(parsed.reference);
   if (parsed.kind === "gate") {
     const gate = (coordination!.state?.pending ?? []).find((item: any) => isRecord(item) && item.id === parsed.gate);
@@ -340,7 +347,7 @@ async function checkHostChoices(context: any, { host, provider, choices, ownRuns
   if (provider !== null) {
     if (!validProvider(provider)) throw refuse("provider", NAME_RULE_MESSAGES.provider);
     const base = await context.readOptions({ host, purpose: "coordinator" });
-    if (base.state === "unavailable") throw refuse("host", base.reason);
+    if (base.state === "unavailable" || base.state === "sign-in") throw refuse("host", base.reason);
     if (!optionOf(base, "provider")?.values.some((item: any) => item.value === provider)) throw refuse("provider", choiceReasons.provider(label, provider));
   }
   for (const { name, purpose, choice } of choices) {
@@ -351,7 +358,7 @@ async function checkHostChoices(context: any, { host, provider, choices, ownRuns
     if (breach) throw refuse(name, breach.message);
     if (choice.effort === null && (choice.model === null || choice.typed)) continue;
     const report = await context.readOptions({ host, purpose, provider, model: choice.model, effort: choice.effort, typed: choice.typed });
-    if (report.state === "unavailable") throw refuse("host", report.reason);
+    if (report.state === "unavailable" || report.state === "sign-in") throw refuse("host", report.reason);
     for (const id of ["model", "effort"]) {
       const chosen = optionOf(report, id)?.chosen;
       if (chosen?.state === "not-offered") throw refuse(name, chosen.reason);
@@ -582,7 +589,7 @@ async function checkedLaunchChoices(context: any, host: any) {
   const { provider } = entry;
   const report = async (fieldLabel: any, selection: any) => {
     const read = await context.readOptions({ host, ...selection });
-    if (read.state === "unavailable") throw fail("host_unavailable", read.reason);
+    if (read.state === "unavailable" || read.state === "sign-in") throw fail("host_unavailable", read.reason);
     if (read.state === "failed") throw notOffered(fieldLabel, read.reason);
     return read;
   };
@@ -618,7 +625,7 @@ const LAUNCH_RUN = {
     const host = launchHostOf(context);
     const availability = context.hosts.find((item: any) => item.host === host);
     if (!availability?.available) return availability?.reason ?? `${hostLabel(context, host)} was not found.`;
-    if (isAcpHost(host)) return acpLaunchPending(availability.label);
+    if (isAcpHost(host)) return ["failed", "sign-in"].includes(context.launchReport?.state) ? context.launchReport.reason : acpLaunchPending(availability.label);
     return context.launchRunning ? launchRunningMessage(context.initiative) : null;
   },
   after: () => null,
