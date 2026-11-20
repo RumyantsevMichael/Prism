@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { CONFORMING, PATHS, REQUIREMENT, write } from "./fixtures/artifact-formats.mjs";
-import { readRun, runCheckout, runFor, waitFor } from "./fixtures/format-migration-runs.mjs";
+import { COMPONENTS, STORE_PATHS } from "./fixtures/artifact-formats-store.mjs";
+import { readRun, runCheckout, runFor, serve, stubHosts, waitFor } from "./fixtures/format-migration-runs.mjs";
+import { checkout, isolateGit, syncedWorkspace } from "./fixtures/workspace-artifacts.mjs";
 
 // A run's session reads only, an artifact has at most one open run, and a run whose owner is gone fails so that it can run again.
 // Every host here is a stub on a PATH that holds no real Claude Code or Codex.
@@ -65,4 +68,38 @@ test("a run whose session's supervisor is gone fails at the next check, so it ca
     return (await readRun(call, run)).status === "failed" || null;
   }, { what: "the orphaned run to fail" });
   assert.equal((await readRun(call, run)).failure.reason, "The run's session ended before the run finished: Prism stopped supervising this session; its host process may still run.");
+});
+
+test("a run left starting without a launch past its lease fails at the next check, so it can run again", { skip: posixOnly }, async (context) => {
+  const { root, call } = await runCheckout(context, BROKEN);
+  const run = await runFor(call, PATHS.requirements);
+  await running(call, run);
+  // The starter's process ended before it launched the session: the record says starting, with no launch, since ten minutes.
+  const { readRun: storedRun, writeRun } = await import("../../dist/server/workflow/migration-runs.mjs");
+  const { launch, ...record } = await storedRun(root, run);
+  await writeRun(root, { ...record, status: "starting", startedAt: new Date(Date.now() - 10 * 60000).toISOString() });
+  await call("check_artifacts", {});
+  const failed = await readRun(call, run);
+  assert.equal(failed.status, "failed");
+  assert.match(failed.failure.reason, /^The run's session never started: /);
+});
+
+test("two machines that see one waiting run in a synced store launch it once", { skip: posixOnly, timeout: 240000 }, async (context) => {
+  await isolateGit();
+  const place = await syncedWorkspace(context);
+  const options = { paths: [...STORE_PATHS], components: [...COMPONENTS] };
+  const rootA = await checkout(place.a, "api", { ...options, files: { ...CONFORMING, [PATHS.requirements]: UNANCHORED } });
+  const callA = await serve(context, rootA, await stubHosts(context, { hosts: [] }));
+  const run = await runFor(callA, PATHS.requirements);
+  await waitFor(async () => (await readRun(callA, run)).status === "waiting-for-host" || null, { what: "the run to wait for a host" });
+  const elsewhere = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-run-machine-b-")));
+  context.after(() => rm(elsewhere, { recursive: true, force: true }));
+  const rootB = await checkout({ ...place.b, parent: elsewhere, storeSetting: place.storeB }, "api", options);
+  const [hostsA, hostsB] = [await stubHosts(context), await stubHosts(context)];
+  // Two machines with a host each, the first a second checkout of the first store clone, check at the same moment.
+  const [callA2, callB] = [await serve(context, rootA, hostsA), await serve(context, rootB, hostsB)];
+  await Promise.all([callA2("check_artifacts", {}), callB("check_artifacts", {})]);
+  await waitFor(async () => (await readRun(callA2, run)).status === "running" || null, { what: "the run to launch", ms: 60000 });
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+  assert.equal(hostsA.runs("claude").length + hostsB.runs("claude").length, 1, "one session of the run starts");
 });
