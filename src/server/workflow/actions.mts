@@ -564,7 +564,8 @@ const launchBase = {
 };
 
 const hostList = (labels: any) => (labels.length > 2 ? `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)}` : labels.join(" and "));
-const NO_HOST = `No host that Prism supports was found on this computer. Prism supports ${hostList(HOSTS.map(({ label }) => label))}.`;
+// Named from the live host list, so a declared or installed ACP agent that cannot run is named beside Claude Code and Codex.
+const noHost = (hosts: any) => `No host that Prism supports was found on this computer. Prism supports ${hostList(hosts.map(({ label }: any) => label))}.`;
 const launchHostOf = (context: any) => settingsOf(context).host ?? firstFoundHost(context);
 // A state that exists but reads invalid hides the host and the models chosen for the launch, and its history cannot record one, so
 // the launch is unavailable until the state reads again rather than running another host or other choices than the ones saved.
@@ -612,7 +613,7 @@ const LAUNCH_RUN = {
   target: (context: any) => context.initiativeTarget,
   unavailable: (context: any) => {
     // The missing hosts read no setting, so they answer first, also while the state reads invalid.
-    if (!context.hosts.some((item: any) => item.available)) return NO_HOST;
+    if (!context.hosts.some((item: any) => item.available)) return noHost(context.hosts);
     if (context.coordination.exists && !context.coordination.valid) return UNREADABLE_STATE;
     const host = launchHostOf(context);
     const availability = context.hosts.find((item: any) => item.host === host);
