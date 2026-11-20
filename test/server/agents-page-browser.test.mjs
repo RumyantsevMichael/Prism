@@ -91,18 +91,18 @@ test("§21 §22 the table groups the agents in order, and Show narrows it to one
   const page = await s.open();
   const show = page.getByRole("radiogroup", { name: "Show" });
   await settled(() => show.getByRole("radio").allInnerTexts().then((items) => items.map((item) => item.replace(/\s+/g, " ").trim())), (items) => items[0] === "All 6");
-  assert.deepEqual((await show.getByRole("radio").allInnerTexts()).map((item) => item.replace(/\s+/g, " ").trim()), ["All 6", "Needs you 2", "This computer 3", "Other sessions 2", "Expired 1"]);
+  assert.deepEqual((await show.getByRole("radio").allInnerTexts()).map((item) => item.replace(/\s+/g, " ").trim()), ["All 6", "Needs you 2", "Launched from Prism 3", "Started outside Prism 2", "Expired 1", "Archived 0"]);
   assert.deepEqual(await page.locator("prism-lib-table .prism-lib-row.is-head").first().evaluate((head) => [...head.children].map((cell) => cell.textContent.trim()).filter(Boolean)), ["Agent", "Host · model", "Working on", "State", "Time"]);
-  assert.deepEqual(await groups(page), ["Needs you 2", "Launched on this computer 1", "Other sessions 2", "Claims that expired 1"]);
+  assert.deepEqual(await groups(page), ["Needs you 2", "Launched from Prism 1", "Started outside Prism 2", "Claims that expired 1"]);
   const order = await page.locator("[data-agent]").evaluateAll((items) => items.filter((item) => item.getClientRects().length).map((item) => item.dataset.agent));
   assert.deepEqual(order, [`launch:${s.failed}`, `launch:${s.waiting}`, `launch:${s.running}`, `claim:${INITIATIVE}/audit`, `claim:${INITIATIVE}/download`, `claim:${INITIATIVE}/naming`]);
-  await show.getByRole("radio", { name: /^Other sessions/ }).click();
-  await settled(() => groups(page), ["Other sessions 2"]);
-  assert.deepEqual(await groups(page), ["Other sessions 2"]);
-  await show.getByRole("radio", { name: /^This computer/ }).click();
-  await settled(() => groups(page), ["Needs you 2", "Launched on this computer 1"]);
-  assert.deepEqual(await groups(page), ["Needs you 2", "Launched on this computer 1"], "This computer shows every launched session");
-  for (const [ref, expected, chosen] of [["agents:needs-you", ["Needs you 2"], /^Needs you/], ["agents:this-computer", ["Needs you 2", "Launched on this computer 1"], /^This computer/], ["agents:other", ["Other sessions 2"], /^Other sessions/], ["agents:expired", ["Claims that expired 1"], /^Expired/]]) {
+  await show.getByRole("radio", { name: /^Started outside Prism/ }).click();
+  await settled(() => groups(page), ["Started outside Prism 2"]);
+  assert.deepEqual(await groups(page), ["Started outside Prism 2"]);
+  await show.getByRole("radio", { name: /^Launched from Prism/ }).click();
+  await settled(() => groups(page), ["Needs you 2", "Launched from Prism 1"]);
+  assert.deepEqual(await groups(page), ["Needs you 2", "Launched from Prism 1"], "Launched from Prism shows every launched session");
+  for (const [ref, expected, chosen] of [["agents:needs-you", ["Needs you 2"], /^Needs you/], ["agents:this-computer", ["Needs you 2", "Launched from Prism 1"], /^Launched from Prism/], ["agents:other", ["Started outside Prism 2"], /^Started outside Prism/], ["agents:expired", ["Claims that expired 1"], /^Expired/]]) {
     const narrowed = await s.open(ref);
     await settled(() => groups(narrowed), expected);
     assert.deepEqual(await groups(narrowed), expected, ref);

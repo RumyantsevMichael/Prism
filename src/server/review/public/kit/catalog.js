@@ -305,7 +305,7 @@ const SPECIMENS = {
   "prism-segmented": {
     default: `<prism-segmented label="View"><span value="board">Board</span><span value="list">List</span><span value="graph">Graph</span></prism-segmented>`,
     chosen: `<prism-segmented label="View" value="list"><span value="board">Board</span><span value="list">List</span><span value="graph">Graph</span></prism-segmented>`,
-    wrap: `<div class="catalog-narrow"><prism-segmented label="Show" value="all" wrap><span value="all">All 12</span><span value="needs-you">Needs you 2</span><span value="here">This computer 4</span><span value="other">Other sessions 6</span><span value="expired">Expired ${UNBROKEN}</span></prism-segmented></div>`,
+    wrap: `<div class="catalog-narrow"><prism-segmented label="Show" value="all" wrap><span value="all">All 12</span><span value="needs-you">Needs you 2</span><span value="here">Launched from Prism 4</span><span value="other">Started outside Prism 6</span><span value="expired">Expired ${UNBROKEN}</span></prism-segmented></div>`,
     "long-text": `<div class="catalog-narrow"><prism-segmented label="${LONG}" value="a"><span value="a">${LONG}</span><span value="b">${LONG}</span></prism-segmented></div>`,
     "unbroken-name": `<div class="catalog-narrow"><prism-segmented label="Unbroken" value="u"><span value="u">${UNBROKEN}</span><span value="v">List</span></prism-segmented></div>`
   },
@@ -574,9 +574,9 @@ const third = 3;</code></pre></prism-code>`,
     "unbroken-name": rowsOf(`<prism-row icon="question" tone="info"><a href="#entry-prism-row">${UNBROKEN}</a><span slot="description">${UNBROKEN}</span><prism-chip slot="kind">${UNBROKEN}</prism-chip><prism-button slot="action" size="sm">Open</prism-button></prism-row><prism-row wrap icon="check-circle" tone="success">${UNBROKEN}<span slot="detail">${UNBROKEN}</span><prism-chip slot="kind" tone="success">Answered</prism-chip></prism-row>`)
   },
   "prism-count-link": {
-    default: `<prism-count-link href="#entry-prism-count-link" icon="play" count="3">Launched on this computer</prism-count-link>`,
+    default: `<prism-count-link href="#entry-prism-count-link" icon="play" count="3">Launched from Prism</prism-count-link>`,
     zero: `<prism-count-link href="#entry-prism-count-link" icon="clock" count="0">Expired claims</prism-count-link>`,
-    list: `<div class="prism-count-links"><prism-count-link href="#entry-prism-count-link" icon="play" count="4">Launched on this computer</prism-count-link><prism-count-link href="#entry-prism-count-link" icon="agent" count="6">Other sessions</prism-count-link><prism-count-link href="#entry-prism-count-link" icon="clock" count="2">Expired claims</prism-count-link></div>`,
+    list: `<div class="prism-count-links"><prism-count-link href="#entry-prism-count-link" icon="play" count="4">Launched from Prism</prism-count-link><prism-count-link href="#entry-prism-count-link" icon="agent" count="6">Started outside Prism</prism-count-link><prism-count-link href="#entry-prism-count-link" icon="clock" count="2">Expired claims</prism-count-link></div>`,
     "long-text": `<div class="catalog-narrow prism-count-links"><prism-count-link href="#entry-prism-count-link" icon="agent" count="12345">${LONG}</prism-count-link></div>`,
     "unbroken-name": `<div class="catalog-narrow prism-count-links"><prism-count-link href="#entry-prism-count-link" icon="agent" count="7">${UNBROKEN}</prism-count-link></div>`
   },

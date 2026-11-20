@@ -118,7 +118,7 @@ In a window 600 pixels wide or less the button shows two avatars and one small c
 Opening it shows the **Agents** menu.
 Its **Needs you** group, left out while nothing needs you, lists each launched session that failed or waits for you with its initiative, its harness, its model, what it works on, its state, and how long it ran.
 A waiting session offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown, and a failed one offers **Open**, which opens [the Agents page](#the-agents-page) with its details shown.
-Below that, **Launched on this computer**, **Other sessions**, and **Expired claims** say how many there are, also at 0, and each opens the Agents page showing only those; **Open Agents** opens the whole page.
+Below that, **Launched from Prism** counts the launched sessions that are not archived, **Started outside Prism** the live claims, and **Expired claims** the claims that expired less than a day ago, also at 0, and each opens the Agents page showing only those; **Open Agents** opens the whole page.
 The menu lists no claim, so every claim shows on the Agents page.
 Wherever the browser shows a claim, on a slice, an initiative, the roadmap, the sidebar, or the Agents page, it names the harness the agent runs in and the model of the session's main agent as `<harness> · <model>`, such as `Codex · gpt-5.5`, when the claim records them, and `Agent` and no model otherwise.
 The sidebar shows a claimed slice's holder at the end of its row.
@@ -296,18 +296,21 @@ Its lead reads `Every agent working on this workspace, and every session launche
 It lists every launched session on this computer whose checkout shares this checkout's records, and every live or expired claim on the workspace's slices that no launched session here holds.
 A launched session holds the claims its own agent takes, so its slice shows in its row rather than in a row of its own.
 
-**Show** narrows the table: **All**, **Needs you**, **This computer**, **Other sessions**, and **Expired**, each with its count.
-**This computer** shows every launched session, and the addresses `agents:needs-you`, `agents:this-computer`, `agents:other`, and `agents:expired` open the page with that choice made.
+**Show** narrows the table: **All**, **Needs you**, **Launched from Prism**, **Started outside Prism**, **Expired**, and **Archived**, each with its count.
+**All** shows neither an archived session nor a claim whose lease passed a day ago or more, and counts only what it shows; a claim leaves it once its expiry is a day old.
+**Launched from Prism** shows the **Needs you** and **Launched from Prism** groups, every launched session that is not archived, **Expired** shows every expired claim however long ago it expired, and **Archived** shows only the archived sessions.
+The addresses `agents:needs-you`, `agents:this-computer`, `agents:other`, `agents:expired`, and `agents:archived` open the page with that choice made.
 
 The table's columns are **Agent**, **Host · model**, **Working on**, **State**, and **Time**, and a last column holds a row's one action.
-Its groups come in this order, each with its count, and a group without agents is left out:
+Its groups come in this order, each with the count of what the Show choice shows of it, and a group without agents is left out:
 
 | Group | What it lists |
 | --- | --- |
 | Needs you | Launched sessions that failed, then those that wait for your answer, the latest launched first. |
-| Launched on this computer | Every other launched session, the latest launched first. |
-| Other sessions | Agents that hold a live claim, the claim that lapses first first. |
+| Launched from Prism | Every other launched session that is not archived, the latest launched first. |
+| Started outside Prism | Agents that hold a live claim, the claim that lapses first first. |
 | Claims that expired | Claims whose lease passed, the latest to lapse first. |
+| Archived | Archived launched sessions, the latest launched first, shown only under **Archived**. |
 
 A launched session's name is its initiative's title, which opens the initiative page, and under it the row says when it started, how its last run ended, and how many runs it had when more than one.
 A claim's name is the claim's label, such as `Dana on studio-mac`, which opens the slice it works on.
