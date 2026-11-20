@@ -2062,6 +2062,21 @@ prism-toast[shown] {
   animation: prism-rise var(--prism-duration-normal) var(--prism-easing-enter);
 }
 
+/* A shown message stands in the top layer, above an open modal dialog, at the same place.
+   It holds no control, so a pointer passes through it to whatever it covers, such as a link preview's buttons. */
+prism-toast[popover] {
+  pointer-events: none;
+  inset: auto;
+  bottom: var(--prism-space-6);
+  left: 50%;
+  margin: 0;
+  overflow: visible;
+}
+
+prism-toast[popover]:not(:popover-open) {
+  display: none;
+}
+
 prism-toast[tone="info"] .prism-toast-icon { color: var(--prism-color-info); }
 prism-toast[tone="success"] .prism-toast-icon { color: var(--prism-color-success); }
 prism-toast[tone="warning"] .prism-toast-icon { color: var(--prism-color-warning); }
