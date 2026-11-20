@@ -63,7 +63,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
     await failStart("The session never reported its host session id, so it cannot be resumed.");
     return;
   }
-  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, model: record.model ?? null, access: record.access ?? "full" });
+  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, model: record.model ?? null, access: record.access ?? "full", readRoots: record.readRoots ?? [] });
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
@@ -77,6 +77,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
       migrationRun: record.migrationRun ?? null,
       model: record.model ?? null,
       access: record.access ?? "full",
+      readRoots: record.readRoots ?? [],
       checkout: record.checkout,
       hostSessionId: record.hostSessionId,
       resume,

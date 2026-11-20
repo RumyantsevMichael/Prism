@@ -3,9 +3,10 @@ import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { CONFORMING, PATHS, REQUIREMENT, write } from "./fixtures/artifact-formats.mjs";
 import { COMPONENTS, STORE_PATHS } from "./fixtures/artifact-formats-store.mjs";
-import { readRun, runCheckout, runFor, serve, stubHosts, waitFor } from "./fixtures/format-migration-runs.mjs";
+import { listedTools, readRun, runCheckout, runFor, serve, stubHosts, waitFor } from "./fixtures/format-migration-runs.mjs";
 import { checkout, isolateGit, syncedWorkspace } from "./fixtures/workspace-artifacts.mjs";
 
 // A run's session reads only, an artifact has at most one open run, and a run whose owner is gone fails so that it can run again.
@@ -19,24 +20,69 @@ const running = (call, run) => waitFor(async () => {
   return record.status === "running" ? record : null;
 }, { what: `the run ${run} to run` });
 const launchRecord = async (hosts, id) => JSON.parse(await readFile(path.join(hosts.app, "launches", id, "launch.json"), "utf8"));
+const PRISM_ROOT = await realpath(fileURLToPath(new URL("../..", import.meta.url)));
+const RUN_TOOLS = ["get_migration_run", "get_artifact", "propose_migration", "finish_migration_run", "fail_migration_run"];
 
-test("a run's Claude Code session has only the reading tools, git log, and Prism's tools, and denies the rest", { skip: posixOnly }, async (context) => {
-  const { call, hosts } = await runCheckout(context, BROKEN);
-  await running(call, await runFor(call, PATHS.requirements));
+test("a run's Claude Code session has only the reading tools, git log, and the run's Prism tools, reads only in its folders, and denies the rest", { skip: posixOnly }, async (context) => {
+  const { root, call, hosts } = await runCheckout(context, BROKEN);
+  const run = await runFor(call, PATHS.requirements);
+  await running(call, run);
   const [started] = await waitFor(() => hosts.runs("claude").length ? hosts.runs("claude") : null, { what: "the Claude Code stub" });
   const after = (flag) => started.argv[started.argv.indexOf(flag) + 1];
   assert.equal(after("--permission-mode"), "dontAsk");
   assert.equal(after("--tools"), "Read,Grep,Glob,Bash");
-  assert.equal(after("--allowedTools"), "Read,Grep,Glob,Bash(git log:*),mcp__plugin_prism_prism-review__*");
+  // No bare Read, Grep, or Glob is allowed, so a read outside the checkout and the added folders asks, and nothing asks.
+  assert.equal(after("--allowedTools"), ["Bash(git log:*)", ...RUN_TOOLS.map((tool) => `mcp__plugin_prism_prism-review__${tool}`)].join(","));
+  const added = started.argv.slice(started.argv.indexOf("--add-dir") + 1, started.argv.indexOf("--permission-mode"));
+  assert.ok(added.includes(PRISM_ROOT), "Prism's own folder, which holds the format references, is readable");
+  assert.ok(added.every((folder) => path.isAbsolute(folder) && folder !== os.homedir()), `only fixed folders are added: ${added}`);
+  assert.equal(started.cwd, await realpath(root));
   assert.equal(started.argv.includes("auto"), false);
+  assert.equal(started.env.PRISM_MIGRATION_RUN, run, "the session's Prism server serves the run only");
 });
 
-test("a run's Codex thread runs in the read-only sandbox", { skip: posixOnly }, async (context) => {
-  const { call, hosts } = await runCheckout(context, BROKEN, { hosts: ["codex"] });
-  await running(call, await runFor(call, PATHS.requirements));
+test("a run's Codex thread runs in the read-only sandbox, readable only in its folders, and never asks to leave it", { skip: posixOnly }, async (context) => {
+  const { root, call, hosts } = await runCheckout(context, BROKEN, { hosts: ["codex"] });
+  const run = await runFor(call, PATHS.requirements);
+  await running(call, run);
   const [started] = await waitFor(() => hosts.runs("codex").length ? hosts.runs("codex") : null, { what: "the Codex stub" });
   const thread = await waitFor(() => hosts.inputs(started.pid).find((message) => message.method === "thread/start") ?? null, { what: "the thread start" });
   assert.equal(thread.params.sandbox, "read-only");
+  assert.equal(thread.params.approvalPolicy, "never");
+  assert.equal("approvalsReviewer" in thread.params, false, "no automatic reviewer lets a command out of the sandbox");
+  const turn = await waitFor(() => hosts.inputs(started.pid).find((message) => message.method === "turn/start") ?? null, { what: "the turn start" });
+  const { type, access } = turn.params.sandboxPolicy;
+  assert.equal(type, "readOnly");
+  assert.equal(access.type, "restricted");
+  assert.equal(access.readableRoots[0], await realpath(root));
+  assert.ok(access.readableRoots.includes(PRISM_ROOT));
+  assert.equal(started.env.PRISM_MIGRATION_RUN, run);
+});
+
+test("a Prism server that a run's session starts lists and takes only the run's tools, for that run and its artifacts", { skip: posixOnly }, async (context) => {
+  const { root, call, hosts } = await runCheckout(context, BROKEN, { hosts: [] });
+  const run = await runFor(call, PATHS.requirements);
+  const listed = Object.keys(await listedTools(context, root, { PRISM_MIGRATION_RUN: run }));
+  assert.deepEqual(listed.sort(), [...RUN_TOOLS].sort());
+  assert.ok(Object.keys(await listedTools(context, root)).includes("update_artifact"), "an unscoped server lists every tool");
+  const scoped = await serve(context, root, { ...hosts, env: { ...hosts.env, PRISM_MIGRATION_RUN: run } });
+  assert.equal((await scoped("get_migration_run", { run })).value.run.id, run);
+  for (const [name, args] of [
+    ["update_artifact", { operations: [{ op: "write", path: PATHS.requirements, content: "x", expectedVersion: null }] }],
+    ["update_roadmap", { operations: [] }],
+    ["check_artifacts", {}],
+    ["get_migration_run", { run: "run-0000000000000000" }],
+    ["fail_migration_run", { run: "run-0000000000000000", reason: "other run" }],
+    ["get_artifact", { path: "docs/plans/artifact-formats/slice.md" }],
+    ["get_artifact", { path: `${path.posix.dirname(PATHS.requirements)}/../../outside.md` }]
+  ]) {
+    const answer = await scoped(name, args);
+    assert.equal(answer.refused, true, `${name} ${JSON.stringify(args)} is refused`);
+    assert.equal(answer.value.code, "migration_scope", `${name} ${JSON.stringify(args)}: ${answer.text}`);
+  }
+  // A read of the run's own artifact passes the scope, and the checkout's own answer follows.
+  assert.notEqual((await scoped("get_artifact", { path: PATHS.requirements })).value?.code, "migration_scope");
+  assert.equal((await readRun(call, run)).status, "waiting-for-host", "nothing the scope refused changed the run");
 });
 
 test("a newer nonconforming version of an artifact ends its open run and stops its session, so one run and one session hold it", { skip: posixOnly }, async (context) => {

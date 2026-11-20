@@ -153,7 +153,10 @@ Continuing a run once the person answers is Planned: Prism will resume its sessi
 Running a failed run again is Planned: it will start a new run with the cause `rerun` that holds the artifacts of the failed run's set that still break their format.
 An artifact has at most one open run: when it changes into a newer version that still breaks its format, its open run fails with a reason that names it, Prism stops that run's session on this computer, and a new run migrates the new version.
 A run whose session's supervision was lost, or whose session ended without reporting it, fails with that reason at the next check on the computer that ran it, and a run that never launched its session within 5 minutes fails with `The run's session never started:` and why.
-A run's session reads only: Claude Code gets its reading tools, `git log`, and Prism's tools, and denies every other tool, and Codex runs in its read-only sandbox, so a session cannot change files or run other commands while it reads artifact text that others wrote.
+A run's session reads only, because it reads artifact text that others wrote.
+It reads files only in the checkout, in Prism's own folder, and in the host's plugin cache: Claude Code gets its reading tools and `git log` and denies every other tool, and Codex runs in its read-only sandbox and never asks to run a command outside it.
+Of Prism's tools, the session can call only the run's own: reading the run, reading the run's artifacts and others under the same configured path, proposing the run's format migrations, and finishing or failing the run.
+Prism refuses every other tool, such as changing an artifact, the roadmap, an initiative, or a review, to that session, so nothing written into an artifact can make the session change them.
 No Prism tool that an agent calls starts, continues, or runs again a run's session.
 
 The session of a run follows the `migrate-artifact` skill and proposes one format migration for each artifact of the set with `propose_migration`, passing the run, the type, the source and the target, the whole migrated content, a summary of what changes and why, and leftovers: each statement of the source that the content does not keep, with a proposed home such as the project instructions.

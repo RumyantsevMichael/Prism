@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { withFileLock } from "../workflow/artifact-store.mjs";
@@ -88,7 +89,7 @@ async function startRun({ folder, record, env, cause }) {
   const token = randomBytes(8).toString("hex");
   const supervisor = spawn(process.execPath, [SUPERVISOR, folder, cause, token], {
     cwd: record.checkout,
-    env: hostEnvironment(env, record.id),
+    env: hostEnvironment(env, record.id, record.migrationRun ?? null),
     detached: true,
     stdio: "ignore",
     windowsHide: true
@@ -152,10 +153,36 @@ export async function startLaunch({ projectRoot, initiative, host, env = process
 export async function startMigrationLaunch({ projectRoot, migrationRun, host, model = null, access = "read-only", env = process.env }) {
   if (!hostDefinition(host)) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code and codex.`);
   if (typeof migrationRun !== "string" || !/^run-[0-9a-f]{16}$/.test(migrationRun)) throw refuse("unknown_migration_run", `No format migration run ${String(migrationRun)} exists.`);
-  return launchSession({ checkout: await realpath(projectRoot), subject: { initiative: null, migrationRun }, host, model, access: access === "full" ? "full" : "read-only", env });
+  const checkout = await realpath(projectRoot);
+  return launchSession({ checkout, subject: { initiative: null, migrationRun }, host, model, access: access === "full" ? "full" : "read-only", readRoots: await migrationReadRoots(checkout, host, env), env });
 }
 
-async function launchSession({ checkout, subject, host, model, access = "full", env }) {
+// The folder this Prism runs from, which holds its skills and their references.
+const PRISM_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
+
+/**
+ * The folders besides its checkout where a format migration run's session may read: this Prism's own folder and the host's plugin cache,
+ * where the host keeps the skills it runs, each by its real path when it exists and lies outside the checkout.
+ */
+export async function migrationReadRoots(checkout, host, env = process.env) {
+  const home = os.homedir();
+  const hostHome = host === "codex" ? (env.CODEX_HOME || path.join(home, ".codex")) : (env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"));
+  const roots = [];
+  for (const candidate of [PRISM_ROOT, path.join(hostHome, "plugins", "cache")]) {
+    let real;
+    try {
+      real = await realpath(candidate);
+      if (!(await stat(real)).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    const inside = (folder) => real === folder || real.startsWith(`${folder}${path.sep}`);
+    if (!inside(checkout) && !roots.some(inside)) roots.push(real);
+  }
+  return roots;
+}
+
+async function launchSession({ checkout, subject, host, model, access = "full", readRoots = [], env }) {
   const resolved = await resolveHost(host, env);
   if (!resolved.available) throw refuse("host_unavailable", resolved.reason);
   const store = await storeLocation(checkout);
@@ -166,7 +193,7 @@ async function launchSession({ checkout, subject, host, model, access = "full", 
     const record = {
       id,
       initiative: subject.initiative,
-      ...(subject.migrationRun ? { migrationRun: subject.migrationRun, model: model ?? null, access } : {}),
+      ...(subject.migrationRun ? { migrationRun: subject.migrationRun, model: model ?? null, access, readRoots } : {}),
       host,
       checkout,
       store,

@@ -54,6 +54,7 @@ import { reportFormatFinding } from "./workflow/format-findings.mjs";
 import { ArtifactCitationError } from "./workflow/artifact-citations.mjs";
 import { proposeMigration } from "./workflow/format-migrations.mjs";
 import { failMigrationRun, finishMigrationRun, getMigrationRun, launchRunSession, setRunLauncher } from "./workflow/migration-runs.mjs";
+import { migrationScopeOf, scopeRefusal, scopedTools } from "./workflow/migration-scope.mjs";
 import { ARTIFACT_TYPES } from "./workflow/artifact-formats.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
@@ -1652,7 +1653,14 @@ async function requireCallClaims(name, argumentsValue) {
   await requireClaimedWork({ projectRoot, initiative: argumentsValue.initiative, tool: name, work: [{ slug: argumentsValue.slice, own: true }] });
 }
 
+// The format migration run that this server serves only, when a run's launched session started it, else null.
+const MIGRATION_SCOPE = migrationScopeOf(process.env);
+
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
+  if (MIGRATION_SCOPE !== null) {
+    const refused = await scopeRefusal(MIGRATION_SCOPE, name, argumentsValue, await requestedProjectRoot(argumentsValue));
+    if (refused) return { content: [{ type: "text", text: refused.message }], structuredContent: refused, isError: true };
+  }
   await requireCallClaims(name, argumentsValue);
   if (name === "wait_for_user_gate") {
     return callGateWait(argumentsValue, metadata, requestId);
@@ -1775,7 +1783,7 @@ input.on("line", async (line) => {
         serverInfo: { name: "prism-review", version: pluginManifest.version }
       });
     } else if (request.method === "tools/list") {
-      result(request.id, { tools });
+      result(request.id, { tools: scopedTools(tools, MIGRATION_SCOPE) });
     } else if (request.method === "tools/call") {
       callsInProgress.add(request.id);
       const meta = request.params?._meta;

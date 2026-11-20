@@ -185,10 +185,10 @@ export async function readRun(call, run) {
   if (read.refused) throw new Error(`get_migration_run failed: ${read.text}`);
   return read.value.run;
 }
-
+/** The tools that a Prism server for the project lists, by name, each with its description and input schema; extra adds variables to its environment. */
 /** The tools that a Prism server for the project lists, by name, each with its description and input schema. */
-export async function listedTools(context, root) {
-  const env = isolatedEnv({ PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./native-manifest-unavailable.json", import.meta.url)), CLAUDE_PROJECT_DIR: root });
+export async function listedTools(context, root, extra = {}) {
+  const env = isolatedEnv({ PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./native-manifest-unavailable.json", import.meta.url)), CLAUDE_PROJECT_DIR: root, ...extra });
   const child = spawn(process.execPath, [fileURLToPath(new URL("../../../dist/server/mcp.mjs", import.meta.url))], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
   context.after(() => { if (child.exitCode === null) child.kill("SIGKILL"); });
   const answers = new Map();
