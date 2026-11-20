@@ -121,7 +121,7 @@ function whyMissing(availability: any) {
  * null; no choice, or AUTOMATIC, answers the first host found with its defaults; a chosen host that is not found, or a choice that
  * cannot be read, answers the first host found with its defaults and the reason why. checkout is the checkout the run starts in.
  */
-export async function prismRunLaunch({ checkout = null, env = process.env } = {}) {
+export async function prismRunLaunch({ checkout = null, env = process.env }: { checkout?: string | null; env?: NodeJS.ProcessEnv } = {}) {
   void checkout;
   const [stored, hosts] = await Promise.all([readPrismRunsChoice(env), hostAvailability({ env })]);
   const first = hosts.find((item) => item.available) ?? null;

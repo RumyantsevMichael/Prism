@@ -143,7 +143,8 @@ Read a run with `get_migration_run`, which lists its set with each artifact's cu
 A run is never a roadmap entry, an initiative, a slice, a claim, or a gate.
 
 Prism launches each new run's session on this computer at once, without asking, as a [launched session](review-browser.md#launched-sessions) of the checkout whose check found the set.
-The host is the first of Claude Code and Codex whose executable, `claude` or `codex`, is on the `PATH` of the Prism server that started the run, and it uses its own default model.
+The host and model are the ones that **Prism's own runs** in the review app's [Settings](review-browser.md#layout) chose for this computer.
+Without that choice, with **Any available host**, or when the chosen host is not found or the choice cannot be read, the host is the first of Claude Code and Codex whose executable, `claude` or `codex`, is on the `PATH` of the Prism server that started the run, and it uses its own default model.
 The session's only prompt is `/prism:migrate-artifact <run id>` for Claude Code, or `$prism:migrate-artifact <run id>` for Codex, so no artifact text reaches its command line or prompt.
 Once the host started, the run is `running` and `get_migration_run` names the session as `launch` with its id and host, and no second session of the run starts while it runs.
 When no host is available, the run waits as `waiting-for-host` with the reason `No host is available on this machine:` and each host's reason, and the next check of the project on a computer where a host is available launches it.

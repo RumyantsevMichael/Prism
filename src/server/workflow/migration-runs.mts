@@ -165,17 +165,23 @@ const LAUNCH_ENDED = "The run's session ended before the run finished: ";
 const LAUNCHED_FROM = new Set(["starting", "waiting-for-host"]);
 
 /**
- * The host, model, and access of a format migration run's session on this machine: { host, model, access, reason }, with the first available host of Claude Code and Codex,
- * in that order, and model null, so the host uses its own default model; when no host is available, host is null and reason says why for each host.
+ * The host, coordinator choice, and access of a format migration run's session on this machine: { host, coordinator, model, access, reason },
+ * with coordinator { provider, model, effort, typed } and model its model. The host and model are the computer's choice for Prism's own runs,
+ * as prismRunLaunch reads it for the checkout; without a supported host found there, the first available host of Claude Code and Codex,
+ * in that order, with its own default model, and when no host is available, host is null and reason says why for each host.
  * The access is read-only: the session reads artifact text that others wrote, so it gets Prism's tools, file reads, and `git log`, and nothing that writes or runs.
- * This is the only choice of a run's host, model, and access, so the machine's launch settings replace this function alone.
+ * This is the only choice of a run's host, model, and access.
  */
-export async function migrationRunHost(env = process.env) {
-  const { hostAvailability } = await import("../session/launch-hosts.mjs");
+export async function migrationRunHost(env: NodeJS.ProcessEnv = process.env, { checkout = null }: { checkout?: string | null } = {}) {
+  const { prismRunLaunch } = await import("../session/prism-runs.mjs");
+  const chosen = await prismRunLaunch({ checkout, env });
+  if (chosen) return { host: chosen.host, coordinator: chosen.coordinator, model: chosen.coordinator.model, access: "read-only", reason: null };
+  const { hostAvailability, HOST_DEFAULT_COORDINATOR } = await import("../session/launch-hosts.mjs");
   const hosts = await hostAvailability({ env });
-  const found = hosts.find((entry) => entry.available);
-  if (found) return { host: found.host, model: null, access: "read-only", reason: null };
-  return { host: null, model: null, access: "read-only", reason: `No host is available on this machine: ${hosts.map((entry) => entry.reason).join(" ")}` };
+  const found = hosts.find((entry: any) => entry.available);
+  const coordinator = { ...HOST_DEFAULT_COORDINATOR };
+  if (found) return { host: found.host, coordinator, model: null, access: "read-only", reason: null };
+  return { host: null, coordinator, model: null, access: "read-only", reason: `No host is available on this machine: ${hosts.map((entry: any) => entry.reason).join(" ")}` };
 }
 
 // Record a run's launch, its status, or both, unless the run ended: the status changes only from one of `from`, so a run that asked or failed meanwhile keeps that.
@@ -212,12 +218,12 @@ async function failOpenRun(root: any, id: any, reason: any, { launch = null }: a
 export async function launchMigrationRun(projectRoot: any, id: any, { env = process.env, status = "running" }: any = {}) {
   const root = await realpath(projectRoot);
   const from = status === "running" ? LAUNCHED_FROM : new Set([status]);
-  const choice = await migrationRunHost(env);
+  const choice = await migrationRunHost(env, { checkout: root });
   if (!choice.host) return recordLaunch(root, id, { status: "waiting-for-host", reason: choice.reason, from: new Set([...from, "starting"]) });
   const { startMigrationLaunch } = await import("../session/launched-sessions.mjs");
   let started: any;
   try {
-    started = await startMigrationLaunch({ projectRoot: root, migrationRun: id, host: choice.host, coordinator: { provider: null, model: choice.model, effort: null, typed: false }, access: choice.access, env });
+    started = await startMigrationLaunch({ projectRoot: root, migrationRun: id, host: choice.host, coordinator: choice.coordinator, access: choice.access, env });
   } catch (error) {
     if (error?.code === "launch_running") return readRun(root, id);
     if (error?.code === "host_unavailable") return recordLaunch(root, id, { status: "waiting-for-host", reason: `No host is available on this machine: ${error.message}`, from: new Set([...from, "starting"]) });
@@ -448,7 +454,7 @@ async function relaunchWaiting(root: any, waiting: any) {
     const claim = await withRunLock(root, run.id, async () => {
       const current = await readRun(root, run.id);
       if (current?.status !== "waiting-for-host") return null;
-      const choice = await migrationRunHost();
+      const choice = await migrationRunHost(process.env, { checkout: root });
       if (!choice.host) return null;
       const next = { ...current, status: "starting", reason: null, waitedFor: current.reason ?? null, startingAt: new Date().toISOString(), nonce: randomBytes(8).toString("hex") };
       await writeRun(root, next);
