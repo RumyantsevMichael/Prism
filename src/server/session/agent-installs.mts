@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { constants, createWriteStream, existsSync } from "node:fs";
-import { copyFile, lstat, mkdir, readdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
+import { copyFile, link, lstat, mkdir, readdir, readFile, rename, rm, rmdir, utimes, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -15,8 +16,9 @@ import { LaunchError, launchRunning, listLaunchRecords, processAlive } from "./l
 // Installing, updating, and removing registry agents in the review app folder's agents/ folder, one at a time on this machine.
 // Nothing of a download runs before the person confirms it in a native dialog, no install, build, or lifecycle script runs at any time,
 // every download is checked against the registry, and an install changes nothing outside agents/: each version lives in
-// agents/<id>/<version>/ beside its install.json, agents/<id>/current.json names the version that new runs use, and the downloads and the
-// package programs' caches live in agents/.staging/, which each install removes when it ends.
+// agents/<id>/<version>/ beside its install.json, agents/<id>/current.json names the version that new runs use, and each install lays out
+// its downloads, the package programs' caches, and the new version in a staging folder of its own under agents/.staging/, which it removes
+// when it ends, moving the version into place only after every check passed.
 
 const LOCK_FILE = ".install.lock";
 const STAGING = ".staging";
@@ -36,7 +38,7 @@ type Confirm = (details: InstallDetails) => Promise<unknown>;
 
 const refuse = (code: string, message: string) => new LaunchError(code, message);
 const agentFolder = (env: NodeJS.ProcessEnv, id: string) => path.join(agentsFolder(env), id);
-const stagingFolder = (env: NodeJS.ProcessEnv) => path.join(agentsFolder(env), STAGING);
+const stagingRoot = (env: NodeJS.ProcessEnv) => path.join(agentsFolder(env), STAGING);
 
 function checkedId(id: unknown): string {
   if (typeof id !== "string" || !ACP_ID_PATTERN.test(id)) throw refuse("action_unavailable", `${String(id)} is not the id of a registry agent.`);
@@ -47,36 +49,123 @@ function checkedId(id: unknown): string {
 
 let busyHere = false;
 
-/** Runs action while this process holds the machine's one install slot, or refuses with install_running while another holds it. */
-async function withInstallSlot<T>(env: NodeJS.ProcessEnv, action: () => Promise<T>): Promise<T> {
+// A lock is held while its holder could still be installing: a holder of this computer whose process runs, or any holder, also one whose
+// lock is unreadable or still being written, whose lock was refreshed within LOCK_STALE_MS. A holder refreshes its lock every
+// LOCK_REFRESH_MS, and a lock of this computer is never older than LOCK_MAX_MS, so a reused process id cannot keep a lock forever.
+const LOCK_REFRESH_MS = 60 * 1000;
+const LOCK_STALE_MS = 10 * 60 * 1000;
+const LOCK_MAX_MS = 24 * 60 * 60 * 1000;
+// A stale lock is removed only by the one process that holds its breaking guard, which lives for a moment, so a guard older than this was
+// left by a process that ended while it broke a lock.
+const GUARD_STALE_MS = 60 * 1000;
+const lockFile = (env: NodeJS.ProcessEnv) => path.join(agentsFolder(env), LOCK_FILE);
+const ownName = () => `${process.pid}-${randomBytes(8).toString("hex")}`;
+
+/** Creates file holding text, complete from its first moment, only when no file has that name, and answers whether it did. */
+async function createExclusive(file: string, text: string) {
+  const temporary = `${file}.${ownName()}.tmp`;
+  await writeFile(temporary, text, { flag: "wx", mode: 0o600 });
+  try {
+    await link(temporary, file);
+    return true;
+  } catch (error: any) {
+    if (error?.code === "EEXIST") return false;
+    // A file system without hard links takes the lock by an exclusive create, which a reader that finds it still empty treats as held.
+    if (!["EPERM", "ENOTSUP", "ENOSYS", "EOPNOTSUPP", "EXDEV"].includes(error?.code)) throw error;
+    try {
+      await writeFile(file, text, { flag: "wx", mode: 0o600 });
+      return true;
+    } catch (again: any) {
+      if (again?.code === "EEXIST") return false;
+      throw again;
+    }
+  } finally {
+    await rm(temporary, { force: true }).catch(() => {});
+  }
+}
+
+/** The lock at file as it stands, or null when there is none: its identity, its age, and its holder when it reads as a whole record. */
+async function readLock(file: string) {
+  const info = await lstat(file).catch((error) => (error?.code === "ENOENT" ? null : Promise.reject(error)));
+  if (!info) return null;
+  const text = await readFile(file, "utf8").catch(() => null);
+  let holder: any = null;
+  try { holder = text === null ? null : JSON.parse(text); } catch { holder = null; }
+  return { ino: info.ino, ageMs: Date.now() - info.mtimeMs, text, holder };
+}
+
+/** Whether the lock's holder is provably gone, so the lock belongs to no install. */
+function lockStale(lock: NonNullable<Awaited<ReturnType<typeof readLock>>>) {
+  const { holder, ageMs } = lock;
+  const ours = holder && holder.host === os.hostname() && Number.isSafeInteger(holder.pid);
+  if (ours) return !processAlive(holder.pid) || ageMs > LOCK_MAX_MS;
+  return ageMs > LOCK_STALE_MS;
+}
+
+/** Removes the stale lock that was read, under the breaking guard, after checking again that the same lock still stands and is stale. */
+async function breakStaleLock(file: string, seen: NonNullable<Awaited<ReturnType<typeof readLock>>>) {
+  const guard = `${file}.break`;
+  if (!(await createExclusive(guard, `${JSON.stringify({ pid: process.pid, host: os.hostname() })}\n`))) {
+    const left = await lstat(guard).catch(() => null);
+    if (left && Date.now() - left.mtimeMs > GUARD_STALE_MS) await rm(guard, { force: true });
+    return;
+  }
+  try {
+    const now = await readLock(file);
+    if (now && now.ino === seen.ino && now.text === seen.text && lockStale(now)) await rm(file, { force: true });
+  } finally {
+    await rm(guard, { force: true }).catch(() => {});
+  }
+}
+
+/** Removes what crashed installs left in the staging folder, keeping every staging folder whose process still runs. */
+async function removeLeftStaging(env: NodeJS.ProcessEnv) {
+  const entries = await readdir(stagingRoot(env), { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const pid = Number(/^(\d+)-[0-9a-f]{16}$/.exec(entry.name)?.[1]);
+    if (entry.isDirectory() && processAlive(pid)) continue;
+    await rm(path.join(stagingRoot(env), entry.name), { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Runs action with a staging folder of its own while this process holds the machine's one install slot, or refuses with install_running
+ * while another holds it.
+ */
+async function withInstallSlot<T>(env: NodeJS.ProcessEnv, action: (staging: string) => Promise<T>): Promise<T> {
   const running = () => refuse("install_running", "Another install, update, or removal of a coding agent is running on this computer; try again once it ends.");
   // Taken before any await, so two requests of this process never both pass.
   if (busyHere) throw running();
   busyHere = true;
-  const file = path.join(agentsFolder(env), LOCK_FILE);
+  const file = lockFile(env);
+  const text = `${JSON.stringify({ pid: process.pid, host: os.hostname(), token: randomBytes(16).toString("hex"), startedAt: new Date().toISOString() })}\n`;
   let taken = false;
+  let refresh: NodeJS.Timeout | undefined;
+  const staging = path.join(stagingRoot(env), ownName());
   try {
     await mkdir(agentsFolder(env), { recursive: true, mode: 0o700 });
-    for (let attempt = 0; attempt < 2 && !taken; attempt += 1) {
-      try {
-        await writeFile(file, `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`, { flag: "wx", mode: 0o600 });
-        taken = true;
-      } catch (error: any) {
-        if (error?.code !== "EEXIST") throw error;
-        // A lock whose process ended belongs to no install.
-        const holder = await readFile(file, "utf8").then((text) => JSON.parse(text), () => null);
-        if (holder && processAlive(holder.pid)) throw running();
-        await rm(file, { force: true });
-      }
+    for (let attempt = 0; attempt < 5 && !taken; attempt += 1) {
+      if (await createExclusive(file, text)) { taken = true; break; }
+      const lock = await readLock(file);
+      // A lock that its holder released since is gone, and a lock that cannot be read whole is being written or held.
+      if (lock === null) continue;
+      if (!lockStale(lock)) throw running();
+      await breakStaleLock(file, lock);
     }
     if (!taken) throw running();
-    // A staging folder left by an install that ended without removing it holds nothing of use.
-    await rm(stagingFolder(env), { recursive: true, force: true });
-    return await action();
+    refresh = setInterval(() => { const at = new Date(); utimes(file, at, at).catch(() => {}); }, LOCK_REFRESH_MS);
+    refresh.unref();
+    await removeLeftStaging(env);
+    await mkdir(staging, { recursive: true, mode: 0o700 });
+    return await action(staging);
   } finally {
+    clearInterval(refresh);
     if (taken) {
-      await rm(stagingFolder(env), { recursive: true, force: true }).catch(() => {});
-      await rm(file, { force: true }).catch(() => {});
+      await rm(staging, { recursive: true, force: true }).catch(() => {});
+      await rmdir(stagingRoot(env)).catch(() => {});
+      // Only this process's own lock is removed, never one that another process took after a stale lock was broken.
+      const lock = await readLock(file).catch(() => null);
+      if (lock?.text === text) await rm(file, { force: true }).catch(() => {});
     }
     busyHere = false;
   }
@@ -97,24 +186,29 @@ const currentVersion = async (env: NodeJS.ProcessEnv, id: string) => {
 
 const sweeping = new Map<string, NodeJS.Timeout>();
 
-/** Removes every version folder of the agent but the current one once no launched session runs on the agent, checking again until then. */
+/** Removes every version folder of the agent but the current one when no launched session runs on the agent, answering whether it could. */
+async function sweepEarlierVersions(env: NodeJS.ProcessEnv, id: string) {
+  if (await agentRunning(id, env)) return false;
+  const current = await currentVersion(env, id);
+  if (current === null) return true;
+  const folder = agentFolder(env, id);
+  const entries = await readdir(folder, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (entry.isDirectory() && entry.name !== current) await rm(path.join(folder, entry.name), { recursive: true, force: true });
+  }
+  return true;
+}
+
+/**
+ * Removes the agent's earlier version folders now, from inside the install slot, or, while a launched session runs on the agent, checks
+ * again until it can, each time inside the slot, so a sweep never removes a folder that an install is laying out.
+ */
 async function removeEarlierVersions(env: NodeJS.ProcessEnv, id: string) {
-  const sweep = async () => {
-    if (await agentRunning(id, env)) return false;
-    const current = await currentVersion(env, id);
-    if (current === null) return true;
-    const folder = agentFolder(env, id);
-    const entries = await readdir(folder, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      if (entry.isDirectory() && entry.name !== current) await rm(path.join(folder, entry.name), { recursive: true, force: true });
-    }
-    return true;
-  };
   clearInterval(sweeping.get(id));
   sweeping.delete(id);
-  if (await sweep()) return;
+  if (await sweepEarlierVersions(env, id)) return;
   const timer = setInterval(() => {
-    sweep().then((done) => {
+    withInstallSlot(env, () => sweepEarlierVersions(env, id)).then((done) => {
       if (done && sweeping.get(id) === timer) { clearInterval(timer); sweeping.delete(id); }
     }, () => {});
   }, SWEEP_MS);
@@ -291,7 +385,8 @@ async function prepare(agent: RegistryAgent, from: string | null, env: NodeJS.Pr
     install: async (folder) => {
       await copyFile(path.join(project, "requirements.txt"), path.join(folder, "requirements.txt"), constants.COPYFILE_EXCL);
       const venv = path.join(folder, "venv");
-      await runTool("uv", ["venv", venv], { cwd: folder, env: toolEnv, agent: label });
+      // The environment is laid out in the staging folder and then moved into place, so its programs must not name its own path.
+      await runTool("uv", ["venv", venv, "--relocatable"], { cwd: folder, env: toolEnv, agent: label });
       const scripts = process.platform === "win32" ? path.join(venv, "Scripts") : path.join(venv, "bin");
       const python = path.join(scripts, process.platform === "win32" ? "python.exe" : "python");
       await runTool("uv", ["pip", "sync", "requirements.txt", "--python", python, "--no-build", "--require-hashes"], { cwd: folder, env: toolEnv, agent: label });
@@ -314,8 +409,15 @@ function lockedVersions(text: string, name: string) {
   });
 }
 
-// Installs the registry's version of the agent beside any installed one, then makes it current; a failure removes what it laid out.
-async function installVersion({ id, env, confirm, update }: { id: string; env: NodeJS.ProcessEnv; confirm: Confirm; update: boolean }) {
+// The version folder of the agent that names version, ignoring letter case, as a case-insensitive file system does, or null.
+async function versionFolderOf(folder: string, version: string) {
+  const entries = await readdir(folder, { withFileTypes: true }).catch(() => []);
+  return entries.find((entry) => entry.isDirectory() && entry.name.toLowerCase() === version.toLowerCase())?.name ?? null;
+}
+
+// Installs the registry's version of the agent into a staging folder of this install, checks it, and only then moves it into place beside
+// any installed version and makes it current; a failure leaves every existing version folder as it was.
+async function installVersion({ id, env, confirm, update, staging }: { id: string; env: NodeJS.ProcessEnv; confirm: Confirm; update: boolean; staging: string }) {
   const installed = await currentVersion(env, id);
   if (update && installed === null) throw refuse("action_unavailable", `${id} is not installed, so there is nothing to update.`);
   if (!update && installed !== null) throw refuse("action_unavailable", `${id} ${installed} is already installed.`);
@@ -326,54 +428,66 @@ async function installVersion({ id, env, confirm, update }: { id: string; env: N
   if (!agent) throw refuse("action_unavailable", `The agent registry lists no agent ${id} for this computer.`);
   if (!agent.install.available) throw refuse("action_unavailable", agent.install.reason!);
   if (!VERSION_FOLDER.test(agent.version)) throw refuse("action_unavailable", `The registry's version ${agent.version} of ${agent.name} cannot name a folder.`);
-  if (update && agent.version === installed) throw refuse("action_unavailable", `${agent.name} ${installed} is the version the registry lists.`);
-  const staging = stagingFolder(env);
-  await mkdir(staging, { recursive: true, mode: 0o700 });
+  if (update && agent.version.toLowerCase() === installed!.toLowerCase()) throw refuse("action_unavailable", `${agent.name} ${installed} is the version the registry lists.`);
+  const folder = agentFolder(env, id);
+  // A folder of this version kept for a launched session that still runs on it is never replaced, so the update waits until it ends.
+  const inUse = async () => (await versionFolderOf(folder, agent.version)) !== null && (await agentRunning(id, env));
+  const busy = () => refuse("agent_running", `${agent.name} ${agent.version} is still in use by a launched session on this computer; stop that session before you install this version again.`);
+  if (await inUse()) throw busy();
   const prepared = await prepare(agent, update ? installed : null, env, staging);
   await confirm(prepared.details);
-  const folder = agentFolder(env, id);
+  const laid = path.join(staging, "version");
+  await mkdir(laid, { mode: 0o755 });
+  const launch = await prepared.install(laid);
   const versionFolder = path.join(folder, agent.version);
+  const command = path.join(versionFolder, path.relative(laid, launch.command));
+  const rule = launchRule({ ...launch, command });
+  if (rule) throw refuse("install_failed", `Prism did not install ${agent.name} ${agent.version}: the registry's command, arguments, or environment break a rule: ${rule}`);
+  const record = {
+    id,
+    name: agent.name,
+    version: agent.version,
+    authors: agent.authors,
+    license: agent.license,
+    source: agent.source,
+    description: agent.description,
+    distribution: agent.distribution.kind,
+    entry: agent.entry,
+    command,
+    args: launch.args,
+    env: launch.env,
+    installedAt: new Date().toISOString()
+  };
+  // Prism's own record replaces anything the archive placed at its name, and its write follows no link: wx never opens an existing name.
+  const recordFile = path.join(laid, "install.json");
+  await rm(recordFile, { recursive: true, force: true });
+  await writeFile(recordFile, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o644, flag: "wx" });
+  // The checked version moves into place only now; a leftover folder of the same version, which no session runs on, moves aside first.
+  if (await inUse()) throw busy();
   const createdAgentFolder = !existsSync(folder);
+  await mkdir(folder, { recursive: true, mode: 0o755 });
+  const left = await versionFolderOf(folder, agent.version);
+  const aside = path.join(staging, "replaced");
+  let moved = false;
   try {
-    await mkdir(folder, { recursive: true, mode: 0o755 });
-    await rm(versionFolder, { recursive: true, force: true });
-    await mkdir(versionFolder, { mode: 0o755 });
-    const launch = await prepared.install(versionFolder);
-    const rule = launchRule(launch);
-    if (rule) throw refuse("install_failed", `Prism did not install ${agent.name} ${agent.version}: the registry's command, arguments, or environment break a rule: ${rule}`);
-    const record = {
-      id,
-      name: agent.name,
-      version: agent.version,
-      authors: agent.authors,
-      license: agent.license,
-      source: agent.source,
-      description: agent.description,
-      distribution: agent.distribution.kind,
-      entry: agent.entry,
-      command: launch.command,
-      args: launch.args,
-      env: launch.env,
-      installedAt: new Date().toISOString()
-    };
-    // Prism's own record replaces anything the archive placed at its name, and its write follows no link: wx never opens an existing name.
-    const recordFile = path.join(versionFolder, "install.json");
-    await rm(recordFile, { recursive: true, force: true });
-    await writeFile(recordFile, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o644, flag: "wx" });
+    if (left !== null) await rename(path.join(folder, left), aside);
+    await rename(laid, versionFolder);
+    moved = true;
     // Only now does the new version become current, so a failed update keeps the earlier one in use.
     await writeAtomically(path.join(folder, "current.json"), `${JSON.stringify({ version: agent.version }, null, 2)}\n`, { mode: 0o644 });
-    return { id, name: agent.name, version: agent.version, from: update ? installed : null };
   } catch (error) {
-    await rm(versionFolder, { recursive: true, force: true }).catch(() => {});
+    if (moved) await rename(versionFolder, laid).catch(() => {});
+    if (left !== null && existsSync(aside)) await rename(aside, path.join(folder, left)).catch(() => {});
     if (createdAgentFolder) await rmdir(folder).catch(() => {});
     throw error;
   }
+  return { id, name: agent.name, version: agent.version, from: update ? installed : null };
 }
 
 /** Installs the version of a registry agent that the registry lists now, after the person confirmed it in confirm's native dialog. */
 export async function installAgent({ id, env = process.env, confirm }: { id: string; env?: NodeJS.ProcessEnv; confirm: Confirm }) {
   const agent = checkedId(id);
-  return withInstallSlot(env, () => installVersion({ id: agent, env, confirm, update: false }));
+  return withInstallSlot(env, (staging) => installVersion({ id: agent, env, confirm, update: false, staging }));
 }
 
 /**
@@ -382,13 +496,12 @@ export async function installAgent({ id, env = process.env, confirm }: { id: str
  */
 export async function updateAgent({ id, env = process.env, confirm }: { id: string; env?: NodeJS.ProcessEnv; confirm: Confirm }) {
   const agent = checkedId(id);
-  return withInstallSlot(env, async () => {
-    const updated = await installVersion({ id: agent, env, confirm, update: true });
+  return withInstallSlot(env, async (staging) => {
+    const updated = await installVersion({ id: agent, env, confirm, update: true, staging });
     await removeEarlierVersions(env, agent);
     return updated;
   });
 }
-
 /** Removes every folder of an installed agent while no launched session runs on it, reading nothing from the registry. */
 export async function removeAgent({ id, env = process.env }: { id: string; env?: NodeJS.ProcessEnv }) {
   const agent = checkedId(id);

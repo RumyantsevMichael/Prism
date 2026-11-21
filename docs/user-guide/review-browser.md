@@ -367,10 +367,11 @@ Every `uv` run has `UV_PYTHON_DOWNLOADS=never`, so `uv` uses only a Python alrea
 
 Each install lives in the review app folder's `agents/<id>/<version>/` beside its `install.json`, which records the registry entry, the command, arguments, and environment, and the install time.
 `agents/<id>/current.json` names the version that new sessions run.
-The downloads and the `npm` and `uv` caches live in `agents/.staging/`, which each install removes when it ends, and nothing outside `agents/` changes, neither your own `npm` or `uv` configuration nor any sign-in.
+Each install lays out its downloads, the `npm` and `uv` caches, and the new version in a folder of its own under `agents/.staging/`, which it removes when it ends, and moves the version into `agents/<id>/<version>/` only once every check passed, so nothing outside `agents/` changes, neither your own `npm` or `uv` configuration nor any sign-in.
 
 An update makes the new version current only once it installed and its command, arguments, and environment keep the rules of a [declaration](#acp-agents), and otherwise it is refused with `install_failed` and the rule it breaks, so a failed update keeps the earlier version in use.
 The earlier version's folder is removed once no launched session runs on the agent.
+While it is still kept for such a session, an update back to that version is refused with `agent_running`, so the running session keeps its files; stop the session and update again.
 A removal deletes every folder of the agent, reads nothing from the registry, and is refused with `agent_running` while a launched session runs on it; afterwards the agent is no host.
 One install, update, or removal runs at a time on a computer, and another one meanwhile is refused with `install_running`.
 
