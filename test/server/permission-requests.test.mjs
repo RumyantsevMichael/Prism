@@ -57,10 +57,10 @@ async function onAgent(t, plan) {
   await setSettings(s.root, INITIATIVE, { host: "acp-gemini" });
   return s;
 }
-async function onClaude(t) {
+async function onClaude(t, script = CLAUDE_ASKING) {
   const s = await acpFixture(t, { hosts: ["claude"] });
   const file = path.join(s.bin, "claude");
-  await writeFile(file, CLAUDE_ASKING);
+  await writeFile(file, script);
   chmodSync(file, 0o755);
   await setSettings(s.root, INITIATIVE, { host: "claude-code" });
   return s;
@@ -400,6 +400,91 @@ test("clause 33: an ACP request that names only its tool call takes the title, k
   await launchRun(s);
   const [request] = await pending(s);
   assert.deepEqual([request.action, request.reason], [`Run a command ${JSON.stringify(rawInput)}`, "Gemini CLI asks before it runs a tool of kind execute."]);
+});
+
+test("clauses 33, 37: a Codex command request that names no command shows that and can only be refused", { skip: posixOnly }, async (t) => {
+  const s = await onCodexWith(t, { request: { method: "item/commandExecution/requestApproval", params: { itemId: "item_stdin", startedAtMs: 1, command: null, kind: "writeStdin" } } });
+  const id = await launchRun(s);
+  const [request] = await pending(s);
+  assert.equal(request.action, `A command that Codex did not name ${JSON.stringify({ kind: "writeStdin" })}`);
+  const before = s.dialogs().length;
+  const refused = await decide(s, id, request.id, "approve");
+  assert.equal(refused.json.code, "approval_unavailable");
+  assert.match(refused.text, /Codex did not say which command this runs, so Prism can only refuse it\./);
+  assert.equal(s.dialogs().length, before, "no dialog is shown");
+  assert.equal(inputsOf(s, "codex").some((message) => message.id === "approval-1" && message.method === undefined), false, "Codex is answered nothing");
+});
+
+test("clauses 33, 37: a Codex file change whose item lists no change cannot be approved", { skip: posixOnly }, async (t) => {
+  const s = await onCodexWith(t, { before: [patchStarted([])], request: fileChange() });
+  const id = await launchRun(s);
+  const [request] = await pending(s);
+  assert.equal(request.action, "A file change that Codex did not describe");
+  const refused = await decide(s, id, request.id, "approve");
+  assert.equal(refused.json.code, "approval_unavailable");
+  assert.match(refused.text, /Codex did not say which files this change writes, so Prism can only refuse it\./);
+  assert.equal(inputsOf(s, "codex").some((message) => message.id === "approval-1" && message.method === undefined), false, "Codex is answered nothing");
+});
+
+test("clauses 33, 37: an ACP request with neither title nor raw input shows that and can only be refused", { skip: posixOnly }, async (t) => {
+  const s = await onAgentWith(t, { toolCall: { toolCallId: "t1", kind: "edit" } });
+  const id = await launchRun(s);
+  const [request] = await pending(s);
+  assert.equal(request.action, "A tool of kind edit that Gemini CLI did not describe");
+  const before = s.dialogs().length;
+  const refused = await decide(s, id, request.id, "approve");
+  assert.equal(refused.json.code, "approval_unavailable");
+  assert.match(refused.text, /Gemini CLI did not say what this tool call does, so Prism can only refuse it\./);
+  assert.equal(s.dialogs().length, before, "no dialog is shown");
+  assert.deepEqual(answers(s), []);
+});
+
+test("clauses 33, 37: a Claude Code request that names no tool shows that and can only be refused", { skip: posixOnly }, async (t) => {
+  const s = await onClaude(t, CLAUDE_ASKING.replace('tool_name: "Write", display_name: "Write", ', ""));
+  const id = await launchRun(s);
+  const [request] = await pending(s);
+  assert.equal(request.action, 'A tool that Claude Code did not name {"file_path":".claude/settings.local.json","content":"{}"}');
+  const before = s.dialogs().length;
+  const refused = await decide(s, id, request.id, "approve");
+  assert.equal(refused.json.code, "approval_unavailable");
+  assert.match(refused.text, /Claude Code did not say which tool this runs, so Prism can only refuse it\./);
+  assert.equal(s.dialogs().length, before, "no dialog is shown");
+  assert.equal(inputsOf(s, "claude").some((message) => message.type === "control_response"), false, "Claude Code is answered nothing");
+});
+
+// The waiting request leaves Attention and the session's waiting state, and an answer for it is refused as unknown.
+async function withdrawnUnanswered(s, id, request) {
+  assert.deepEqual(await settled(async () => (await attention(s)).permissions, (list) => list.length === 0), [], "the resolved request leaves Attention");
+  const viewed = await settled(async () => (await launches(s)).find((item) => item.id === id), (item) => item?.state !== "waiting");
+  assert.notEqual(viewed?.state, "waiting", "the session no longer waits on it");
+  const late = await decide(s, id, request.id, "approve");
+  assert.deepEqual([late.status, late.json.code], [404, "unknown_request"]);
+}
+
+test("clause 40: a request that Codex reports resolved is withdrawn and answered nothing", { skip: posixOnly }, async (t) => {
+  const s = await onCodexWith(t, { request: { method: "item/commandExecution/requestApproval", params: { itemId: "item_ask", startedAtMs: 1, command: "touch /etc/hosts" } }, after: [{ method: "serverRequest/resolved", params: { requestId: "approval-1" } }] });
+  const id = await launchRun(s);
+  const [request] = await pending(s);
+  await withdrawnUnanswered(s, id, request);
+  assert.equal(inputsOf(s, "codex").some((message) => message.id === "approval-1" && message.method === undefined), false, "Codex is answered nothing");
+});
+
+test("clause 40: a request that an ACP agent cancels with $/cancel_request is withdrawn and answered nothing", { skip: posixOnly }, async (t) => {
+  const s = await onAgentWith(t, { cancelAfter: true });
+  const id = await launchRun(s);
+  const [request] = await pending(s);
+  await withdrawnUnanswered(s, id, request);
+  assert.deepEqual(answers(s), [], "the agent is answered nothing");
+});
+
+test("clause 40: a request that Claude Code cancels with control_cancel_request is withdrawn and answered nothing", { skip: posixOnly }, async (t) => {
+  const cancelling = CLAUDE_ASKING.replace('tool_use_id: "toolu_1" } });', 'tool_use_id: "toolu_1" } });\n      setTimeout(() => write({ type: "control_cancel_request", request_id: "ask-1" }), 300);');
+  assert.notEqual(cancelling, CLAUDE_ASKING);
+  const s = await onClaude(t, cancelling);
+  const id = await launchRun(s);
+  const [request] = await pending(s);
+  await withdrawnUnanswered(s, id, request);
+  assert.equal(inputsOf(s, "claude").some((message) => message.type === "control_response"), false, "Claude Code is answered nothing");
 });
 
 test("clause 38: a refusal answers an ACP agent with its reject_once option, else cancelled", { skip: posixOnly }, async (t) => {

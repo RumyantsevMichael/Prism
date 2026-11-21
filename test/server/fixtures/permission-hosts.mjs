@@ -3,7 +3,8 @@
 // Each wrapper starts the wrapped stub with its own arguments, passes the standard input through, and rewrites only that request, so
 // the wrapped stub still logs every message it reads, the answers to the rewritten request included.
 // The plan file holds { acp: { toolCall, before }, codex: { request, before, after } }:
-// acp.toolCall replaces the tool call of session/request_permission, and acp.before holds session/update `update` objects sent first;
+// acp.toolCall replaces the tool call of session/request_permission, acp.before holds session/update `update` objects sent first,
+// and acp.cancelAfter sends `$/cancel_request` for the request 300 ms after it;
 // codex.request holds the method and the params, without threadId and turnId, that replace the stub's approval request, and
 // codex.before and codex.after hold { method, params } notifications, without threadId and turnId, sent before and 300 ms after it.
 import { chmodSync } from "node:fs";
@@ -24,6 +25,7 @@ function rewrite(message) {
     const sessionId = message.params?.sessionId;
     for (const update of value.before ?? []) out({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update } });
     out(value.toolCall ? { ...message, params: { ...message.params, toolCall: value.toolCall } } : message);
+    if (value.cancelAfter) setTimeout(() => out({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId: message.id } }), 300);
     return;
   }
   if (${JSON.stringify(kind)} === "codex" && message.id === "approval-1" && message.method !== undefined && value.request) {
