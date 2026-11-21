@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.31.0](https://github.com/RumyantsevMichael/Prism/compare/v0.30.0...v0.31.0) (2026-11-21)
+
+
+### Added
+
+* **personal-settings:** keep each person's own settings on their machine ([#401](https://github.com/RumyantsevMichael/Prism/issues/401)) ([bf6b472](https://github.com/RumyantsevMichael/Prism/commit/bf6b472971182cedaaf4615f8c5d22ed1665ee60))
+* **review:** show the whole linked section in a wider, scrolling preview ([#399](https://github.com/RumyantsevMichael/Prism/issues/399)) ([338e826](https://github.com/RumyantsevMichael/Prism/commit/338e826e586d0c7727acd45b057d1ff03e562758)), closes [#376](https://github.com/RumyantsevMichael/Prism/issues/376) [#380](https://github.com/RumyantsevMichael/Prism/issues/380)
+
+
+### Fixed
+
+* **server:** keep record writes during hashing from failing verification ([#408](https://github.com/RumyantsevMichael/Prism/issues/408)) ([0a31d2a](https://github.com/RumyantsevMichael/Prism/commit/0a31d2a27e27cfbf60bebb96df7af0e6a49121a7)), closes [#118](https://github.com/RumyantsevMichael/Prism/issues/118)
+* **server:** let gate waits outlast the cloud session tool timeout ([#405](https://github.com/RumyantsevMichael/Prism/issues/405)) ([d351a01](https://github.com/RumyantsevMichael/Prism/commit/d351a0105e17451c54b2d3e69963262949a430ed))
+
 ## [0.30.0](https://github.com/RumyantsevMichael/Prism/compare/v0.29.0...v0.30.0) (2026-11-21)
 
 
