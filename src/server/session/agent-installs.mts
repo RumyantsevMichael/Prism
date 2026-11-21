@@ -28,8 +28,9 @@ const TOOL_TIMEOUT_MS = 15 * 60 * 1000;
 const MAX_REDIRECTS = 5;
 const STDERR_TAIL = 16 * 1024;
 const VERSION_FOLDER = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$/;
-// An earlier version that a launched session still runs on is checked again this often until it can be removed.
-const SWEEP_MS = 5000;
+// An installer that finds a sweep of unused versions holding the install slot waits this long for it, since a sweep only removes folders.
+const SWEEP_WAIT_MS = 5000;
+const SWEEP_POLL_MS = 50;
 
 /** What the install dialog names: the agent, its authors, its exact version, its license, its source, and the download or package. */
 export interface InstallDetails { id: string; name: string; version: string; from: string | null; authors: string[]; license: string | null; source: string | null; download: string }
@@ -132,16 +133,17 @@ async function removeLeftStaging(env: NodeJS.ProcessEnv) {
  * Runs action with a staging folder of its own while this process holds the machine's one install slot, or refuses with install_running
  * while another holds it.
  */
-async function withInstallSlot<T>(env: NodeJS.ProcessEnv, action: (staging: string) => Promise<T>): Promise<T> {
+async function withInstallSlot<T>(env: NodeJS.ProcessEnv, action: (staging: string) => Promise<T>, { sweep = false } = {}): Promise<T> {
   const running = () => refuse("install_running", "Another install, update, or removal of a coding agent is running on this computer; try again once it ends.");
   // Taken before any await, so two requests of this process never both pass.
   if (busyHere) throw running();
   busyHere = true;
   const file = lockFile(env);
-  const text = `${JSON.stringify({ pid: process.pid, host: os.hostname(), token: randomBytes(16).toString("hex"), startedAt: new Date().toISOString() })}\n`;
+  const text = `${JSON.stringify({ pid: process.pid, host: os.hostname(), token: randomBytes(16).toString("hex"), startedAt: new Date().toISOString(), ...(sweep ? { purpose: "sweep" } : {}) })}\n`;
   let taken = false;
   let refresh: NodeJS.Timeout | undefined;
   const staging = path.join(stagingRoot(env), ownName());
+  const waitUntil = Date.now() + SWEEP_WAIT_MS;
   try {
     await mkdir(agentsFolder(env), { recursive: true, mode: 0o700 });
     for (let attempt = 0; attempt < 5 && !taken; attempt += 1) {
@@ -149,19 +151,25 @@ async function withInstallSlot<T>(env: NodeJS.ProcessEnv, action: (staging: stri
       const lock = await readLock(file);
       // A lock that its holder released since is gone, and a lock that cannot be read whole is being written or held.
       if (lock === null) continue;
-      if (!lockStale(lock)) throw running();
+      if (!lockStale(lock)) {
+        // A sweep of unused versions ends within moments, so an install waits for it rather than being refused; a sweep never waits.
+        if (sweep || lock.holder?.purpose !== "sweep" || Date.now() > waitUntil) throw running();
+        await new Promise((done) => setTimeout(done, SWEEP_POLL_MS));
+        attempt -= 1;
+        continue;
+      }
       await breakStaleLock(file, lock);
     }
     if (!taken) throw running();
     refresh = setInterval(() => { const at = new Date(); utimes(file, at, at).catch(() => {}); }, LOCK_REFRESH_MS);
     refresh.unref();
     await removeLeftStaging(env);
-    await mkdir(staging, { recursive: true, mode: 0o700 });
+    if (!sweep) await mkdir(staging, { recursive: true, mode: 0o700 });
     return await action(staging);
   } finally {
     clearInterval(refresh);
     if (taken) {
-      await rm(staging, { recursive: true, force: true }).catch(() => {});
+      if (!sweep) await rm(staging, { recursive: true, force: true }).catch(() => {});
       await rmdir(stagingRoot(env)).catch(() => {});
       // Only this process's own lock is removed, never one that another process took after a stale lock was broken.
       const lock = await readLock(file).catch(() => null);
@@ -173,10 +181,28 @@ async function withInstallSlot<T>(env: NodeJS.ProcessEnv, action: (staging: stri
 
 // ---- Sessions on an agent ----
 
-/** Whether a launched session of this machine runs on the agent now. */
-export async function agentRunning(id: string, env: NodeJS.ProcessEnv = process.env) {
+const runningOn = async (env: NodeJS.ProcessEnv, id: string) => {
   const host = `${ACP_HOST_PREFIX}${id}`;
-  return (await listLaunchRecords(env)).some(({ record }) => record?.host === host && launchRunning(record));
+  return (await listLaunchRecords(env)).filter(({ record }) => record?.host === host && launchRunning(record)).map(({ record }) => record);
+};
+
+/** Whether a launched session of this machine runs on the agent now, on any version. */
+export async function agentRunning(id: string, env: NodeJS.ProcessEnv = process.env) {
+  return (await runningOn(env, id)).length > 0;
+}
+
+/**
+ * The version folders of the agent, in lowercase, that the running launched sessions of this machine run on, as each run's record names
+ * the version it started on, or null when a running session's run names none, so that every version counts as in use.
+ */
+export async function versionsInUse(id: string, env: NodeJS.ProcessEnv = process.env): Promise<Set<string> | null> {
+  const used = new Set<string>();
+  for (const record of await runningOn(env, id)) {
+    const version = record.runs.at(-1)?.agentVersion;
+    if (typeof version !== "string" || !VERSION_FOLDER.test(version)) return null;
+    used.add(version.toLowerCase());
+  }
+  return used;
 }
 
 const currentVersion = async (env: NodeJS.ProcessEnv, id: string) => {
@@ -184,36 +210,41 @@ const currentVersion = async (env: NodeJS.ProcessEnv, id: string) => {
   return typeof value?.version === "string" && VERSION_FOLDER.test(value.version) ? value.version : null;
 };
 
-const sweeping = new Map<string, NodeJS.Timeout>();
-
-/** Removes every version folder of the agent but the current one when no launched session runs on the agent, answering whether it could. */
-async function sweepEarlierVersions(env: NodeJS.ProcessEnv, id: string) {
-  if (await agentRunning(id, env)) return false;
+/** The version folders of the agent other than the current one, or none when no version is current. */
+async function earlierFolders(env: NodeJS.ProcessEnv, id: string) {
   const current = await currentVersion(env, id);
-  if (current === null) return true;
-  const folder = agentFolder(env, id);
-  const entries = await readdir(folder, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries) {
-    if (entry.isDirectory() && entry.name !== current) await rm(path.join(folder, entry.name), { recursive: true, force: true });
+  if (current === null) return [];
+  const entries = await readdir(agentFolder(env, id), { withFileTypes: true }).catch(() => []);
+  return entries.filter((entry) => entry.isDirectory() && entry.name !== current).map((entry) => entry.name);
+}
+
+/** Removes every earlier version folder of the agent that no running launched session runs on; the caller holds the install slot. */
+async function sweepAgent(env: NodeJS.ProcessEnv, id: string) {
+  const earlier = await earlierFolders(env, id);
+  if (earlier.length === 0) return;
+  const used = await versionsInUse(id, env);
+  if (used === null) return;
+  for (const name of earlier) {
+    if (!used.has(name.toLowerCase())) await rm(path.join(agentFolder(env, id), name), { recursive: true, force: true });
   }
-  return true;
 }
 
 /**
- * Removes the agent's earlier version folders now, from inside the install slot, or, while a launched session runs on the agent, checks
- * again until it can, each time inside the slot, so a sweep never removes a folder that an install is laying out.
+ * Removes the earlier version folders that no running launched session of this machine runs on, of the agents named or of every
+ * installed agent, inside the install slot, so a sweep never removes a folder that an install is laying out. Any review server or
+ * supervisor of this machine runs it, so an earlier version goes once its last session ends whichever process updated the agent;
+ * it does nothing while an install holds the slot, or when nothing is left to remove, and never throws.
  */
-async function removeEarlierVersions(env: NodeJS.ProcessEnv, id: string) {
-  clearInterval(sweeping.get(id));
-  sweeping.delete(id);
-  if (await sweepEarlierVersions(env, id)) return;
-  const timer = setInterval(() => {
-    withInstallSlot(env, () => sweepEarlierVersions(env, id)).then((done) => {
-      if (done && sweeping.get(id) === timer) { clearInterval(timer); sweeping.delete(id); }
-    }, () => {});
-  }, SWEEP_MS);
-  timer.unref();
-  sweeping.set(id, timer);
+export async function sweepUnusedVersions(env: NodeJS.ProcessEnv = process.env, ids: string[] | null = null) {
+  try {
+    const names = ids ?? (await readdir(agentsFolder(env), { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isDirectory() && ACP_ID_PATTERN.test(entry.name)).map((entry) => entry.name);
+    const pending: string[] = [];
+    for (const id of names) if (ACP_ID_PATTERN.test(id) && (await earlierFolders(env, id)).length > 0) pending.push(id);
+    if (pending.length === 0 || busyHere) return;
+    await withInstallSlot(env, async () => { for (const id of pending) await sweepAgent(env, id); }, { sweep: true });
+  } catch {
+    // A sweep that cannot run now runs again at the next launch end or periodic sweep.
+  }
 }
 
 // ---- Package programs ----
@@ -431,7 +462,12 @@ async function installVersion({ id, env, confirm, update, staging }: { id: strin
   if (update && agent.version.toLowerCase() === installed!.toLowerCase()) throw refuse("action_unavailable", `${agent.name} ${installed} is the version the registry lists.`);
   const folder = agentFolder(env, id);
   // A folder of this version kept for a launched session that still runs on it is never replaced, so the update waits until it ends.
-  const inUse = async () => (await versionFolderOf(folder, agent.version)) !== null && (await agentRunning(id, env));
+  const inUse = async () => {
+    const left = await versionFolderOf(folder, agent.version);
+    if (left === null) return false;
+    const used = await versionsInUse(id, env);
+    return used === null || used.has(left.toLowerCase());
+  };
   const busy = () => refuse("agent_running", `${agent.name} ${agent.version} is still in use by a launched session on this computer; stop that session before you install this version again.`);
   if (await inUse()) throw busy();
   const prepared = await prepare(agent, update ? installed : null, env, staging);
@@ -492,13 +528,14 @@ export async function installAgent({ id, env = process.env, confirm }: { id: str
 
 /**
  * Installs the registry's newer version of an installed agent after the person confirmed it, makes it current once it installed, and
- * removes the earlier version's folder once no launched session runs on the agent.
+ * removes the earlier version's folder once no launched session runs on that version.
  */
 export async function updateAgent({ id, env = process.env, confirm }: { id: string; env?: NodeJS.ProcessEnv; confirm: Confirm }) {
   const agent = checkedId(id);
   return withInstallSlot(env, async (staging) => {
     const updated = await installVersion({ id: agent, env, confirm, update: true, staging });
-    await removeEarlierVersions(env, agent);
+    // An earlier version that a session still runs on stays; the sweep after that session's run ends removes it.
+    await sweepAgent(env, agent);
     return updated;
   });
 }
@@ -510,8 +547,6 @@ export async function removeAgent({ id, env = process.env }: { id: string; env?:
     if (!existsSync(folder)) throw refuse("action_unavailable", `${agent} is not installed.`);
     const label = readInstalls(env).find((item) => item.id === agent)?.label ?? agent;
     if (await agentRunning(agent, env)) throw refuse("agent_running", `${label} runs in a launched session on this computer; stop that session before you remove it.`);
-    clearInterval(sweeping.get(agent));
-    sweeping.delete(agent);
     await rm(folder, { recursive: true, force: true });
     return { id: agent, name: label };
   });

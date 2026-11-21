@@ -370,7 +370,8 @@ Each install lives in the review app folder's `agents/<id>/<version>/` beside it
 Each install lays out its downloads, the `npm` and `uv` caches, and the new version in a folder of its own under `agents/.staging/`, which it removes when it ends, and moves the version into `agents/<id>/<version>/` only once every check passed, so nothing outside `agents/` changes, neither your own `npm` or `uv` configuration nor any sign-in.
 
 An update makes the new version current only once it installed and its command, arguments, and environment keep the rules of a [declaration](#acp-agents), and otherwise it is refused with `install_failed` and the rule it breaks, so a failed update keeps the earlier version in use.
-The earlier version's folder is removed once no launched session runs on the agent.
+Each launched session runs on the version that was current when its run started, and a later run of it, such as a resume, runs on the version current then.
+The earlier version's folder is removed once no launched session runs on that version: when the last such session's run ends, or at the next start or periodic check of any review app on this computer, even if the review app that ran the update has ended.
 While it is still kept for such a session, an update back to that version is refused with `agent_running`, so the running session keeps its files; stop the session and update again.
 A removal deletes every folder of the agent, reads nothing from the registry, and is refused with `agent_running` while a launched session runs on it; afterwards the agent is no host.
 One install, update, or removal runs at a time on a computer, and another one meanwhile is refused with `install_running`.

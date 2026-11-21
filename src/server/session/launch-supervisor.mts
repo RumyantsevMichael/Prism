@@ -109,6 +109,8 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
   }
   // An ACP agent runs with the arguments and environment of its declaration or install record.
   const acp: any = (resolved as any).acp ?? null;
+  // The version folder of a registry agent that this run starts on, which an update or sweep never removes while the run runs.
+  const agentVersion: string | null = acp?.install ? path.basename(acp.install.folder) : null;
   const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator, acp });
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
@@ -167,7 +169,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
         const at = new Date().toISOString();
         update((current: any) => {
           delete current.startFailure;
-          current.runs.push({ number, cause, token, supervisorPid: process.pid, hostPid: child.pid, startedAt: at, heartbeatAt: at, outputAt: null, model: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: graceMs, stopRequestedAt: null });
+          current.runs.push({ number, cause, token, supervisorPid: process.pid, hostPid: child.pid, ...(acp ? { agentVersion } : {}), startedAt: at, heartbeatAt: at, outputAt: null, model: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: graceMs, stopRequestedAt: null });
         }).then(() => markSpawned(true));
         heartbeat = setInterval(() => update((current: any) => {
           const run = current.runs.find((entry: any) => entry.token === token);
@@ -281,6 +283,11 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
   });
   if (started) await started.ended;
   await queue;
+  // Once this run ended, the earlier versions of its registry agent that no other session runs on are removed, whichever process updated it.
+  if (started && agentVersion !== null) {
+    const { sweepUnusedVersions } = await import("./agent-installs.mjs");
+    await sweepUnusedVersions(env, [acp.id]);
+  }
   // A run that exited 0 with an answer given here while it ran, whose gate is still pending, is resumed once for that answer.
   if (started) {
     const { resumeForAnswers } = await import("./launched-sessions.mjs");
