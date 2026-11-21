@@ -396,7 +396,12 @@ Each run also keeps the model its host reports as soon as the host names it, fro
 
 Each permission request that a launched session's host still asks, Claude Code's prompt to use a tool, a Codex approval of a command, a file change, or more permissions, or an ACP agent's request to run a tool, keeps the session waiting and waits for you on this computer's Attention.
 It lists with the initiative, the host, the action that the host named, the host's reason, and when it was asked, oldest first, and it counts toward the waiting questions that the page's title and desktop notification show.
-The action of a Claude Code request is the tool and the input it would run with, as compact JSON, such as `Write {"file_path":".claude/settings.local.json","content":"{}"}`, because that input is what an approval allows; a Codex action is the command, such as `touch /etc/hosts`, the file change's path, or the permissions asked, and an ACP agent's is its tool call's title.
+The action holds everything that an allow of the request covers, as compact JSON after a short name:
+- A Claude Code request shows the tool and the input it would run with, such as `Write {"file_path":".claude/settings.local.json","content":"{}"}`, because that input is what an approval allows.
+- A Codex command shows the command, such as `touch /etc/hosts`, followed by the folder, environment, kind, and network host it runs with whenever Codex sets them, such as `curl https://example.com {"cwd":"/","networkApprovalContext":{"host":"example.com","protocol":"https"}}`; the amendments Codex proposes are left out, because Prism never applies one.
+- A Codex file change shows `File change` and the paths, kinds, and diffs of every file it writes, as Codex last described the change before it asked, plus the folder it asks to write under for the rest of the session when it asks for one, such as `File change {"changes":[{"path":"src/new.txt","kind":{"type":"add"},"diff":"hello\\n"}]}`.
+- A Codex permissions request shows `Permissions` and the permissions it asks for.
+- An ACP agent's request shows its tool call's title followed by the tool call's raw input, such as `Write file {"file_path":"notes.txt","content":"hello"}`, with the title, kind, and raw input taken from the agent's earlier updates of the same tool call when the request leaves them out; an agent that sends no raw input shows only the title, or `a tool of kind <kind>` without one, because that is all it says the tool call does.
 The action and the reason show on one line with every character the host sent visible: a backslash shows as `\\`, a line feed as `\n`, a carriage return as `\r`, a tab as `\t`, and any other control, format, or line or paragraph separator character as `\u{<code>}`, such as `\u{202E}`, so no host text can hide part of itself or add a line.
 An action or reason longer than 1,000 characters shows as its first 1,000 characters followed by `…`, and such a request can only be refused: **Allow** answers `approval_too_long` before any dialog, because a confirmation could not show what you would allow.
 The session shows **Waiting for you** with the reason `Asks you to allow: <action>.`.
@@ -404,12 +409,17 @@ A request lives only in the session's folder on this computer, so it never reach
 
 **Allow** asks you again outside the browser every time, in a dialog of the operating system that names the initiative and the host, then shows the whole action and the whole reason each on its own line, and whose default button refuses; an open launch window does not skip it.
 The process that runs the session and answers its host shows that dialog itself, and it allows only the request whose own dialog you confirmed, so no file or message that another program of this computer writes, the session's host included, can approve anything.
-Only once you choose **Allow** there does Prism answer the host, and it answers with the host's allow for this one request alone: Claude Code runs the tool with the input it asked for, Codex accepts the command or file change, or grants the requested permissions for the current turn, and an ACP agent gets its allow-once option.
+Only once you choose **Allow** there does Prism answer the host, and it answers with the host's allow for this one request alone: Claude Code runs the tool with the input it asked for, Codex accepts the command or file change and nothing more, and an ACP agent gets its allow-once option.
 When you choose **Refuse** in that dialog, or nobody answers within 2 minutes, the request keeps waiting and the action is refused with `confirmation_declined` or `confirmation_timeout`.
 A request whose host offers no allow that covers only this one request, such as an ACP agent that offers only an always-allow option, cannot be allowed and is refused with `approval_unavailable`.
+Some Codex requests can only be refused, and **Allow** answers `approval_unavailable` before any dialog, with the request still waiting until you refuse it or it ends:
+- A permissions request, because the narrowest grant Codex takes lasts for the rest of its turn: `Codex asks for these permissions for the rest of its turn, so Prism can only refuse it.`
+- A file change that asks to write under a folder for the rest of the session: `Codex asks to allow writes under <folder> for the rest of the session, so Prism can only refuse it.`
+- A file change whose files Codex did not describe before it asked, whose action shows as `A file change that Codex did not describe`: `Codex did not say which files this change writes, so Prism can only refuse it.`
 
-**Refuse** needs no dialog: Claude Code is told `The person refused this on Attention.`, Codex declines, and an ACP agent gets its reject-once option, or a cancelled answer when it offers none.
+**Refuse** needs no dialog: Claude Code is told `The person refused this on Attention.`, Codex declines, or for a permissions request is granted no permission, and an ACP agent gets its reject-once option, or a cancelled answer when it offers none.
 When the session's run ends, or you stop it, while a request waits, Prism refuses the request to the host if it still runs and removes it from Attention.
+When Codex changes the patch of a file change while its request waits, what an allow would cover has changed, so Prism declines that request and removes it from Attention, and a dialog for it that is open then allows nothing.
 An answer to a request that no longer waits in the session is refused with `unknown_request`.
 Each answer is recorded in the initiative's history as `launch.permission` with the decision and the action.
 
