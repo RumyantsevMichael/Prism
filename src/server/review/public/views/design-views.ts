@@ -70,9 +70,18 @@ function viewBody(view: any) {
   return `<prism-canvas class="diagram-output"><prism-spinner label="Rendering the view"></prism-spinner></prism-canvas><div class="diagram-source" hidden><prism-code language="plantuml"><pre><code>${highlight(view.source, "plantuml")}</code></pre></prism-code></div>`;
 }
 
-/** One view as a card and a region named by its question: its kind and file above the question, the note, then the drawing or the source text. */
+// A diagram that no Views line names, such as one of a design written before designs declared views, answers no stated question and explains no clause.
+const UNASKED_NOTE = '<p class="view-note">This diagram is in the slice’s folder, but the design states no question for it and cites no clause that it explains.</p>';
+
+/**
+ * One view as a card and a region named by its question: its kind and file above the question, the note, then the drawing or the source text.
+ * A diagram that no Views line names is named by its title instead, and its note says that it states no question.
+ */
 export function viewCardHtml(view: any, level = 2) {
-  return `<prism-panel class="diagram-view view-region" variant="card" level="${level}" region heading="${escapeHtml(view.question)}" eyebrow="${escapeHtml(`${viewKind(view)} · ${view.file}`)}" data-view="${escapeHtml(view.path)}">${viewTools(view)}${viewNoteHtml(view)}${viewBody(view)}</prism-panel>`;
+  const declared = view.declared !== false;
+  const heading = declared ? view.question : view.title ?? view.file;
+  const eyebrow = declared ? `${viewKind(view)} · ${view.file}` : `Diagram · ${view.file}`;
+  return `<prism-panel class="diagram-view view-region" variant="card" level="${level}" region heading="${escapeHtml(heading)}" eyebrow="${escapeHtml(eyebrow)}" data-view="${escapeHtml(view.path)}"${declared ? "" : " data-view-unasked"}>${viewTools(view)}${declared ? viewNoteHtml(view) : UNASKED_NOTE}${viewBody(view)}</prism-panel>`;
 }
 
 /** A view card's eyebrow names its file, where the file is the subject, so the line is marked as such once the panel has drawn it. */
