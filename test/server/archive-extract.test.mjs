@@ -48,6 +48,28 @@ test("a tar.gz link that leads outside the version folder refuses the archive", 
   await assert.rejects(extractTarGz(file, path.join(folder, "out")), /leads outside the version folder/);
 });
 
+test("a tar.gz link that leads outside only through another link, to a target that does not exist, refuses the archive", { skip: posixOnly }, async (t) => {
+  const folder = await scratch(t);
+  const file = await tarOf(folder, async (content) => {
+    await mkdir(path.join(content, "a", "b"), { recursive: true });
+    await symlink("../..", path.join(content, "a", "b", "up"));
+    await symlink("a/b/up/../missing", path.join(content, "link"));
+  }, ["a", "link"]);
+  await assert.rejects(extractTarGz(file, path.join(folder, "out", "version")), /leads outside the version folder/);
+});
+
+test("a tar.gz link that climbs through another link and stays inside is kept, also when its target does not exist", { skip: posixOnly }, async (t) => {
+  const folder = await scratch(t);
+  const file = await tarOf(folder, async (content) => {
+    await mkdir(path.join(content, "a", "b"), { recursive: true });
+    await symlink("..", path.join(content, "a", "b", "up"));
+    await symlink("a/b/up/missing", path.join(content, "link"));
+  }, ["a", "link"]);
+  const out = path.join(folder, "out");
+  await extractTarGz(file, out);
+  assert.ok(lstatSync(path.join(out, "link")).isSymbolicLink());
+});
+
 test("a tar.gz entry written through a link it made refuses the archive", { skip: posixOnly }, async (t) => {
   const folder = await scratch(t);
   const file = await tarOf(folder, async (content) => {

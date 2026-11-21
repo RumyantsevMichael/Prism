@@ -113,6 +113,9 @@ function checkedLaunch(entry: Record<string, any>): { launch: AcpLaunch | null; 
   return { launch: Object.freeze({ command, args: Object.freeze([...args]), env: Object.freeze(Object.fromEntries(pairs)), autoMode, resumeCommand }), rule: null };
 }
 
+/** The rule of clause 3 that an install's command, args, and env break, or null when they keep every rule. */
+export const launchRule = (launch: { command: unknown; args: unknown; env: unknown }) => checkedLaunch(launch).rule;
+
 const listedId = (value: unknown) => (typeof value === "string" ? value.slice(0, 100) : null);
 
 function declaredAgent(entry: unknown, position: number): AcpAgent {

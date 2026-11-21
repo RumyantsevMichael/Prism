@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createWriteStream, existsSync } from "node:fs";
+import { constants, createWriteStream, existsSync } from "node:fs";
 import { copyFile, lstat, mkdir, readdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
-import { ACP_HOST_PREFIX, ACP_ID_PATTERN, agentsFolder, readInstalls } from "./acp-agents.mjs";
+import { ACP_HOST_PREFIX, ACP_ID_PATTERN, agentsFolder, launchRule, readInstalls } from "./acp-agents.mjs";
 import { downloadUrlRefusal, npxPackage, readRegistry, uvxPackage, type RegistryAgent } from "./acp-registry.mjs";
 import { ArchiveError, extractTarGz, extractZip } from "./archive-extract.mjs";
 import { resolveDefinition } from "./launch-hosts.mjs";
@@ -156,7 +156,9 @@ function toolEnvironment(env: NodeJS.ProcessEnv, staging: string): NodeJS.Proces
     npm_config_ignore_scripts: "true",
     npm_config_update_notifier: "false",
     UV_CACHE_DIR: path.join(staging, "uv-cache"),
-    UV_NO_BUILD: "1"
+    UV_NO_BUILD: "1",
+    // uv uses only a Python already on the computer and never downloads one of its own outside agents/.
+    UV_PYTHON_DOWNLOADS: "never"
   };
 }
 
@@ -256,8 +258,8 @@ async function prepare(agent: RegistryAgent, from: string | null, env: NodeJS.Pr
     return {
       details: { ...base, download: `the npm package ${spec.name}@${spec.version} and the dependencies its lockfile names` },
       install: async (folder) => {
-        await copyFile(path.join(project, "package.json"), path.join(folder, "package.json"));
-        await copyFile(path.join(project, "package-lock.json"), path.join(folder, "package-lock.json"));
+        await copyFile(path.join(project, "package.json"), path.join(folder, "package.json"), constants.COPYFILE_EXCL);
+        await copyFile(path.join(project, "package-lock.json"), path.join(folder, "package-lock.json"), constants.COPYFILE_EXCL);
         await runTool("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: folder, env: toolEnv, agent: label });
         const packageFolder = path.join(folder, "node_modules", ...spec.name.split("/"));
         const installed = await readFile(path.join(packageFolder, "package.json"), "utf8").then((text) => JSON.parse(text), () => null);
@@ -280,18 +282,36 @@ async function prepare(agent: RegistryAgent, from: string | null, env: NodeJS.Pr
   // Only the locked requirements are resolved before the dialog, from wheels alone, so no build backend runs.
   await runTool("uv", ["pip", "compile", "requirements.in", "-o", "requirements.txt", "--generate-hashes", "--no-build"], { cwd: project, env: toolEnv, agent: label });
   if (!existsSync(path.join(project, "requirements.txt"))) throw refuse("install_failed", `uv wrote no locked requirements for ${label}.`);
+  const locked = lockedVersions(await readFile(path.join(project, "requirements.txt"), "utf8"), spec.name);
+  if (!locked.includes(spec.version)) {
+    throw refuse("install_mismatch", `uv locked ${spec.name} ${locked.join(", ") || "at no version"}, but the registry lists ${spec.version}, so Prism installed nothing.`);
+  }
   return {
     details: { ...base, download: `the Python package ${distribution.package} and the requirements it locks` },
     install: async (folder) => {
-      await copyFile(path.join(project, "requirements.txt"), path.join(folder, "requirements.txt"));
+      await copyFile(path.join(project, "requirements.txt"), path.join(folder, "requirements.txt"), constants.COPYFILE_EXCL);
       const venv = path.join(folder, "venv");
       await runTool("uv", ["venv", venv], { cwd: folder, env: toolEnv, agent: label });
       const scripts = process.platform === "win32" ? path.join(venv, "Scripts") : path.join(venv, "bin");
       const python = path.join(scripts, process.platform === "win32" ? "python.exe" : "python");
       await runTool("uv", ["pip", "sync", "requirements.txt", "--python", python, "--no-build", "--require-hashes"], { cwd: folder, env: toolEnv, agent: label });
-      return { command: path.join(scripts, process.platform === "win32" ? `${spec.name}.exe` : spec.name), args: distribution.args, env: distribution.env };
+      const command = path.join(scripts, process.platform === "win32" ? `${spec.name}.exe` : spec.name);
+      if (!(await lstat(command).catch(() => null))?.isFile()) throw refuse("install_failed", `Prism did not install ${agent.name}: its virtual environment holds no program ${spec.name}.`);
+      return { command, args: distribution.args, env: distribution.env };
     }
   };
+}
+
+// A Python package name as Python compares it: letter case and each run of -, _, and . alike.
+const pythonName = (name: string) => name.toLowerCase().replace(/[-_.]+/g, "-");
+
+/** The versions that the locked requirements pin with == for the package, in lock order. */
+function lockedVersions(text: string, name: string) {
+  const wanted = pythonName(name);
+  return text.split(/\r?\n/).flatMap((line) => {
+    const match = /^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*==\s*([^\s;\\]+)/.exec(line.trim());
+    return match && pythonName(match[1]) === wanted ? [match[2]] : [];
+  });
 }
 
 // Installs the registry's version of the agent beside any installed one, then makes it current; a failure removes what it laid out.
@@ -319,6 +339,8 @@ async function installVersion({ id, env, confirm, update }: { id: string; env: N
     await rm(versionFolder, { recursive: true, force: true });
     await mkdir(versionFolder, { mode: 0o755 });
     const launch = await prepared.install(versionFolder);
+    const rule = launchRule(launch);
+    if (rule) throw refuse("install_failed", `Prism did not install ${agent.name} ${agent.version}: the registry's command, arguments, or environment break a rule: ${rule}`);
     const record = {
       id,
       name: agent.name,
@@ -334,7 +356,10 @@ async function installVersion({ id, env, confirm, update }: { id: string; env: N
       env: launch.env,
       installedAt: new Date().toISOString()
     };
-    await writeFile(path.join(versionFolder, "install.json"), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o644 });
+    // Prism's own record replaces anything the archive placed at its name, and its write follows no link: wx never opens an existing name.
+    const recordFile = path.join(versionFolder, "install.json");
+    await rm(recordFile, { recursive: true, force: true });
+    await writeFile(recordFile, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o644, flag: "wx" });
     // Only now does the new version become current, so a failed update keeps the earlier one in use.
     await writeAtomically(path.join(folder, "current.json"), `${JSON.stringify({ version: agent.version }, null, 2)}\n`, { mode: 0o644 });
     return { id, name: agent.name, version: agent.version, from: update ? installed : null };

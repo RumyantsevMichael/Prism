@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, realpath, symlink, writeFile, chmod, copyFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readlink, symlink, writeFile, chmod, copyFile } from "node:fs/promises";
 import path from "node:path";
 import { crc32, gunzipSync, inflateRawSync } from "node:zlib";
 
@@ -88,12 +88,44 @@ async function writeEntries(entries: Entry[], folder: string) {
       await chmod(file, (entry.mode & 0o777) | 0o600);
     }
   }
-  // A link may lead through another link, so each one that resolves is checked again where it really leads.
-  const real = await realpath(root);
+  // A link may lead through other links that the archive made, so each one is followed again link by link, whether or not its target exists.
   for (const file of links) {
-    const resolved = await realpath(file).catch(() => null);
-    if (resolved !== null && !inside(real, resolved)) throw refuse(`The archive link ${JSON.stringify(path.relative(root, file))} leads outside the version folder.`);
+    if (!(await staysInside(root, file))) throw refuse(`The archive link ${JSON.stringify(path.relative(root, file))} leads outside the version folder.`);
   }
+}
+
+const MAX_LINK_HOPS = 40;
+
+/**
+ * Whether the link at file, followed through every link below root, stays inside root, wherever its target exists or not.
+ * The walk keeps the folders it has passed, relative to root: a part that is a link is replaced by its target, a `..` climbs one folder,
+ * and a part that does not exist is taken as written, so a target that does not exist yet still counts where it would lead.
+ */
+async function staysInside(root: string, file: string): Promise<boolean> {
+  const at = path.relative(root, path.dirname(file)).split(path.sep).filter(Boolean);
+  const absolute = (target: string) => path.isAbsolute(target) || /^[\\/]/.test(target) || /^[A-Za-z]:/.test(target);
+  const first = await readlink(file);
+  if (absolute(first)) return false;
+  const pending = first.split(/[\\/]+/);
+  let hops = 0;
+  while (pending.length > 0) {
+    const part = pending.shift()!;
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (at.length === 0) return false;
+      at.pop();
+      continue;
+    }
+    const next = path.join(root, ...at, part);
+    const info = await lstat(next).catch((error) => (error.code === "ENOENT" || error.code === "ENOTDIR" ? null : Promise.reject(error)));
+    if (info === null || !info.isSymbolicLink()) { at.push(part); continue; }
+    hops += 1;
+    if (hops > MAX_LINK_HOPS) return false;
+    const target = await readlink(next);
+    if (absolute(target)) return false;
+    pending.unshift(...target.split(/[\\/]+/));
+  }
+  return true;
 }
 
 // ---- tar.gz ----

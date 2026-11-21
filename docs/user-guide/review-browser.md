@@ -357,18 +357,19 @@ Prism runs no install, build, or lifecycle script of an agent or its dependencie
 
 | Kind | Before the dialog | After the dialog |
 | --- | --- | --- |
-| Build for this computer | Nothing | Downloads the archive, checks its SHA-256 against the registry's, and only then unpacks it with Prism's own code, refusing any entry with an absolute path, a `..` part, or a link that leads outside the version folder |
+| Build for this computer | Nothing | Downloads the archive, checks its SHA-256 against the registry's, and only then unpacks it with Prism's own code, refusing any entry with an absolute path, a `..` part, or a link that leads outside the version folder, read as written or followed through the archive's other links, whether or not its target exists |
 | `npx` package | Resolves a lockfile with `npm install --package-lock-only --ignore-scripts` | Installs from that lockfile with `npm ci --ignore-scripts` and checks that the installed version is the registry's |
-| `uvx` package | Resolves hashed requirements with `uv pip compile --generate-hashes --no-build` | Creates a virtual environment and installs them with `uv pip sync --no-build --require-hashes`, so a requirement that needs a build fails |
+| `uvx` package | Resolves hashed requirements with `uv pip compile --generate-hashes --no-build` | Creates a virtual environment and installs them with `uv pip sync --no-build --require-hashes`, so a requirement that needs a build fails, and checks that the requirements pin the registry's package and version and that the environment holds a program named after the package |
 
 A download whose checksum or package version differs from the registry's installs nothing, leaves no file of it behind, and is refused with `install_mismatch`, naming the expected and the found value.
 An agent that needs its install scripts to work fails when it starts, with its own error.
+Every `uv` run has `UV_PYTHON_DOWNLOADS=never`, so `uv` uses only a Python already on the computer, and a computer without one refuses the install with `uv`'s own reason.
 
 Each install lives in the review app folder's `agents/<id>/<version>/` beside its `install.json`, which records the registry entry, the command, arguments, and environment, and the install time.
 `agents/<id>/current.json` names the version that new sessions run.
 The downloads and the `npm` and `uv` caches live in `agents/.staging/`, which each install removes when it ends, and nothing outside `agents/` changes, neither your own `npm` or `uv` configuration nor any sign-in.
 
-An update makes the new version current only once it installed, so a failed update keeps the earlier version in use.
+An update makes the new version current only once it installed and its command, arguments, and environment keep the rules of a [declaration](#acp-agents), and otherwise it is refused with `install_failed` and the rule it breaks, so a failed update keeps the earlier version in use.
 The earlier version's folder is removed once no launched session runs on the agent.
 A removal deletes every folder of the agent, reads nothing from the registry, and is refused with `agent_running` while a launched session runs on it; afterwards the agent is no host.
 One install, update, or removal runs at a time on a computer, and another one meanwhile is refused with `install_running`.
