@@ -1,5 +1,6 @@
 // Browser helpers for the review app UI kit's acceptance tests.
 // Playwright is not a dependency of this repository, so the browser tests use an installed copy, local or global, and skip with a message that says how to install it.
+import "./no-host-path.mjs";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
