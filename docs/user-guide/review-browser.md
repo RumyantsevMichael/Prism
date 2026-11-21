@@ -39,6 +39,7 @@ Its **Host** select offers **Any available host** and every host Prism supports,
 **Any available host** starts each run on the first host Prism finds with that host's default model, so its **Model** picker takes no choice.
 **Apply** stores the choice in `prism-runs.json` in the review app folder, readable only by you, and only a tab that Prism opened can apply it; a run already started keeps its own host and model.
 When the chosen host is no longer found, or the stored choice cannot be read, a run starts on the first host Prism finds with its default model and says why, and with no host found it does not start.
+**Coding agents** lists the [ACP agents](#acp-agents) that Prism can launch or install, as [Coding agents in Settings](#coding-agents-in-settings) describes.
 **About Prism** names the version of Prism that runs the review app, and **Open the catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
 The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
 
@@ -246,8 +247,9 @@ Index actions are not part of an initiative, so shipping one leaves them availab
 An initiative whose record cannot be read and that the roadmap does not list has no settings, so its page offers none.
 On a slice page the card names the initiative above its title, because the settings belong to the whole initiative and a change there applies to every slice.
 Each setting shows its options as a button group, the sentence on when a change takes effect, and for an on or off setting what the picked option does.
-**Host** is one select of every host Prism supports, as found on this computer; a host this computer lacks shows as `<host>: unavailable` and cannot be chosen, and its reason, such as `Codex was not found: no codex executable on PATH.`, shows below the select.
-**Models** follows the host that the select shows, and switching the host shows the choices kept for that host, so switching back shows the first host's choices as they were.
+**Host** is one choice of every host Prism supports, as found on this computer: Claude Code, Codex, and each [ACP agent](#acp-agents), each with a line under its label.
+The line says what choosing the host does, or why it cannot run: a host this computer lacks shows its reason, such as `Codex was not found: no codex executable on PATH.`, and cannot be chosen, and an ACP agent whose models were read shows its sign-in or failed reason, such as `<label> needs you to sign in before it can run:` and its sign-in methods.
+**Models** follows the host that the choice shows, and switching the host shows the choices kept for that host, so switching back shows the first host's choices as they were.
 It shows a **Provider** picker when the host reports providers, as Codex does, and then one picker for the **Coordinator** and one for each kind of agent: **Design and implementation**, **Code review**, **Security review**, and **Design gate summary**.
 Each picker shows the chosen model and effort, such as **Fable 5.2 · High effort**, or **Host default** and **Host default effort** for the host's own choice.
 While the review app asks the host for its options, each picker reads **Reading <host>’s models…**; a host that does not answer shows its reason, such as `Claude Code did not report its run options: it gave no answer within 20 seconds.`, and its pickers still offer the host's default and a model name you type.
@@ -345,6 +347,19 @@ Prism installs only what it can check and lock, so an agent cannot be installed,
 
 While the registry cannot be read, the list says why, keeps every installed and declared agent with the details its install recorded, and offers no install or update until the registry answers again.
 
+### Coding agents in Settings
+
+**Coding agents** in [Settings](#layout) lists every agent of `GET api/coding-agents`, read again each time you open the section: the installed agents, then the registry's other agents for this computer, then the declared ones.
+Each row shows the agent's name and version, its authors, license, and source, which opens in a new tab, and its description.
+An installed agent is marked **Installed**, a declared one **Declared**, and an available update shows as **Update <version>**.
+A registry agent that is not installed offers **Install**, or in its place the reason it cannot be installed, such as a build without a SHA-256 checksum.
+An installed agent offers **Update** while the registry lists another version, and **Remove**, which asks you in the page first.
+A declared agent offers neither, because Prism does not install it; change it in `acp-agents.json`.
+An installed or declared agent that cannot run says why under its description, such as `Broken agent was not found: no executable file at /nowhere/broken-agent.`
+**Install** and **Update** wait for the confirmation outside the browser that [Install, update, or remove an agent](#install-update-or-remove-an-agent) describes, and the row says so meanwhile; a refused or declined one shows its message in the row.
+Below the list the section says when the registry was read, and while the registry cannot be read a warning names its reason, such as `it answered HTTP 503`, and the list keeps only the installed and declared agents.
+In a tab that can only read, the section shows the read-only notice and its buttons are disabled.
+
 ### Install, update, or remove an agent
 
 The actions `agents.install`, `agents.update`, and `agents.remove` on the target `agent:<id>` install, update, and remove a registry agent on this computer.
@@ -387,7 +402,7 @@ It works on the initiative as an agent you started in a terminal would, and you 
 It shows the latest run when there is one, then **Host**, **How the run works** with **Autonomy**, **Commit**, **Push**, **Continuation**, and **Review**, and **Models** with the coordinator and each kind of agent, each set to the initiative's current value as **Settings** shows it.
 Each option says what it does when you point at it, and the chosen option's effect shows under its group.
 Opening the dialog starts nothing.
-Changing **Host** shows the choices kept for that host and renames the launch button, such as **Launch with Codex**, and a host this computer lacks shows as unavailable with its reason and cannot be chosen.
+Changing **Host** shows the choices kept for that host and renames the launch button, such as **Launch with Codex**, and each host shows under its label why it cannot run, as in **Settings**, and a host this computer lacks cannot be chosen.
 **Cancel**, Escape, and the close button discard the dialog's changes and launch nothing.
 **Launch with <host>** saves every changed choice as the initiative's settings, asking you in the page first for a risky one such as **Push** on, and then starts the session, so the initiative's history records the settings before the launch.
 While a choice is not offered, the button is disabled and the dialog names the field and its reason, such as `Code review: Claude Code on this computer does not offer the model claude-opus-3.`, until you choose a value the host offers.

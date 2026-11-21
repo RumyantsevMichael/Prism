@@ -19,6 +19,7 @@ import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createAgentsMenu } from "./views/agents-menu.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
 import { createActionList, shownActionEntries } from "./views/actions.js";
+import { createCodingAgents } from "./views/coding-agents.js";
 import { artifactChangesView, artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 import { createWorkspaceForms } from "./views/workspace-forms.js";
@@ -1209,7 +1210,7 @@ function requireApp() {
 }
 
 // Settings, from the status bar's gear or Ctrl+,: sections down its start edge for the appearance, the layout, the record store,
-// Prism's own runs, and About Prism. Each appearance and layout choice applies at once and is kept as the person's preference, as the
+// Prism's own runs, the coding agents, and About Prism. Each appearance and layout choice applies at once and is kept as the person's preference, as the
 // appearance menu's did; Prism's own runs is this computer's action, drawn by the action list and applied with its own button.
 const settingsDialog = document.getElementById("settings-dialog");
 const PRISM_RUNS_TARGET = "machine:prism-runs";
@@ -1238,12 +1239,35 @@ function showPrismRuns(shown: any) {
   return prismRunsShown;
 }
 
+// The coding agents are read each time their section is chosen, since an agent installed, removed, or declared elsewhere changes the
+// list, and the section shows once the first read has answered, rather than a loading line.
+let codingAgents: any = null;
+// A read of the registry may take its own 30 seconds before the list answers without it.
+const CODING_AGENTS_DEADLINE_MS = 45000;
+function showCodingAgents(shown: any) {
+  if (!codingAgents) {
+    codingAgents = createCodingAgents({
+      root: document.getElementById("settings-agents-list"),
+      read: () => appFetch("./api/coding-agents", { cache: "no-store", deadlineMs: CODING_AGENTS_DEADLINE_MS }),
+      api: actionApi,
+      canWrite: () => Boolean(writeSession()),
+      shown: () => queueMicrotask(shown)
+    });
+  }
+  const ready = codingAgents.ready();
+  void codingAgents.refresh();
+  return ready;
+}
+
 function startSettings() {
   const sections = document.getElementById("settings-sections");
   let current = "appearance";
   const showSection = (name: string) => {
+    const chosen = current !== name;
     current = name;
-    const ready = name !== "prism-runs" || showPrismRuns(() => { if (current === "prism-runs") showSection("prism-runs"); });
+    const ready = name === "prism-runs" ? showPrismRuns(() => { if (current === "prism-runs") showSection("prism-runs"); })
+      : name === "agents" ? (chosen ? showCodingAgents(() => { if (current === "agents") showSection("agents"); }) : codingAgents?.ready() ?? false)
+      : true;
     for (const section of settingsDialog!.querySelectorAll(".settings-section")) (section as any).hidden = (section as any).dataset.section !== name || !ready;
     for (const item of sections!.querySelectorAll("prism-tree-item")) item.toggleAttribute("selected", item.getAttribute("value") === name);
   };
@@ -1291,6 +1315,7 @@ function openSettings() {
   document!.getElementById("settings-store-name")!.textContent = store!.hidden ? "No record store" : store!.getAttribute("data-name") || "Record store";
   document!.getElementById("settings-store-state")!.textContent = store!.hidden ? "This workspace keeps no records yet." : (store!.getAttribute("tip") ?? "").split("\n")[0];
   document!.getElementById("settings-store-open")!.hidden = store!.hidden;
+  if (settingsDialog!.querySelector('.settings-section[data-section="agents"]:not([hidden])')) void codingAgents?.refresh();
   (settingsDialog! as any).show();
 }
 

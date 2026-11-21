@@ -42,7 +42,7 @@ const ready = (scope) => settled(() => picker(scope).evaluate((element) => !elem
 test("clause 8: Settings has a section for Prism's own runs after the record store, with the host select and the model picker", { skip: skipHere, timeout: 90000 }, async (t) => {
   const s = await section(t, { hosts: ["claude"] });
   const sections = (await s.settings.getByRole("treeitem").allInnerTexts()).map((name) => name.trim());
-  assert.deepEqual(sections, ["Appearance", "Layout", "Record store", "Prism's own runs", "About Prism"]);
+  assert.deepEqual(sections, ["Appearance", "Layout", "Record store", "Prism's own runs", "Coding agents", "About Prism"]);
   assert.match(await s.region.innerText(), /Prism's own runs on this computer, such as moving records to a new format, start with this host and model; a run already started keeps its own\./);
   const host = s.region.getByRole("combobox", { name: "Host" });
   const options = await host.locator("option").evaluateAll((items) => items.map((item) => [item.value, item.textContent.trim(), item.disabled]));
