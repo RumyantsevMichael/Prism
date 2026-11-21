@@ -118,7 +118,8 @@ test("clauses 11, 12: answering records each point's value with its author and c
 });
 
 test("clause 13: answering refuses an answered run, a run that is not asking, an invalid value, and a field for no asked point", { skip: posixOnly }, async (context) => {
-  const { call, base, headers } = await served(context, { ...CONFORMING, [AUDIT]: AUDIT_SOURCE, [PATHS.requirements]: UNANCHORED });
+  // The ADR is a set of its own type, so its run is a second run that does not ask.
+  const { call, base, headers } = await served(context, { ...CONFORMING, [AUDIT]: AUDIT_SOURCE, [LOG_ADR]: LOG_ADR_SOURCE });
   const { run, points } = await asking(call);
   const lined = await answer(base, run, { ...unknownAnswers(points), [points[0].id]: "Two\nlines." }, headers);
   assert.equal(codeOf(lined), "invalid_input", lined.text);
@@ -131,7 +132,8 @@ test("clause 13: answering refuses an answered run, a run that is not asking, an
   assert.equal((await answer(base, run, unknownAnswers(points), headers)).status, 200);
   const again = await apply(base, { action: "migration-run.answer", target: `migration-run:${run}`, input: unknownAnswers(points), revision: "x", confirmed: true }, headers);
   assert.equal(codeOf(again), "already_answered", again.text);
-  const running = (await entryFor(call, PATHS.requirements)).migration.run;
+  const running = (await entryFor(call, LOG_ADR)).migration.run;
+  assert.notEqual(running, run, "the ADR has a run of its own");
   const notAsking = await apply(base, { action: "migration-run.answer", target: `migration-run:${running}`, input: { p1: "unknown" }, revision: "x", confirmed: true }, headers);
   assert.equal(codeOf(notAsking), "run_not_asking", notAsking.text);
 });
@@ -146,6 +148,31 @@ test("clause 11: an unknown value is refused as an answer for an Accepted ADR", 
   assert.equal((await answer(base, run, values, headers)).status, 200);
 });
 
+test("clause 11: a conflict point's field starts as the option its recommendation names first, and as target when it names none", { skip: posixOnly }, async (context) => {
+  const terms = "docs/requirements/terms.md";
+  const glossary = CONFORMING[PATHS.glossary];
+  const source = "# Payment terms\n\nTerms used by the payments team.\n\n| Term | Definition |\n| --- | --- |\n| Backoff | The wait between two attempts. |\n| Retry deadline | The longest a request may wait. |\n";
+  const entry = (id, title, text) => `<a id="${id}"></a>\n## ${title}\n\n${text}\n\nSource: migration\n`;
+  const conflicts = [{ entry: "retry-deadline", content: entry("retry-deadline", "Retry deadline", "The longest a request may wait.") }];
+  const leftover = { statement: "Terms used by the payments team.", home: "Dropped: the glossary keeps its own purpose." };
+  const proposal = (run, extra = {}) => ({ run, type: "glossary", source: terms, target: PATHS.glossary, content: `${glossary}\n${entry("backoff", "Backoff", "The wait between two attempts.")}`, summary: "Moves the payments team's terms into the glossary and asks which definition of the retry deadline stays.", leftovers: [leftover], conflicts, settled: [{ point: { kind: "leftover", statement: leftover.statement }, reason: "The glossary already states its purpose." }], ...extra });
+  const cases = [["Take the source's definition, which the team wrote later than the target's.", "source"], ["Keep the glossary's definition.", "target"]];
+  for (const [recommendation, expected] of cases) {
+    const { call, base, headers } = await served(context, { ...CONFORMING, [terms]: source });
+    const run = await runFor(call, terms);
+    const bare = await call("propose_migration", proposal(run));
+    assert.equal(bare.value?.code, "migration_unsettled", bare.text);
+    const asked = bare.value.points.map((point) => ({ point, recommendation: point.kind === "remove-source" ? "Remove it, since its terms now live in the glossary." : recommendation }));
+    const proposed = await call("propose_migration", proposal(run, { asked }));
+    assert.equal(proposed.refused, false, proposed.text);
+    assert.equal((await call("finish_migration_run", { run })).refused, false);
+    const conflict = proposed.value.migration.points.find((point) => point.kind === "conflict");
+    assert.ok(conflict, JSON.stringify(proposed.value.migration.points));
+    const { action } = await answerAction(base, run, headers);
+    assert.equal(action.value[conflict.id], expected, recommendation);
+  }
+});
+
 test("clause 18: a separate source's removal takes no field, and the answer records its removal", { skip: posixOnly }, async (context) => {
   const terms = "docs/requirements/terms.md";
   const glossary = CONFORMING[PATHS.glossary];
@@ -157,17 +184,24 @@ test("clause 18: a separate source's removal takes no field, and the answer reco
   assert.ok(removal, JSON.stringify(points));
   const { action } = await answerAction(base, run, headers);
   assert.ok(!action.fields.some((field) => field.name === removal.id), "the removal offers no choice");
-  const others = Object.fromEntries(points.filter((point) => point !== removal).map((point) => [point.id, RECOMMENDATION]));
+  const settledPoint = points.find((point) => point.asked === null);
+  assert.ok(settledPoint, "the leftover that Prism settled is a point of the migration");
+  assert.ok(!action.fields.some((field) => field.name === settledPoint.id), "a settled point offers no field");
+  const others = Object.fromEntries(points.filter((point) => point.asked && point !== removal).map((point) => [point.id, RECOMMENDATION]));
   const kept = await answer(base, run, { ...others, [removal.id]: "keep" }, headers);
   assert.equal(codeOf(kept), "invalid_input", kept.text);
+  const settled = await answer(base, run, { ...others, [settledPoint.id]: RECOMMENDATION }, headers);
+  assert.equal(codeOf(settled), "invalid_input", "a field for a settled point names no asked point");
   assert.equal((await answer(base, run, others, headers)).status, 200);
   assert.equal((await readRun(call, run)).answers[removal.id].choice, "remove");
 });
 
 test("clause 14: rerunning a failed run starts a new run of its set, and a run that is not failed or already rerun is refused", { skip: posixOnly }, async (context) => {
-  const { call, base, headers, kindPage } = await served(context, { ...CONFORMING, [PATHS.requirements]: UNANCHORED, [AUDIT]: AUDIT_SOURCE });
+  // The ADR is a set of its own type, so its run fails apart from the audit file's asking run.
+  const { call, base, headers, kindPage } = await served(context, { ...CONFORMING, [LOG_ADR]: LOG_ADR_SOURCE, [AUDIT]: AUDIT_SOURCE });
   const { run: asked } = await asking(call);
-  const run = (await entryFor(call, PATHS.requirements)).migration.run;
+  const run = (await entryFor(call, LOG_ADR)).migration.run;
+  assert.notEqual(run, asked, "the ADR has a run of its own");
   assert.equal((await call("fail_migration_run", { run, reason: "The section numbers are ambiguous." })).refused, false);
   const listed = await listing(base, `migration-run:${run}`, headers);
   const action = actionOf(listed, "migration-run.rerun");
@@ -175,7 +209,7 @@ test("clause 14: rerunning a failed run starts a new run of its set, and a run t
   const rerun = await apply(base, { action: "migration-run.rerun", target: `migration-run:${run}`, input: {}, revision: action.revision, confirmed: true }, headers);
   assert.equal(rerun.status, 200, rerun.text);
   const next = await waitFor(async () => {
-    const migration = (await entryFor(call, PATHS.requirements)).migration;
+    const migration = (await entryFor(call, LOG_ADR)).migration;
     return migration && migration.run !== run ? migration.run : null;
   }, { what: "the new run" });
   assert.equal((await readRun(call, next)).cause, "rerun");
