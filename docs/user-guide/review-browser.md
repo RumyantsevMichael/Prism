@@ -372,7 +372,7 @@ A computer that cannot show the dialog refuses every launch with `This computer 
 
 ### What runs
 
-Claude Code runs as `claude -p --verbose --session-id <session id> --input-format stream-json --output-format stream-json --permission-mode auto --permission-prompts none` with the prompt `/prism:orchestrate <initiative>`.
+Claude Code runs as `claude -p --verbose --session-id <session id> --input-format stream-json --output-format stream-json --permission-mode auto --permission-prompts host --permission-prompt-tool stdio` with the prompt `/prism:orchestrate <initiative>`.
 Codex runs as `codex app-server` with the approval policy `on-request`, the automatic approval reviewer, and the `workspace-write` sandbox, and the prompt `$prism:orchestrate <initiative>`.
 An ACP agent runs as the command, arguments, and environment of its declaration or install record, and Prism declares no file system or terminal capability to it.
 Prism opens one session in the checkout whose only MCP server is Prism's own, run by the review app's Node with `NODE_USE_ENV_PROXY=1`, `PRISM_LAUNCH`, and the review app folder, and it sets the agent's automatic mode, the declaration's `autoMode` or else the agent's `auto` mode, then the coordinator's model and effort, before the prompt.
@@ -380,16 +380,34 @@ Prism never sets a mode that bypasses or accepts all permissions, such as `bypas
 A value the agent does not offer fails the run before its prompt with `<label> does not offer <value> for <option>.`.
 Prism waits up to 60 seconds for its tools to start in the agent's session, and an agent that does not start them ends with `<label> did not start Prism's tools, so it cannot run Prism's workflow.` and receives no prompt.
 Prism's skills are not installed in an ACP agent, so the prompt carries the text of the orchestrate skill, as an attached resource where the agent takes one, and the instruction to run it for the initiative and to read every other skill file it names with Prism's `get_skill` tool.
-The agent answers no other request of Prism's, and a permission request it asks is cancelled, so the action it asked for does not run and the session shows it as refused; approving such requests on Attention is Planned.
+Prism answers no other request of the agent's, and a permission request it asks waits on Attention as described in [Permission requests](#permission-requests).
 A run on an ACP agent fails with `<label> stopped: <reason>.` when the agent stops for a refusal, its token limit, or its turn limit.
 Each runs in the checkout's folder with the review app's environment, without the variables of an agent session that the review app may have inherited, and with `PRISM_LAUNCH` set to the launch's id.
-The host's own permission handling and the project's own host settings apply: Prism grants no permission and answers no question of the host itself, so an action the host's automatic handling refuses ends as a refusal that the session shows.
+The host's own permission handling and the project's own host settings apply first: Claude Code decides what it can in its auto mode and Codex under its automatic reviewer, and each asks Prism only the rest, so how often a session asks depends on your host settings.
+Prism answers no question of the host itself, and an action that the host's automatic handling refuses ends as a refusal that the session shows.
 A session keeps running when the review app exits, idles out, restarts, or is replaced by a newer release, because a supervisor process of its own starts and watches the host.
 Each launched session keeps its record in `launches/<launch id>/` in the review app folder, readable only by you, and Prism removes it 14 days after the session's last run ended.
 The host's session id stays in that record on this computer: no shared record, history entry, or log holds it, and only this computer's page shows it, in the command that continues the session in a terminal.
 Each run keeps the last 64 KiB of its host's standard error, with the host's session id replaced, in `run-<n>.stderr` of the launch's folder, and a run that failed without an error answer gives as its reason the last line of that text that is not a stack frame.
 A run on an ACP agent also keeps the usage the agent reported: the tokens of its answer, the context used and its size, and the cost, each shown as not reported when the agent gave none.
 Each run also keeps the model its host reports as soon as the host names it, from Claude Code's first `init` event or from the result of Codex's thread start or resume, and a launched session names the model of its latest run; a run whose host names no model, or a value longer than 128 characters or holding a control character, keeps none.
+
+### Permission requests
+
+Each permission request that a launched session's host still asks, Claude Code's prompt to use a tool, a Codex approval of a command, a file change, or more permissions, or an ACP agent's request to run a tool, keeps the session waiting and waits for you on this computer's Attention.
+It lists with the initiative, the host, the action that the host named, such as `Write .claude/settings.local.json` or `touch /etc/hosts`, the host's reason, and when it was asked, oldest first, and it counts toward the waiting questions that the page's title and desktop notification show.
+The session shows **Waiting for you** with the reason `Asks you to allow: <action>.`.
+A request lives only in the session's folder on this computer, so it never reaches a shared record or another machine, and only the review app of the computer whose session asked it can answer it.
+
+**Allow** asks you again outside the browser every time, in a dialog of the operating system that names the initiative, the host, the action, and the reason, and whose default button refuses; an open launch window does not skip it.
+Only once you choose **Allow** there does Prism answer the host, and it answers with the host's allow for this one request alone: Claude Code runs the tool with the input it asked for, Codex accepts the command or file change, or grants the requested permissions for the current turn, and an ACP agent gets its allow-once option.
+When you choose **Refuse** in that dialog, or nobody answers within 2 minutes, the request keeps waiting and the action is refused with `confirmation_declined` or `confirmation_timeout`.
+A request whose host offers no allow that covers only this one request, such as an ACP agent that offers only an always-allow option, cannot be allowed and is refused with `approval_unavailable`.
+
+**Refuse** needs no dialog: Claude Code is told `The person refused this on Attention.`, Codex declines, and an ACP agent gets its reject-once option, or a cancelled answer when it offers none.
+When the session's run ends, or you stop it, while a request waits, Prism refuses the request to the host if it still runs and removes it from Attention.
+An answer to a request that no longer waits in the session is refused with `unknown_request`.
+Each answer is recorded in the initiative's history as `launch.permission` with the decision and the action.
 
 ### How the review app reads a host's models
 
@@ -442,7 +460,7 @@ A launched session's state is one of these:
 | State | Meaning |
 | --- | --- |
 | Running | The host is working. |
-| Waiting for you | A question that the session asked waits for your answer. |
+| Waiting for you | A question or a permission request of the session waits for your answer. |
 | Blocked | The host refused an action that the session needed, with a reason such as `Claude Code refused Bash: <the host's reason>`. |
 | Finished | The last run ended by itself. |
 | Failed | The host reported an error, its process ended with an exit code other than 0 or by a signal, or Prism stopped supervising it, each with its reason. |
