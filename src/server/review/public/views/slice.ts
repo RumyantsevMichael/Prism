@@ -228,9 +228,17 @@ function legacyChangeMapCard(path: any, ctx: any) {
   return card("Change map", `<p>The planned changes and their readiness.</p><p>${artifactChip(path, ctx, "Open the change map")}</p>`);
 }
 
+// A failing name that exactly one frozen test names opens that test at the line naming it; any other stays text.
 function failingList(run: any) {
   const more = (run.failingCount ?? run.failing.length) - run.failing.length;
-  return `${run.failing.map((name: string) => `<code>${escapeHtml(name)}</code>`).join(" ")}${more > 0 ? ` and ${more} more` : ""}`;
+  const links = new Map((run.failingLinks ?? []).filter((link: any) => link.path).map((link: any) => [link.name, link]));
+  const item = (name: string) => {
+    const link: any = links.get(name);
+    return link
+      ? `<prism-chip interactive tone="accent" data-code-subject data-frozen-test="${escapeHtml(link.path)}" data-frozen-line="${link.line}" tip="${escapeHtml(`${link.path}, line ${link.line}`)}">${escapeHtml(name)}</prism-chip>`
+      : `<prism-chip data-code-subject tip="No frozen test names this test">${escapeHtml(name)}</prism-chip>`;
+  };
+  return `<span class="code-list">${run.failing.map(item).join(" ")}${more > 0 ? ` <span class="muted">and ${more} more</span>` : ""}</span>`;
 }
 
 // The line names the last passing run, which need not be the latest run shown above it; a malformed shared record shows nothing.
@@ -241,7 +249,8 @@ export function codeLine(code: any) {
   return `<p class="muted">Last passing run ${parts.branch ? `on ${parts.branch} ` : ""}at ${parts.commit}${parts.remote ? ` · ${parts.remote}` : ""}${code.dirty === true ? " with uncommitted changes" : ""}</p>`;
 }
 
-// Verification shows the accepted design's frozen tests, the latest run of the project's test command, and the derived change map.
+// Verification shows the accepted design's frozen tests, the latest run of the project's test command, and the derived change map;
+// a frozen test, a failing test, and the run's log open in the side panel.
 function verificationCard(design: any, run: any, code = null) {
   if (!design && !run) return "";
   const result = run ? `<p>${badge(run.passed ? "passed" : "failed", run.passed ? "success" : "danger")} ${escapeHtml(formatTime(run.finishedAt))}${run.reason ? `: ${escapeHtml(REASONS[run.reason] ?? run.reason)}` : ""}</p>` : emptyNote("No verification run yet.");
@@ -251,13 +260,52 @@ function verificationCard(design: any, run: any, code = null) {
     ${keyValues([
       ["Design accepted", design ? escapeHtml(formatTime(design.acceptedAt)) : null],
       ["Review", design ? (design.review === "required" ? "required" : "not required") : null],
-      ["Frozen tests", design?.frozenTests.length ? `<span class="code-list" data-code-subject>${design.frozenTests.map((item: any) => `<code>${escapeHtml(item.path)}</code>`).join(" ")}</span>` : null],
+      ["Frozen tests", design?.frozenTests.length ? `<span class="code-list">${design.frozenTests.map((item: any) => `<prism-chip interactive tone="accent" data-code-subject data-frozen-test="${escapeHtml(item.path)}" tip="${escapeHtml(item.path)}">${escapeHtml(item.path)}</prism-chip>`).join(" ")}</span>` : null],
       ["Command", run ? `<code>${escapeHtml(run.command)}</code>` : null],
       ["Duration", run?.durationMs ? seconds(run.durationMs) : null],
       ["Exit code", run && run.exitCode !== null ? String(run.exitCode) : null],
+      ["Output", run?.outputTail || run?.log ? `<prism-button size="sm" data-verification-log="${escapeHtml(run.id)}"><prism-icon slot="start" name="file" size="sm"></prism-icon>Open the log</prism-button>` : null],
       ["Failing tests", run?.failing?.length ? failingList(run) : null]
     ])}
-    ${run?.outputTail ? `<prism-disclosure summary="Output tail"><pre class="output-tail">${escapeHtml(run.outputTail)}</pre></prism-disclosure>` : ""}`, { eyebrow: "Latest run" });
+`, { eyebrow: "Latest run" });
+}
+
+const BYTES = (size: number) => size >= 1048576 ? `${(size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(size / 1024))} KB`;
+
+// Where the log came from decides its note: the whole file on this machine, its end when it is large, or the end the shared record keeps.
+// The log opens at its end, so the note follows it there, and a log shown from part way through starts with an ellipsis line.
+function logNote(log: any) {
+  if (log.source === "log") return log.cut ? `<prism-banner class="verification-log-note" tone="info"><p>The log is ${BYTES(log.size)}, so the panel shows its last ${BYTES(log.shown)}, above.</p></prism-banner>` : "";
+  if (log.complete) return "";
+  const machine = log.host ? `<strong>${escapeHtml(log.host)}</strong>, the machine that ran the command` : "the machine that ran the command";
+  const where = log.log ? `, at <code>${escapeHtml(log.log)}</code>` : ", in Prism's plugin data";
+  return `<prism-banner class="verification-log-note" tone="info"><p>The shared record keeps only the last 4,000 characters of the output, shown above. The full log is on ${machine}${where}.</p></prism-banner>`;
+}
+
+function logHtml(log: any) {
+  const partial = log.source === "log" ? log.cut : !log.complete;
+  const text = log.content ? `<prism-code class="verification-log"><pre><code>${partial ? "…\n" : ""}${escapeHtml(log.content)}</code></pre></prism-code>` : '<p class="muted">The command printed nothing.</p>';
+  return `${text}${logNote(log)}`;
+}
+
+// The log opens in the side panel at its end, where a test runner prints its failures and summary.
+async function openLog(run: any, data: any, ctx: any) {
+  const title = { eyebrow: "Verification log", name: `${run.passed ? "Passed" : "Failed"} run · ${formatTime(run.finishedAt)}`, detail: run.command ?? null };
+  ctx.sidePanel.showContent({ ...title, html: '<p class="muted side-panel-loading">Loading…</p>' });
+  const shown = ctx.sidePanel.current();
+  let html;
+  try {
+    html = logHtml(await ctx.fetchJson(`./api/verification-log?initiative=${encodeURIComponent(data.id)}&slice=${encodeURIComponent(data.slug)}&id=${encodeURIComponent(run.id)}`));
+  } catch (error) {
+    html = `<p class="error">${escapeHtml(error.message)}</p>`;
+  }
+  // Another item opened while the log loaded keeps the panel.
+  if (ctx.sidePanel.current() === shown) ctx.sidePanel.showContent({ ...title, html, at: "end" });
+}
+
+function openFrozenTest(path: string, line: any, data: any, ctx: any) {
+  const url = `./api/frozen-test?initiative=${encodeURIComponent(data.id)}&slice=${encodeURIComponent(data.slug)}&path=${encodeURIComponent(path)}`;
+  void ctx.sidePanel.show(path, line ? `L${line}` : null, { url, eyebrow: "Frozen test", tab: ctx.hasArtifact(path) });
 }
 
 // The slice folder may hold any number of diagrams, or none; the code view comes first when it exists.
@@ -523,6 +571,15 @@ export async function render(container: any, entity: any, ctx: any) {
       const view = [...views.own, ...views.slices.flatMap((group: any) => group.views)].find((item) => item.path === card.dataset.view);
       navigator.clipboard.writeText(view?.source ?? "").then(() => ctx.showToast("API specification copied."), () => ctx.showToast("The browser could not copy the specification."));
     }
+  });
+  // A frozen test, a failing test, and the run's log open in the side panel.
+  container.addEventListener("click", (event: any) => {
+    const test = event.target.closest("[data-frozen-test]");
+    const log = event.target.closest("[data-verification-log]");
+    if (!ctx.sidePanel || !(test || log) || !container.contains(test ?? log)) return;
+    event.preventDefault();
+    if (test) openFrozenTest(test.dataset.frozenTest, test.dataset.frozenLine ?? null, data, ctx);
+    else void openLog(data.verification, data, ctx);
   });
   container.addEventListener("click", (event: any) => {
     const link = event.target.closest("[data-clause]");

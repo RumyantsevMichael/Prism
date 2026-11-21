@@ -20,6 +20,7 @@ import { parseStoreJson } from "../workflow/store-json.mjs";
 import { recordChanges } from "./record-changes.mjs";
 import { relativeLinkTargets } from "./artifact-links.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
+import { failingTestLinks } from "./verification-view.mjs";
 
 // A workspace read through its store's clone alone has no checkout and so no configuration of its own: its defaults are no setting to warn about.
 async function readWorkflowConfig(projectRoot: string) {
@@ -548,7 +549,9 @@ export async function loadSliceView(projectRoot: string, id: string, slug: strin
   if (!initiative.record || !Object.hasOwn(initiative.record.slices, slug)) throw new Error(`The initiative ${id} has no slice ${slug}.`);
   const slice = initiative.record.slices[slug];
   const derived = initiative.derived;
-  const verification = await latestVerification(projectRoot, id, slug).catch(() => null);
+  const latest = await latestVerification(projectRoot, id, slug).catch(() => null);
+  // A failing name links to the frozen test that names it, where exactly one does.
+  const verification = latest?.failing?.length ? { ...latest, failingLinks: await failingTestLinks(projectRoot, id, slug, latest.failing).catch(() => []) } : latest;
   const { document: changeMapDocument, ...changeMap } = await derivedChangeMapState(projectRoot, id, slug, slice.design, verification) ?? {};
   const totals = await loadInitiativeRunTotals(projectRoot, initiative);
   // A failed read has no slice entries, and its initiative total is every measure unavailable.

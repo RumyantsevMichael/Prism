@@ -435,6 +435,10 @@ body {
   font-size: var(--prism-font-size-sm);
 }
 
+.verification-log-note {
+  margin-top: var(--prism-space-4);
+}
+
 /* ---------- Status bar on the canvas ---------- */
 
 .statusbar {

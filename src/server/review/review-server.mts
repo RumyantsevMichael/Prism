@@ -23,6 +23,7 @@ import { readIndexingStatus } from "../repository-intelligence/index-status.mjs"
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadAttention, loadClaims, loadDeclaredView, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
+import { frozenTestFile, verificationLog } from "./verification-view.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { archiveEndedLaunches, archiveLaunch, listLaunches, unarchiveLaunch } from "../session/launched-sessions.mjs";
@@ -1564,6 +1565,20 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       sendJson(response, 200, await sliceFiles(projectRoot, parsed.id, parsed.slug, (await sliceCode() as any)));
+    } else if ((route === "/api/frozen-test" || route === "/api/verification-log") && request.method === "GET") {
+      // A slice's Verification tab opens one of its frozen tests, or one of its runs' logs, in the side panel.
+      const ref = `slice:${url.searchParams.get("initiative") ?? ""}/${url.searchParams.get("slice") ?? ""}`;
+      const parsed = parseEntityRef(ref);
+      if (parsed?.kind !== "slice" || !(await entityExists(projectRoot, ref))) {
+        send(response, 404, "The project has no slice of that initiative and slug.");
+        return;
+      }
+      const found = route === "/api/frozen-test"
+        ? await frozenTestFile(projectRoot, parsed.id, parsed.slug, url.searchParams.get("path") ?? "").catch(() => null)
+        : await verificationLog(projectRoot, parsed.id, parsed.slug, url.searchParams.get("id") ?? "").catch(() => null);
+      // A refusal is one sentence of text, which the side panel shows as it is.
+      if (found) sendJson(response, 200, found);
+      else send(response, 404, route === "/api/frozen-test" ? "The slice's accepted design freezes no test at that path, or no copy of it is left." : "The slice has no verification run with that id.");
     } else if (route === "/api/store/conflicts" && request.method === "GET") {
       // Saved local record versions are read-only here; a person redoes a lost change through an agent.
       send(response, 200, JSON.stringify({ conflicts: await listRecordStoreConflicts(projectRoot).catch(() => []) }), "application/json; charset=utf-8");
