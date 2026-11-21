@@ -52,9 +52,9 @@ const CLAUDE_FLAGS = Object.freeze(["--input-format", "stream-json", "--output-f
 const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" });
 // A launch's access: "full" for an initiative's orchestration, and "read-only" for a format migration run, whose session reads artifact text that others wrote,
 // works in an empty folder of its own outside the checkout, and reads nothing of the checkout: it gets the run's sources, the project's paths, and the sources'
-// Git history through the run's own Prism tools. A read-only Claude Code run has only Read, Grep, and Glob, allows only the run's Prism tools and no shell,
-// reads only in its working folder and the added folders without asking, and denies every other call, since nothing asks; a read-only Codex thread runs in the
-// read-only sandbox, readable only in those folders and the platform's own, and never asks to run a command outside it.
+// Git history, and the format reference through the run's own Prism tools. A read-only Claude Code run has no built-in tool and adds no folder, so it reads no file,
+// allows only the run's Prism tools and no shell, and denies every other call, since nothing asks; a read-only Codex thread runs in the read-only sandbox,
+// readable only in its working folder, Prism's own folder, Codex's plugin cache, and the platform's own, and never asks to run a command outside it.
 // Prism's server, which the session starts with PRISM_MIGRATION_RUN naming the run and PRISM_MIGRATION_PROJECT naming the checkout,
 // lists and takes only the run's tools for that run's project and artifacts.
 export const LAUNCH_ACCESS = Object.freeze(["full", "read-only"]);
