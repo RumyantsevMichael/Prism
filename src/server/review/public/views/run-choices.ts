@@ -57,9 +57,12 @@ const capitalized = (level: any) => `${level.charAt(0).toUpperCase()}${level.sli
 /**
  * Reads api/run-options through fetchOptions(query), which resolves to { status, json }: one read per distinct query, kept until
  * forget(), and at most two at once, since a browser opens only a few connections to the review app. A read that never answered is read again.
+ * reason(host) is why the latest answered report of that host says it cannot run, such as a sign-in it needs, or null, and settled(),
+ * when given, is called after each answer.
  */
-export function createRunOptionsReader(fetchOptions: any) {
+export function createRunOptionsReader(fetchOptions: any, settled: (() => void) | null = null) {
   const kept = new Map();
+  const reasons = new Map();
   const queue: any = [];
   let running = 0;
   const next = () => {
@@ -81,12 +84,22 @@ export function createRunOptionsReader(fetchOptions: any) {
           next();
         });
         kept.set(key, answer);
-        void answer.then((result: any) => { if (result.status === 0 && kept.get(key) === answer) kept.delete(key); });
+        void answer.then((result: any) => {
+          if (result.status === 0 && kept.get(key) === answer) kept.delete(key);
+          if (kept.get(key) !== answer) return;
+          const report = result.status === 200 && isRecord(result.json) ? result.json : null;
+          if (report) reasons.set(query.host, (report.state === "failed" || report.state === "sign-in") && report.reason ? String(report.reason) : null);
+          settled?.();
+        });
       }
       return kept.get(key);
     },
+    reason(host: any) {
+      return reasons.get(host) ?? null;
+    },
     forget() {
       kept.clear();
+      reasons.clear();
     }
   };
 }

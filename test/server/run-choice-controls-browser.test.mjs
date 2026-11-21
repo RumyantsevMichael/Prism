@@ -82,14 +82,14 @@ const applyAll = async (s) => {
   await settled(() => s.dialog.isVisible(), false);
 };
 
-test("clause 1: Settings shows the host as one select of every supported host, with one this computer lacks disabled and its reason", { skip: skipHere, timeout: 90000 }, async (t) => {
+test("clause 1: Settings shows the host as one choice of every supported host, with one this computer lacks disabled and its reason", { skip: skipHere, timeout: 90000 }, async (t) => {
   const s = await settingsDialog(t, { hosts: ["claude"] });
-  const host = s.dialog.getByRole("combobox", { name: "Host" });
-  assert.equal(await host.count(), 1, "one Host select, which the Models section follows");
-  const options = await host.locator("option").evaluateAll((items) => items.map((item) => [item.value, item.textContent.trim(), item.disabled]));
-  assert.deepEqual(options, [["claude-code", "Claude Code", false], ["codex", "Codex: unavailable", true]]);
-  assert.equal(await host.inputValue(), "claude-code", "with no stored host the first host found shows");
-  assert.match(await s.dialog.innerText(), /Codex was not found: no codex executable on PATH\./, "the reason shows below the select");
+  const host = s.dialog.getByRole("radiogroup", { name: "Host" });
+  assert.equal(await host.count(), 1, "one Host choice, which the Models section follows");
+  const options = await host.getByRole("radio").evaluateAll((items) => items.map((item) => [item.value, item.closest("prism-choice-option").querySelector(".prism-choice-title").textContent.trim(), item.disabled]));
+  assert.deepEqual(options, [["claude-code", "Claude Code", false], ["codex", "Codex", true]]);
+  assert.equal(await host.evaluate((element) => element.value), "claude-code", "with no stored host the first host found shows");
+  assert.match(await host.getByRole("radio", { name: "Codex" }).evaluate((item) => item.closest("prism-choice-option").innerText), /Codex was not found: no codex executable on PATH\./, "the reason shows under the host's label");
   assert.match(await s.dialog.innerText(), /The hosts Prism supports, as found on this computer\. Each host reports its own models, providers and effort levels\./);
   assert.deepEqual(s.page.errors, []);
 });
@@ -103,7 +103,7 @@ test("clause 2: the Models section shows the coordinator and each kind of agent 
     assert.match(await shown(models, label), /^Host default\s*·?\s*Host default effort$/, `${label} reads the host default`);
     assert.equal(await picker(models, label).getAttribute("hint"), HINTS[index]);
   }
-  await s.dialog.getByRole("combobox", { name: "Host" }).selectOption("codex");
+  await s.dialog.getByRole("radiogroup", { name: "Host" }).getByRole("radio", { name: "Codex" }).check();
   await settled(() => models.locator("prism-picker").count(), 6);
   assert.deepEqual(await models.locator("prism-picker").evaluateAll((items) => items.map((item) => item.getAttribute("label"))), ["Provider", ...KINDS], "Codex reports providers, so its Provider picker leads");
   assert.equal(await picker(models, "Provider").getAttribute("hint"), "Where the host sends its model requests; only some hosts offer a choice.");
@@ -193,7 +193,7 @@ test("clause 7: switching the host shows the choices kept for that host and its 
     } })
   });
   assert.match(await shown(s.dialog, "Coordinator"), /^Fable 5\.2\s*·?\s*High effort$/);
-  const host = s.dialog.getByRole("combobox", { name: "Host" });
+  const host = { selectOption: (name) => s.dialog.getByRole("radiogroup", { name: "Host" }).getByRole("radio", { name: name === "codex" ? "Codex" : "Claude Code" }).check() };
   await host.selectOption("codex");
   assert.match(await settled(() => shown(s.dialog, "Coordinator"), (text) => text.startsWith("GPT")), /^GPT-6 Luna\s*·?\s*Minimal effort$/, "Codex's kept choice shows, not Claude Code's");
   assert.match(await shown(s.dialog, "Provider"), /^OpenAI/);

@@ -3,7 +3,8 @@ import { coalesce } from "./poller.js";
 import { createRunChoices, createRunOptionsReader, HOST_HINT, hostFieldOf, hostLeader, isRunAction, isRunField, runFieldsFixed } from "./run-choices.js";
 
 // The page draws every action from its listing: the registry names the fields, and this view places them as kit controls:
-// a prism-field per text field, a group of pressed prism-buttons per choice, a select prism-field per choice of host, a prism-picker
+// a prism-field per text field, a group of pressed prism-buttons per choice, a prism-choice per choice of host that leads run choices
+// and a select prism-field per run action's own choice of host, a prism-picker
 // per run choice, such as a model and its effort, and prism-buttons to apply and reset.
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 export const STALE_MESSAGE = "Someone changed this since you opened it; it now shows the current value.";
@@ -153,8 +154,8 @@ function shownFields(action: any, input: any) {
 // A one-choice setting applies when an option is picked; an action with text or several fields applies with its own button.
 const appliesOnPick = (action: any) => !action.context && action.fields.length === 1 && action.fields[0].kind !== "text";
 
-// A choice of host is one select: a host this computer lacks shows as unavailable and cannot be chosen, with its reason below, and the
-// field's own hint, such as why a stored choice cannot be read, takes the place of the hosts' hint.
+// A run action's own choice of host is one select: a host this computer lacks shows as unavailable and cannot be chosen, with its reason
+// below, and the field's own hint, such as why a stored choice cannot be read, takes the place of the hosts' hint.
 function selectHtml(action: any, field: any, input: any, { disabled, key }: { disabled: any; key: any }) {
   const picked = normalized(input[field.name]);
   const chosen = field.options.find((option: any) => option.value === picked);
@@ -164,7 +165,23 @@ function selectHtml(action: any, field: any, input: any, { disabled, key }: { di
   return `<div class="action-choice is-wide"><prism-field class="action-field" type="select" label="${escapeHtml(field.label)}" hint="${escapeHtml(field.hint ?? HOST_HINT)}" value="${escapeHtml(picked ?? "")}" data-select data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}`)}"${disabled ? " disabled" : ""}>${options}</prism-field>${consequence}${reasons}</div>`;
 }
 
+// The choice of host that leads a list's run choices, as in the Launch and Settings dialogs, is a prism-choice of every host the
+// listing names, in its order: each option shows under its label why it cannot run, from the listing or from the host's own report
+// once read, such as a sign-in it needs, and otherwise what choosing it does; a host this computer lacks cannot be chosen. The row's
+// own label names the choice, so the group carries the name only for assistive technology.
+function hostChoiceHtml(action: any, field: any, input: any, { disabled, key, reportReason }: { disabled: any; key: any; reportReason: (host: string) => string | null }) {
+  const picked = normalized(input[field.name]);
+  const options = field.options.map((option: any) => {
+    const detail = option.reason ?? reportReason(option.value) ?? (action.context ? "" : option.consequence ?? "");
+    const off = disabled || Boolean(option.reason);
+    return `<prism-choice-option value="${escapeHtml(option.value)}" data-focus-key="${escapeHtml(`${key}|${field.name}|${option.value}`)}"${off ? " disabled" : ""}>${escapeHtml(option.label ?? option.value)}${detail ? `<span slot="detail">${escapeHtml(detail)}</span>` : ""}</prism-choice-option>`;
+  }).join("");
+  const hint = `<p class="action-hint">${escapeHtml(field.hint ?? HOST_HINT)}</p>`;
+  return `<div class="action-choice is-wide"><prism-choice class="action-host-choice" aria-label="${escapeHtml(field.label)}" value="${escapeHtml(picked ?? "")}" data-select data-field="${escapeHtml(field.name)}">${options}</prism-choice>${hint}</div>`;
+}
+
 function fieldHtml(action: any, field: any, input: any, { disabled, key, layout }: { disabled: any; key: any; layout: any }) {
+  if (layout.choice(field)) return hostChoiceHtml(action, field, input, { disabled, key, reportReason: layout.reportReason });
   if (layout.select(field)) return selectHtml(action, field, input, { disabled, key });
   if (layout.skip(field)) return "";
   if (field.kind === "text") {
@@ -219,10 +236,10 @@ function actionHtml(action: any, entry: any, { writable, renderMarkdown, heading
 
 const panels = new Set();
 
-// A kit control takes focus on its native control: the button inside a prism-button, or the input of a prism-field.
-const ENABLED = "prism-button:not([disabled]), prism-field:not([disabled])";
+// A kit control takes focus on its native control: the button inside a prism-button, the input of a prism-field, or the radio of a prism-choice-option.
+const ENABLED = "prism-button:not([disabled]), prism-field:not([disabled]), prism-choice-option:not([disabled])";
 const focusKeyOf = (element: any) => element?.closest?.("[data-focus-key]")?.dataset.focusKey ?? null;
-const nativeOf = (element: any) => element?.control ?? element;
+const nativeOf = (element: any) => element?.control ?? (element?.localName === "prism-choice-option" ? element.querySelector("input.prism-choice-input") : null) ?? element;
 const isEnabled = (element: any) => Boolean(element) && !element.hasAttribute("disabled");
 
 // prism-field names no length limit, so each drawn text field passes its limit to its native control.
@@ -266,7 +283,9 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
   let wanted = [...targets];
   // The run choices of each run action, kept across redraws, and one reader of the hosts' run options for the whole list.
   const runChoices = new Map();
-  const reader = typeof api.runOptions === "function" ? createRunOptionsReader((query: any) => api.runOptions(query)) : null;
+  // A report that arrives may name why its host cannot run, which the choice of host shows under that host, so the list draws again.
+  const reader = typeof api.runOptions === "function" ? createRunOptionsReader((query: any) => api.runOptions(query), () => { if (root.isConnected) render(); }) : null;
+  const reportReason = (host: string) => reader?.reason(host) ?? null;
 
   function entryOf(target: any, action: any) {
     const key = keyOf(target, action);
@@ -288,7 +307,9 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     const host = hostFieldOf(action);
     const led = Boolean(host && hostLeader(self, items));
     return {
-      select: (field: any) => (leads && field === action.fields[0]) || (field === host && !led),
+      choice: (field: any) => leads && field === action.fields[0],
+      select: (field: any) => field === host && !led,
+      reportReason,
       skip: (field: any) => isRunField(field) || (field === host && led)
     };
   }
@@ -579,7 +600,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
 
   // A choice of host waits in the draft like a pick, and a run action's own choice of host shows that host's choices.
   root.addEventListener("change", (event: any) => {
-    const field = event.target.closest?.("prism-field[data-select]");
+    const field = event.target.closest?.(":is(prism-field, prism-choice)[data-select]");
     const item = field && root.contains(field) ? locate(field) : null;
     if (!item) return;
     item.entry.error = null;
