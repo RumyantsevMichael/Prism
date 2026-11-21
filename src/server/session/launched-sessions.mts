@@ -8,7 +8,7 @@ import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { listInitiatives } from "../workflow/record-store.mjs";
 import { readRoadmap } from "../workflow/roadmap.mjs";
 import { readCoordinationState } from "../workflow/state.mjs";
-import { acpLaunchPending, checkedCoordinator, hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { checkedCoordinator, hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 import {
   LAUNCH_ID_PATTERN,
   LaunchError,
@@ -141,7 +141,6 @@ const RECORDED_CHOICE_INVALID = "The session's recorded model choice is not one 
 export async function startLaunch({ projectRoot, initiative, host, coordinator = null, env = process.env }: { projectRoot: string; initiative: string; host: string; coordinator?: unknown; env?: NodeJS.ProcessEnv }) {
   const definition = hostDefinition(host, env);
   if (!definition) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code, codex, and the ACP agents that this computer offers.`);
-  if (definition.acp) throw refuse("host_unavailable", acpLaunchPending(definition.label));
   const choice = checkedCoordinator(coordinator);
   if (!choice) throw refuse("invalid_choice", INVALID_CHOICE);
   const checkout = await realpath(projectRoot);

@@ -15,7 +15,7 @@ import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pe
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
 import { confirmLaunch } from "../session/launch-confirmation.mjs";
-import { acpLaunchPending, HOSTS } from "../session/launch-hosts.mjs";
+import { HOSTS } from "../session/launch-hosts.mjs";
 import { isAcpHost } from "../session/acp-agents.mjs";
 import { LAUNCH_ID_PATTERN } from "../session/launch-records.mjs";
 import { AUTOMATIC, AUTOMATIC_LABEL, PrismRunsError, readPrismRunsChoice, writePrismRunsChoice } from "../session/prism-runs.mjs";
@@ -625,7 +625,7 @@ const LAUNCH_RUN = {
     const host = launchHostOf(context);
     const availability = context.hosts.find((item: any) => item.host === host);
     if (!availability?.available) return availability?.reason ?? `${hostLabel(context, host)} was not found.`;
-    if (isAcpHost(host)) return ["failed", "sign-in"].includes(context.launchReport?.state) ? context.launchReport.reason : acpLaunchPending(availability.label);
+    if (isAcpHost(host) && ["failed", "sign-in"].includes(context.launchReport?.state)) return context.launchReport.reason;
     return context.launchRunning ? launchRunningMessage(context.initiative) : null;
   },
   after: () => null,

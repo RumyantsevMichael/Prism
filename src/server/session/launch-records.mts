@@ -6,6 +6,7 @@ import { describeRecordStore } from "../workflow/record-store.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { checkedCoordinator, hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts.mjs";
 import { isAgentModel } from "./agent-models.mjs";
+import { isAcpHost } from "./acp-agents.mjs";
 import { sessionHolder } from "../workflow/slice-claims.mjs";
 
 // The record of each launched session lives in <review app folder>/launches/<launch id>/launch.json, private to the user.
@@ -273,6 +274,8 @@ function stateOf(record: any, status: any, label: string, gates: any) {
   if (status === "running") return { state: gates.waiting ? "waiting" : "running", reason: null };
   if (status === "lost") return { state: "failed", reason: SUPERVISION_LOST };
   if (run.stopRequestedAt) return { state: "stopped", reason: null };
+  // A failure Prism found in the run, such as an ACP agent's stop reason or an option it does not offer, is already a sentence.
+  if (typeof run.failure === "string") return { state: "failed", reason: run.failure };
   // A reported host error comes before the exit code, since Claude Code exits 1 after an error result.
   if (typeof run.hostError === "string") return { state: "failed", reason: `${label} reported an error: ${run.hostError}` };
   const stderr = lastErrorLine(run.stderr);
@@ -293,7 +296,8 @@ function stateOf(record: any, status: any, label: string, gates: any) {
 
 /**
  * The launch view of a record: { id, initiative, host, hostLabel, model, holder, checkout, launchedAt, runningMs, runs, endedAt, state,
- * reason, exit, resumeCommand, waitingGate, answerWaits }.
+ * reason, exit, resumeCommand, waitingGate, answerWaits }, and for an ACP agent's launch usage, the last run's { tokens, context, cost },
+ * each null when the agent did not report it.
  * model is the last run's recorded model, holder the claim holder that the host session takes claims as, and only resumeCommand
  * names the host session id.
  * gates is gateFacts of the launch as the page's checkout reads its initiative's coordination state; without it no gate is counted.
@@ -335,8 +339,21 @@ export function launchView(record: any, { now = Date.now(), gates = null }: { no
     exit,
     resumeCommand,
     waitingGate: state === "waiting" && typeof gates?.waitingGate === "string" ? gates.waitingGate : null,
-    answerWaits: facts.answerWaits
+    answerWaits: facts.answerWaits,
+    ...(isAcpHost(record.host) ? { usage: runUsage(last) } : {})
   };
+}
+
+const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const USAGE_TOKENS = ["inputTokens", "outputTokens", "cachedReadTokens", "cachedWriteTokens", "thoughtTokens", "totalTokens"];
+
+/** A run's recorded usage, keeping only well-formed values, so nothing else that a record holds reaches the page. */
+function runUsage(run: any) {
+  const usage = run?.usage && typeof run.usage === "object" ? run.usage : {};
+  const tokens = usage.tokens && typeof usage.tokens === "object" ? Object.fromEntries(USAGE_TOKENS.filter((key) => finite(usage.tokens[key])).map((key) => [key, usage.tokens[key]])) : {};
+  const context = finite(usage.context?.used) && finite(usage.context?.size) ? { used: usage.context.used, size: usage.context.size } : null;
+  const cost = finite(usage.cost?.amount) && typeof usage.cost?.currency === "string" ? { amount: usage.cost.amount, currency: usage.cost.currency } : null;
+  return { tokens: Object.keys(tokens).length ? tokens : null, context, cost };
 }
 
 /** Whether a launch folder may be removed: its last run ended, or its supervision was lost, more than 14 days before now, or it never started a run. */

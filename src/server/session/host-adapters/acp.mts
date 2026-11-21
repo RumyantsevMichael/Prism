@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { pluginPath } from "../../plugin-root.mjs";
-import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, lineSplitter, MODEL_PATTERN, strippedEnvironment } from "../launch-hosts.mjs";
+import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, lineSplitter, MODEL_PATTERN, strippedEnvironment, validHostSessionId } from "../launch-hosts.mjs";
 import { toolsListed } from "../options-read-marker.mjs";
 
 // The Agent Client Protocol (ACP) version 1 client: JSON-RPC 2.0 over an agent's standard input and output. Prism declares no
@@ -286,4 +287,284 @@ export async function readAcpOptions(definition: AcpOptionsDefinition, { checkou
     if (timedOut) client.end();
     else if (!client.hasExited()) setTimeout(() => client.end(), EXIT_GRACE_MS).unref();
   }
+}
+
+// ---- Launched runs ----
+
+// How long a launched run waits for Prism's server in the agent's session to list its tools before it gives up.
+export const TOOLS_WAIT_MS = 60000;
+const TOKEN_KEYS = Object.freeze(["inputTokens", "outputTokens", "cachedReadTokens", "cachedWriteTokens", "thoughtTokens", "totalTokens"]);
+const FAILING_STOPS: ReadonlySet<string> = new Set(["refusal", "max_tokens", "max_turn_requests"]);
+// Mode values that Prism never sets, whatever a declaration names, and the words by which any other value says it bypasses or accepts all permissions.
+const BYPASS_VALUES: ReadonlySet<string> = new Set(["bypassPermissions", "agent-full-access"]);
+const BYPASS_WORDS = /bypass|full[\s_-]*access|(accept|allow|approve)s?\s+(all|every)\s+(permission|request|tool)/i;
+export const SKILL_URI = "prism://skills/orchestrate/SKILL.md";
+
+/** The instruction that follows the orchestrate skill's text in a launched run's prompt. */
+export const launchInstruction = (initiative: string) => `Run the Prism skill orchestrate in the attached resource for the initiative ${initiative}. Prism's skills are not installed in this agent: read every other Prism skill or reference file that a skill names with Prism's get_skill tool.`;
+
+/** The run reasons of a launched ACP run that are its own sentences. */
+export const acpRunReasons = Object.freeze({
+  notOffered: (label: string, value: string, option: string) => `${label} does not offer ${value} for ${option}.`,
+  noResume: (label: string) => `${label} cannot resume a session.`,
+  stopped: (label: string, stopReason: string) => `${label} stopped: ${stopReason}.`
+});
+
+/** The usage a run records: tokens of the prompt's answer, context and cost of the last usage_update, each null when not reported. */
+export interface AcpUsage { tokens: Record<string, number> | null; context: { used: number; size: number } | null; cost: { amount: number; currency: string } | null }
+export const NO_USAGE: AcpUsage = Object.freeze({ tokens: null, context: null, cost: null });
+
+const bypasses = (entry: { value: string; name: string; description: string }) => BYPASS_VALUES.has(entry.value) || BYPASS_WORDS.test(entry.value) || BYPASS_WORDS.test(entry.name) || BYPASS_WORDS.test(entry.description);
+const anyValue = /^[^\u0000-\u001f\u007f]{1,200}$/;
+
+/**
+ * The mode value a run sets: the declared autoMode, and otherwise the agent's `auto` mode value, or null when it has neither or the one
+ * it has bypasses permissions, so the agent keeps its own mode. A declared value that the agent does not offer is still answered, so the
+ * run fails naming it.
+ */
+export function automaticMode(options: unknown, autoMode: string | null) {
+  const option = optionOfCategory(options, "mode");
+  const values = option ? selectValues(option, anyValue) : [];
+  const allowed = (value: string) => {
+    const entry = values.find((item) => item.value === value);
+    return entry ? !bypasses(entry) : !BYPASS_VALUES.has(value) && !BYPASS_WORDS.test(value);
+  };
+  if (autoMode !== null && allowed(autoMode)) return autoMode;
+  return values.some((item) => item.value === "auto") && allowed("auto") ? "auto" : null;
+}
+
+const finiteTokens = (usage: unknown) => {
+  if (!isObject(usage)) return null;
+  const counts = Object.fromEntries(TOKEN_KEYS.filter((key) => Number.isFinite(usage[key])).map((key) => [key, usage[key] as number]));
+  return Object.keys(counts).length ? counts : null;
+};
+
+export interface AcpRunFacts { hostSessionId: string | null; model: string | null; hostError: string | null; failure: string | null; usage: AcpUsage | null; refusals: { tool: string; reason: string }[]; refusalCount: number }
+
+export interface AcpConversationOptions {
+  label: string;
+  autoMode: string | null;
+  initiative: string;
+  checkout: string;
+  hostSessionId: string | null;
+  resume: boolean;
+  coordinator: { model: string | null; effort: string | null };
+  env: NodeJS.ProcessEnv;
+  launch: string | null;
+  /** The process id of the agent that the supervisor started. */
+  agentPid: () => number | null;
+  facts: AcpRunFacts;
+  write: (message: unknown) => void;
+  close: () => void;
+  inputOpen: () => boolean;
+  /** Host text with the session id redacted and cut, for a reason or an error. */
+  cut: (value: string) => string;
+  named: (model: unknown) => void;
+  onSessionId: (id: string) => void;
+}
+
+/**
+ * One launched run's conversation with an ACP agent: initialize, session/new with Prism's server or a resume of the recorded session
+ * with session/resume or session/load, the automatic mode and the coordinator's model and effort with session/set_config_option, a wait
+ * until Prism's server listed its tools, and one session/prompt with the orchestrate skill and the instruction. Every request of the
+ * agent other than session/request_permission is answered with HOST_REQUEST_REFUSAL. A stop sends session/cancel once while the prompt
+ * runs and closes the input when it answers, or closes the input at once before the prompt. It answers { start, interrupt, event }.
+ */
+export function acpConversation(options: AcpConversationOptions) {
+  const { label, initiative, checkout, hostSessionId, resume, coordinator, env, launch, facts, write, close, cut } = options;
+  const pending = new Map<number, string>();
+  let nextId = 1;
+  let sessionId: string | null = null;
+  let configOptions: unknown[] = [];
+  let embedded = false;
+  let canResume = false;
+  let canLoad = false;
+  let authMethods: unknown = [];
+  let queue: { configId: string; value: string }[] = [];
+  let prompting = false;
+  let promptDone = false;
+  let stopAsked = false;
+  let cancelSent = false;
+  const usage = { tokens: null, context: null, cost: null } as AcpUsage;
+  const request = (method: string, params: unknown) => {
+    const id = nextId++;
+    pending.set(id, method);
+    write({ jsonrpc: "2.0", id, method, params });
+  };
+  const fail = (reason: string) => {
+    facts.failure = cut(reason);
+    close();
+  };
+  const server = () => prismMcpServer({ env, launch });
+
+  // The options a run sets, in order, each checked against what the agent offers now; a value it does not offer fails the run.
+  const plan = () => {
+    const steps: { category: string; value: string }[] = [];
+    const mode = automaticMode(configOptions, options.autoMode);
+    if (mode !== null) steps.push({ category: "mode", value: mode });
+    if (coordinator.model !== null) steps.push({ category: "model", value: coordinator.model });
+    if (coordinator.effort !== null) steps.push({ category: "thought_level", value: coordinator.effort });
+    return steps;
+  };
+  const resolveStep = (step: { category: string; value: string }) => {
+    const option = optionOfCategory(configOptions, step.category);
+    const offered = option && typeof option.id === "string" && selectValues(option, anyValue).some((entry) => entry.value === step.value);
+    if (!offered) return { reason: acpRunReasons.notOffered(label, step.value, text(option?.name).trim() || (step.category === "thought_level" ? "effort" : step.category)) };
+    return { configId: option.id as string };
+  };
+  let steps: { category: string; value: string }[] = [];
+  const next = () => {
+    if (stopAsked) {
+      close();
+      return;
+    }
+    const step = steps.shift();
+    if (step) {
+      const resolved = resolveStep(step);
+      if ("reason" in resolved) {
+        fail(resolved.reason!);
+        return;
+      }
+      request("session/set_config_option", { sessionId, configId: resolved.configId, value: step.value });
+      return;
+    }
+    const model = optionOfCategory(configOptions, "model");
+    options.named(model?.currentValue);
+    void awaitTools();
+  };
+  const awaitTools = async () => {
+    const pid = options.agentPid();
+    const listed = pid !== null && await toolsListed({ env, agentPid: pid, deadline: Date.now() + TOOLS_WAIT_MS, stopped: () => stopAsked || !options.inputOpen() });
+    if (stopAsked || !options.inputOpen()) {
+      close();
+      return;
+    }
+    if (!listed) {
+      fail(acpReasons.noTools(label));
+      return;
+    }
+    let skill: string;
+    try {
+      skill = readFileSync(pluginPath("skills", "orchestrate", "SKILL.md"), "utf8");
+    } catch (error: any) {
+      fail(`Prism could not read its orchestrate skill: ${error.message}`);
+      return;
+    }
+    const first = embedded ? { type: "resource", resource: { uri: SKILL_URI, mimeType: "text/markdown", text: skill } } : { type: "text", text: skill };
+    prompting = true;
+    request("session/prompt", { sessionId, prompt: [first, { type: "text", text: launchInstruction(initiative) }] });
+  };
+  const opened = (method: string, result: any) => {
+    const id = method === "session/new" ? result?.sessionId : hostSessionId;
+    if (typeof id !== "string" || !id) {
+      fail(`${label} named no session.`);
+      return;
+    }
+    sessionId = id;
+    if (method === "session/new" && validHostSessionId(id)) {
+      facts.hostSessionId = id;
+      options.onSessionId(id);
+    }
+    configOptions = Array.isArray(result?.configOptions) ? result.configOptions : [];
+    // An agent may forget options on a resume, so every run sets them again.
+    steps = plan();
+    next();
+  };
+  const answered = (method: string, result: any) => {
+    if (method === "initialize") {
+      if (result?.protocolVersion !== ACP_PROTOCOL_VERSION) {
+        fail(acpReasons.version(label, result?.protocolVersion));
+        return;
+      }
+      const capabilities = isObject(result?.agentCapabilities) ? result.agentCapabilities : {};
+      embedded = capabilities.promptCapabilities?.embeddedContext === true;
+      canResume = isObject(capabilities.sessionCapabilities?.resume);
+      canLoad = capabilities.loadSession === true;
+      authMethods = result?.authMethods;
+      if (!resume) {
+        request("session/new", { cwd: checkout, mcpServers: [server()] });
+        return;
+      }
+      if (!validHostSessionId(hostSessionId)) {
+        fail("The session never reported its host session id, so it cannot be resumed.");
+        return;
+      }
+      if (!canResume && !canLoad) {
+        fail(acpRunReasons.noResume(label));
+        return;
+      }
+      request(canResume ? "session/resume" : "session/load", { sessionId: hostSessionId, cwd: checkout, mcpServers: [server()] });
+      return;
+    }
+    if (method === "session/new" || method === "session/resume" || method === "session/load") {
+      opened(method, result);
+      return;
+    }
+    if (method === "session/set_config_option") {
+      if (Array.isArray(result?.configOptions)) configOptions = result.configOptions;
+      next();
+      return;
+    }
+    if (method === "session/prompt") {
+      promptDone = true;
+      usage.tokens = finiteTokens(result?.usage);
+      facts.usage = { ...usage };
+      const stopReason = text(result?.stopReason);
+      if (FAILING_STOPS.has(stopReason)) facts.failure = cut(acpRunReasons.stopped(label, stopReason));
+      close();
+    }
+  };
+  const sendCancel = () => {
+    if (cancelSent || promptDone || !prompting || sessionId === null) return;
+    cancelSent = true;
+    write({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+  };
+  return {
+    start: () => request("initialize", { protocolVersion: ACP_PROTOCOL_VERSION, clientCapabilities: {}, clientInfo: { name: "prism-launch", version: "1" } }),
+    interrupt() {
+      stopAsked = true;
+      if (prompting && !promptDone) sendCancel();
+      else close();
+    },
+    event(message: any) {
+      const hasId = typeof message.id === "string" || typeof message.id === "number";
+      if (hasId && typeof message.method === "string") {
+        if (message.method === "session/request_permission") {
+          // Prism grants no permission to a launched agent yet: the request is cancelled, which an agent never reads as an approval.
+          const call = isObject(message.params?.toolCall) ? message.params.toolCall : {};
+          const tool = cut(text(call.title) || text(call.kind) || "a tool").slice(0, 100);
+          facts.refusalCount += 1;
+          if (facts.refusals.length < 20) facts.refusals.push({ tool, reason: cut(`${label} asked to run ${tool}, and Prism grants no permission to a launched agent.`) });
+          write({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "cancelled" } } });
+          return;
+        }
+        write({ jsonrpc: "2.0", id: message.id, error: { ...HOST_REQUEST_REFUSAL } });
+        return;
+      }
+      if (hasId) {
+        const method = typeof message.id === "number" ? pending.get(message.id) : undefined;
+        if (!method) return;
+        pending.delete(message.id);
+        if (message.error !== undefined && message.error !== null) {
+          if (method === "session/prompt") promptDone = true;
+          if (method === "session/new" && message.error?.code === AUTH_REQUIRED_CODE) {
+            fail(acpReasons.signIn(label, authMethods));
+            return;
+          }
+          facts.hostError = cut(text(message.error?.message) || "The agent gave no reason.");
+          close();
+          return;
+        }
+        answered(method, message.result);
+        return;
+      }
+      if (message.method !== "session/update") return;
+      const update = isObject(message.params?.update) ? message.params.update : {};
+      if (update.sessionUpdate === "usage_update") {
+        if (Number.isFinite(update.used) && Number.isFinite(update.size)) usage.context = { used: update.used, size: update.size };
+        if (isObject(update.cost) && Number.isFinite(update.cost.amount) && typeof update.cost.currency === "string" && /^[A-Za-z]{1,8}$/.test(update.cost.currency)) usage.cost = { amount: update.cost.amount, currency: update.cost.currency };
+        facts.usage = { ...usage };
+      } else if (update.sessionUpdate === "config_option_update" && Array.isArray(update.configOptions)) configOptions = update.configOptions;
+    }
+  };
 }

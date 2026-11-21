@@ -10,11 +10,17 @@
 // It names its launch folder on its command line, so any process on this machine can find it.
 // After a run that exited 0, it resumes the session once when the person answered here, during the run, a gate that is still pending.
 import { spawn } from "node:child_process";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { launchCoordinator, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
-import { hostArguments, hostConversation, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { hostArguments, hostConversation, hostEnvironment, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 
+// The tail of a host's standard error that a run keeps in run-<n>.stderr of its launch folder, with the host session id redacted.
 const STDERR_KEEP = 64 * 1024;
+const STDERR_LINE_MAX = 300;
+// A stack frame: a line whose first word after spaces is `at`.
+const STACK_FRAME = /^\s*at(\s|$)/;
 const OUTPUT_DRAIN_MS = 2000;
 // After a stop's forced end, the output is drained for at most this long past the stop's deadline, so the end is recorded in time.
 const STOP_DRAIN_MS = 500;
@@ -29,6 +35,11 @@ const STOP_FINISH_MS = 2000;
 // exit, the handle sends nothing; no process is ever ended by a looked-up process id.
 function forceEndHost(child: any) {
   try { child.kill("SIGKILL"); } catch {}
+}
+
+/** The last non-blank line of a host's standard error that is no stack frame, or null. */
+export function lastReasonLine(text: string) {
+  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !STACK_FRAME.test(line)).at(-1) ?? null;
 }
 
 // The time of a stop request, never later than now.
@@ -68,7 +79,9 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     await failStart("The session's recorded model choice is not one Prism can pass to a host.");
     return;
   }
-  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator });
+  // An ACP agent runs with the arguments and environment of its declaration or install record.
+  const acp: any = (resolved as any).acp ?? null;
+  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator, acp });
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
@@ -78,6 +91,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     // The host's input is written only through the conversation, which closes it once the host's work is over.
     child.stdin.on("error", () => {});
     const conversation = hostConversation(record.host, {
+      acp: acp && { label: resolved.label, autoMode: acp.autoMode ?? null, env, launch: record.id, agentPid: () => child.pid ?? null },
       initiative: record.initiative,
       checkout: record.checkout,
       hostSessionId: record.hostSessionId,
@@ -187,14 +201,15 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
         conversation.end();
         clearInterval(heartbeat);
         const { facts } = conversation;
-        const lines = stderr.toString("utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        // The id is replaced before the text is cut, so no cut leaves part of it behind.
+        const kept = redactSessionId(stderr.toString("utf8"), record.hostSessionId ?? facts.hostSessionId);
+        await writeAtomically(path.join(folder, `run-${number}.stderr`), kept, { mode: 0o600 }).catch(() => {});
         await update((current: any) => {
           if (!current.hostSessionId && facts.hostSessionId) current.hostSessionId = facts.hostSessionId;
           const run = current.runs.find((entry: any) => entry.token === token);
           if (!run) return;
-          // The id is replaced before the line is cut, so no cut leaves part of it behind.
-          const last = redactSessionId(lines.at(-1) ?? null, current.hostSessionId);
-          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, stderr: last?.slice(0, 300) ?? null });
+          const last = lastReasonLine(redactSessionId(kept, current.hostSessionId));
+          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, failure: facts.failure, stderr: last?.slice(0, STDERR_LINE_MAX) ?? null, ...(acp ? { usage: facts.usage } : {}) });
           if (!run.stopRequestedAt && request) run.stopRequestedAt = new Date(requestTime(request)).toISOString();
         });
         resolve();
@@ -210,7 +225,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     if (!current || tokenVoided(current, token)) return null;
     let child;
     try {
-      child = (spawn as any)(resolved.command, [...resolved.prefix, ...args], { cwd: record.checkout, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      child = (spawn as any)(resolved.command, [...resolved.prefix, ...args], { cwd: record.checkout, env: acp ? hostEnvironment(env, record.id, acp) : env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     } catch (error) {
       await failStart(`${resolved.label} could not be started: ${error.message}`);
       return null;

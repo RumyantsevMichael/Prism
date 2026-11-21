@@ -1674,8 +1674,9 @@ if (process.env.CLAUDE_PROJECT_DIR) {
     void recordStoreOf(root).catch(() => {});
     reviewServers.register(root, { open: await opensAtStart(root) });
   }, () => {});
-} else if (process.env.PRISM_OPTIONS_READ !== "1") {
-  // A read of an ACP agent's run options only needs this server to list its tools, so it starts no review app.
+} else if (process.env.PRISM_OPTIONS_READ !== "1" && !process.env.PRISM_LAUNCH) {
+  // A read of an ACP agent's run options only needs this server to list its tools, and a launched session runs under the review app
+  // that launched it, so neither starts a review app here.
   reviewServers.startApp();
 }
 

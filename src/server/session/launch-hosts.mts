@@ -3,6 +3,7 @@ import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { acpHostDefinition, acpHosts, isAcpHost } from "./acp-agents.mjs";
 import { isAgentModel } from "./agent-models.mjs";
+import { acpConversation } from "./host-adapters/acp.mjs";
 
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
 // Nothing here takes a value from the review page except the initiative identifier, checked by the caller, the host, and the
@@ -89,9 +90,6 @@ export function builtinHost(host: unknown) {
 export function hostDefinition(host: string, env: NodeJS.ProcessEnv = process.env): { host: string; label: string; executable: string; acp?: unknown } | null {
   return builtinHost(host) ?? (isAcpHost(host) ? acpHostDefinition(host, env) : null);
 }
-
-/** Why a launch on an ACP agent does not start yet: Prism lists the agent as a host before it runs launched sessions on it. */
-export const acpLaunchPending = (label: string) => `Prism cannot launch ${label} yet: it lists ACP agents as hosts but does not run launched sessions on them.`;
 
 /** Every host in list order: Claude Code, Codex, then the ACP agents offered now in install and then declaration order. */
 export function hostDefinitions(env: NodeJS.ProcessEnv = process.env) {
@@ -212,15 +210,17 @@ function coordinatorOf(coordinator: unknown): CoordinatorChoice {
 
 /**
  * The arguments of a run: Claude Code's launch or resume form with its session id, followed by --model and --effort of the
- * coordinator's choice, each left out for the host default, or Codex's app server, which takes the choice in its requests.
+ * coordinator's choice, each left out for the host default, Codex's app server, which takes the choice in its requests, or an ACP
+ * agent's arguments from its declaration or install record, which takes the choice in its requests too.
  */
-export function hostArguments({ host, hostSessionId, resume, coordinator = null }: { host: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown }) {
+export function hostArguments({ host, hostSessionId, resume, coordinator = null, acp = null }: { host: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; acp?: { args: readonly string[] } | null }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
     const { model, effort } = coordinatorOf(coordinator);
     return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS, ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
   }
   if (host === "codex") return ["app-server"];
+  if (acp) return [...acp.args];
   throw new Error(`Unknown host ${host}.`);
 }
 
@@ -257,10 +257,16 @@ export function codexInterruptRequest({ threadId, turnId }: { threadId: string |
   return { method: "turn/interrupt", params: { threadId, turnId } };
 }
 
-/** The command that continues a host session in a terminal, or null for an id that breaks HOST_SESSION_ID_PATTERN. */
-export function resumeCommandOf(host: string, hostSessionId: unknown) {
+/**
+ * The command that continues a host session in a terminal, or null for an id that breaks HOST_SESSION_ID_PATTERN; an ACP agent's is
+ * its declared resumeCommand with {session} replaced, and null without one or once the agent is no longer offered.
+ */
+export function resumeCommandOf(host: string, hostSessionId: unknown, env: NodeJS.ProcessEnv = process.env) {
   if (!validHostSessionId(hostSessionId)) return null;
-  return host === "claude-code" ? `claude --resume ${hostSessionId}` : `codex resume ${hostSessionId}`;
+  if (host === "claude-code") return `claude --resume ${hostSessionId}`;
+  if (host === "codex") return `codex resume ${hostSessionId}`;
+  const template = isAcpHost(host) ? acpHostDefinition(host, env)?.acp.resumeCommand : null;
+  return template ? template.replaceAll("{session}", hostSessionId) : null;
 }
 
 /** The starter's environment without the host session variables, as a launched run and a read of run options see it. */
@@ -270,9 +276,12 @@ export function strippedEnvironment(env: NodeJS.ProcessEnv) {
   return result;
 }
 
-/** The environment of a run: the starter's own, without the host session variables, and with PRISM_LAUNCH naming the launch. */
-export function hostEnvironment(env: NodeJS.ProcessEnv, launchId: string) {
-  return { ...strippedEnvironment(env), PRISM_LAUNCH: launchId };
+/**
+ * The environment of a run: the starter's own, without the host session variables, and with PRISM_LAUNCH naming the launch; an ACP
+ * agent's run adds the environment of its declaration or install record.
+ */
+export function hostEnvironment(env: NodeJS.ProcessEnv, launchId: string, acp: { env: Readonly<Record<string, string>> } | null = null) {
+  return { ...strippedEnvironment(env), ...(acp ? acp.env : {}), PRISM_LAUNCH: launchId };
 }
 
 /** Splits a byte stream into lines, dropping every line longer than maxBytes, MAX_LINE_BYTES unless given. */
@@ -357,7 +366,7 @@ const digestKey = (id: string) => createHash("sha256").update(Buffer.from(id, "u
  * closes the input once the host has answered it, or at once for a Codex run that has not sent turn/start yet.
  */
 export interface HostRefusal { tool: string; reason: string }
-export interface HostFacts { hostSessionId: string | null; turnId: string | null; model: string | null; refusals: HostRefusal[]; refusalCount: number; hostError: string | null }
+export interface HostFacts { hostSessionId: string | null; turnId: string | null; model: string | null; refusals: HostRefusal[]; refusalCount: number; hostError: string | null; failure: string | null; usage: any }
 export interface HostConversationOptions {
   initiative: string;
   checkout: string;
@@ -368,10 +377,12 @@ export interface HostConversationOptions {
   closeInput: () => void;
   onSessionId?: (id: string) => void;
   onModel?: (model: string) => void;
+  /** An ACP agent's run: its label and automatic mode, the starter's environment, the launch id, and the agent's process id. */
+  acp?: { label: string; autoMode: string | null; env: NodeJS.ProcessEnv; launch: string; agentPid: () => number | null } | null;
 }
 
-export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {} }: HostConversationOptions) {
-  const facts: HostFacts = { hostSessionId: null, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null };
+export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null }: HostConversationOptions) {
+  const facts: HostFacts = { hostSessionId: null, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
   const named = (value: unknown) => {
@@ -395,7 +406,26 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     inputOpen = false;
     closeInput();
   };
-  const handle = host === "claude-code" ? claudeHandler() : codexHandler();
+  if (host !== "claude-code" && host !== "codex" && !acp) throw new Error(`Unknown host ${host}.`);
+  const handle = host === "claude-code" ? claudeHandler() : host === "codex" ? codexHandler() : acpConversation({
+    label: acp!.label,
+    autoMode: acp!.autoMode,
+    initiative,
+    checkout,
+    hostSessionId,
+    resume,
+    coordinator: coordinatorOf(coordinator),
+    env: acp!.env,
+    launch: acp!.launch,
+    agentPid: acp!.agentPid,
+    facts,
+    write,
+    close,
+    inputOpen: () => inputOpen,
+    cut,
+    named,
+    onSessionId
+  });
 
   // Claude Code: the prompt is one stream-json user message, and the input closes at a result event once every background task
   // that the host reported as started has been reported as ended.
