@@ -269,9 +269,9 @@ function sourceStatements(type: any, text: any) {
   });
 }
 
-// Whether a content statement needs no source: the format's structure, a default, unknown, a link, a glossary source, a requirement pattern, or a date that the source or its Git history gives.
+// Whether a content statement needs no source: the format's structure, a default, unknown, a link, a glossary source, the pattern of a split-out requirement section, or a date that the source or its Git history gives.
 // A Status value needs no source when it is the type's new status or the status a source or target records or states; a date when the source's Git history gives it or a source or target states it in the same field.
-function needsNoSource(type: any, statement: any, { dates, known }: any) {
+function needsNoSource(type: any, statement: any, { dates, known, splitOut = false }: any) {
   const value = normalizeStatement(statement.text);
   const raw = statement.text.trim();
   if (!value || value === UNKNOWN || value === "n/a") return true;
@@ -280,8 +280,8 @@ function needsNoSource(type: any, statement: any, { dates, known }: any) {
   if (statement.field === "Status") return value === newStatus(STORE_KINDS[type]) || known.some((artifact: any) => artifact.status === value || headerValue(artifact.text, "Status") === value);
   if (statement.field && DATE_FIELDS.has(statement.field)) return DATE.test(value) && (dates.has(value) || known.some((artifact: any) => headerValue(artifact.text, statement.field) === value));
   if (statement.field && DECISION_FIELDS.has(statement.field)) return false;
-  // A requirement split into a new numbered section takes the Pattern of its own sentence, one of the format's patterns.
-  if (type === "requirements" && statement.field === "Pattern" && PATTERNS.includes(value)) return true;
+  // A requirement split out into a new numbered section takes the Pattern of its own sentence, one of the format's patterns.
+  if (type === "requirements" && splitOut && statement.field === "Pattern" && PATTERNS.includes(value)) return true;
   if (statement.field && LINK_LIST.test(raw)) return true;
   if (type === "glossary" && statement.field === "Source" && /^(?:migration(?:\s+migration-[0-9a-f]+)?|\[[^\]]*\]\([^)\s]+\))(\s*,\s*(?:migration(?:\s+migration-[0-9a-f]+)?|\[[^\]]*\]\([^)\s]+\)))*$/.test(raw)) return true;
   return false;
@@ -414,6 +414,57 @@ function leadingName(line: any) {
   return name ? normalizeStatement(name[1]) : null;
 }
 
+// ---- Splits of requirement sections ----
+
+// A numbered heading's number and folded title, or null.
+const numberedHeading = (heading: any) => {
+  const match = heading === null || heading === undefined ? null : /^(\d+)\.\s+(\S.*?)\s*$/.exec(heading);
+  return match ? { number: match[1], title: match[2].replace(/\s+/g, " ").toLowerCase() } : null;
+};
+
+// The numbered sections of a requirement text by number: { heading, title, first }, where first is the section's first requirement,
+// its first Requirement sentence that says shall, else its first Requirement sentence, normalized, or null.
+function numberedSections(text: any) {
+  const held = sectionsOf(text);
+  const result = new Map();
+  for (const entry of held.slice(1)) {
+    const heading = numberedHeading(entry?.h2);
+    if (heading && !result.has(heading.number)) result.set(heading.number, { heading: entry.h2, title: heading.title, requirements: [] });
+  }
+  for (const statement of statementsOf("requirements", text)) {
+    if (statement.field !== "Requirement") continue;
+    const section = result.get(numberedHeading(held[statement.line]?.h2)?.number);
+    if (section) section.requirements.push(normalizeStatement(statement.text));
+  }
+  for (const section of result.values()) section.first = section.requirements.find((text: any) => /\bshall\b/i.test(text)) ?? section.requirements[0] ?? null;
+  return result;
+}
+
+/**
+ * Whether the content heading `to` is a section split out of the source's numbered section `from`, given both texts' numbered sections:
+ * a number the source does not use, section `from`'s title, and the content still holds section `from` under its number and title, beginning with its first requirement.
+ */
+function splitTarget(source: any, target: any, from: any, to: any) {
+  const [left, right] = [numberedHeading(from), numberedHeading(to)];
+  if (left === null || right === null || left.title !== right.title || source.has(right.number)) return false;
+  const original = source.get(left.number), kept = target.get(left.number);
+  return Boolean(original && kept && kept.title === original.title && kept.first === original.first);
+}
+
+// The numbered sections of a requirement source and its content, or null for another type.
+const splitSides = (type: any, sourceText: any, content: any) => type === "requirements" ? { source: numberedSections(sourceText), target: numberedSections(content) } : null;
+
+/** The content's split-out requirement sections, by heading text: each numbered section that splitTarget takes as split out of a source section. */
+function splitOutSections(type: any, sourceText: any, content: any) {
+  const found = new Set();
+  const sides = splitSides(type, sourceText, content);
+  if (!sides) return found;
+  for (const section of sides.target.values()) {
+    if ([...sides.source.values()].some((original: any) => splitTarget(sides.source, sides.target, original.heading, section.heading))) found.add(section.heading);
+  }
+  return found;
+}
+
 /**
  * The source statements that the content moves to a section that does not correspond to the one they came from, as [{ text, line, from, to }],
  * or to a section other than the one a person's answer named; statements the content does not hold are placed elsewhere and not compared here.
@@ -424,17 +475,9 @@ function misplacedStatements(type: any, sourceText: any, content: any, statement
   const contentStatements = statementsOf(type, content).map((statement) => ({ ...statement, normalized: normalizeStatement(statement.text) }));
   const headings = contentSections.slice(1).map((entry: any, index: any) => ({ ...entry, number: index + 1 })).filter((entry: any) => /^\s{0,3}#{2,3}\s/.test(entry.line));
   const misplaced = [];
-  // A requirement split out of a numbered section lands in a new numbered section, one whose number the source does not use, under that section's title.
-  const numbered = (heading: any) => {
-    const match = heading === null ? null : /^(\d+)\.\s+(\S.*?)\s*$/.exec(heading);
-    return match ? { number: match[1], title: match[2].replace(/\s+/g, " ").toLowerCase() } : null;
-  };
-  const sourceNumbers = new Set(sourceSections.slice(1).map((entry: any) => numbered(entry.h2)?.number).filter(Boolean));
-  const splitInto = (from: any, to: any) => {
-    if (type !== "requirements") return false;
-    const [left, right] = [numbered(from), numbered(to)];
-    return left !== null && right !== null && !sourceNumbers.has(right.number) && left.title === right.title;
-  };
+  // A requirement split out of a numbered section lands in a new numbered section under that section's title, while the section keeps its number and first requirement.
+  const sides = splitSides(type, sourceText, content);
+  const splitInto = (from: any, to: any) => sides !== null && splitTarget(sides.source, sides.target, from, to);
   for (const statement of statements) {
     const value = normalizeStatement(statement.text);
     let places = contentStatements.filter((item) => item.normalized === value).map((item) => contentSections[item.line]?.h2 ?? null);
@@ -593,8 +636,14 @@ export async function proposeMigration(input: any) {
     const knownArtifacts = [source, ...(existing ? [existing] : [])];
     const knownStatements = new Set(knownArtifacts.flatMap((artifact) => statementsOf(type, artifact.text)).map((statement) => normalizeStatement(statement.text)));
     const dates = await historyDates(root, source.path);
-    const invented = [content, ...conflicts.map((conflict) => conflict.source)].flatMap((text) => statementsOf(type, text))
-      .filter((statement) => !needsNoSource(type, statement, { dates, known: knownArtifacts }) && (DECISION_FIELDS.has(statement.field) || !knownStatements.has(normalizeStatement(statement.text))));
+    const splitOut = splitOutSections(type, source.text, content);
+    const contentHeadings = sectionsOf(content);
+    const inSplitOut = (statement: any) => splitOut.has(contentHeadings[statement.line]?.h2);
+    const invented = [
+      ...statementsOf(type, content).map((statement) => ({ statement, splitOut: inSplitOut(statement) })),
+      ...conflicts.flatMap((conflict) => statementsOf(type, conflict.source).map((statement) => ({ statement, splitOut: false })))
+    ].filter(({ statement, splitOut: split }) => !needsNoSource(type, statement, { dates, known: knownArtifacts, splitOut: split }) && (DECISION_FIELDS.has(statement.field) || !knownStatements.has(normalizeStatement(statement.text))))
+      .map(({ statement }) => statement);
     if (invented.length) {
       throw fail("migration_invented", `${invented.length === 1 ? "A statement" : `${invented.length} statements`} of the content ${invented.length === 1 ? "occurs" : "occur"} in neither ${label(source)} nor the target: ${invented.map((statement) => `line ${statement.line}: ${JSON.stringify(statement.text)}`).join("; ")}. Write only what the source says, and mark a value that neither the source nor its Git history gives as unknown.`, { statements: invented.map(({ text, line }: any) => ({ text, line })) });
     }

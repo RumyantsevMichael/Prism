@@ -1,8 +1,6 @@
 // The formats of Prism's normative artifacts: requirement files, ADRs, the glossary, and feature files.
 // Each format's reference under skills/ states the same version, rule ids, and defaults, and holds an example that these checks accept.
 
-import { splitStatements } from "./statements.mjs";
-
 const MAX_TEXT_BYTES = 1024 * 1024;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const UNKNOWN = "unknown";
@@ -214,8 +212,33 @@ const relatedLinks = (value: any) => {
   return LINK_LIST.test(links) && linkTargets(links).every((target) => isLinkTo(target, { anchor: "optional" }));
 };
 
-// The requirements one Requirement: value states: its sentences, as a format migration splits statements, that say shall in any case.
-export const requirementsIn = (value: any) => splitStatements(value).filter((statement: any) => /\bshall\b/i.test(statement.text));
+// The abbreviations whose period ends no sentence when the next word starts in lower case, as requirements.shall counts a Requirement value's sentences.
+const ABBREVIATION = /(?:^|[\s(])(?:e\.g|i\.e|etc|vs|cf|approx|incl|resp)\.$/i;
+
+/**
+ * The requirements one Requirement: value states, [{ text }]: its sentences that say shall in any case.
+ * A sentence ends at ".", "!", or "?", optionally followed by closing quotes or brackets, and then whitespace, so a quoted ending ("done.") ends one;
+ * it does not end inside a code span, or after an abbreviation such as "e.g." that a lower-case word follows.
+ */
+export function requirementsIn(value: any) {
+  const text = String(value);
+  // Code spans masked to the same length, so a period inside one ends no sentence.
+  const masked = text.replace(/`[^`]*`/g, (span) => "x".repeat(span.length));
+  const found: any[] = [];
+  let from = 0;
+  const push = (to: any) => {
+    const piece = text.slice(from, to).trim();
+    if (piece) found.push({ text: piece });
+  };
+  for (const match of masked.matchAll(/[.!?]["'\u2019\u201d)\]]*(\s+)/g)) {
+    const next = match.index + match[0].length;
+    if (ABBREVIATION.test(masked.slice(from, match.index + 1)) && /^[a-z0-9]/.test(masked.slice(next))) continue;
+    push(next - match[1].length);
+    from = next;
+  }
+  push(text.length);
+  return found.filter((sentence) => /\bshall\b/i.test(sentence.text));
+}
 
 function inspectRequirementSection(section: any, number: any, findings: any, unknowns: any, oneShall: any) {
   const type = "requirements";
