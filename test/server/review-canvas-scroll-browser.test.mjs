@@ -75,6 +75,66 @@ test("a PlantUML diagram draws on the same dotted grid, which follows its zoom",
   assert.deepEqual(page.errors, []);
 });
 
+test("a zoomed-in PlantUML diagram pans by dragging it with a mouse, and only shows a grab cursor while there is something to pan", { skip, timeout: 90000 }, async (context) => {
+  const { page } = await stressPage(context, "docs/plans/huge-initiative/slice-with-long-name/diagram.puml", { viewport: { width: 1280, height: 800 } });
+  await page.waitForFunction(() => document.querySelector("#artifact prism-canvas.diagram-output svg"), null, { timeout: 15000 });
+  const canvas = page.locator("#artifact prism-canvas.diagram-output");
+  const zoom = (action) => page.locator(`#artifact .diagram-view [data-action='${action}']`).click();
+  const read = () => canvas.evaluate((element) => ({ left: element.scrollLeft, page: document.getElementById("workspace").scrollTop, cursor: getComputedStyle(element).cursor, select: getComputedStyle(element).userSelect, touch: getComputedStyle(element).touchAction, overflowing: element.hasAttribute("overflowing"), panning: element.hasAttribute("panning") }));
+  assert.equal(await canvas.getAttribute("pannable"), "", "a diagram's canvas pans by dragging");
+  for (let step = 0; step < 8; step += 1) await zoom("zoom-out");
+  const small = await settled(read, (value) => !value.overflowing);
+  assert.equal(small.overflowing, false, "the smallest zoom of the diagram fits its canvas");
+  assert.notEqual(small.cursor, "grab", "a diagram that fits shows no grab cursor");
+  for (let step = 0; step < 16; step += 1) await zoom("zoom-in");
+  const before = await settled(read, (value) => value.overflowing);
+  assert.equal(before.overflowing, true, "the zoomed-in diagram is wider than its canvas");
+  assert.equal(before.cursor, "grab");
+  assert.equal(before.select, "none", "a drag selects no text");
+  assert.notEqual(before.touch, "none", "a finger pans by the browser's own scrolling");
+  const box = await canvas.boundingBox();
+  // The canvas grows taller than the window with its diagram, so the drag starts in its padding near the top, which is in view and holds no link.
+  const [x, y] = [box.x + box.width / 2, box.y + 12];
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - 120, y - 60, { steps: 6 });
+  const during = await read();
+  assert.equal(during.panning, true, "the canvas shows it is being dragged");
+  assert.equal(during.cursor, "grabbing");
+  await page.mouse.up();
+  const after = await read();
+  assert.equal(after.panning, false);
+  assert.ok(after.left > before.left, "dragging left moves the diagram left");
+  assert.ok(after.page > before.page, "dragging up scrolls the page that holds the tall diagram");
+  assert.equal(await page.evaluate(() => String(getSelection())), "", "dragging the diagram selects no text");
+  assert.deepEqual(page.errors, []);
+});
+
+test("a press on a link or control in a pannable canvas keeps its meaning and starts no pan", { skip, timeout: 90000 }, async (context) => {
+  const { page } = await stressPage(context, "docs/plans/huge-initiative/slice-with-long-name/diagram.puml", { viewport: { width: 1280, height: 800 } });
+  await page.waitForFunction(() => document.querySelector("#artifact prism-canvas.diagram-output svg"), null, { timeout: 15000 });
+  const moved = await page.evaluate(async () => {
+    const canvas = document.createElement("prism-canvas");
+    canvas.setAttribute("pannable", "");
+    canvas.style.cssText = "width:200px;height:120px";
+    canvas.innerHTML = `<svg width="800" height="600" viewBox="0 0 800 600"><a href="#here"><rect id="target" x="0" y="0" width="160" height="100"/></a></svg>`;
+    document.body.append(canvas);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const rect = canvas.querySelector("#target").getBoundingClientRect();
+    const fire = (type, x, y) => canvas.querySelector("#target").dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 7, pointerType: "mouse", button: 0, buttons: type === "pointerup" ? 0 : 1, clientX: x, clientY: y }));
+    fire("pointerdown", rect.left + 50, rect.top + 50);
+    fire("pointermove", rect.left + 10, rect.top + 10);
+    fire("pointerup", rect.left + 10, rect.top + 10);
+    const result = { left: canvas.scrollLeft, panning: canvas.hasAttribute("panning"), overflowing: canvas.hasAttribute("overflowing") };
+    canvas.remove();
+    return result;
+  });
+  assert.equal(moved.overflowing, true);
+  assert.equal(moved.left, 0, "a press on a link does not pan");
+  assert.equal(moved.panning, false);
+  assert.deepEqual(page.errors, []);
+});
+
 test("a menu taller than the window keeps its scroll position when the page places it again", { skip, timeout: 90000 }, async (context) => {
   const { page } = await stressPage(context, "attention", { viewport: { width: 1280, height: 560 } });
   await page.evaluate(() => {

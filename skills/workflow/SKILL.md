@@ -136,4 +136,4 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 
 - Read [delegation.md](references/delegation.md) before starting child agents.
 - Read [visual-review.md](references/visual-review.md) before human artifact review.
-- Ask only at a real gate or unresolved choice, as a [blocker](#common-terms) in plain language before its artifact reference.
+- Ask only at a real gate or unresolved choice, as a [blocker](#common-terms) in plain language before its artifact reference, and while a gate you asked waits, ask nothing through the host's own question tool, whose answer does not answer the gate, but wait for the gate and ask any other question in plain text.
