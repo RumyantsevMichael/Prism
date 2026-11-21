@@ -21,7 +21,7 @@ function psParents() {
   const parents = new Map<number, number>();
   if (process.platform === "win32") return parents;
   let table: string;
-  try { table = execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }); } catch { return parents; }
+  try { table = execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000, windowsHide: true }); } catch { return parents; }
   for (const line of table.split("\n")) {
     const [pid, parent] = line.trim().split(/\s+/).map(Number);
     if (Number.isSafeInteger(pid) && Number.isSafeInteger(parent)) parents.set(pid, parent);
