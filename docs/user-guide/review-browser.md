@@ -412,14 +412,18 @@ The process that runs the session and answers its host shows that dialog itself,
 Only once you choose **Allow** there does Prism answer the host, and it answers with the host's allow for this one request alone: Claude Code runs the tool with the input it asked for, Codex accepts the command or file change and nothing more, and an ACP agent gets its allow-once option.
 When you choose **Refuse** in that dialog, or nobody answers within 2 minutes, the request keeps waiting and the action is refused with `confirmation_declined` or `confirmation_timeout`.
 A request whose host offers no allow that covers only this one request, such as an ACP agent that offers only an always-allow option, cannot be allowed and is refused with `approval_unavailable`.
-Some Codex requests can only be refused, and **Allow** answers `approval_unavailable` before any dialog, with the request still waiting until you refuse it or it ends:
-- A permissions request, because the narrowest grant Codex takes lasts for the rest of its turn: `Codex asks for these permissions for the rest of its turn, so Prism can only refuse it.`
-- A file change that asks to write under a folder for the rest of the session: `Codex asks to allow writes under <folder> for the rest of the session, so Prism can only refuse it.`
-- A file change whose files Codex did not describe before it asked, whose action shows as `A file change that Codex did not describe`: `Codex did not say which files this change writes, so Prism can only refuse it.`
+Some requests can only be refused, and **Allow** answers `approval_unavailable` before any dialog, with the request still waiting until you refuse it or it ends:
+- A Codex permissions request, because the narrowest grant Codex takes lasts for the rest of its turn: `Codex asks for these permissions for the rest of its turn, so Prism can only refuse it.`
+- A Codex file change that asks to write under a folder for the rest of the session: `Codex asks to allow writes under <folder> for the rest of the session, so Prism can only refuse it.`
+- A Codex file change whose files Codex did not describe before it asked, or described as no change, whose action shows as `A file change that Codex did not describe`: `Codex did not say which files this change writes, so Prism can only refuse it.`
+- A Codex command request without a command, whose action shows as `A command that Codex did not name` followed by the folder, environment, kind, and network host Codex sets: `Codex did not say which command this runs, so Prism can only refuse it.`
+- A Claude Code request without a tool name, whose action shows as `A tool that Claude Code did not name` followed by its input: `Claude Code did not say which tool this runs, so Prism can only refuse it.`
+- An ACP agent's request whose tool call has neither a title nor a raw input, whose action shows as `A tool of kind <kind> that <label> did not describe`: `<label> did not say what this tool call does, so Prism can only refuse it.`
 
 **Refuse** needs no dialog: Claude Code is told `The person refused this on Attention.`, Codex declines, or for a permissions request is granted no permission, and an ACP agent gets its reject-once option, or a cancelled answer when it offers none.
 When the session's run ends, or you stop it, while a request waits, Prism refuses the request to the host if it still runs and removes it from Attention.
 When Codex changes the patch of a file change while its request waits, what an allow would cover has changed, so Prism declines that request and removes it from Attention, and a dialog for it that is open then allows nothing.
+When the host reports that it settled a waiting request by itself, as Codex does with `serverRequest/resolved`, an ACP agent with `$/cancel_request`, and Claude Code with `control_cancel_request`, Prism removes the request from Attention without answering it, the session no longer shows **Waiting for you** for it, and a dialog for it that is open then or that you confirm later allows nothing.
 An answer to a request that no longer waits in the session is refused with `unknown_request`.
 Each answer is recorded in the initiative's history as `launch.permission` with the decision and the action.
 
