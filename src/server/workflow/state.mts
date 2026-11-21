@@ -1382,5 +1382,18 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
     }
   }, error));
   await markLaunchedGates(projectRoot, initiative, paused.openedGates);
+  await markLaunchedPause(projectRoot, initiative);
   return paused;
+}
+
+// A pause recorded by a launched session of this machine, whose environment names its launch, is marked in that launch folder, so its
+// run counts as having a result; a mark that cannot be written leaves the pause as it succeeded.
+async function markLaunchedPause(projectRoot: string, initiative: string) {
+  if (typeof process.env.PRISM_LAUNCH !== "string" || !process.env.PRISM_LAUNCH) return;
+  try {
+    const { markLaunchPause } = await import("../session/launched-sessions.mjs");
+    await markLaunchPause({ projectRoot, initiative, env: process.env });
+  } catch {
+    // The run then ends without a result, and its no-result gate asks the person what it should do next.
+  }
 }

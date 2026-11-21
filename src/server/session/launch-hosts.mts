@@ -4,6 +4,7 @@ import path from "node:path";
 import { acpHostDefinition, acpHosts, isAcpHost } from "./acp-agents.mjs";
 import { isAgentModel } from "./agent-models.mjs";
 import { acpConversation } from "./host-adapters/acp.mjs";
+import { lastMessageOf } from "./run-result.mjs";
 import { shownForm, type PermissionAsk, type PermissionDecision } from "./permission-requests.mjs";
 
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
@@ -444,7 +445,9 @@ const digestKey = (id: string) => createHash("sha256").update(Buffer.from(id, "u
 export interface HostRefusal { tool: string; reason: string }
 // agentSessionId is the session id an ACP agent named, whatever its characters, kept only to redact it; settled is false while an ACP
 // run has no outcome of its own, so an agent that exits 0 before its prompt answers fails the run.
-export interface HostFacts { hostSessionId: string | null; agentSessionId: string | null; settled: boolean; turnId: string | null; model: string | null; refusals: HostRefusal[]; refusalCount: number; hostError: string | null; failure: string | null; usage: any }
+// lastMessage is the text of the host's last reply in the run, with the session ids replaced and cut, or null; stopReason is the stop
+// reason with which an ACP agent's prompt answered, or null.
+export interface HostFacts { hostSessionId: string | null; agentSessionId: string | null; settled: boolean; turnId: string | null; model: string | null; refusals: HostRefusal[]; refusalCount: number; hostError: string | null; failure: string | null; usage: any; lastMessage: string | null; stopReason: string | null }
 export interface HostConversationOptions {
   initiative: string;
   checkout: string;
@@ -477,7 +480,7 @@ export type PermissionAnswer = (decision: PermissionDecision) => unknown;
 export const REFUSED_ON_ATTENTION = "The person refused this on Attention.";
 
 export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null, permissions = null }: HostConversationOptions) {
-  const facts: HostFacts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null };
+  const facts: HostFacts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null, lastMessage: null, stopReason: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
   const named = (value: unknown) => {
@@ -492,6 +495,11 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
   // The id is replaced before the text is cut, so no cut leaves part of it behind.
   const cut = (value: string) => detached(redact(value).slice(0, REFUSAL_REASON_MAX));
   const hostError = (value: string) => cut(value || HOST_ERROR_FALLBACK);
+  // A reply's text as the run's last message, kept in a string of its own.
+  const replyText = (value: unknown) => {
+    const kept = lastMessageOf(value, redact);
+    return kept === null ? null : detached(kept);
+  };
   const toolName = (value: unknown, fallback: string) => (typeof value === "string" && value ? detached(redact(value).slice(0, TOOL_NAME_MAX)) : fallback);
   const write = (message: unknown) => {
     if (inputOpen) send(message);
@@ -552,6 +560,7 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     close,
     inputOpen: () => inputOpen,
     cut,
+    replyText,
     named,
     onSessionId,
     ask
@@ -640,6 +649,8 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
           return { tool, reason: reason || cut(`${tool} was refused.`) };
         });
         facts.hostError = event.is_error === true ? hostError(claudeErrorText(event)) : null;
+        // The last result that is no error holds the run's last reply.
+        if (event.is_error !== true) facts.lastMessage = replyText(event.result);
         if (tasks.size === 0 && untrackedTasks === 0) close();
       }
     };
@@ -672,6 +683,9 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     let turnDone = false;
     let stopAsked = false;
     let interruptSent = false;
+    // The last reply of each turn whose agent messages arrived before the turn/start answer named the run's turn, by turn digest,
+    // at most KEPT_EARLY_COMPLETIONS of them.
+    const earlyReplies = new Map<string, string | null>();
     const request = (method: string, params: unknown) => {
       const id = nextId++;
       pending.set(id, method);
@@ -720,6 +734,8 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
           return;
         }
         facts.turnId = id;
+        if (earlyReplies.has(digestKey(id))) facts.lastMessage = earlyReplies.get(digestKey(id)) ?? null;
+        earlyReplies.clear();
         if (completed.has(digestKey(id))) turnEnded(completed.get(digestKey(id)));
         else if (stopAsked) sendInterrupt();
       }
@@ -795,6 +811,16 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
         if (message.method === "serverRequest/resolved" && (typeof params.requestId === "string" || typeof params.requestId === "number")) {
           // Codex settled the request itself, so it is withdrawn and answered nothing.
           waitingApprovals.get(requestKey(params.requestId))?.dismiss();
+          return;
+        }
+        if (message.method === "item/completed" && params.item?.type === "agentMessage" && typeof params.turnId === "string" && !turnDone) {
+          // Only a reply of the run's turn counts; one that arrives before the turn/start answer waits for it.
+          if (facts.turnId === null) {
+            const key = digestKey(params.turnId);
+            earlyReplies.delete(key);
+            earlyReplies.set(key, typeof params.item.text === "string" ? replyText(params.item.text) : null);
+            if (earlyReplies.size > KEPT_EARLY_COMPLETIONS) earlyReplies.delete(earlyReplies.keys().next().value!);
+          } else if (params.turnId === facts.turnId && typeof params.item.text === "string") facts.lastMessage = replyText(params.item.text);
           return;
         }
         if (message.method === "item/completed" && params.item?.status === "declined") {

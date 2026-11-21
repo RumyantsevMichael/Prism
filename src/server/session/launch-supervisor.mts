@@ -11,7 +11,8 @@
 // Each permission request of the host waits in the launch folder. A refusal that a review server of this machine writes there is
 // answered to the host; an approval only asks this process to show the request's native dialog, and the host is allowed only the
 // request whose dialog the person confirmed. When the run ends or is stopped, every request still waiting is refused and removed.
-// After a run that exited 0, it resumes the session once when the person answered here, during the run, a gate that is still pending.
+// After a run that exited 0, it resumes the session once when the person answered here, during the run, a gate that is still pending,
+// and otherwise records a no-result gate for a run that ended normally without a result.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -126,6 +127,8 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
   let stderrTrimmed = false;
+  // What the run's conversation found once the host ended: whether the host ended normally by its own facts, and its last message.
+  let ending: { normal: boolean; lastMessage: string | null } | null = null;
 
   // Every listener is attached as soon as the host process exists, so no early output or exit is missed.
   const watch = (child: any) => {
@@ -261,6 +264,11 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
         // The id is replaced before the text is cut, so no cut leaves part of it behind.
         const kept = keptStderr(stderr, stderrTrimmed, [record.hostSessionId, facts.hostSessionId, facts.agentSessionId]);
         await writeAtomically(path.join(folder, `run-${number}.stderr`), kept, { mode: 0o600 }).catch(() => {});
+        // An ACP agent's run ends normally only when its prompt answered end_turn.
+        ending = { normal: acp ? facts.settled && facts.stopReason === "end_turn" : true, lastMessage: facts.lastMessage };
+        // The check is marked before the end, so the run never shows as finished before Prism checked its result.
+        const { markResultCheck } = await import("./launched-sessions.mjs");
+        await markResultCheck({ id: record.id, token, env }).catch(() => {});
         await update((current: any) => {
           if (!current.hostSessionId && facts.hostSessionId) current.hostSessionId = facts.hostSessionId;
           const run = current.runs.find((entry: any) => entry.token === token);
@@ -304,10 +312,13 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     const { sweepUnusedVersions } = await import("./agent-installs.mjs");
     await sweepUnusedVersions(env, [acp.id]);
   }
-  // A run that exited 0 with an answer given here while it ran, whose gate is still pending, is resumed once for that answer.
+  // A run that exited 0 with an answer given here while it ran, whose gate is still pending, is resumed once for that answer;
+  // only then does Prism check whether a run that ended normally ended with a result, and record its no-result gate when it did not.
   if (started) {
-    const { resumeForAnswers } = await import("./launched-sessions.mjs");
-    await resumeForAnswers({ id: record.id, token, env }).catch(() => {});
+    const { resumeForAnswers, settleRunResult } = await import("./launched-sessions.mjs");
+    const resumed = await resumeForAnswers({ id: record.id, token, env }).catch(() => false);
+    const ended = ending as { normal: boolean; lastMessage: string | null } | null;
+    await settleRunResult({ id: record.id, token, normal: ended?.normal === true, resumed, lastMessage: ended?.lastMessage ?? null, env }).catch(() => {});
   }
 }
 

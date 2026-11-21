@@ -32,6 +32,9 @@ import {
   listLaunchRecords,
   newLaunchId,
   readGateRecord,
+  readResultMarks,
+  noResultGates,
+  writeResultMarks,
   readStopRequest,
   prepareLaunchesDirectory,
   readLaunchRecord,
@@ -45,6 +48,7 @@ import {
   writeStopRequest
 } from "./launch-records.mjs";
 import { launchRequests } from "./permission-requests.mjs";
+import { isNoResultGate, noResultContext, noResultQuestion, runHasResult } from "./run-result.mjs";
 
 // Starting, listing, resuming, and stopping launched sessions: headless host sessions that Prism runs for one initiative on this machine.
 // Each run runs under a detached supervisor, so the session outlives the process that started it.
@@ -264,6 +268,92 @@ export async function markLaunchGates({ projectRoot, initiative, gates, env = pr
   });
 }
 
+/**
+ * Marks a pause that the launched run that env.PRISM_LAUNCH names recorded, in that launch folder only, when the launch is of this
+ * machine, of the same initiative, and in the record store of projectRoot; otherwise it marks nothing. A pause is a result of the run.
+ */
+export async function markLaunchPause({ projectRoot, initiative, env = process.env }: { projectRoot: string; initiative: string; env?: NodeJS.ProcessEnv }) {
+  const found = await launchOf(env, env.PRISM_LAUNCH!, { projectRoot, initiative });
+  if (!found) return false;
+  return withLaunchLock(env, async () => {
+    if (!(await readLaunchRecord(found.folder))) return false;
+    const marks = await readResultMarks(found.folder);
+    await writeResultMarks(found.folder, { ...marks, pauses: [...marks.pauses, { at: new Date().toISOString() }] });
+    return true;
+  });
+}
+
+/** Marks that this process checks whether the run with this token ended with a result, so the run shows as running until the check ends. */
+export async function markResultCheck({ id, token, env = process.env }: { id: string; token: string; env?: NodeJS.ProcessEnv }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return;
+  const folder = launchFolder(env, id);
+  await withLaunchLock(env, async () => {
+    const marks = await readResultMarks(folder);
+    await writeResultMarks(folder, { ...marks, checks: [...marks.checks.filter((check) => check.run !== token), { run: token, pid: process.pid, at: new Date().toISOString() }] });
+  });
+}
+
+const NEWER_RUN = "A newer run of this launched session ended without a result.";
+
+// Records the no-result gate of a run in the initiative's coordination state, first resolving the launch's earlier unanswered one:
+// { gate } with the new gate's id, or { failure } with why it could not be recorded.
+async function askNoResultGate(record: any, earlier: string[], lastMessage: string | null, env: NodeJS.ProcessEnv) {
+  const { readCoordinationState: read, updateCoordinationState } = await import("../workflow/state.mjs");
+  const label = hostDefinition(record.host, env)?.label ?? record.host;
+  const ask = { op: "ask", kind: "assistance", question: noResultQuestion(label, record.initiative), context: noResultContext(lastMessage), artifacts: [] };
+  let failure = "The coordination state kept changing.";
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const current: any = await read({ projectRoot: record.checkout, initiative: record.initiative });
+      const pending = current.valid && Array.isArray(current.state?.pending) ? current.state.pending : [];
+      const resolve = pending.filter((gate: any) => gate && earlier.includes(gate.id) && !gate.answer && isNoResultGate(gate)).map((gate: any) => ({ op: "resolve", id: gate.id, reason: NEWER_RUN }));
+      const result: any = await updateCoordinationState({ projectRoot: record.checkout, initiative: record.initiative, expectedRevision: current.revision ?? null, changes: { gateOperations: [...resolve, ask] } });
+      const gate = result.openedGates?.at(-1)?.id;
+      return typeof gate === "string" && GATE_ID_PATTERN.test(gate) ? { gate } : { failure: "The coordination state named no new gate." };
+    } catch (error: any) {
+      failure = typeof error?.message === "string" && error.message ? error.message : String(error);
+      if (error?.code !== "revision_conflict") break;
+    }
+  }
+  return { failure };
+}
+
+/**
+ * After a run of a launched session ended, checks whether it ended with a result, then removes this process's check mark. A run that ended
+ * normally, that no answer resumed, and that has no result gets one no-result gate, marked as asked by the launch and, for Claude Code
+ * and Codex, by its host session, and a no-result mark that names the gate, or why Prism could not record it.
+ * normal says whether the host ended normally by its own facts, such as an ACP agent's stop reason; the record decides the rest.
+ */
+export async function settleRunResult({ id, token, normal, resumed, lastMessage, env = process.env }: { id: string; token: string; normal: boolean; resumed: boolean; lastMessage: string | null; env?: NodeJS.ProcessEnv }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return;
+  const folder = launchFolder(env, id);
+  let mark: { run: string; gate: string | null; failure: string | null; at: string } | null = null;
+  try {
+    const record = await readLaunchRecord(folder);
+    const run = record?.runs.find((entry: any) => entry.token === token);
+    const ended = run && run === record.runs.at(-1) && run.endedAt && !run.stopRequestedAt && run.exit?.code === 0 && !run.exit?.signal
+      && typeof run.failure !== "string" && typeof run.hostError !== "string" && !(Array.isArray(run.refusals) && run.refusals.length) && !(run.refusalCount > 0);
+    if (!normal || resumed || !ended || (await readStopRequest(folder))?.token === token) return;
+    const marks = await readResultMarks(folder);
+    if (await runHasResult({ checkout: record.checkout, initiative: record.initiative, since: run.startedAt, pauses: marks.pauses })) return;
+    const asked = await askNoResultGate(record, noResultGates(marks), lastMessage, env);
+    if ("gate" in asked) {
+      await markLaunchGates({ projectRoot: record.checkout, initiative: record.initiative, gates: [asked.gate], env: { ...env, PRISM_LAUNCH: id } }).catch(() => false);
+      if ((record.host === "claude-code" || record.host === "codex") && validHostSessionId(record.hostSessionId)) {
+        const { noticeDirectory, rememberAskedGates } = await import("../workflow/change-notices.mjs");
+        const { holderOf } = await import("../workflow/slice-claims.mjs");
+        await rememberAskedGates({ projectRoot: record.checkout, initiative: record.initiative, gateIds: [asked.gate], session: holderOf(record.hostSessionId), directory: noticeDirectory(env) }).catch(() => {});
+      }
+    }
+    mark = { run: token, gate: "gate" in asked ? asked.gate! : null, failure: "failure" in asked ? asked.failure! : null, at: new Date().toISOString() };
+  } finally {
+    await withLaunchLock(env, async () => {
+      const marks = await readResultMarks(folder);
+      await writeResultMarks(folder, { ...marks, checks: marks.checks.filter((check) => check.run !== token), noResult: mark ? [...marks.noResult.filter((item) => item.run !== token), mark] : marks.noResult });
+    }).catch(() => {});
+  }
+}
+
 // The launch of this machine, in the record store of projectRoot, that marked the gate of the initiative: { folder, record }, or null.
 async function markingLaunch(env: NodeJS.ProcessEnv, { projectRoot, initiative, gate }: { projectRoot: string; initiative: string; gate: any }) {
   const store = await storeLocation(await realpath(projectRoot));
@@ -402,7 +492,10 @@ async function pageViewer(projectRoot: string, at: number) {
     }
     return pendingOf.get(initiative);
   };
-  const viewOf = async (folder: string, record: any) => launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative)), permission: (await launchRequests(folder, record, at))[0] ?? null });
+  const viewOf = async (folder: string, record: any) => {
+    const results = await readResultMarks(folder);
+    return launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative), noResultGates(results)), permission: (await launchRequests(folder, record, at))[0] ?? null, results });
+  };
   return { checkout, store, viewOf };
 }
 
