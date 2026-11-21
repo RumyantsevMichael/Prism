@@ -381,10 +381,17 @@ export async function answerMigrationRun(projectRoot: any, id: any, answers: any
     const current = await storedRun(root, id);
     if (current.answers !== null && current.answers !== undefined) throw fail("already_answered", `The format migration run ${id} already has its answers.`, { run: id });
     if (current.status !== "asking" || (askedAt !== undefined && current.question?.askedAt !== askedAt)) throw fail("run_not_asking", `The format migration run ${id} is ${current.status}, so it asks nothing to answer.`, { run: id, status: current.status });
-    const next = { ...current, answers };
+    // The answer and the move out of asking are one write, so a continuation that never happens leaves a continuing run, which the lease and the orphan check end, never an answered run that still asks.
+    const next = { ...current, answers, status: "continuing", reason: null, continuingAt: new Date().toISOString() };
     await writeRun(root, next);
     return next;
   }));
+}
+
+/** Fail a run whose continuation after the person's answer could not start, applying nothing, unless it ended meanwhile; returns the run's record. */
+export async function failContinuation(projectRoot: any, id: any, reason: any) {
+  const root = await realpath(projectRoot);
+  return failOpenRun(root, id, `${CONTINUATION_FAILED}${reason}`);
 }
 
 const starting = new Map();
@@ -453,6 +460,8 @@ const SUPERSEDED = "An artifact of the run changed into a newer version that bre
 // A run that is starting gets this long to launch its session before Prism takes its starter for gone.
 const START_LEASE_MS = 5 * 60 * 1000;
 const STARTER_GONE = "The run's session never started: the process that started the run ended before it launched the session.";
+const CONTINUATION_FAILED = "The run could not continue after the answer: ";
+const CONTINUATION_GONE = `${CONTINUATION_FAILED}the process that recorded the answer ended before it continued the run.`;
 
 // End a live run with a reason, applying nothing, unless it ended meanwhile; returns the ended record, or null.
 async function endRun(root: any, id: any, reason: any, statuses = LIVE_STATUSES) {
@@ -499,8 +508,10 @@ async function failOrphanedRuns(root: any, runs: any) {
       if (ended) reason = `${LAUNCH_ENDED}${ended}`;
     } else if (run.status === "starting" && !run.launch && now - Date.parse(run.startingAt ?? run.startedAt) > START_LEASE_MS) {
       reason = STARTER_GONE;
+    } else if (run.status === "continuing" && !run.launch?.id && !resuming) {
+      reason = CONTINUATION_GONE;
     }
-    const record = reason ? await endRun(root, run.id, reason, reason === STARTER_GONE ? new Set(["starting"]) : OPEN_STATUSES) : null;
+    const record = reason ? await endRun(root, run.id, reason, reason === STARTER_GONE ? new Set(["starting"]) : reason === CONTINUATION_GONE ? new Set(["continuing"]) : OPEN_STATUSES) : null;
     standing.push(record ?? run);
   }
   return standing;
