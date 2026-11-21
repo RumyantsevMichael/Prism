@@ -1671,24 +1671,12 @@ a.inspect-tile:focus-visible {
   outline-offset: var(--prism-stroke);
 }
 
-.output-tail {
-  max-height: calc(var(--prism-row-height) * 16);
-  margin: 0;
-  overflow: auto;
-  padding: var(--prism-space-3) var(--prism-space-4);
-  border-radius: var(--prism-radius-md);
-  background: var(--prism-color-sunken);
-  font-family: var(--prism-font-code);
-  font-size: var(--prism-font-size-code);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 .code-list {
   display: inline-flex;
   flex-wrap: wrap;
   gap: var(--prism-space-1) var(--prism-space-3);
   min-width: 0;
+  max-width: 100%;
 }
 
 /* ---------- Agents: the Show choice over one library table of agents, and a launched session's details under its row ---------- */

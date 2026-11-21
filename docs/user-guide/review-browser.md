@@ -456,6 +456,10 @@ Under its title a tag line names the slice's phase with its gate or status, such
 The tabs are Design, Views, Verification, Review, Files, and Change map.
 The Views tab counts the views, the Review tab the open findings, and the Files tab the slice folder's files.
 The Change map tab is last and marked Deprecated, because the Files tab and the verified result replace it; it stays until existing slices no longer need it.
+The Verification tab shows the latest verification run, and each frozen test, each failing test, and the run's log open in the side panel.
+A frozen test shows the content the design froze: the work tree's file, the copy Prism keeps for a slice that has not started, or, with a note, the changed file when no frozen copy is left.
+A failing test opens its frozen test at the line that names it when exactly one frozen test names it, and otherwise stays plain text, so it never opens a test that only shares its name.
+Open the log opens the run's output at its end: the whole log, or its last 2 MB when it is larger, on the machine that ran the command, and elsewhere the last 4,000 characters that the run record keeps, with a note naming the machine and where the full log is.
 The Review tab holds the slice's review ledger, which the review record's own page shows too.
 Its summary line names the current wave and whether it is open or accepted, counts the unresolved findings, those that block shipping until verified, the deferred ones, and open conflicts, and shows each reviewer with the result of their lane.
 The wave's run totals end the line, and choosing them shows the full table.

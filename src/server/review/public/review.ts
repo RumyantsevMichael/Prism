@@ -2841,6 +2841,8 @@ function viewContext(path: any, state: any) {
     escapeHtml,
     showToast,
     fetchArtifact: (artifactPath: string) => fetchJson(`./api/artifact?${artifactQuery(localTab(artifactPath))}`),
+    // A view's own read route, such as a slice's frozen test or run log, answers JSON, and a refusal throws its text.
+    fetchJson: (url: string) => fetchJson(url),
     fetchEvidence: (id: string) => fetchJson(`./api/evidence?id=${encodeURIComponent(id)}`),
     hasArtifact: (artifactPath: string) => availableArtifacts.has(localTab(artifactPath)) || Boolean(parseEntityRef(artifactPath)),
     // A store artifact's scope label, which the record views show beside it, or null for any other file.
@@ -2872,7 +2874,9 @@ function viewContext(path: any, state: any) {
       if (path === selectedPath) pageBar.setActions(nodes);
     },
     sidePanel: {
-      show: (ref: any) => sidePanel.showFile(ref),
+      show: (ref: any, anchor: any = null, options: any = {}) => sidePanel.showFile(ref, anchor, options),
+      showContent: (content: any) => sidePanel.showContent(content),
+      current: () => sidePanel.current(),
       close: () => sidePanel.close(),
       isOpen: () => sidePanel.isOpen()
     },
