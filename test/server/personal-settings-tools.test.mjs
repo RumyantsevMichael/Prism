@@ -21,9 +21,20 @@ const NAMES = ["interactionStyle", "reviewBrowser", "reviewBrowserOnStart", "ses
 const DEFAULTS = { interactionStyle: "structured", reviewBrowser: "auto", reviewBrowserOnStart: "on", sessionOffer: "ask" };
 const ALL_DEFAULT = Object.fromEntries(NAMES.map((name) => [name, "default"]));
 
+// A test's cleanups run last registered first, so a server stops before the folder it runs in is removed, which Windows refuses while a process uses it.
+const cleanups = new WeakMap();
+function cleanup(context, action) {
+  if (!cleanups.has(context)) {
+    const actions = [];
+    cleanups.set(context, actions);
+    context.after(async () => { for (const next of actions.reverse()) await next(); });
+  }
+  cleanups.get(context).push(action);
+}
+
 async function temporary(context, prefix) {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
-  context.after(() => rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+  cleanup(context, () => rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   return directory;
 }
 
@@ -53,7 +64,7 @@ async function server(context, { cwd, env, command = CLAUDE_SERVER }) {
     for (const request of pending.values()) { clearTimeout(request.timer); request.reject(new Error(stderr || "MCP stopped")); }
     pending.clear();
   });
-  context.after(async () => {
+  cleanup(context, async () => {
     if (child.exitCode === null && child.signalCode === null) {
       const exited = new Promise((resolve) => child.once("exit", resolve));
       child.stdin.end();
