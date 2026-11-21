@@ -339,6 +339,43 @@ test("clause 40: a Codex file change whose patch changes while its request waits
   assert.deepEqual(await settled(async () => (await attention(s)).permissions, (list) => list.length === 0), []);
 });
 
+test("clause 33: a Codex command shows its folder, environment, kind, and network host, but no amendment, and an approval answers plain accept", { skip: posixOnly }, async (t) => {
+  const network = { host: "evil.example", protocol: "https" };
+  const params = { itemId: "item_cmd", startedAtMs: 1, command: "curl https://evil.example", cwd: "/", networkApprovalContext: { protocol: "https", host: "evil.example" }, commandActions: [{ type: "unknown", command: "curl https://evil.example" }], approvalId: null, proposedExecpolicyAmendment: ["curl"], proposedNetworkPolicyAmendments: [{ action: "allow", host: "evil.example" }], reason: "Codex needs the network." };
+  const s = await onCodexWith(t, { request: { method: "item/commandExecution/requestApproval", params } });
+  const id = await launchRun(s);
+  const [request] = await pending(s);
+  const action = `curl https://evil.example ${JSON.stringify({ cwd: "/", networkApprovalContext: network })}`;
+  assert.deepEqual([request.action, request.reason], [action, "Codex needs the network."]);
+  const approved = await decide(s, id, request.id, "approve");
+  assert.equal(approved.status, 200, approved.text);
+  assert.ok(dialogText(s.dialogs().at(-1)).split("\n").includes(`Action: ${action}`), "the dialog names the host that the allow lets the command reach");
+  assert.deepEqual((await codexAnswer(s)).result, { decision: "accept" }, "no amendment is applied");
+});
+
+test("clause 33: a Codex request to write into a terminal shows its kind and environment", { skip: posixOnly }, async (t) => {
+  const s = await onCodexWith(t, { request: { method: "item/commandExecution/requestApproval", params: { itemId: "item_stdin", startedAtMs: 1, command: "y", kind: "writeStdin", environmentId: "remote-1", approvalId: "c1" } } });
+  await launchRun(s);
+  const [request] = await pending(s);
+  assert.equal(request.action, `y ${JSON.stringify({ environmentId: "remote-1", kind: "writeStdin" })}`);
+});
+
+test("clauses 37, 38: a Codex permissions request, whose grant lasts the rest of the turn, can only be refused, and a refusal grants nothing", { skip: posixOnly }, async (t) => {
+  const permissions = { network: { enabled: true } };
+  const s = await onCodexWith(t, { request: { method: "item/permissions/requestApproval", params: { itemId: "item_perm", startedAtMs: 1, cwd: "/", permissions, reason: "Codex wants the network." } } });
+  const id = await launchRun(s);
+  const [request] = await pending(s);
+  assert.equal(request.action, `Permissions ${JSON.stringify(permissions)}`);
+  const before = s.dialogs().length;
+  const refused = await decide(s, id, request.id, "approve");
+  assert.equal(refused.json.code, "approval_unavailable");
+  assert.match(refused.text, /Codex asks for these permissions for the rest of its turn, so Prism can only refuse it\./);
+  assert.equal(s.dialogs().length, before, "no dialog is shown for a grant that outlasts the request");
+  assert.equal(inputsOf(s, "codex").some((message) => message.id === "approval-1" && message.method === undefined), false, "Codex is answered nothing");
+  await decide(s, id, request.id, "refuse");
+  assert.deepEqual((await codexAnswer(s)).result, { permissions: {}, scope: "turn" });
+});
+
 test("clause 33: an ACP request shows the tool call's raw input after its title, and an approval answers allow_once", { skip: posixOnly }, async (t) => {
   const rawInput = { file_path: "/home/person/.ssh/authorized_keys", content: "ssh-ed25519 AAAA" };
   const s = await onAgentWith(t, { toolCall: { toolCallId: "t1", title: "Write file", kind: "edit", rawInput } });
