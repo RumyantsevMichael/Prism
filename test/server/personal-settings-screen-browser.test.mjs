@@ -3,15 +3,16 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { escapes, launch, openPage, reviewUrl, serveProject, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
+import { escapes, launch, openPage, reviewUrl, serveProject, settle, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
 import { settled } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/personal-settings.md §3.
-// Contract: docs/plans/personal-settings/slice.md clauses 19 to 24; each test names the clauses it checks at the start of its title.
+// Contract: docs/plans/personal-settings/slice.md clauses 18 to 24; each test names the clauses it checks at the start of its title.
 // The approved mockup is scripts/review-demo/mockups/personal-settings/mockup.html.
 // Settings gains a Personal section where the person changes their own settings, which stay on this machine.
 
 const FILE = "personal-settings.json";
+const READ_ONLY = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 const NOTE = "These settings stay on this machine and apply to every project and every host you run Prism in. A change here reaches no one else.";
 const SAVED = "Saved on this machine. This change reaches no one else.";
 const GROUPS = [
@@ -30,13 +31,43 @@ async function project(context, lines = []) {
   return root;
 }
 
-async function fixture(context, { lines = [], file = null, width = 1440, colorScheme = "light" } = {}) {
+// A review whose page Prism opened, so the page's address carries the one-time grant that gives the tab its write session.
+async function serveWritable(context, root) {
+  // The conservation store reads its location when its module loads, so private data is set before the review server's import, as the kit fixture does.
+  if (!process.env.PLUGIN_DATA) process.env.PLUGIN_DATA = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-personal-browser-data-")));
+  delete process.env.CLAUDE_PLUGIN_DATA;
+  const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
+  const opened = [];
+  const review = await startReviewServer({ projectRoot: root, openBrowser: async (url) => { opened.push(url); return true; } });
+  context.after(() => review.close());
+  await review.open([]);
+  const grant = new URLSearchParams(new URL(opened.at(-1)).hash.slice(1)).get("write");
+  return { base: review.baseUrl.replace(/\/$/, ""), grant };
+}
+
+// A tab opened from the review URL alone, as from a link an agent printed, holds no write session; `writable` gives the tab the grant Prism's own opening gives.
+async function fixture(context, { lines = [], file = null, width = 1440, colorScheme = "light", writable = true } = {}) {
   const directory = await useAppDirectory(context);
   if (file !== null) await writeFile(path.join(directory, FILE), file);
   const root = await project(context, lines);
-  const { base } = await serveProject(context, root);
   const browser = await launch(context);
-  const page = await openPage(browser, reviewUrl(base, "attention"), { viewport: { width, height: 900 }, colorScheme });
+  let base;
+  let url;
+  if (writable) {
+    const served = await serveWritable(context, root);
+    base = served.base;
+    url = `${reviewUrl(base, "attention")}#write=${served.grant}`;
+  } else {
+    base = (await serveProject(context, root)).base;
+    url = reviewUrl(base, "attention");
+  }
+  if (!writable) return { directory, root, base, page: await openPage(browser, url, { viewport: { width, height: 900 }, colorScheme }) };
+  // The page exchanges the grant once it loads, so the test waits for that exchange before it changes anything.
+  const page = await openPage(browser, "about:blank", { viewport: { width, height: 900 }, colorScheme });
+  const exchanged = page.waitForResponse((response) => response.url().endsWith("/api/write-session"));
+  await page.goto(url);
+  assert.equal((await exchanged).status(), 200, "the page takes its write session");
+  await settle(page);
   return { directory, root, base, page };
 }
 
@@ -117,6 +148,25 @@ test("clause 23: opening Settings again shows a value an agent changed meanwhile
   await writeFile(path.join(directory, FILE), JSON.stringify({ schemaVersion: 1, settings: { reviewBrowserOnStart: { value: "off", source: "chosen", at: new Date().toISOString() } } }));
   await openPersonal(page);
   assert.equal(await settled(() => checked(page, "Open at session start"), "Off"), "Off");
+});
+
+test("clauses 18, 19: a tab without a write session shows the Personal choices at their values but disabled, with the read-only notice, and saves nothing", { skip, timeout: 60000 }, async (context) => {
+  const { page, directory } = await fixture(context, { lines: ["Review browser: external"], writable: false, width: 390 });
+  await openPersonal(page);
+  const notice = personal(page).getByRole("note").filter({ hasText: "This tab can only read." });
+  assert.equal(await notice.count(), 1, "the section shows the review app's read-only notice");
+  assert.equal((await notice.innerText()).replace(/\s+/g, " ").trim(), READ_ONLY);
+  for (const [name, options] of GROUPS) {
+    const radios = group(page, name).getByRole("radio");
+    assert.equal(await radios.count(), options.length, `${name} still lists its values`);
+    for (let index = 0; index < options.length; index += 1) assert.equal(await radios.nth(index).isDisabled(), true, `${name} ${options[index][0]} is disabled`);
+  }
+  assert.equal(await checked(page, "Review browser"), "External", "the value Prism uses is still shown");
+  await group(page, "Offer Prism").getByRole("radio", { name: "Off" }).click({ force: true });
+  assert.equal(await checked(page, "Offer Prism"), "Ask", "a disabled choice does not change");
+  assert.equal((await stored(directory)).settings.sessionOffer, undefined, "nothing is saved");
+  assert.deepEqual(await escapes(page, "#settings-dialog"), [], "nothing escapes its container");
+  assert.deepEqual(page.errors, []);
 });
 
 for (const [width, colorScheme] of [[390, "light"], [820, "dark"], [1440, "dark"]]) {

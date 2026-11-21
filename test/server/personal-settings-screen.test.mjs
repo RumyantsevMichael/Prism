@@ -43,10 +43,21 @@ async function project(context, lines = []) {
   return root;
 }
 
+const READ_ONLY = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
+const writeSessions = new Map();
+
+// A review whose page Prism opened, so the test holds the write session that the opened URL's one-time grant gives, as the page does.
 async function serve(context, root) {
-  const review = await startReviewServer({ projectRoot: root, openBrowser: async () => false });
+  const opened = [];
+  const review = await startReviewServer({ projectRoot: root, openBrowser: async (url) => { opened.push(url); return true; } });
   context.after(() => review.close());
-  return review.baseUrl.replace(/\/$/, "");
+  const base = review.baseUrl.replace(/\/$/, "");
+  await review.open([]);
+  const grant = new URLSearchParams(new URL(opened.at(-1)).hash.slice(1)).get("write");
+  const exchanged = await fetch(`${base}/api/write-session`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grant }) });
+  assert.equal(exchanged.status, 200, "the opened page's grant gives a write session");
+  writeSessions.set(base, { "X-Prism-Write": (await exchanged.json()).token });
+  return base;
 }
 
 const route = (base) => `${base}/api/personal-settings`;
@@ -54,7 +65,7 @@ const get = async (base) => {
   const response = await fetch(route(base));
   return { status: response.status, body: await response.json() };
 };
-const put = async (base, body, headers = { "Content-Type": "application/json" }) => {
+const put = async (base, body, headers = { "Content-Type": "application/json", ...writeSessions.get(base) }) => {
   const response = await fetch(route(base), { method: "PUT", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
   const text = await response.text();
   let json = null;
@@ -93,12 +104,29 @@ test("clause 18: a PUT from the page saves the given settings as chosen and answ
   assert.deepEqual((await get(base)).body.settings, answer.body.settings, "a later GET reads the saved values");
 });
 
-test("clause 18: a PUT that is not the page's own JSON is refused with 403 and saves nothing", async (context) => {
+test("clause 18: a PUT that is not the page's own JSON is refused with 403 and saves nothing, even with a write session", async (context) => {
   const directory = await appDirectory(context);
   const base = await serve(context, await project(context));
-  assert.equal((await put(base, { sessionOffer: "off" }, { "Content-Type": "text/plain" })).status, 403);
-  assert.equal((await put(base, { sessionOffer: "off" }, { "Content-Type": "application/json", Origin: "http://elsewhere.example" })).status, 403);
+  assert.equal((await put(base, { sessionOffer: "off" }, { "Content-Type": "text/plain", ...writeSessions.get(base) })).status, 403);
+  assert.equal((await put(base, { sessionOffer: "off" }, { "Content-Type": "application/json", Origin: "http://elsewhere.example", ...writeSessions.get(base) })).status, 403);
   assert.equal(await readFile(path.join(directory, FILE), "utf8").catch(() => null), null);
+});
+
+test("clause 18: a PUT without a valid write session is refused with 403 write_forbidden and changes nothing, while GET still reads", async (context) => {
+  const directory = await appDirectory(context);
+  const base = await serve(context, await project(context));
+  assert.equal((await put(base, { interactionStyle: "plain-text" })).status, 200, "the page's own write session saves");
+  const before = await readFile(path.join(directory, FILE), "utf8");
+  for (const headers of [{ "Content-Type": "application/json" }, { "Content-Type": "application/json", "X-Prism-Write": "A".repeat(43) }]) {
+    for (const body of [{ interactionStyle: "structured", sessionOffer: "off" }, { reviewBrowser: "chrome" }, "{ not json"]) {
+      const refused = await put(base, body, headers);
+      assert.deepEqual([refused.status, refused.body?.code, refused.body?.message], [403, "write_forbidden", READ_ONLY], `${JSON.stringify(headers)} ${JSON.stringify(body)}`);
+    }
+  }
+  assert.equal(await readFile(path.join(directory, FILE), "utf8"), before, "the settings file is left as it was");
+  const read = await get(base);
+  assert.equal(read.status, 200);
+  assert.deepEqual(read.body.settings, { ...DEFAULTS, interactionStyle: "plain-text" });
 });
 
 test("clause 18: an invalid change is refused with 400 invalid_setting naming the setting, and a body that is no JSON object too", async (context) => {
