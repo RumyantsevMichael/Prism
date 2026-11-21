@@ -12,7 +12,7 @@ import { readRoadmap } from "./roadmap.mjs";
 import { shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction, validEarlierName } from "./state.mjs";
 import { recommendedChoice } from "./format-migrations.mjs";
-import { RUN_ID, allRuns, answerMigrationRun, continueMigrationRun, followedRun, readRun, rerunMigration } from "./migration-runs.mjs";
+import { RUN_ID, allRuns, answerMigrationRun, continueMigrationRun, followedRun, readRun, rerunMigration, settledRunLaunches } from "./migration-runs.mjs";
 import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
@@ -1093,6 +1093,8 @@ export async function applyAction({ projectRoot, target, action, input, revision
       await continueMigrationRun(projectRoot, parsed.run, { env }).catch(runRefusal);
     } else {
       await rerunMigration(projectRoot, parsed.run, { name: applied.by.name, email: applied.by.email }, { env }).catch(runRefusal);
+      // The new run's session launches apart from the call; the action waits for it to start, as continuing a run does, so nothing of the launch lands after the response.
+      await settledRunLaunches(await realpath(projectRoot));
     }
   } else if (parsed.kind === "machine") {
     // The write repeats the revision check under the file's lock, so a change that lands after the read above is refused as stale.
