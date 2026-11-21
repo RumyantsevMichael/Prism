@@ -479,6 +479,10 @@ A claim also records the harness its agent runs in, as `host`, by the title the 
 A claim records the model of its agent, as `model`, only when the session's main agent took it and Prism's session-facts hook observed that agent's model, such as `claude-opus-5-5`.
 A sub-agent's claim records no model, and nor does a call that Prism cannot attribute to the main agent, such as a Claude Code call whose tool use Prism's hook did not record or a Codex call whose metadata names no thread.
 Each renewal of a main agent's claim writes the session's model as it is then, so a change of model reaches the claim within one renewal.
+A claim records the session behind it, as `session` with its `kind` and the host's own `id`, only when the host gives a session that a person can open from a link: today that is Claude Code on the web, whose session `cse_<id>` opens at `claude.ai/code/session_<id>`.
+A Claude Code sub-agent's claim records the session of the agent that started it, which is the one a person opens.
+A local Claude Code or Codex session, a Codex call, and a session that Prism launched record no session, and a launched session's claim leads to its launch on the Agents page instead.
+The session's id is kept in the shared store as it is, and its link opens only for the session's owner.
 `get_initiative` lists each live claim under `claims`, with its `host` and `model` when the claim records them.
 The review browser shows each claim's holder, activity, and time left on the slice board, the slice list, and the slice page, and marks the slices inside a scope that a design claim covers.
 A claim that lapsed without a release shows as expired until someone claims or releases the slice.

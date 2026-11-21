@@ -2306,6 +2306,10 @@ prism-claim {
   white-space: nowrap;
 }
 
+.prism-claim-session {
+  flex: none;
+}
+
 .prism-claim-name {
   font-weight: var(--prism-font-weight-semibold);
 }
