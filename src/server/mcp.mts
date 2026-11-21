@@ -991,8 +991,11 @@ function waitUnsupportedReason() {
   if (olderThan(clientVersion, FIRST_BACKGROUND_VERSION)) return `Claude Code ${clientVersion} predates background tool calls (2.1.212).`;
   const handoff = Number(process.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS ?? DEFAULT_BACKGROUND_MS);
   if (["1", "true"].includes(String(process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toLowerCase()) || handoff === 0) return "Background tool calls are disabled in this Claude Code session.";
-  const timeout = Number(process.env.MCP_TOOL_TIMEOUT);
-  if (Number.isFinite(timeout) && timeout > 0 && timeout <= handoff) return `MCP_TOOL_TIMEOUT (${timeout} ms) ends the call before Claude Code moves it to the background (${handoff} ms).`;
+  // The plugin's MCP configuration gives this server its own tool timeout, which overrides MCP_TOOL_TIMEOUT, and names it in PRISM_TOOL_TIMEOUT_MS,
+  // because a cloud session sets MCP_TOOL_TIMEOUT to one minute, which would end every wait before the handoff.
+  const own = Number(process.env.PRISM_TOOL_TIMEOUT_MS);
+  const [variable, timeout] = Number.isFinite(own) && own >= 1000 ? ["The prism-review server timeout", own] : ["MCP_TOOL_TIMEOUT", Number(process.env.MCP_TOOL_TIMEOUT)];
+  if (Number.isFinite(timeout) && timeout > 0 && timeout <= handoff) return `${variable} (${timeout} ms) ends the call before Claude Code moves it to the background (${handoff} ms).`;
   return null;
 }
 
