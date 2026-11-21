@@ -91,9 +91,8 @@ export async function privateDirectory(directory: string): Promise<string> {
   const parent = path.dirname(directory);
   if (parent !== directory) {
     try {
+      // The check covers the parent itself, so a parent that is a file, or a link that the operating system does not own, is refused.
       await assertSafeAncestors(parent);
-      const info = await lstat(parent);
-      if (info.isSymbolicLink() || !info.isDirectory()) throw semanticError("invalid_path", "A private storage parent is not a directory.");
     } catch (error) { if (error.code !== "ENOENT") throw error; await privateDirectory(parent); }
   }
   await mkdir(directory, { mode: 0o700 }).catch(error => { if (error.code !== "EEXIST") throw error; });
@@ -103,14 +102,14 @@ export async function privateDirectory(directory: string): Promise<string> {
   return directory;
 }
 
-// Whether a folder's real path is the path it was named by. Windows names a folder by its short 8.3 name (RUNNER~1) or in another letter
-// case as readily as by its own name, and resolving either is not following a link, so there the real path is compared with the real path
-// of the parent, whose every ancestor the caller has already checked for links, joined with the folder's name, ignoring letter case.
+// Whether a folder's real path is the path it was named by: the real path of its parent, whose every ancestor the caller has already
+// checked, joined with the folder's name. The parent's real path differs from its name where an operating-system link such as /var on
+// macOS leads to it, and on Windows where a folder is named by its short 8.3 name (RUNNER~1) or in another letter case, which is why
+// Windows compares ignoring letter case.
 async function ownRealPath(directory: string): Promise<boolean> {
   const real = await realpath(directory);
-  if (process.platform !== "win32") return real === path.resolve(directory);
   const named = path.join(await realpath(path.dirname(path.resolve(directory))), path.basename(directory));
-  return real.toLowerCase() === named.toLowerCase();
+  return process.platform === "win32" ? real.toLowerCase() === named.toLowerCase() : real === named;
 }
 
 
