@@ -17,7 +17,7 @@ import { DEFAULT_PLACE, PLACES, placeNamed } from "./views/places.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createAgentsMenu } from "./views/agents-menu.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
-import { shownActionEntries } from "./views/actions.js";
+import { readOnlyNotice, shownActionEntries } from "./views/actions.js";
 import { artifactChangesView, artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 import { createWorkspaceForms } from "./views/workspace-forms.js";
@@ -1256,7 +1256,17 @@ function openSettings() {
   document.getElementById("settings-store-state").textContent = store.hidden ? "This workspace keeps no records yet." : (store.getAttribute("tip") ?? "").split("\n")[0];
   document.getElementById("settings-store-open").hidden = store.hidden;
   settingsDialog.show();
+  showPersonalAccess();
   loadPersonalSettings();
+}
+
+// A tab without a write session shows the personal choices at their values but disabled, under the review app's read-only notice.
+function showPersonalAccess() {
+  const writable = Boolean(writeSession());
+  for (const choice of settingsDialog.querySelectorAll("prism-segmented[data-setting]")) choice.toggleAttribute("disabled", !writable);
+  const notice = document.getElementById("settings-personal-read-only");
+  if (!writable && !notice.firstElementChild) notice.innerHTML = readOnlyNotice();
+  notice.hidden = writable;
 }
 
 const PERSONAL_SETTINGS_ROUTE = "./api/personal-settings";

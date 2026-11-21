@@ -849,9 +849,14 @@ export async function exchangeWriteGrant(request, response, writeSessions) {
 }
 
 // A change to the person's own settings comes from the review page as JSON, as a change of the preferences does, and is checked as the agents' tool checks it.
-async function changePersonalSettings(request, response) {
+// writable says whether the request holds the page's write session, which a change needs as every other change of the review app does.
+async function changePersonalSettings(request, response, writable) {
   if (!fromPage(request)) {
     sendJson(response, 403, { code: "origin_refused", message: "Personal settings must come from the review page as JSON." });
+    return;
+  }
+  if (!writable) {
+    sendJson(response, 403, { code: "write_forbidden", message: READ_ONLY_NOTICE });
     return;
   }
   let change;
@@ -1576,7 +1581,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       // The person's own settings for this project, adopting each value the project still records; reading needs no write session.
       sendJson(response, 200, await readPersonalSettings({ projectRoot }));
     } else if (route === "/api/personal-settings" && request.method === "PUT") {
-      await changePersonalSettings(request, response);
+      await changePersonalSettings(request, response, writableRequest(request));
     } else if (route === "/api/actions/targets" && request.method === "GET") {
       try {
         sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind"), checkouts: await checkoutRoots() }));

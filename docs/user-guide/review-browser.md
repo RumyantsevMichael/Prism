@@ -37,6 +37,7 @@ A choice applies at once, and System follows the operating system again.
 Each row shows the value Prism uses and where it comes from: **Your choice**, **Adopted from a repository's configuration**, **From this repository's configuration**, or **Default**.
 A choice saves at once on this machine, reaches no one else, and the row then says **Your choice**; agents see it the next time they read your settings.
 Settings reads your settings again each time it opens, so it shows a change an agent made meanwhile.
+Changing a personal setting needs a tab that [can make changes](#which-tabs-can-make-changes): a tab that can only read shows each value with its choices disabled under the read-only notice.
 When Prism cannot read `personal-settings.json` in its application folder, the section warns that it uses the repository's values and its defaults, and it refuses every change until you fix or remove the file, so nothing in it is overwritten.
 **Record store** says where the project's records live and opens the store's details.
 **About Prism** names the version of Prism that runs the review app, and **Open the catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.

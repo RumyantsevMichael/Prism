@@ -526,6 +526,11 @@ body {
   margin-bottom: var(--prism-space-4);
 }
 
+/* The read-only notice sits in the notes' own gap, so it takes none of its own. */
+.settings-notes .action-notice {
+  margin: 0;
+}
+
 .settings-source {
   display: block;
   min-width: 0;
