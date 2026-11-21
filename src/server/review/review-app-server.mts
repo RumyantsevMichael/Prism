@@ -42,6 +42,7 @@ import { codeFolder, createCodeClones, registeredRemotes } from "./code-clones.m
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { createViewerHub, isEventStream } from "./viewer-hub.mjs";
 import { createCachedValue } from "./cached-value.mjs";
+import { sweepUnusedVersions } from "../session/agent-installs.mjs";
 
 const LEASE_MS = 3 * 60 * 1000;
 const IDLE_MS = 30 * 60 * 1000;
@@ -975,7 +976,12 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
     if (current?.controlToken !== controlToken) await writeDiscovery(directory, published).catch(() => {});
   }
 
+  // Earlier versions of registry agents that no launched session runs on any more are removed at start and on every sweep, so one
+  // kept for a session goes even when the process that updated the agent, or the session's own supervisor, ended first.
+  const agentEnv = { ...process.env, PRISM_REVIEW_APP_DIR: directory };
+  void sweepUnusedVersions(agentEnv);
   const sweep = setInterval(() => {
+    void sweepUnusedVersions(agentEnv);
     const now = Date.now();
     const busy = viewerCount() > 0 || [...projects.values()].some((project) => live(project, now));
     if (busy) idleSince = now;

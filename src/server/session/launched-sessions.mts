@@ -44,6 +44,7 @@ import {
   writeLaunchRecord,
   writeStopRequest
 } from "./launch-records.mjs";
+import { launchRequests } from "./permission-requests.mjs";
 
 // Starting, listing, resuming, and stopping launched sessions: headless host sessions that Prism runs for one initiative on this machine.
 // Each run runs under a detached supervisor, so the session outlives the process that started it.
@@ -145,8 +146,8 @@ const RECORDED_CHOICE_INVALID = "The session's recorded model choice is not one 
  * host default: { launch }, its view in state running. The launch record keeps the choice, and every resume runs with it.
  */
 export async function startLaunch({ projectRoot, initiative, host, coordinator = null, env = process.env }: { projectRoot: string; initiative: string; host: string; coordinator?: unknown; env?: NodeJS.ProcessEnv }) {
-  const definition = hostDefinition(host);
-  if (!definition) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code and codex.`);
+  const definition = hostDefinition(host, env);
+  if (!definition) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code, codex, and the ACP agents that this computer offers.`);
   const choice = checkedCoordinator(coordinator);
   if (!choice) throw refuse("invalid_choice", INVALID_CHOICE);
   const checkout = await realpath(projectRoot);
@@ -401,7 +402,7 @@ async function pageViewer(projectRoot: string, at: number) {
     }
     return pendingOf.get(initiative);
   };
-  const viewOf = async (folder: string, record: any) => launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative)) });
+  const viewOf = async (folder: string, record: any) => launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative)), permission: (await launchRequests(folder, record, at))[0] ?? null });
   return { checkout, store, viewOf };
 }
 

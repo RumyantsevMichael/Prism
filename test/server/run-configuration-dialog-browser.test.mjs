@@ -66,7 +66,7 @@ test("clause 1: Launch opens one dialog with the host, how the run works, and th
   const order = ["Host", "How the run works", "Autonomy", "Commit", "Push", "Continuation", "Review", "Models", "Coordinator", "Design and implementation", "Code review", "Security review", "Design gate summary"];
   const positions = order.map((word) => text.indexOf(word));
   assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])), `the dialog reads in order: ${JSON.stringify(Object.fromEntries(order.map((word, index) => [word, positions[index]])))}`);
-  assert.equal(await s.dialog.getByRole("combobox", { name: "Host" }).inputValue(), "claude-code");
+  assert.equal(await s.dialog.getByRole("radiogroup", { name: "Host" }).evaluate((element) => element.value), "claude-code");
   assert.deepEqual(await s.dialog.locator("prism-picker").evaluateAll((items) => items.map((item) => item.getAttribute("label"))), KINDS);
   assert.match(text, /Launching saves these choices as this initiative's settings\./);
   assert.equal(await launchLabel(s.dialog), "Launch with Claude Code");
@@ -160,7 +160,7 @@ test("clause 5: choosing another host names it on the launch button, shows its o
     before: (fixture) => writeSettings(fixture.root, { models: { codex: { provider: "openai", coordinator: { model: "gpt-5.5", effort: "high" } } } })
   });
   await s.open();
-  await s.dialog.getByRole("combobox", { name: "Host" }).selectOption("codex");
+  await s.dialog.getByRole("radiogroup", { name: "Host" }).getByRole("radio", { name: "Codex" }).check();
   assert.equal(await settled(() => launchLabel(s.dialog), "Launch with Codex"), "Launch with Codex");
   await settled(() => s.dialog.locator("prism-picker").count(), 6);
   await ready(s.dialog, "Coordinator");
@@ -175,7 +175,7 @@ test("clause 5: choosing another host names it on the launch button, shows its o
 test("clause 5: a host this computer lacks shows unavailable with its reason and cannot be chosen", { skip: skipHere, timeout: 90000 }, async (t) => {
   const s = await runPage(t, { hosts: ["claude"] });
   await s.open();
-  const options = await s.dialog.getByRole("combobox", { name: "Host" }).locator("option").evaluateAll((items) => items.map((item) => [item.value, item.disabled]));
+  const options = await s.dialog.getByRole("radiogroup", { name: "Host" }).getByRole("radio").evaluateAll((items) => items.map((item) => [item.value, item.disabled]));
   assert.deepEqual(options, [["claude-code", false], ["codex", true]]);
   assert.match(await s.dialog.innerText(), /Codex was not found: no codex executable on PATH\./);
   assert.equal(await launchLabel(s.dialog), "Launch with Claude Code");

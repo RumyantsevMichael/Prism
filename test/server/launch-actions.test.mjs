@@ -105,7 +105,7 @@ test("a confirmed launch starts the session, records it in the initiative's hist
   assert.deepEqual(result.json.applied.after, { launch: result.json.launch.id, host: "claude-code", coordinator: { provider: null, model: null, effort: null } });
   assert.equal(result.json.applied.via, "review-app");
   assert.equal(s.dialogs().length, 1, "the first launch asks outside the page");
-  assert.ok(s.dialogs()[0].argv.includes("--default-cancel"));
+  assert.ok(s.dialogs()[0].cancelsByDefault, "the dialog cancels by default");
   const entries = await history(s.root);
   assert.deepEqual(entries.map((entry) => entry.id), [result.json.applied.id]);
   const [run] = await waitFor(() => s.runs("claude").length ? s.runs("claude") : null, { what: "the host to start" });

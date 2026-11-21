@@ -26,7 +26,7 @@ function launchEntry(launch: any, title: string, claim: any, archived: boolean) 
     state: launch.state,
     reason: launch.reason ?? null,
     expiresAt: null,
-    launch: { id: launch.id, launchedAt: launch.launchedAt, runningMs: launch.runningMs, runs: launch.runs, endedAt: launch.endedAt, exit: launch.exit, resumeCommand: launch.resumeCommand, waitingGate: launch.waitingGate },
+    launch: { id: launch.id, launchedAt: launch.launchedAt, runningMs: launch.runningMs, runs: launch.runs, endedAt: launch.endedAt, exit: launch.exit, resumeCommand: launch.resumeCommand, waitingGate: launch.waitingGate, ...(launch.usage ? { usage: launch.usage } : {}) },
     action: launchAction(launch.state)
   };
 }

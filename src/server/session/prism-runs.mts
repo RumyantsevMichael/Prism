@@ -4,7 +4,7 @@ import path from "node:path";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
-import { EFFORT_PATTERN, hostAvailability, hostDefinition, MODEL_PATTERN, PROVIDER_PATTERN } from "./launch-hosts.mjs";
+import { builtinHost, EFFORT_PATTERN, hostAvailability, MODEL_PATTERN, PROVIDER_PATTERN } from "./launch-hosts.mjs";
 
 // The host and model of Prism's own runs on this computer, such as the runs that move records to a new format: one choice per
 // computer, kept in the review app folder because a host must be installed and signed in where it runs, and read by the code
@@ -47,7 +47,8 @@ export class PrismRunsError extends Error {
 function storedChoice(value: any) {
   if (!isRecord(value)) return null;
   const { host, provider = null, model = null, effort = null, typed = false } = value;
-  if (host !== AUTOMATIC && !hostDefinition(host)) return null;
+  // Prism's own runs do not run on ACP agents, so only Claude Code and Codex are a stored host.
+  if (host !== AUTOMATIC && !builtinHost(host)) return null;
   if (!nameOrNull(provider, PROVIDER_PATTERN) || !nameOrNull(model, MODEL_PATTERN) || !nameOrNull(effort, EFFORT_PATTERN) || typeof typed !== "boolean") return null;
   if (typed && model === null) return null;
   if (host === AUTOMATIC && (provider !== null || model !== null || effort !== null)) return null;
@@ -123,7 +124,7 @@ function whyMissing(availability: any) {
  */
 export async function prismRunLaunch({ checkout = null, env = process.env } = {}) {
   void checkout;
-  const [stored, hosts] = await Promise.all([readPrismRunsChoice(env), hostAvailability({ env })]);
+  const [stored, hosts] = await Promise.all([readPrismRunsChoice(env), hostAvailability({ env, acp: false })]);
   const first = hosts.find((item) => item.available) ?? null;
   if (!first) return null;
   const fallback = (reason: any) => ({ host: first.host, coordinator: { ...DEFAULT_RUN }, reason });
@@ -131,6 +132,6 @@ export async function prismRunLaunch({ checkout = null, env = process.env } = {}
   if (stored.state === "none" || stored.choice.host === AUTOMATIC) return fallback(null);
   const { host, provider, model, effort, typed } = stored.choice;
   const chosen = hosts.find((item) => item.host === host);
-  if (!chosen?.available) return fallback(`${hostDefinition(host)!.label}, chosen for Prism's own runs, was not found: ${whyMissing(chosen ?? { label: hostDefinition(host)!.label, reason: "" })}. ${first.label} runs it with its default model.`);
+  if (!chosen?.available) return fallback(`${builtinHost(host)!.label}, chosen for Prism's own runs, was not found: ${whyMissing(chosen ?? { label: builtinHost(host)!.label, reason: "" })}. ${first.label} runs it with its default model.`);
   return { host, coordinator: { provider, model, effort, typed }, reason: null };
 }

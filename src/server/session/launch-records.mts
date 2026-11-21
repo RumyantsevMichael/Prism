@@ -1,11 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { describeRecordStore } from "../workflow/record-store.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { checkedCoordinator, hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts.mjs";
 import { isAgentModel } from "./agent-models.mjs";
+import { isAcpHost } from "./acp-agents.mjs";
 import { sessionHolder } from "../workflow/slice-claims.mjs";
 
 // The record of each launched session lives in <review app folder>/launches/<launch id>/launch.json, private to the user.
@@ -248,9 +250,41 @@ export function lastRunStatus(record: any, now = Date.now()) {
   return "running";
 }
 
+// A supervisor that marked a start this long ago no longer counts as starting, so a reused process id never holds a start forever.
+const STARTING_STALE_MS = 10 * 60 * 1000;
+
+/**
+ * Whether a live supervisor is starting a run of the record that it has not recorded yet: it marked the start in `starting` before it
+ * read which host or agent version to start, and the run record that names its token replaces the mark.
+ */
+export function launchStarting(record: any, now = Date.now()) {
+  const mark = record?.starting;
+  if (typeof mark?.token !== "string" || tokenVoided(record, mark.token)) return false;
+  if (record.runs.some((run: any) => run?.token === mark.token)) return false;
+  return processAlive(mark.supervisorPid) && now - time(mark.at) <= STARTING_STALE_MS;
+}
+
 /** Whether one of the record's runs runs under a live supervisor. */
 export function launchRunning(record: any, now = Date.now()) {
   return lastRunStatus(record, now) === "running";
+}
+
+const validPid = (pid: unknown) => Number.isSafeInteger(pid) && (pid as number) > 0;
+
+/**
+ * Whether the record's last run still runs for the purpose of keeping the files it runs from: it has not ended and its supervisor or
+ * host process is alive, whatever its heartbeat age, since a late heartbeat, as right after the computer wakes from sleep, does not
+ * end a run; only when neither process can be checked does a heartbeat older than the stale age count it as ended.
+ * A run whose last heartbeat came before the computer last started ended with it, so a process that later took its supervisor's or
+ * host's process id never keeps it; the computer's uptime counts time asleep, so waking does not end a run.
+ */
+export function launchRunInUse(record: any, now = Date.now()) {
+  const run = record?.runs?.at(-1);
+  if (!run || run.endedAt) return false;
+  const signs = [time(run.heartbeatAt), time(run.startedAt)].filter(Number.isFinite);
+  if (signs.length && Math.max(...signs) < now - os.uptime() * 1000) return false;
+  if (validPid(run.supervisorPid) || validPid(run.hostPid)) return processAlive(run.supervisorPid) || processAlive(run.hostPid);
+  return now - time(run.heartbeatAt) <= HEARTBEAT_STALE_MS;
 }
 
 function lastErrorLine(text: string) {
@@ -268,17 +302,24 @@ function lastEnd(record: any, status: string): number | null {
   return null;
 }
 
-function stateOf(record: any, status: any, label: string, gates: any) {
+export const asksToAllow = (action: string) => `Asks you to allow: ${action}.`;
+
+function stateOf(record: any, status: any, label: string, gates: any, permission: { action: string } | null) {
   const run = record.runs.at(-1);
+  // A run that waits on a permission request waits on the person before any gate.
+  if (status === "running" && permission) return { state: "waiting", reason: asksToAllow(permission.action) };
   if (status === "running") return { state: gates.waiting ? "waiting" : "running", reason: null };
   if (status === "lost") return { state: "failed", reason: SUPERVISION_LOST };
   if (run.stopRequestedAt) return { state: "stopped", reason: null };
+  // A failure Prism found in the run, such as an ACP agent's stop reason or an option it does not offer, is already a sentence.
+  if (typeof run.failure === "string") return { state: "failed", reason: run.failure };
   // A reported host error comes before the exit code, since Claude Code exits 1 after an error result.
   if (typeof run.hostError === "string") return { state: "failed", reason: `${label} reported an error: ${run.hostError}` };
   const stderr = lastErrorLine(run.stderr);
   const tail = stderr ? ` ${stderr}` : "";
   if (run.exit?.signal) return { state: "failed", reason: `${label} ended by signal ${run.exit.signal}.${tail}` };
-  if (run.exit && run.exit.code !== 0) return { state: "failed", reason: `${label} ended with exit code ${run.exit.code}.${tail}` };
+  // An ACP run that never settled, as when its agent exits before its prompt answers, fails with its exit status even when that is 0.
+  if (run.exit && (run.exit.code !== 0 || run.settled === false)) return { state: "failed", reason: `${label} ended with exit code ${run.exit.code}.${tail}` };
   if (gates.waiting) return { state: "waiting", reason: null };
   const refusals = Array.isArray(run.refusals) ? run.refusals : [];
   if (refusals.length) {
@@ -293,16 +334,18 @@ function stateOf(record: any, status: any, label: string, gates: any) {
 
 /**
  * The launch view of a record: { id, initiative, host, hostLabel, model, holder, checkout, launchedAt, runningMs, runs, endedAt, state,
- * reason, exit, resumeCommand, waitingGate, answerWaits }.
+ * reason, exit, resumeCommand, waitingGate, answerWaits }, and for an ACP agent's launch usage, the last run's { tokens, context, cost },
+ * each null when the agent did not report it.
  * model is the last run's recorded model, holder the claim holder that the host session takes claims as, and only resumeCommand
  * names the host session id.
  * gates is gateFacts of the launch as the page's checkout reads its initiative's coordination state; without it no gate is counted.
+ * permission is the oldest permission request that waits in the running run, which makes the launch waiting on it.
  */
-export function launchView(record: any, { now = Date.now(), gates = null }: { now?: number; gates?: { waiting?: boolean; answerWaits?: boolean; waitingGate?: string | null } | null } = {}) {
+export function launchView(record: any, { now = Date.now(), gates = null, permission = null }: { now?: number; gates?: { waiting?: boolean; answerWaits?: boolean; waitingGate?: string | null } | null; permission?: { action: string } | null } = {}) {
   const status = lastRunStatus(record, now);
   const label = hostDefinition(record.host)?.label ?? record.host;
   const facts = { waiting: gates?.waiting === true, answerWaits: status !== "running" && gates?.answerWaits === true };
-  const { state, reason: hostText } = stateOf(record, status, label, facts);
+  const { state, reason: hostText } = stateOf(record, status, label, facts, permission);
   const reason = redactSessionId(hostText, record.hostSessionId);
   const runningMs = record.runs.reduce((sum: any, run: any, index: number) => {
     const start = time(run.startedAt);
@@ -335,8 +378,21 @@ export function launchView(record: any, { now = Date.now(), gates = null }: { no
     exit,
     resumeCommand,
     waitingGate: state === "waiting" && typeof gates?.waitingGate === "string" ? gates.waitingGate : null,
-    answerWaits: facts.answerWaits
+    answerWaits: facts.answerWaits,
+    ...(isAcpHost(record.host) ? { usage: runUsage(last) } : {})
   };
+}
+
+const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const USAGE_TOKENS = ["inputTokens", "outputTokens", "cachedReadTokens", "cachedWriteTokens", "thoughtTokens", "totalTokens"];
+
+/** A run's recorded usage, keeping only well-formed values, so nothing else that a record holds reaches the page. */
+function runUsage(run: any) {
+  const usage = run?.usage && typeof run.usage === "object" ? run.usage : {};
+  const tokens = usage.tokens && typeof usage.tokens === "object" ? Object.fromEntries(USAGE_TOKENS.filter((key) => finite(usage.tokens[key])).map((key) => [key, usage.tokens[key]])) : {};
+  const context = finite(usage.context?.used) && finite(usage.context?.size) ? { used: usage.context.used, size: usage.context.size } : null;
+  const cost = finite(usage.cost?.amount) && typeof usage.cost?.currency === "string" ? { amount: usage.cost.amount, currency: usage.cost.currency } : null;
+  return { tokens: Object.keys(tokens).length ? tokens : null, context, cost };
 }
 
 /** Whether a launch folder may be removed: its last run ended, or its supervision was lost, more than 14 days before now, or it never started a run. */

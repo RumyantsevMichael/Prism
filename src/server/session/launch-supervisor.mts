@@ -8,13 +8,28 @@
 // process itself through the handle of the child process it started. It starts, watches, and signals only the host process, never
 // a process that the host started.
 // It names its launch folder on its command line, so any process on this machine can find it.
+// Each permission request of the host waits in the launch folder. A refusal that a review server of this machine writes there is
+// answered to the host; an approval only asks this process to show the request's native dialog, and the host is allowed only the
+// request whose dialog the person confirmed. When the run ends or is stopped, every request still waiting is refused and removed.
 // After a run that exited 0, it resumes the session once when the person answered here, during the run, a gate that is still pending.
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { launchCoordinator, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
-import { hostArguments, hostConversation, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { isAcpHost } from "./acp-agents.mjs";
+import { hostArguments, hostConversation, hostEnvironment, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { approvalText, confirmApproval } from "./launch-confirmation.mjs";
+import { permissionBroker, shownForm } from "./permission-requests.mjs";
 
+// The tail of a host's standard error that a run keeps in run-<n>.stderr of its launch folder, with the host session id redacted.
 const STDERR_KEEP = 64 * 1024;
+const STDERR_LINE_MAX = 300;
+// The raw tail held while the host runs: the kept size and as much again, so the id is redacted before the kept text is cut.
+const STDERR_HELD = 2 * STDERR_KEEP;
+// A stack frame: a line whose first word after spaces is `at`.
+const STACK_FRAME = /^\s*at(\s|$)/;
 const OUTPUT_DRAIN_MS = 2000;
 // After a stop's forced end, the output is drained for at most this long past the stop's deadline, so the end is recorded in time.
 const STOP_DRAIN_MS = 500;
@@ -31,10 +46,36 @@ function forceEndHost(child: any) {
   try { child.kill("SIGKILL"); } catch {}
 }
 
+/**
+ * The text of run-<n>.stderr: the held raw tail with every named session id redacted, whatever its characters, then cut to its last
+ * STDERR_KEEP bytes. A held tail that lost its start may begin inside an id, which no redaction matches, so the length of the longest
+ * id, and the replacement characters of a split character, are dropped from its start after the redaction.
+ */
+export function keptStderr(held: Buffer, trimmed: boolean, ids: unknown[]) {
+  const named = ids.filter((id): id is string => typeof id === "string" && id.length > 0);
+  let text = named.reduce((value, id) => redactSessionId(value, id), held.toString("utf8"));
+  if (trimmed) text = text.slice(Math.max(0, ...named.map((id) => id.length)) + 3);
+  const bytes = Buffer.from(text, "utf8");
+  return bytes.length > STDERR_KEEP ? bytes.subarray(bytes.length - STDERR_KEEP).toString("utf8") : text;
+}
+
+/** The last non-blank line of a host's standard error that is no stack frame, or null. */
+export function lastReasonLine(text: string) {
+  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !STACK_FRAME.test(line)).at(-1) ?? null;
+}
+
 // The time of a stop request, never later than now.
 function requestTime(request: any) {
   const at = Date.parse(request?.requestedAt ?? "");
   return Number.isFinite(at) ? Math.min(at, Date.now()) : Date.now();
+}
+
+// The initiative's title as the checkout's roadmap names it, in its shown form, or its id.
+async function initiativeTitle(checkout: string, initiative: string) {
+  const { readRoadmap } = await import("../workflow/roadmap.mjs");
+  const roadmap: any = await readRoadmap(checkout).catch(() => null);
+  const title = roadmap?.loaded?.record?.initiatives?.find((item: any) => item?.id === initiative)?.title;
+  return typeof title === "string" && title ? shownForm(title) : initiative;
 }
 
 export async function superviseRun({ folder, cause, token, env = process.env }: { folder: string; cause: any; token: string; env?: NodeJS.ProcessEnv }) {
@@ -48,11 +89,19 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     }).catch(() => {});
     return queue;
   };
-  const failStart = (message: any) => update((record: any) => { record.startFailure = { token, message, at: new Date().toISOString() }; });
+  const failStart = (message: any) => update((record: any) => {
+    record.startFailure = { token, message, at: new Date().toISOString() };
+    if (record.starting?.token === token) delete record.starting;
+  });
 
   const record = await readLaunchRecord(folder);
   if (!record) return;
   const resume = record.runs.length > 0;
+  // A start on an ACP agent is marked before the agent's current version is read, so that no sweep or update of any process removes a
+  // version folder while this run has not yet recorded the version it starts on; the run's record replaces the mark.
+  if (isAcpHost(record.host)) {
+    await update((current: any) => { current.starting = { token, supervisorPid: process.pid, at: new Date().toISOString() }; });
+  }
   const resolved = await resolveHost(record.host, env);
   if (!resolved?.available) {
     await failStart(resolved?.reason ?? `Unknown host ${record.host}.`);
@@ -68,16 +117,32 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     await failStart("The session's recorded model choice is not one Prism can pass to a host.");
     return;
   }
-  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator });
+  // An ACP agent runs with the arguments and environment of its declaration or install record.
+  const acp: any = (resolved as any).acp ?? null;
+  // The version folder of a registry agent that this run starts on, which an update or sweep never removes while the run runs.
+  const agentVersion: string | null = acp?.install ? path.basename(acp.install.folder) : null;
+  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator, acp });
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
+  let stderrTrimmed = false;
 
   // Every listener is attached as soon as the host process exists, so no early output or exit is missed.
   const watch = (child: any) => {
     // The host's input is written only through the conversation, which closes it once the host's work is over.
     child.stdin.on("error", () => {});
+    // This process shows each approval's native dialog itself, from the request it keeps in memory, and allows only a confirmed one.
+    const permissions = permissionBroker({
+      folder,
+      launch: record.id,
+      run: token,
+      host: record.host,
+      hostLabel: resolved.label,
+      confirm: async ({ action, reason }) => confirmApproval({ text: approvalText({ initiative: await initiativeTitle(record.checkout, record.initiative), host: resolved.label, action, reason }), env })
+    });
     const conversation = hostConversation(record.host, {
+      permissions,
+      acp: acp && { label: resolved.label, autoMode: acp.autoMode ?? null, env, launch: record.id, agentPid: () => child.pid ?? null },
       initiative: record.initiative,
       checkout: record.checkout,
       hostSessionId: record.hostSessionId,
@@ -114,7 +179,8 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
         const at = new Date().toISOString();
         update((current: any) => {
           delete current.startFailure;
-          current.runs.push({ number, cause, token, supervisorPid: process.pid, hostPid: child.pid, startedAt: at, heartbeatAt: at, outputAt: null, model: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: graceMs, stopRequestedAt: null });
+          if (current.starting?.token === token) delete current.starting;
+          current.runs.push({ number, cause, token, supervisorPid: process.pid, hostPid: child.pid, ...(acp ? { agentVersion } : {}), startedAt: at, heartbeatAt: at, outputAt: null, model: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: graceMs, stopRequestedAt: null });
         }).then(() => markSpawned(true));
         heartbeat = setInterval(() => update((current: any) => {
           const run = current.runs.find((entry: any) => entry.token === token);
@@ -123,6 +189,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
         // A stop request counts only for this run's token; the stop is recorded before the host is asked to end.
         let checking = false;
         stopPoll = setInterval(async () => {
+          void permissions.poll();
           if (checking || stopping || exited) return;
           checking = true;
           try {
@@ -161,7 +228,10 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
       });
       child.stderr.on("data", (chunk: any) => {
         stderr = Buffer.concat([stderr, chunk]);
-        if (stderr.length > STDERR_KEEP) stderr = stderr.subarray(stderr.length - STDERR_KEEP);
+        if (stderr.length > STDERR_HELD) {
+          stderr = stderr.subarray(stderr.length - STDERR_HELD);
+          stderrTrimmed = true;
+        }
       });
       const drained = new Promise<void>((done) => {
         let open = 2;
@@ -185,16 +255,18 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
         const read = stopping ? null : await readStopRequest(folder);
         const request = read?.token === token && requestTime(read) <= Date.parse(endedAt) ? read : null;
         conversation.end();
+        await permissions.close();
         clearInterval(heartbeat);
         const { facts } = conversation;
-        const lines = stderr.toString("utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        // The id is replaced before the text is cut, so no cut leaves part of it behind.
+        const kept = keptStderr(stderr, stderrTrimmed, [record.hostSessionId, facts.hostSessionId, facts.agentSessionId]);
+        await writeAtomically(path.join(folder, `run-${number}.stderr`), kept, { mode: 0o600 }).catch(() => {});
         await update((current: any) => {
           if (!current.hostSessionId && facts.hostSessionId) current.hostSessionId = facts.hostSessionId;
           const run = current.runs.find((entry: any) => entry.token === token);
           if (!run) return;
-          // The id is replaced before the line is cut, so no cut leaves part of it behind.
-          const last = redactSessionId(lines.at(-1) ?? null, current.hostSessionId);
-          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, stderr: last?.slice(0, 300) ?? null });
+          const last = lastReasonLine(redactSessionId(kept, current.hostSessionId));
+          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, failure: facts.failure, stderr: last?.slice(0, STDERR_LINE_MAX) ?? null, ...(acp ? { usage: facts.usage, settled: facts.settled } : {}) });
           if (!run.stopRequestedAt && request) run.stopRequestedAt = new Date(requestTime(request)).toISOString();
         });
         resolve();
@@ -208,9 +280,13 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
   const started: any = await withRunStartLock(folder, async () => {
     const current = await readLaunchRecord(folder);
     if (!current || tokenVoided(current, token)) return null;
+    if (acp?.install && !existsSync(acp.install.folder)) {
+      await failStart(`${resolved.label} could not be started: its version ${agentVersion} is no longer installed.`);
+      return null;
+    }
     let child;
     try {
-      child = (spawn as any)(resolved.command, [...resolved.prefix, ...args], { cwd: record.checkout, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      child = (spawn as any)(resolved.command, [...resolved.prefix, ...args], { cwd: record.checkout, env: acp ? hostEnvironment(env, record.id, acp) : env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     } catch (error) {
       await failStart(`${resolved.label} could not be started: ${error.message}`);
       return null;
@@ -220,8 +296,14 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     // Wrapped, so the lock is released once the run is recorded rather than when the host ends.
     return { ended: watched.ended };
   });
+  if (!started) await update((current: any) => { if (current.starting?.token === token) delete current.starting; });
   if (started) await started.ended;
   await queue;
+  // Once this run ended, the earlier versions of its registry agent that no other session runs on are removed, whichever process updated it.
+  if (started && agentVersion !== null) {
+    const { sweepUnusedVersions } = await import("./agent-installs.mjs");
+    await sweepUnusedVersions(env, [acp.id]);
+  }
   // A run that exited 0 with an answer given here while it ran, whose gate is still pending, is resumed once for that answer.
   if (started) {
     const { resumeForAnswers } = await import("./launched-sessions.mjs");
