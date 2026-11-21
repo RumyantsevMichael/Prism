@@ -1,7 +1,7 @@
 import { createActionList, readOnlyNotice } from "./actions.js";
 import { openQuestion } from "./attention.js";
 import { coalesce } from "./poller.js";
-import { badge, bindLinks, emptyState, escapeHtml } from "./util.js";
+import { badge, bindLinks, emptyState, escapeHtml, keyValues } from "./util.js";
 import { agoText, timeLeft } from "../kit/claim-time.js";
 
 // The Agents page: every agent of the workspace and every session launched on this computer, one library table row each, grouped by
@@ -148,7 +148,36 @@ function actionHtml(entry: any, writable: any) {
   return "";
 }
 
+const grouped = (value: number) => value.toLocaleString("en-US", { maximumFractionDigits: 6 });
+
+/**
+ * The usage an agent reported for its last run, as the facts Tokens, Context, and Cost, each `Not reported by <label>` when the agent gave
+ * none; an empty list for a session whose host reports no usage to Prism.
+ */
+export function usageFacts(entry: any) {
+  const usage = entry.launch?.usage;
+  if (!usage || typeof usage !== "object") return [];
+  const missing = `Not reported by ${entry.harness || "the agent"}`;
+  const finite = (value: any) => typeof value === "number" && Number.isFinite(value);
+  const tokens = usage.tokens ?? {};
+  const cached = finite(tokens.cachedReadTokens) && tokens.cachedReadTokens > 0 ? ` (${grouped(tokens.cachedReadTokens)} cached)` : "";
+  return [
+    ["Tokens", finite(tokens.totalTokens) ? `${grouped(tokens.totalTokens)}${cached}` : missing],
+    ["Context", finite(usage.context?.used) && finite(usage.context?.size) ? `${grouped(usage.context.used)} of ${grouped(usage.context.size)}` : missing],
+    ["Cost", finite(usage.cost?.amount) && typeof usage.cost?.currency === "string" ? `${grouped(usage.cost.amount)} ${usage.cost.currency}` : missing]
+  ];
+}
+
+function usageHtml(entry: any) {
+  const facts = usageFacts(entry);
+  return facts.length ? `<div class="agents-usage">${keyValues(facts.map(([key, value]) => [key, escapeHtml(value)]))}</div>` : "";
+}
+
 function detailsHtml(entry: any) {
+  return `${usageHtml(entry)}${commandHtml(entry)}`;
+}
+
+function commandHtml(entry: any) {
   const command = entry.launch?.resumeCommand;
   // The reason shows here only when the row's Working on names the slice in its place.
   const reason = entry.reason && !workText(entry).includes(entry.reason) ? `<p class="agents-details-reason">${escapeHtml(entry.reason)}</p>` : "";

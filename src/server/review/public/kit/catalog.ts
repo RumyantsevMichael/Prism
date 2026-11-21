@@ -152,6 +152,7 @@ const SPECIMENS: Record<string, any> = {
     shrink: `<span class="catalog-narrow"><prism-button variant="chrome" shrink><prism-avatar kind="workspace" name="P" aria-hidden="true"></prism-avatar><span>payments-platform / feature/retry-total-deadline</span><prism-badge variant="count" tone="danger">12</prism-badge><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button></span>`,
     badge: `<prism-button variant="ghost" label="Attention, 5 items"><prism-icon name="bell"></prism-icon><prism-badge slot="badge" solid size="sm">5</prism-badge></prism-button>`,
     text: `<prism-button size="sm" variant="primary" text="Answer"></prism-button><prism-button size="sm" variant="ghost" text="Stop"></prism-button>`,
+    "text-icon": `<prism-button variant="primary" icon="lock" text="Allow"></prism-button><prism-button size="sm" icon="play" text="Launch"></prism-button>`,
     "long-text": `<prism-button>${LONG}</prism-button><prism-button text="${LONG}"></prism-button>`,
     "unbroken-name": `<prism-button variant="primary">${UNBROKEN}</prism-button>`
   },

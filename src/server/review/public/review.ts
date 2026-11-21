@@ -428,9 +428,10 @@ const actionApi = {
     if (!response.ok) throw Object.assign(new Error(listing.message ?? "The actions could not be read."), { code: listing.code });
     return listing;
   },
-  async apply(request: any) {
+  // An action that waits on the person, such as an approval confirmed in a native dialog, passes a longer deadlineMs.
+  async apply(request: any, { deadlineMs }: { deadlineMs?: number } = {}) {
     if (connection === "stopped") return { status: 0, json: { message: STOPPED_MESSAGE } };
-    const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify(request) })
+    const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify(request), deadlineMs })
       .catch(() => null);
     if (!response) return { status: 0, json: { message: "The review app did not answer, so the change was not applied. Try again in a moment." } };
     return { status: response.status, json: await response.json().catch(() => ({ message: "The server returned an unreadable response." })) };

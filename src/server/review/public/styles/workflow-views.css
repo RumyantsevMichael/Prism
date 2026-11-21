@@ -418,8 +418,13 @@
   text-transform: uppercase;
 }
 
+/* The group's name shows in capitals as small capitals of a larger size, which match the label's capitals, so its text stays as written,
+   such as "Needs you", wherever the page's text is read or copied. */
 .attention-group-label > span:first-child {
   min-width: 0;
+  font-size: var(--prism-font-size-lg);
+  font-variant-caps: all-small-caps;
+  text-transform: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -837,6 +842,39 @@ a.inspect-tile:focus-visible {
 /* An approval gate names its file in full, its scope, and the status an approval records; a long path wraps inside the card. */
 .gate-approval .key-values {
   margin: 0;
+}
+
+/* A permission request names its initiative, host, action, and reason; the action and reason are one line of host text that wraps anywhere. */
+.gate-permission .key-values {
+  margin: 0;
+}
+
+.permission-action,
+.permission-reason {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Allow and Refuse sit side by side beside the facts, and under them in a narrow sheet, with the hint and any refusal below. */
+.permission-answer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.permission-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.permission-hint {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
 }
 
 .approval-path {
@@ -1727,6 +1765,16 @@ a.inspect-tile:focus-visible {
 
 .agents-details-reason {
   color: var(--prism-color-ink);
+}
+
+/* The usage an agent reported reads as facts above the session's command, at the size of the lines around it. */
+.agents-usage .key-values {
+  gap: 0 var(--prism-space-5);
+  margin: 0;
+}
+
+.agents-usage .key-values dd {
+  font-size: var(--prism-font-size-sm);
 }
 
 .agents-folder {

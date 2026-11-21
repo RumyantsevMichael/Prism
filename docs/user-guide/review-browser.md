@@ -169,6 +169,7 @@ An answer to a question that an agent asked reaches only the session whose agent
 An answer to the approval of a requirement or ADR reaches, once and in the same ways, only an agent working in the checkout that asked for the approval, however long you take to answer.
 Agents in other checkouts or on other machines are not told, but any agent that reads that file also reads your latest answer and its note, so requested changes are not lost when nothing waits.
 Attention also lists blocked slices, open findings, failed verifications, and active work.
+In a window as narrow as a phone, Attention opens on its list, and picking an item shows its card in place of the list, with **All items** to go back.
 A slice that is not done is a failed verification while its latest verification run failed, with the reason in words, such as `The tests failed, 2 tests failed`, until a later run passes or the slice is done.
 Choosing a kind or an initiative in the sidebar opens Attention filtered to it, at an address such as `attention:failed` or `attention:work/<initiative>`, which shows only those items, says above them the filter and its count, such as `Failed verifications · 1 of 13 items`, and offers **Show everything**.
 Each filtered item opens where it is handled: a question opens Attention with that question picked so you can answer it, and a failed verification opens its slice.
@@ -405,6 +406,9 @@ The action holds everything that an allow of the request covers, as compact JSON
 The action and the reason show on one line with every character the host sent visible: a backslash shows as `\\`, a line feed as `\n`, a carriage return as `\r`, a tab as `\t`, and any other control, format, or line or paragraph separator character as `\u{<code>}`, such as `\u{202E}`, so no host text can hide part of itself or add a line.
 An action or reason longer than 1,000 characters shows as its first 1,000 characters followed by `…`, and such a request can only be refused: **Allow** answers `approval_too_long` before any dialog, because a confirmation could not show what you would allow.
 The session shows **Waiting for you** with the reason `Asks you to allow: <action>.`.
+On Attention each request lists under **Needs you**, before the questions, with a lock, the action as its title, `Permission · <initiative> · <host>` under it, and how long ago it was asked.
+Its card is headed `<host> asks you to allow: <action>`, lists **Initiative**, **Host**, **Action**, and **Reason**, and offers **Allow** and **Refuse** with the hint `You confirm outside the browser.`.
+When Prism refuses your answer, such as an **Allow** answered with `approval_too_long`, `approval_unavailable`, or a declined confirmation, the card shows why in plain words and the request stays on Attention until you refuse it or it ends.
 A request lives only in the session's folder on this computer, so it never reaches a shared record or another machine, and only the review app of the computer whose session asked it can answer it.
 
 **Allow** asks you again outside the browser every time, in a dialog of the operating system that names the initiative and the host, then shows the whole action and the whole reason each on its own line, and whose default button refuses; an open launch window does not skip it.
@@ -468,6 +472,7 @@ A claim's name is the claim's label, such as `Dana on studio-mac`, which opens t
 A session that waits offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown; a running session offers **Stop**; any other session offers **Open**, which unfolds its details under its row.
 A claim offers no action.
 
+The details of a session on an ACP agent start with the usage the agent reported for its last run: **Tokens** with the total and the cached tokens, such as `182,400 (12,000 cached)`, **Context** as the used and whole context, such as `61,200 of 200,000`, and **Cost** with its currency, such as `0.42 USD`, each `Not reported by <agent>` when the agent gave none.
 The details hold the session's reason, the command that continues it in a terminal while no run runs and the host reported its session id, `claude --resume <session id>`, `codex resume <thread id>`, or an ACP agent's declared `resumeCommand` with `{session}` replaced, with the folder to run it in and **Copy**, which copies the command, and the session's own actions, such as **Resume**.
 The page reads the list again every 5 seconds and after each action you apply there, and moves a claim to **Claims that expired** once its lease passes.
 In a tab that cannot make changes the page says so, **Stop** stays unavailable, and the details offer no action, while **Answer** still opens the question.
