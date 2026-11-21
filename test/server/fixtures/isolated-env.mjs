@@ -1,11 +1,13 @@
+import "./no-host-path.mjs";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 // A server, hook, or command that a test spawns sees none of the host's plugin directories or the user's review settings, so it
 // never joins the user's review app or writes the host's plugin data, and the browser openers on its PATH do nothing.
-// It also never takes the host's cloud session for its own, which would change how it asks for test-command approval.
-const HOST_ONLY = /^(?:PRISM_REVIEW_\w+|CLAUDE_PLUGIN_\w+|PLUGIN_DATA|PLUGIN_ROOT|CLAUDE_PROJECT_DIR|CLAUDE_CODE_REMOTE)$/;
+// It also never takes the host's cloud session for its own, which would change how it asks for test-command approval,
+// nor the tool timeout that the plugin gives the host's Prism server, which would change whether a gate wait can run.
+const HOST_ONLY = /^(?:PRISM_REVIEW_\w+|CLAUDE_PLUGIN_\w+|PLUGIN_DATA|PLUGIN_ROOT|CLAUDE_PROJECT_DIR|CLAUDE_CODE_REMOTE(?:_SESSION_ID)?|PRISM_TOOL_TIMEOUT_MS)$/;
 let stubs = null;
 
 function browserStubs() {

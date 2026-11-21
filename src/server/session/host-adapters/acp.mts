@@ -277,7 +277,8 @@ export async function readAcpOptions(definition: AcpOptionsDefinition, { checkou
     }
     const after = acpConfigChoices(options);
     // The host default is what the agent holds before Prism sets anything.
-    return { state: "ready", model: after.model && { ...after.model, current: before.model?.current ?? null }, effort: after.effort && { ...after.effort, current: before.effort?.current ?? null } };
+    // The agent names its version in initialize's agentInfo, which run options show as the source of the list; run options check its form.
+    return { state: "ready", version: initialized?.agentInfo?.version ?? null, model: after.model && { ...after.model, current: before.model?.current ?? null }, effort: after.effort && { ...after.effort, current: before.effort?.current ?? null } };
   } catch (error: any) {
     return { state: "failed", message: error instanceof AcpError ? error.message : String(error?.message ?? error) };
   } finally {

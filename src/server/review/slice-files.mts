@@ -22,9 +22,20 @@ export async function shippedCommit(projectRoot: string, initiative: string, sli
   return hashOrNull(recorded?.shipped);
 }
 
+// Where the shown commit is, with shippedOnDefault whether the default branch holds the commit recorded at ship,
+// so files shown at a verified commit that a kept feature branch still holds do not read as missing from the default branch after a squash merge.
+async function heldAt(code: any, repository: string, commit: string, shipped: any) {
+  const where = (at: string) => code.branchesHolding ? code.branchesHolding(repository, at).catch(() => null) : null;
+  const held = await where(commit);
+  if (!held) return null;
+  const shippedOnDefault = !shipped ? false : shipped === commit ? held.onDefault : (await where(shipped))?.onDefault === true;
+  return { ...held, shippedOnDefault };
+}
+
 /**
- * The answer of /api/slice-files: { initiative, slice, repository, verified, shipped, shown, files, message }.
- * code reads the workspace's code clones, { state(repository), reachable(repository, commit), blobs(repository, commit, paths) }, or is null where there are none.
+ * The answer of /api/slice-files: { initiative, slice, repository, verified, shipped, shown, held, files, message },
+ * with held where the shown commit is, { defaultBranch, onDefault, branches, branchCount, shippedOnDefault }, so the page says when the files are not on the default branch yet, or null.
+ * code reads the workspace's code clones, { state(repository), reachable(repository, commit), branchesHolding(repository, commit), blobs(repository, commit, paths) }, or is null where there are none.
  */
 export async function sliceFiles(projectRoot: string, initiative: string, slice: string, code: any = null) {
   const run = await latestPassingRun(projectRoot, initiative, slice);
@@ -33,8 +44,8 @@ export async function sliceFiles(projectRoot: string, initiative: string, slice:
   const verified = hashOrNull(run.checkout?.head);
   const shipped = await shippedCommit(projectRoot, initiative, slice);
   const recorded = (Array.isArray(run.files) ? run.files : []).filter((file: any) => typeof file?.path === "string").map((file: any) => ({ path: file.path, blob: hashOrNull(file.blob) }));
-  const answer = (shown: any, blobs: any, message: any) => ({
-    initiative, slice, repository, verified, shipped, shown,
+  const answer = (shown: any, blobs: any, message: any, held: any = null) => ({
+    initiative, slice, repository, verified, shipped, shown, held,
     files: recorded.map((file: any) => {
       if (!shown) return { ...file, shownBlob: null, state: "not available" };
       const shownBlob = blobs.get(file.path) ?? null;
@@ -51,7 +62,7 @@ export async function sliceFiles(projectRoot: string, initiative: string, slice:
   for (const [commit, source] of [[verified, "verified"], [shipped, "ship"]]) {
     if (!commit || !(await code!.reachable(repository, commit))) continue;
     const blobs = await code!.blobs(repository, commit, paths);
-    if (blobs) return answer({ commit, source }, blobs, null);
+    if (blobs) return answer({ commit, source }, blobs, null, await heldAt(code, repository, commit, shipped));
   }
   return answer(null, null, `Neither the verified commit nor a commit recorded at ship is in the code clone of ${repository}, so the review app cannot show the slice's files; work that was never pushed shows only as its presence.`);
 }

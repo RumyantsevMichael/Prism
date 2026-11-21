@@ -51,6 +51,6 @@ MCP tools now take `initiative` and `slice` identifiers instead of record paths,
 
 Attention lists every recorded question with the artifacts to inspect, including read-only source files.
 In Claude Code the agent waits for your browser answer in a background tool call and resumes on its own.
-The wait needs a tool timeout longer than Claude Code's background handoff: keep `MCP_TOOL_TIMEOUT` unset or above two minutes.
+The wait needs a tool timeout longer than Claude Code's background handoff, so Prism's plugin gives its server its own tool timeout of about 27 hours, which takes the place of `MCP_TOOL_TIMEOUT`, including the one-minute value that cloud sessions set.
 Elsewhere, or when the wait cannot run in the background, send any message after answering, and the agent receives the answer with it.
 Only a tab that Prism opened can answer; a tab opened from a review URL that an agent printed can only read, as [Which tabs can make changes](review-browser.md#which-tabs-can-make-changes) explains.

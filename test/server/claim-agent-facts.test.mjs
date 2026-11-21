@@ -259,3 +259,58 @@ test("§5 a claim record whose model is malformed reads as a claim without a mod
   const refused = await tools.call(null, "update_initiative", { initiative: "a", expectedRevision: read.revision, operations: [{ op: "claim", slug: "a" }] });
   assert.equal(refused.error.data.code, "slice_claimed", "the claim with a malformed model still blocks another holder");
 });
+
+// A host session that a person can open from a link, such as a Claude Code on the web session, which names itself cse_<id> in the environment of every process it starts.
+const CLOUD_SESSION = "cse_018gSB8BexampleLinkId";
+const CLOUD_URL = "https://claude.ai/code/session_018gSB8BexampleLinkId";
+
+test("§8 a claim of the server's own host session records the session a person can open, and every view shows its link", async (context) => {
+  const space = await workspace(context);
+  const tools = await server(context, space, { clientInfo: CLAUDE_CODE, session: CLAUDE_SESSION, extraEnv: { CLAUDE_CODE_REMOTE_SESSION_ID: CLOUD_SESSION } });
+  await createInitiative(tools, null);
+  await tools.update(null, [{ op: "claim", slug: "reports" }]);
+  const stored = await storedClaim(space.root);
+  assert.deepEqual(stored.session, { kind: "claude-code-web", id: CLOUD_SESSION });
+  assert.deepEqual(Object.keys(stored), ["schemaVersion", "slug", "holder", "label", "host", "session", "activity", "claimedAt", "renewedAt", "expiresAt", "nonce"], "the session sits in the claim's fixed field order");
+  const read = (await tools.call(null, "get_initiative", {})).result.structuredContent;
+  assert.deepEqual(read.record.slices.reports.claim.session, { url: CLOUD_URL, label: "Claude Code on the web" }, "a read shows the link, not the raw id");
+});
+
+test("§8 a claim records no session for a host with no openable session, a Codex call, a malformed id, or a run Prism launched", async (context) => {
+  const cases = [
+    ["no cloud session", {}, null],
+    ["a malformed id", { CLAUDE_CODE_REMOTE_SESSION_ID: "session_018gSB8B" }, null],
+    ["a launched run", { CLAUDE_CODE_REMOTE_SESSION_ID: CLOUD_SESSION, PRISM_LAUNCH: "launch-1" }, null],
+    ["a Codex call", { CLAUDE_CODE_REMOTE_SESSION_ID: CLOUD_SESSION }, codexCall()]
+  ];
+  for (const [name, extraEnv, meta] of cases) {
+    const space = await workspace(context);
+    const tools = await server(context, space, { clientInfo: meta ? CODEX : CLAUDE_CODE, session: meta ? "" : CLAUDE_SESSION, extraEnv });
+    await createInitiative(tools, meta);
+    await tools.update(meta, [{ op: "claim", slug: "reports" }]);
+    assert.equal(Object.hasOwn(await storedClaim(space.root), "session"), false, name);
+  }
+});
+
+test("§8 a claim record whose session is malformed or of an unknown kind is never refused, and only a known kind shows a link", async (context) => {
+  const space = await workspace(context);
+  const tools = await server(context, space, { clientInfo: CODEX });
+  const sessions = { a: "cse_x", b: { kind: "Claude Code", id: "cse_018gSB8Bexample" }, c: { kind: "claude-code-web", id: "has space" }, d: { kind: "another-host", id: "run-7" }, e: { kind: "claude-code-web", id: CLOUD_SESSION, later: true } };
+  for (const initiative of Object.keys(sessions)) await createInitiative(tools, null, initiative);
+  const now = Date.now();
+  const at = (minutes) => new Date(now + minutes * 60000).toISOString();
+  for (const [slug, session] of Object.entries(sessions)) {
+    await mkdir(path.dirname(claimFile(space.root, slug)), { recursive: true });
+    await writeFile(claimFile(space.root, slug), `${JSON.stringify({ schemaVersion: 1, slug, holder: `session-${"0".repeat(15)}${slug}`, label: "Dana on studio-mac", host: "Claude Code", session, activity: "design", claimedAt: at(-5), renewedAt: at(-5), expiresAt: at(25), nonce: "0123456789abcdef01234567" }, null, 2)}\n`);
+  }
+  for (const [slug, expected] of [["a", undefined], ["b", undefined], ["c", undefined], ["d", undefined], ["e", { url: CLOUD_URL, label: "Claude Code on the web" }]]) {
+    const read = (await tools.call(null, "get_initiative", { initiative: slug })).result.structuredContent;
+    assert.equal(read.valid, true, JSON.stringify(read.errors));
+    const claim = read.record.slices[slug].claim;
+    assert.equal(claim?.label, "Dana on studio-mac", `the claim on ${slug} still holds the slice`);
+    assert.deepEqual(claim.session, expected, slug);
+  }
+  const read = (await tools.call(null, "get_initiative", { initiative: "a" })).result.structuredContent;
+  const refused = await tools.call(null, "update_initiative", { initiative: "a", expectedRevision: read.revision, operations: [{ op: "claim", slug: "a" }] });
+  assert.equal(refused.error.data.code, "slice_claimed", "the claim with a malformed session still blocks another holder");
+});

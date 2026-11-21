@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -304,5 +304,46 @@ test("clause 11: on a phone-wide window the Models section and an open picker st
   assert.ok(box.x >= 0 && box.x + box.width <= 390, `the popover stays inside the window: ${JSON.stringify(box)}`);
   assert.equal(await s.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "the page does not scroll sideways");
   assert.deepEqual(await escapes(s.page, "[data-run-choices]"), []);
+  assert.deepEqual(s.page.errors, []);
+});
+
+test("the Models section and each model picker name the program, version, and path their list came from, and a long path stays inside a phone-wide window", { skip: skipHere, timeout: 90000 }, async (t) => {
+  // A deep folder first on PATH, as an installation inside a version manager is, holds the claude stub the review app finds first.
+  let deep = null;
+  const s = await settingsDialog(t, {
+    hosts: ["claude"],
+    viewport: { width: 390, height: 844 },
+    before: async (fixture) => {
+      deep = path.join(fixture.bin, "versions", "node-v22.11.0-with-a-long-folder-name", "lib", "node_modules", "@anthropic-ai", "claude-code", "bin");
+      await mkdir(deep, { recursive: true });
+      await copyFile(path.join(fixture.bin, "claude"), path.join(deep, "claude"));
+      process.env.PATH = `${deep}${path.delimiter}${process.env.PATH}`;
+    }
+  });
+  const source = `Listed by Claude Code 2.1.327 at ${path.join(deep, "claude")}.`;
+  const models = s.dialog.locator("[data-run-choices]");
+  await ready(s.dialog, "Coordinator");
+  await settled(() => models.locator(".prism-run-choices-source").innerText(), source);
+  const popover = await openPicker(s.page, s.dialog, "Code review");
+  assert.equal(await popover.locator(".prism-run-choice-source").innerText(), source, "the open picker names where its list came from");
+  assert.equal(await s.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "the page does not scroll sideways");
+  assert.deepEqual(await escapes(s.page, "[data-run-choices]"), []);
+  assert.deepEqual(s.page.errors, []);
+});
+
+test("a saved choice that a failed read cannot check shows the read's reason, never as a model the host does not offer", { skip: skipHere, timeout: 90000 }, async (t) => {
+  const s = await settingsDialog(t, {
+    hosts: ["claude"],
+    before: async (fixture) => {
+      await writeSettings(fixture.root, { models: { "claude-code": { coordinator: { model: "fable", effort: "high" } } } });
+      await fixture.setCatalog({ claude: { fail: "Not logged in" } });
+    }
+  });
+  const coordinator = picker(s.dialog, "Coordinator");
+  await ready(s.dialog, "Coordinator");
+  await settled(() => coordinator.innerText(), (text) => text.includes("Not checked"));
+  assert.match(await coordinator.innerText(), /Not checked: Claude Code did not report its run options: Not logged in\./);
+  assert.doesNotMatch(await s.dialog.innerText(), /does not offer/);
+  assert.match(await s.dialog.locator(".prism-run-choices-source").innerText(), /^Prism asked Claude Code at .+claude\.$/);
   assert.deepEqual(s.page.errors, []);
 });

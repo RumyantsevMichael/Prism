@@ -22,14 +22,37 @@ const STATES: Readonly<Record<string, any>> = Object.freeze({
 });
 
 // The table's groups in their order, and what each Show choice shows, with the count each choice names.
-export const GROUPS = Object.freeze([["needs-you", "Needs you"], ["launched", "Launched on this computer"], ["other", "Other sessions"], ["expired", "Claims that expired"]]);
+export const GROUPS = Object.freeze([["needs-you", "Needs you"], ["launched", "Launched from Prism"], ["other", "Started outside Prism"], ["expired", "Claims that expired"], ["archived", "Archived"]]);
 export const SHOWS = Object.freeze([
   ["all", "All", "all", ["needs-you", "launched", "other", "expired"]],
   ["needs-you", "Needs you", "needsYou", ["needs-you"]],
-  ["this-computer", "This computer", "thisComputer", ["needs-you", "launched"]],
-  ["other", "Other sessions", "other", ["other"]],
-  ["expired", "Expired", "expired", ["expired"]]
+  ["this-computer", "Launched from Prism", "thisComputer", ["needs-you", "launched"]],
+  ["other", "Started outside Prism", "other", ["other"]],
+  ["expired", "Expired", "expired", ["expired"]],
+  ["archived", "Archived", "archived", ["archived"]]
 ]);
+
+// The states in which a launched session ended, so the person can archive it.
+export const ENDED_STATES = Object.freeze(["finished", "failed", "stopped", "blocked"]);
+
+/** Whether the person can archive an entry: a launched session that ended and is not archived. */
+export function archivable(entry: any) {
+  return entry.kind === "launch" && entry.group !== "archived" && ENDED_STATES.includes(entry.state);
+}
+
+/** What Archive all ended says once the server archived `count` sessions. */
+export function archivedText(count: number) {
+  if (count === 1) return "Archived 1 session. The Archived filter keeps it.";
+  return count ? `Archived ${count} sessions. The Archived filter keeps them.` : "No ended session was left to archive.";
+}
+
+// The group an unarchived session shows in again until the next read says, as the server groups it.
+const groupAfterUnarchive = (entry: any) => (entry.state === "failed" || entry.state === "waiting" ? "needs-you" : "launched");
+
+const READ_ONLY_TIP = "This tab can only read.";
+
+// All leaves out a claim whose expiry is this old or older; Expired keeps it.
+export const EXPIRED_IN_ALL_MS = 24 * 60 * 60 * 1000;
 
 /** A duration in milliseconds as hours, minutes, and seconds, such as `4s`, `2m 05s`, or `1h 02m 09s`. */
 export function runningText(ms: number) {
@@ -118,15 +141,22 @@ function order(left: any, right: any) {
   return at(right.expiresAt) - at(left.expiresAt) || left.id.localeCompare(right.id);
 }
 
-/** The counts of the Show choices, from the entries as the page holds them. */
-export function countsOf(entries: any) {
-  const count = (accept: any) => entries.filter(accept).length;
+/** Whether All shows an entry: not archived, and not a claim whose expiry is a day old or more by `now`. */
+export function inAll(entry: any, now = Date.now()) {
+  if (entry.group === "archived") return false;
+  return !(entry.group === "expired" && at(entry.expiresAt) && now - at(entry.expiresAt) >= EXPIRED_IN_ALL_MS);
+}
+
+/** The counts of the Show choices, from the entries as the page holds them, with All counting only what it shows by `now`. */
+export function countsOf(entries: any[], now = Date.now()) {
+  const count = (accept: (entry: any) => boolean) => entries.filter(accept).length;
   return {
-    all: entries.length,
+    all: count((entry: any) => inAll(entry, now)),
     needsYou: count((entry: any) => entry.group === "needs-you"),
-    thisComputer: count((entry: any) => entry.kind === "launch"),
+    thisComputer: count((entry: any) => entry.kind === "launch" && entry.group !== "archived"),
     other: count((entry: any) => entry.group === "other"),
-    expired: count((entry: any) => entry.group === "expired")
+    expired: count((entry: any) => entry.group === "expired"),
+    archived: count((entry: any) => entry.group === "archived")
   };
 }
 
@@ -140,12 +170,25 @@ function titleHtml(entry: any, ctx: any) {
   return `<prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${link}${facts ? `<span class="prism-lib-cell is-detail">${escapeHtml(facts)}</span>` : ""}</span>`;
 }
 
+// A claim's link to its holder's session, which opens in a new tab and only for the person whose session it is.
+function sessionLinkHtml(session: any) {
+  const url = typeof session?.url === "string" && /^https:\/\/[^\s"<>]+$/i.test(session.url) ? session.url : null;
+  if (!url) return "";
+  const where = typeof session.label === "string" && session.label.trim() ? session.label.trim() : "";
+  const tip = `Opens this session${where ? ` in ${where}` : ""} in a new tab. Only the person whose session it is can open it.`;
+  return `<prism-chip class="agents-session" href="${escapeHtml(url)}" target="_blank" label="${escapeHtml(where ? `Open session in ${where}` : "Open session")}" tip="${escapeHtml(tip)}"><prism-icon slot="start" name="external"></prism-icon>Session</prism-chip>`;
+}
+
 function actionHtml(entry: any, writable: any) {
+  if (entry.kind === "claim") return sessionLinkHtml(entry.session);
   if (entry.action === "answer") return '<prism-button size="sm" variant="primary" data-agent-action="answer" text="Answer"></prism-button>';
-  // A tab that can only read shows the stop it cannot send as unavailable.
-  if (entry.action === "stop") return `<prism-button size="sm" variant="ghost" data-agent-action="stop" text="Stop"${writable ? "" : ' disabled tip="This tab can only read."'}></prism-button>`;
-  if (entry.action === "open") return '<prism-button size="sm" variant="ghost" data-agent-action="open" text="Open"></prism-button>';
-  return "";
+  // A tab that can only read shows each change it cannot send as unavailable, and says why.
+  const lock = writable ? "" : ` disabled tip="${READ_ONLY_TIP}"`;
+  if (entry.action === "stop") return `<prism-button size="sm" variant="ghost" data-agent-action="stop" text="Stop"${lock}></prism-button>`;
+  const open = entry.action === "open" ? '<prism-button size="sm" variant="ghost" data-agent-action="open" text="Open"></prism-button>' : "";
+  if (entry.kind === "launch" && entry.group === "archived") return `${open}<prism-button size="sm" variant="ghost" data-agent-action="unarchive" text="Unarchive"${lock}></prism-button>`;
+  if (archivable(entry)) return `${open}<prism-button size="sm" variant="ghost" data-agent-action="archive" text="Archive"${lock}></prism-button>`;
+  return open;
 }
 
 const grouped = (value: number) => value.toLocaleString("en-US", { maximumFractionDigits: 6 });
@@ -195,7 +238,7 @@ export async function render(container: any, entity: any, ctx: any) {
   container.innerHTML = `<div class="agents">
     <div class="agents-notice" data-agents-notice></div>
     <p class="error agents-error" role="alert" hidden></p>
-    <div class="agents-toolbar" data-agents-toolbar hidden><prism-segmented label="Show" value="${escapeHtml(state.show)}" wrap data-agents-show>${showChoices}</prism-segmented></div>
+    <div class="agents-toolbar" data-agents-toolbar hidden><prism-segmented label="Show" value="${escapeHtml(state.show)}" wrap data-agents-show>${showChoices}</prism-segmented><prism-button class="agents-archive-ended" size="sm" data-agents-archive-ended text="Archive all ended" hidden></prism-button></div>
     <prism-lib-table class="agents-table" data-agents-table hidden><div class="prism-lib-row is-head" aria-hidden="true">${columns}</div></prism-lib-table>
     <div class="agents-none" data-agents-none hidden>${emptyState(EMPTY_TEXT)}</div>
   </div>`;
@@ -203,6 +246,7 @@ export async function render(container: any, entity: any, ctx: any) {
   const headRow = table.querySelector(".prism-lib-row.is-head");
   const toolbar = container.querySelector("[data-agents-toolbar]");
   const show = container.querySelector("[data-agents-show]");
+  const archiveAll = container.querySelector("[data-agents-archive-ended]");
   const empty = container.querySelector("[data-agents-none]");
   const noticeSlot = container.querySelector("[data-agents-notice]");
   const errorLine = container.querySelector(".agents-error");
@@ -219,12 +263,28 @@ export async function render(container: any, entity: any, ctx: any) {
   const rows = new Map();
   const drafts = (state.actionDrafts ??= {});
   let entries: any[] = [];
+  // The entries All left out at the last layout, so a second that moves a claim out of All lays the table out again.
+  let allOut = "";
+  const outOfAll = (now: number) => entries.filter((entry) => !inAll(entry, now)).map((entry) => entry.id).join("\n");
   let loaded = false;
   let readOnly = typeof ctx.canWrite === "function" ? !ctx.canWrite() : false;
+  // Counts the archives and unarchives the server answered, so a read that left before one does not bring its rows back.
+  let writes = 0;
   bindLinks(table, ctx);
 
+  // Archive all ended says why it is unavailable in a tab that can only read.
+  const paintArchiveAll = () => {
+    if (readOnly) {
+      archiveAll.setAttribute("disabled", "");
+      archiveAll.setAttribute("tip", READ_ONLY_TIP);
+    } else if (!archiveAll.hasAttribute("data-busy")) {
+      archiveAll.removeAttribute("disabled");
+      archiveAll.removeAttribute("tip");
+    }
+  };
   const noteReadOnly = () => {
     if (readOnly && !noticeSlot.childElementCount) noticeSlot.innerHTML = readOnlyNotice();
+    paintArchiveAll();
   };
   noteReadOnly();
 
@@ -338,10 +398,13 @@ export async function render(container: any, entity: any, ctx: any) {
   }
 
   // Places the head, each shown group's head, and its rows in order, moving a node only when the order changed, and hides what the Show choice leaves out.
-  function layout() {
+  function layout(now = Date.now()) {
     entries.sort(order);
-    const counts: Record<string, any> = countsOf(entries);
+    const counts: Record<string, any> = countsOf(entries, now);
     const shown = SHOWS.find(([value]) => value === state.show)?.[3] ?? SHOWS[0][3];
+    // All leaves out what inAll does, and each group's count counts what the choice shows of it.
+    const showing = state.show === "all" || !SHOWS.some(([value]) => value === state.show) ? (entry: any) => inAll(entry, now) : () => true;
+    allOut = outOfAll(now);
     for (const [value, , key] of SHOWS) {
       const slot = show.querySelector(`[data-show-count="${value}"]`);
       if (slot && slot.textContent !== String(counts[(key as any)])) slot.textContent = String(counts[(key as any)]);
@@ -350,20 +413,25 @@ export async function render(container: any, entity: any, ctx: any) {
     let visibleRows = 0;
     for (const [group] of GROUPS) {
       const members = entries.filter((entry) => entry.group === group);
-      const visible = shown.includes(group) && members.length > 0;
+      const kept = new Set(members.filter(showing));
+      const visible = shown.includes(group) && kept.size > 0;
       const head = groupHeads.get(group);
       head!.hidden = !visible;
       const count = head!.querySelector("prism-badge");
-      if (count!.textContent !== String(members.length)) count!.textContent = String(members.length);
+      if (count!.textContent !== String(kept.size)) count!.textContent = String(kept.size);
       sequence.push(head);
       for (const entry of members) {
         const row = rows.get(entry.id);
-        row.element.hidden = !visible;
-        if (visible) visibleRows += 1;
+        const rowVisible = visible && kept.has(entry);
+        row.element.hidden = !rowVisible;
+        if (rowVisible) visibleRows += 1;
         sequence.push(row.element);
       }
     }
     nothing.hidden = visibleRows > 0;
+    // Archive all ended shows while the choice shows the person's or Prism's launched sessions and one of those shown can be archived.
+    const offers = (shown.includes("needs-you") || shown.includes("launched")) && entries.some((entry) => shown.includes(entry.group) && showing(entry) && archivable(entry));
+    if (archiveAll.hidden === offers) archiveAll.hidden = !offers;
     sequence.push(nothing);
     let previous = null;
     for (const node of sequence) {
@@ -375,6 +443,42 @@ export async function render(container: any, entity: any, ctx: any) {
     table.hidden = none;
     toolbar.hidden = none;
     empty.hidden = !none;
+  }
+
+  // Moves entries to another group at once, before the next read confirms it.
+  function regroup(ids: string[], group: string | ((entry: any) => string)) {
+    const moved = new Set(ids);
+    entries = entries.map((entry) => {
+      if (!moved.has(entry.id)) return entry;
+      const row = rows.get(entry.id);
+      const next = { ...entry, group: typeof group === "function" ? group(entry) : group };
+      if (row) {
+        row.entry = next;
+        paint(row);
+      }
+      return next;
+    });
+    layout();
+  }
+
+  // Sends an archive or an unarchive with the tab's write session, and answers the status and the server's answer.
+  async function send(route: string, body: unknown): Promise<{ status: number; json: any }> {
+    const headers = { "Content-Type": "application/json", ...(typeof ctx.writeHeaders === "function" ? ctx.writeHeaders() : {}) };
+    const response = await fetch(`./api/agents/${route}`, { method: "POST", headers, body: JSON.stringify(body) }).catch(() => null);
+    if (!response) return { status: 0, json: { message: "The review app did not answer, so nothing changed. Try again in a moment." } };
+    return { status: response.status, json: await response.json().catch(() => ({ message: "The server returned an unreadable response." })) };
+  }
+
+  async function change(route: string, body: unknown, done: (answer: any) => void) {
+    const result = await send(route, body);
+    if (result.status === 200) {
+      writes += 1;
+      done(result.json);
+    } else {
+      ctx.showToast(result.json?.message ?? "The change could not be made.");
+    }
+    void refresh();
+    return result;
   }
 
   function showAgents(list: any) {
@@ -402,11 +506,14 @@ export async function render(container: any, entity: any, ctx: any) {
   // One read at a time; a read asked for while one is on its way runs once after it.
   const refresh = coalesce(async () => {
     try {
+      const before = writes;
       const response = await fetch("./api/agents", { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.message ?? "The agents could not be read.");
       errorLine.hidden = true;
       loaded = true;
+      // An archive answered while this read was on its way, so the read may predate it; the read that follows shows the list.
+      if (before !== writes) return void refresh();
       showAgents(Array.isArray(body.agents) ? body.agents : []);
     } catch (error) {
       errorLine.textContent = loaded ? `The list could not be refreshed: ${error.message}` : error.message;
@@ -414,7 +521,7 @@ export async function render(container: any, entity: any, ctx: any) {
     }
   });
 
-  // Each second counts a running launch's time on, and moves a claim whose lease passed to the claims that expired.
+  // Each second counts a running launch's time on, moves a claim whose lease passed to the claims that expired, and takes a claim out of All once its expiry is a day old.
   function tick() {
     const now = Date.now();
     let moved = false;
@@ -427,12 +534,28 @@ export async function render(container: any, entity: any, ctx: any) {
       }
       paint(row, now);
     }
-    if (moved) layout();
+    if (moved || outOfAll(now) !== allOut) layout(now);
   }
 
   show.addEventListener("change", (event: any) => {
     state.show = event.detail?.value ?? show.value;
     layout();
+  });
+
+  archiveAll.addEventListener("click", async () => {
+    if (readOnly || archiveAll.hasAttribute("disabled")) return;
+    archiveAll.setAttribute("data-busy", "");
+    archiveAll.setAttribute("disabled", "");
+    try {
+      await change("archive", { ended: true }, (answer: any) => {
+        const ids = (Array.isArray(answer?.archived) ? answer.archived : []).map((id: string) => `launch:${id}`);
+        regroup(ids, "archived");
+        ctx.showToast(archivedText(ids.length));
+      });
+    } finally {
+      archiveAll.removeAttribute("data-busy");
+      paintArchiveAll();
+    }
   });
 
   table.addEventListener("click", async (event: any) => {
@@ -457,6 +580,22 @@ export async function render(container: any, entity: any, ctx: any) {
     if (what === "open") {
       state.openAgents = isOpen(row) ? state.openAgents.filter((id: string) => id !== row.entry.id) : [...state.openAgents, row.entry.id];
       return paint(row);
+    }
+    if (what === "archive" || what === "unarchive") {
+      if (readOnly || button.hasAttribute("disabled")) return;
+      button.setAttribute("disabled", "");
+      const id = row.entry.id;
+      const result = await change(what, { launch: row.entry.launch.id }, () => {
+        if (what === "archive") {
+          regroup([id], "archived");
+          ctx.showToast("Archived. The Archived filter keeps it.");
+        } else {
+          regroup([id], groupAfterUnarchive);
+          ctx.showToast("Unarchived.");
+        }
+      });
+      if (result.status !== 200) button.removeAttribute("disabled");
+      return;
     }
     if (what === "stop") {
       button.setAttribute("disabled", "");

@@ -120,6 +120,7 @@
       <prism-tree id="settings-sections" class="settings-sections" label="Settings sections">
         <prism-tree-item value="appearance" label="Appearance" selected><prism-icon slot="start" name="contrast" size="sm"></prism-icon></prism-tree-item>
         <prism-tree-item value="layout" label="Layout"><prism-icon slot="start" name="panel-left" size="sm"></prism-icon></prism-tree-item>
+        <prism-tree-item value="personal" label="Personal"><prism-icon slot="start" name="agent" size="sm"></prism-icon></prism-tree-item>
         <prism-tree-item value="store" label="Record store"><prism-icon slot="start" name="store" size="sm"></prism-icon></prism-tree-item>
         <prism-tree-item value="prism-runs" label="Prism's own runs"><prism-icon slot="start" name="agent" size="sm"></prism-icon></prism-tree-item>
         <prism-tree-item value="agents" label="Coding agents"><prism-icon slot="start" name="agent" size="sm"></prism-icon></prism-tree-item>
@@ -156,6 +157,43 @@
           <div class="settings-row">
             <div><strong>Sidebar width</strong><span class="settings-hint" id="settings-sidebar-width">Drag the sidebar's edge to change it.</span></div>
             <prism-button id="settings-sidebar-reset" size="sm">Reset the width</prism-button>
+          </div>
+        </section>
+        <section class="settings-section" data-section="personal" aria-labelledby="settings-personal" hidden>
+          <h3 id="settings-personal">Personal settings</h3>
+          <div class="settings-notes">
+            <prism-banner tone="info">These settings stay on this machine and apply to every project and every host you run Prism in. A change here reaches no one else.</prism-banner>
+            <div id="settings-personal-read-only" hidden></div>
+            <prism-banner id="settings-personal-problem" tone="warning" heading="Prism cannot read your personal settings" hidden>It uses the repository's values and its defaults, and saves no change until you fix or remove personal-settings.json in Prism's application folder.</prism-banner>
+          </div>
+          <div class="settings-row">
+            <div><strong>Questions</strong><span class="settings-hint">How an agent asks you to choose: the host's question tool, or numbered options in its message.</span><span class="settings-source" data-source="interactionStyle" hidden><prism-badge variant="status" tone="neutral"></prism-badge></span></div>
+            <prism-segmented label="Questions" data-setting="interactionStyle">
+              <span value="structured">Question tool</span>
+              <span value="plain-text">Numbered options</span>
+            </prism-segmented>
+          </div>
+          <div class="settings-row">
+            <div><strong>Review browser</strong><span class="settings-hint">Auto opens reviews in the host's internal browser on the desktop and in your system browser from a terminal.</span><span class="settings-source" data-source="reviewBrowser" hidden><prism-badge variant="status" tone="neutral"></prism-badge></span></div>
+            <prism-segmented label="Review browser" data-setting="reviewBrowser">
+              <span value="auto">Auto</span>
+              <span value="internal">Internal</span>
+              <span value="external">External</span>
+            </prism-segmented>
+          </div>
+          <div class="settings-row">
+            <div><strong>Open at session start</strong><span class="settings-hint">Opens the review browser when a session starts on a computer with a screen.</span><span class="settings-source" data-source="reviewBrowserOnStart" hidden><prism-badge variant="status" tone="neutral"></prism-badge></span></div>
+            <prism-segmented label="Open at session start" data-setting="reviewBrowserOnStart">
+              <span value="on">On</span>
+              <span value="off">Off</span>
+            </prism-segmented>
+          </div>
+          <div class="settings-row">
+            <div><strong>Offer Prism</strong><span class="settings-hint">A new conversation offers to run work through Prism when it changes what your requirements describe.</span><span class="settings-source" data-source="sessionOffer" hidden><prism-badge variant="status" tone="neutral"></prism-badge></span></div>
+            <prism-segmented label="Offer Prism" data-setting="sessionOffer">
+              <span value="ask">Ask</span>
+              <span value="off">Off</span>
+            </prism-segmented>
           </div>
         </section>
         <section class="settings-section" data-section="store" aria-labelledby="settings-store" hidden>

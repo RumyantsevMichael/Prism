@@ -59,5 +59,15 @@ test("the Show counts follow the entries' groups", () => {
     { kind: "claim", group: "other" },
     { kind: "claim", group: "expired" }
   ];
-  assert.deepEqual(countsOf(entries), { all: 4, needsYou: 1, thisComputer: 2, other: 1, expired: 1 });
+  assert.deepEqual(countsOf(entries), { all: 4, needsYou: 1, thisComputer: 2, other: 1, expired: 1, archived: 0 });
+});
+
+test("All counts no archived session and no claim whose expiry is a day old, while Expired counts every expired claim", () => {
+  const entries = [
+    { kind: "launch", group: "launched" },
+    { kind: "launch", group: "archived" },
+    { kind: "claim", group: "expired", expiresAt: minutes(-60) },
+    { kind: "claim", group: "expired", expiresAt: minutes(-24 * 60) }
+  ];
+  assert.deepEqual(countsOf(entries, NOW), { all: 2, needsYou: 0, thisComputer: 1, other: 0, expired: 2, archived: 1 });
 });

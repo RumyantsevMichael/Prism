@@ -16,7 +16,7 @@ import { ARTIFACT_LOCATION_BYTES_MAX, ARTIFACT_NAME_FORM, artifactAddress as art
 import { acceptArtifactVersions, ArtifactError, storeArtifactLocation } from "./store-artifacts.mjs";
 import { syncRecordStoreNow } from "./record-store-sync.mjs";
 import { readAgentModel } from "../session/agent-models.mjs";
-import { blockingClaim, callIsMainAgent, claimedMessage, claimHolder, claimHost, claimLabel, claimView, dropClaim, holdClaim, isLive, newClaim, parseClaim, pendClaim, renewal, serializeClaim, settleClaim, takeLostClaims, adoptClaims } from "./slice-claims.mjs";
+import { blockingClaim, callIsMainAgent, claimedMessage, claimHolder, claimHost, claimSession, claimLabel, claimView, dropClaim, holdClaim, isLive, newClaim, parseClaim, pendClaim, renewal, serializeClaim, settleClaim, takeLostClaims, adoptClaims } from "./slice-claims.mjs";
 import { mergeHistory, mergeKeyed, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, latestDependentsRun, measureContract, restageFrozenTests, REVIEW_MARKS, stageFrozenTests, verifiedCode, withdrawFrozenTests } from "./slice-design.mjs";
 import { effectiveSettings, readCoordinationState } from "./state.mjs";
@@ -27,6 +27,7 @@ import { refuseShipped, shippedHistory } from "./shipped-history.mjs";
 import { contractClauses, plannedChanges } from "./design-view.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { deferredFindings, loadReview } from "../review/review-ledger.mjs";
+import { sessionFields } from "../session/session-links.mjs";
 
 const RECORD_NAME = "initiative.json";
 const PROJECTION_NAME = "initiative.md";
@@ -414,7 +415,7 @@ async function claimsView(resolved: any, loaded: any, { report = true } = {}) {
     record = { ...record, slices: { ...record.slices } };
     for (const [slug, claim] of claims) {
       if (!isLive(claim, now) || !Object.hasOwn(record.slices, slug)) continue;
-      record.slices[slug] = { ...record.slices[slug], claim: { holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, claimedAt: claim.claimedAt, renewedAt: claim.renewedAt, expiresAt: claim.expiresAt } };
+      record.slices[slug] = { ...record.slices[slug], claim: { holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), ...sessionFields(claim), activity: claim.activity, claimedAt: claim.claimedAt, renewedAt: claim.renewedAt, expiresAt: claim.expiresAt } };
       listed[slug] = { label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, expiresAt: claim.expiresAt, heldHere: claim.holder === holder };
     }
   }
@@ -739,7 +740,7 @@ function takeClaim(record: any, slugValue: any, activity: any, effects: any, ope
     claims.expired.push(claimView(previous));
     effects.notes.set(operation, { replacedClaim: { holder: previous.holder, label: previous.label, activity: previous.activity, expiresAt: previous.expiresAt } });
   }
-  claims.files.set(slugValue, newClaim(previous, { slug: slugValue, holder: claims.holder, label: claims.label, host: claims.host, model: claims.model, activity, now: claims.now }));
+  claims.files.set(slugValue, newClaim(previous, { slug: slugValue, holder: claims.holder, label: claims.label, host: claims.host, model: claims.model, session: claims.session, activity, now: claims.now }));
 }
 
 function endClaim(slugValue: any, effects: any) {
@@ -1196,7 +1197,7 @@ async function claimContext(resolved: any, mode: any, label: string | null = nul
   const { claims } = await readClaims(resolved);
   const holder = claimHolder();
   const model = mode === "plan" && callIsMainAgent() ? await readAgentModel(holder) : null;
-  return { mode, holder, label, host: claimHost(), model, now: Date.now(), files: claims, initial: new Map(claims), expired: [], released: [], releasedSlugs: new Set(), ended: new Set() };
+  return { mode, holder, label, host: claimHost(), model, session: claimSession(), now: Date.now(), files: claims, initial: new Map(claims), expired: [], released: [], releasedSlugs: new Set(), ended: new Set() };
 }
 
 // Claim records change one process at a time per initiative, so two local starts never both pass the check for overlapping claims.

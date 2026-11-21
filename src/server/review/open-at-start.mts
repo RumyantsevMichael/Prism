@@ -1,4 +1,4 @@
-import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { readPersonalSettings } from "../workflow/personal-settings.mjs";
 import { openAtStartDisabled } from "./review-app-discovery.mjs";
 
 // Cloud, CI, print-mode, and display-less sessions run the review app too, but nobody there can see a window it opens.
@@ -8,11 +8,11 @@ function canShowWindow(env: NodeJS.ProcessEnv, platform: any) {
   return platform === "darwin" || platform === "win32" || Boolean(env.DISPLAY || env.WAYLAND_DISPLAY);
 }
 
-// Answers whether this session opens the review browser at start: only where someone can see it, and not when the user or the project
+// Answers whether this session opens the review browser at start: only where someone can see it, and not when the person's own settings, or a value their project records,
 // turned it off or chose the internal browser, which only the agent can open.
 export async function opensAtStart(projectRoot: string, { env = process.env, platform = process.platform }: any = {}) {
   if (openAtStartDisabled(env) || !canShowWindow(env, platform)) return false;
-  const interaction: Record<string, any> = await readWorkflowConfig(projectRoot).then((config) => config.sections.Interaction ?? {}, () => ({}));
-  if (/^internal$/i.test(interaction["Review browser"] ?? "")) return false;
-  return !/^off$/i.test(interaction["Review browser on start"] ?? "");
+  const personal = await readPersonalSettings({ projectRoot, env }).catch(() => null);
+  if (!personal) return true;
+  return personal.settings.reviewBrowser !== "internal" && personal.settings.reviewBrowserOnStart === "on";
 }

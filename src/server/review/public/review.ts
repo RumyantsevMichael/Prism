@@ -18,7 +18,7 @@ import { DEFAULT_PLACE, PLACES, placeNamed } from "./views/places.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createAgentsMenu } from "./views/agents-menu.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
-import { createActionList, shownActionEntries } from "./views/actions.js";
+import { createActionList, readOnlyNotice, shownActionEntries } from "./views/actions.js";
 import { createCodingAgents } from "./views/coding-agents.js";
 import { artifactChangesView, artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
@@ -141,6 +141,10 @@ let lastSnapshot = "";
 let renderedPath: any = null;
 let rebuilding = false;
 const scrollPositions = new Map();
+// A refresh of the shown page that waits while an overlay open in it, such as an initiative's Settings dialog, would close as the page is replaced,
+// and a build that finished while one was open, which replaces the page once the overlay closes.
+let refreshHeld = false;
+let heldBuild: any = null;
 let probes = { failures: 0, failingSince: null };
 // Live, retrying, or stopped: a stopped page keeps checking, and it returns to live when the same app or a handed-off successor answers.
 let connection = "live";
@@ -1209,9 +1213,10 @@ function requireApp() {
   return false;
 }
 
-// Settings, from the status bar's gear or Ctrl+,: sections down its start edge for the appearance, the layout, the record store,
-// Prism's own runs, the coding agents, and About Prism. Each appearance and layout choice applies at once and is kept as the person's preference, as the
-// appearance menu's did; Prism's own runs is this computer's action, drawn by the action list and applied with its own button.
+// Settings, from the status bar's gear or Ctrl+,: sections down its start edge for the appearance, the layout, the person's own settings,
+// the record store, Prism's own runs, the coding agents, and About Prism. Each appearance, layout, and personal choice applies at once and is kept as the
+// person's preference, as the appearance menu's did; Prism's own runs is this computer's action, drawn by the action list and applied with its own button.
+// The person's own settings live on this machine beside Prism's application data, so the section reads them again each time Settings opens.
 const settingsDialog = document.getElementById("settings-dialog");
 const PRISM_RUNS_TARGET = "machine:prism-runs";
 let prismRunsList: any = null;
@@ -1300,6 +1305,9 @@ function startSettings() {
   });
   sidebarChoice!.addEventListener("change", (event) => setSidebarCollapsed((event as any).detail?.value === "hidden"));
   document!.getElementById("settings-sidebar-reset")!.addEventListener("click", () => setSidebarWidth(null, { remember: true }));
+  for (const choice of settingsDialog!.querySelectorAll<HTMLElement>("prism-segmented[data-setting]")) {
+    choice.addEventListener("change", (event) => savePersonalSetting(choice.dataset.setting, (event as any).detail?.value));
+  }
   document!.getElementById("settings-store-open")!.addEventListener("click", () => {
     (settingsDialog! as any).close();
     document!.getElementById("store-status")!.click();
@@ -1317,6 +1325,82 @@ function openSettings() {
   document!.getElementById("settings-store-open")!.hidden = store!.hidden;
   if (settingsDialog!.querySelector('.settings-section[data-section="agents"]:not([hidden])')) void codingAgents?.refresh();
   (settingsDialog! as any).show();
+  showPersonalAccess();
+  loadPersonalSettings();
+}
+
+// A tab without a write session shows the personal choices at their values but disabled, under the review app's read-only notice.
+function showPersonalAccess() {
+  const writable = Boolean(writeSession());
+  for (const choice of settingsDialog!.querySelectorAll("prism-segmented[data-setting]")) choice.toggleAttribute("disabled", !writable);
+  const notice = document.getElementById("settings-personal-read-only")!;
+  if (!writable && !notice.firstElementChild) notice.innerHTML = readOnlyNotice();
+  notice.hidden = writable;
+}
+
+const PERSONAL_SETTINGS_ROUTE = "./api/personal-settings";
+const PERSONAL_SOURCES: Record<string, { label: string; tone: string }> = {
+  chosen: { label: "Your choice", tone: "accent" },
+  adopted: { label: "Adopted from a repository's configuration", tone: "info" },
+  repository: { label: "From this repository's configuration", tone: "neutral" },
+  default: { label: "Default", tone: "neutral" }
+};
+let personalSettings: any = null;
+let personalReads = 0;
+
+// Shows each setting at the value Prism uses, its source, and the warning when Prism cannot read the person's settings file.
+function showPersonalSettings(answer: any) {
+  personalSettings = answer;
+  for (const choice of settingsDialog!.querySelectorAll<HTMLElement>("prism-segmented[data-setting]")) {
+    const value = answer?.settings?.[choice.dataset.setting!];
+    if (typeof value === "string") choice.setAttribute("value", value);
+  }
+  for (const holder of settingsDialog!.querySelectorAll<HTMLElement>(".settings-source[data-source]")) {
+    const source = PERSONAL_SOURCES[answer?.sources?.[holder.dataset.source!]];
+    holder.hidden = !source;
+    if (!source) continue;
+    const badge = holder.querySelector("prism-badge")!;
+    badge.setAttribute("tone", source.tone);
+    badge.textContent = source.label;
+  }
+  document.getElementById("settings-personal-problem")!.hidden = !answer?.problem;
+}
+
+async function loadPersonalSettings() {
+  const read = ++personalReads;
+  try {
+    const answer = await fetchJson(PERSONAL_SETTINGS_ROUTE);
+    if (read === personalReads) showPersonalSettings(answer);
+  } catch {
+    // An unreachable review app keeps the values the section last showed.
+  }
+}
+
+// Saves one choice at once; a refusal names Prism's reason and checks the value Prism uses again.
+async function savePersonalSetting(name: string | undefined, value: any) {
+  if (!name || typeof value !== "string") return;
+  const read = ++personalReads;
+  let message: string | null = null;
+  try {
+    const response = await appFetch(PERSONAL_SETTINGS_ROUTE, { method: "PUT", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ [name]: value }) });
+    const text = await response.text();
+    let answer: any = null;
+    try {
+      answer = JSON.parse(text);
+    } catch {
+    }
+    if (response.ok && answer) {
+      if (read === personalReads) showPersonalSettings(answer);
+      showToast("Saved on this machine. This change reaches no one else.", { tone: "success" });
+      return;
+    }
+    message = answer?.message || text || `the review app answered ${response.status}.`;
+  } catch (error: any) {
+    message = error?.message || "the review app did not answer.";
+  }
+  showToast(`Prism could not save this change: ${message}`, { tone: "danger" });
+  if (personalSettings) showPersonalSettings(personalSettings);
+  await loadPersonalSettings();
 }
 
 function openCatalog() {
@@ -1493,7 +1577,7 @@ function diagramCard(diagram: any, { compact = false }: any = {}) {
       <prism-button variant="ghost" size="sm" data-action="source" aria-expanded="false">Show source</prism-button>
       <prism-button variant="ghost" size="sm" data-action="copy" tip="Copy PlantUML source">Copy</prism-button>
     </div>
-    <prism-canvas class="diagram-output"><prism-spinner label="Rendering diagram"></prism-spinner></prism-canvas>
+    <prism-canvas class="diagram-output" pannable><prism-spinner label="Rendering diagram"></prism-spinner></prism-canvas>
     <div class="diagram-source" hidden><prism-code language="plantuml"><pre><code>${highlight(diagram.source, "plantuml")}</code></pre></prism-code></div>`;
   return section;
 }
@@ -2257,24 +2341,27 @@ function controlsOf(root: any) {
   return [...root.querySelectorAll("button, a[href], input, textarea, select, summary, [tabindex]")];
 }
 
+// The open sections, the focused control, and its caret of the page showing, which a rebuild of the same page gives back,
+// with the page's height held so the workspace keeps its scroll position while the new view draws.
+function captureView(memory: any) {
+  memory.open = [...artifact!.querySelectorAll("prism-disclosure")].map((disclosure) => [disclosure.getAttribute("summary") ?? "", (disclosure as any).open]);
+  memory.focus = artifact!.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
+  // A control whose view names it with data-focus-key, such as a kit button whose own control sits in its shadow, gets its focus back by that name.
+  memory.focusKey = artifact!.contains(document.activeElement) ? (document!.activeElement!.closest("[data-focus-key]") as any)?.dataset.focusKey ?? null : null;
+  // A control that the new view takes over whole, such as the comment form with an unsent comment, is focused again as itself,
+  // since moving it to another scope renames its focus key and the controls before it can differ.
+  memory.focused = artifact!.contains(document.activeElement) ? document.activeElement : null;
+  memory.selection = memory.focused && "selectionStart" in memory.focused ? [memory.focused.selectionStart, memory.focused.selectionEnd] : null;
+  artifact!.style.minHeight = `${artifact!.offsetHeight}px`;
+}
+
 // A rebuilt view starts empty and renders graphs and diagrams asynchronously, so the old height is held until it is done
 // and then the scroll position, open sections, and focus come back; a newly opened path starts where its tab was left, or at the top.
 function beginRebuild(path: any) {
   const same = renderedPath === path;
   const memory: any = { path, top: same ? workspace!.scrollTop : scrollPositions.get(path) ?? 0, open: null, focus: -1, focusKey: null };
-  if (same) {
-    memory.open = [...artifact!.querySelectorAll("prism-disclosure")].map((disclosure) => [disclosure.getAttribute("summary") ?? "", (disclosure as any).open]);
-    memory.focus = artifact!.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
-    // A control whose view names it with data-focus-key, such as a kit button whose own control sits in its shadow, gets its focus back by that name.
-    memory.focusKey = artifact!.contains(document.activeElement) ? (document!.activeElement!.closest("[data-focus-key]") as any)?.dataset.focusKey ?? null : null;
-    // A control that the new view takes over whole, such as the comment form with an unsent comment, is focused again as itself,
-    // since moving it to another scope renames its focus key and the controls before it can differ.
-    memory.focused = artifact!.contains(document.activeElement) ? document.activeElement : null;
-    memory.selection = memory.focused && "selectionStart" in memory.focused ? [memory.focused.selectionStart, memory.focused.selectionEnd] : null;
-    artifact!.style.minHeight = `${artifact!.offsetHeight}px`;
-  } else {
-    artifact!.style.minHeight = "";
-  }
+  if (same) captureView(memory);
+  else artifact!.style.minHeight = "";
   rebuilding = true;
   linkPreview?.hide();
   // The new view is built out of sight beside the one showing and replaces it whole once it is drawn, graphs and diagrams included,
@@ -2288,11 +2375,38 @@ function beginRebuild(path: any) {
   return memory;
 }
 
+// A dialog, popover, or menu showing; a modeless dialog leaves the page usable behind it, so it holds nothing.
+const OVERLAYS = "prism-dialog:not([modeless]), prism-popover, prism-menu[for]";
+const overlayShowing = (overlay: any) => overlay.isOpen ?? overlay.hasAttribute("open");
+
+function pageOverlayOpen() {
+  return [...artifact!.querySelectorAll(OVERLAYS)].some(overlayShowing);
+}
+
+// Once the last overlay in the page closes, a held build replaces the page with what it was given back as the overlay left it,
+// and a held refresh reads the page again; a menu sends no close, so the next check of the project runs its refresh.
+function resumeHeld() {
+  if (pageOverlayOpen()) return;
+  const memory = heldBuild;
+  heldBuild = null;
+  if (memory && memory.generation === stageGeneration && memory.path === selectedPath && memory.stage.isConnected) {
+    refreshHeld = false;
+    captureView(memory);
+    swapIn(memory);
+    return;
+  }
+  if (refreshHeld && selectedPath) {
+    refreshHeld = false;
+    void showArtifact(selectedPath);
+  }
+}
+
 // Each rebuild, and each page written straight into the artifact area, starts a new generation, so a slower build that an earlier one began is dropped rather than shown over it.
 let stageGeneration = 0;
 
 function dropStages() {
   stageGeneration += 1;
+  heldBuild = null;
   for (const stage of workspace!.querySelectorAll(":scope > .artifact-stage")) stage.remove();
 }
 
@@ -2417,6 +2531,16 @@ function endRebuild(memory: any) {
     artifact!.style.minHeight = "";
     return;
   }
+  // A refresh that finished while an overlay opened in the page waits for it to close, since replacing the page would close it.
+  if (renderedPath === memory.path && pageOverlayOpen()) {
+    heldBuild = memory;
+    setBusy(false);
+    return;
+  }
+  swapIn(memory);
+}
+
+function swapIn(memory: any) {
   // The reader may have scrolled the page while the new view was built, so a refresh of the same page keeps where they are now.
   if (renderedPath === memory.path) memory.top = workspace!.scrollTop;
   artifact!.replaceChildren(...memory.stage.childNodes);
@@ -2672,6 +2796,12 @@ async function showArtifact(path: any) {
   if (path !== selectedPath) {
     return;
   }
+  // A refresh of the page showing waits while an overlay is open in it, and runs once the overlay closes.
+  if (renderedPath === path && pageOverlayOpen()) {
+    refreshHeld = true;
+    return;
+  }
+  refreshHeld = false;
   if (parseEntityRef(path)) {
     await showEntity(path);
     return;
@@ -2817,6 +2947,8 @@ function viewContext(path: any, state: any) {
     escapeHtml,
     showToast,
     fetchArtifact: (artifactPath: string) => fetchJson(`./api/artifact?${artifactQuery(localTab(artifactPath))}`),
+    // A view's own read route, such as a slice's frozen test or run log, answers JSON, and a refusal throws its text.
+    fetchJson: (url: string) => fetchJson(url),
     fetchEvidence: (id: string) => fetchJson(`./api/evidence?id=${encodeURIComponent(id)}`),
     hasArtifact: (artifactPath: string) => availableArtifacts.has(localTab(artifactPath)) || Boolean(parseEntityRef(artifactPath)),
     // A store artifact's scope label, which the record views show beside it, or null for any other file.
@@ -2838,6 +2970,8 @@ function viewContext(path: any, state: any) {
     },
     openEvidence: (id: string, label: string) => openEvidence(id, label, viewContext(path, state)),
     actionApi,
+    // The tab's write session header, which a view's own write routes, such as the Agents page's archive, send.
+    writeHeaders,
     // Names one of Prism's records by title and kind, or a repository file by its path, as the page bar and the palette do.
     describe,
     recordTitle: (recordPath: string) => ((navigation.index ?? []).find((entry) => (entry as any).ref === recordPath) as any)?.label ?? null,
@@ -2846,7 +2980,9 @@ function viewContext(path: any, state: any) {
       if (path === selectedPath) pageBar.setActions(nodes);
     },
     sidePanel: {
-      show: (ref: any) => sidePanel.showFile(ref),
+      show: (ref: any, anchor: any = null, options: any = {}) => sidePanel.showFile(ref, anchor, options),
+      showContent: (content: any) => sidePanel.showContent(content),
+      current: () => sidePanel.current(),
       close: () => sidePanel.close(),
       isOpen: () => sidePanel.isOpen()
     },
@@ -3237,6 +3373,9 @@ async function initialize() {
       openRef(ref, options);
     }
   });
+  // The side panel and link previews read a file the way opening it does, by the store ref a checkout path names,
+  // so a panel, a preview, and the page they open never disagree about which artifact it is, and a store document's links resolve in the store.
+  const previewArtifact = (ref: any) => fetchJson(`./api/artifact?${artifactQuery(localTab(ref))}`);
   sidePanel = createSidePanel({
     shell: appShell,
     // A view's clause or contract opens on the contract's page, so the panel closes rather than show the view beside it.
@@ -3249,6 +3388,7 @@ async function initialize() {
     // A page's Side panel button follows the panel, however it opens or closes.
     onChange: (open: any) => document.dispatchEvent(new CustomEvent("prism:side-panel", { detail: { open } })),
     fetchJson,
+    fetchArtifact: previewArtifact,
     renderMarkdown: (path: any, content: any, links: any) => renderText(path, content, markdownOptions(path, links)),
     // The panel draws a diagram as the same card its page shows, without the name its header already gives, and fitted to the panel's width.
     mountDiagram: async (target: any, diagram: any) => {
@@ -3268,6 +3408,7 @@ async function initialize() {
   linkPreview = createLinkPreview({
     root: workspace,
     fetchJson,
+    fetchArtifact: previewArtifact,
     renderMarkdown: (path: any, content: any, links: any) => renderText(path, content, markdownOptions(path, links)),
     kindLabel: (kind: any) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,
@@ -3279,6 +3420,7 @@ async function initialize() {
   panelPreview = createLinkPreview({
     root: sidePanel.body,
     fetchJson,
+    fetchArtifact: previewArtifact,
     renderMarkdown: (path: any, content: any, links: any) => renderText(path, content, markdownOptions(path, links)),
     kindLabel: (kind: any) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,
@@ -3378,7 +3520,9 @@ async function initialize() {
     const docLink = (event!.target as any).closest("a[data-doc-link]");
     if (docLink) openRef(docLink.dataset.docLink, { keep: true });
   });
-  const overlayOpen = () => [...document.querySelectorAll("prism-dialog:not([modeless]), prism-popover, prism-menu")].some((overlay) => (overlay as any).isOpen ?? overlay.hasAttribute("open"));
+  const overlayOpen = () => [...document.querySelectorAll("prism-dialog:not([modeless]), prism-popover, prism-menu")].some(overlayShowing);
+  // A dialog's or popover's close runs its own handlers first, such as the dialog's return of focus, and then any refresh it held.
+  artifact!.addEventListener("prism-close", () => setTimeout(resumeHeld));
   document.addEventListener("keydown", (event) => {
     const typing = ["INPUT", "TEXTAREA"].includes((document.activeElement?.tagName as any)) || Boolean(document.activeElement?.closest?.("prism-field"));
     if ((event.key === "k" || event.key === "K") && (event.ctrlKey || event.metaKey)) {

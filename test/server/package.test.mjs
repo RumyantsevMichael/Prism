@@ -16,7 +16,9 @@ test("uses host-specific portable MCP launch paths", async () => {
   assert.deepEqual(claudeMcp.mcpServers["prism-review"], {
     command: "node",
     args: ["${CLAUDE_PLUGIN_ROOT}/dist/server/mcp.mjs"],
-    env: { NODE_USE_ENV_PROXY: "1" }
+    // Its own tool timeout overrides a short MCP_TOOL_TIMEOUT, such as a cloud session's, so a gate wait reaches the background handoff.
+    timeout: 100000000,
+    env: { NODE_USE_ENV_PROXY: "1", PRISM_TOOL_TIMEOUT_MS: "100000000" }
   });
   assert.equal(codexManifest.mcpServers, "./.codex-mcp.json");
   assert.deepEqual(codexMcp.mcpServers["prism-review"], {
@@ -79,6 +81,9 @@ test("packages compatible capacity and trace hooks at the default plugin path", 
     assert.ok(commands(event).includes(roleCommand), event);
   }
   assert.deepEqual(hookManifest.hooks.PreToolUse.filter((group) => group.hooks.some((hook) => hook.command === roleCommand)).map((group) => group.matcher), ["Skill"]);
+  // The host question tools of Claude Code and Codex are refused while the asking session has an unanswered Prism gate.
+  const questionCommand = "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-questions-in-gates.mjs\"";
+  assert.deepEqual(hookManifest.hooks.PreToolUse.filter((group) => group.hooks.some((hook) => hook.command === questionCommand)).map((group) => group.matcher), ["^(AskUserQuestion|request_user_input)$"]);
   // Codex clamps a SessionEnd hook to 3 seconds and warns about any longer timeout.
   assert.deepEqual(hookManifest.hooks.SessionEnd.flatMap((group) => group.hooks).map((hook) => hook.timeout), [3, 3]);
   assert.equal(Object.hasOwn(hookManifest.hooks, "PostModelSwitch"), false);

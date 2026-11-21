@@ -14,6 +14,7 @@ delete process.env.CLAUDE_CODE_REMOTE;
 const { getInitiative, initiativeAcknowledgement, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { failingTests, verificationBrief, verifySlice } = await import("../../dist/server/workflow/verification.mjs");
 const { checkSliceGate } = await import("../../dist/server/workflow/slice-gate.mjs");
+const { callConservationTool } = await import("../../dist/server/conservation/conservation-tools.mjs");
 const { getReview, updateReview } = await import("../../dist/server/review/review-ledger.mjs");
 const { answerUserGate, readCoordinationState, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
 test.after(() => rm(privateData, { recursive: true, force: true }));
@@ -294,6 +295,21 @@ test("a slice whose design requires review completes on a review of its verified
   assert.equal((await verifySlice(slice)).status, "passed");
   gate = await checkSliceGate({ ...slice, gate: "completion" });
   assert.deepEqual(gate.problems.map((problem) => problem.code), ["review_stale"]);
+  assert.deepEqual(gate.problems[0].paths, ["source.mjs"], "the refusal names the path that changed since the reviewed result");
+  assert.match(gate.problems[0].message, /source\.mjs/);
+  // check_review_gate applies the same comparison, so it never reads ready while set_status done refuses.
+  const tool = await callConservationTool("check_review_gate", { ...slice, gate: "completion" });
+  assert.equal(tool.ready, false);
+  assert.deepEqual(tool.problems.map((problem) => problem.code), ["review_stale"]);
+  assert.deepEqual(tool.problems[0].paths, ["source.mjs"]);
+  await assert.rejects(review({ id: "coordinator", role: "coordinator" }, [{ op: "start_wave", id: "w2", mode: "implementation-review", lanesFrom: "w1" }]),
+    (error) => /records orchestrator as its coordinator/.test(error.message) && error.problems[0].expected === "orchestrator", "an actor mismatch names the expected id");
+  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w2", mode: "implementation-review", lanes, lanesFrom: "w1" }]), /Pass either lanes or lanesFrom/);
+  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w2", mode: "implementation-review", lanesFrom: "w9" }]), /no wave w9/);
+  await review(coordinator, [{ op: "start_wave", id: "w2", mode: "implementation-review", lanesFrom: "w1" }]);
+  assert.deepEqual((await getReview(slice)).currentWave.lanes, lanes, "lanesFrom copies the earlier wave's lanes");
+  await assert.rejects(review(coordinator, [{ op: "carry_lane", lane: "security", fromWave: "w1" }]),
+    (error) => error.problems[0].code === "carry_inputs_changed" && error.problems[0].input === "tree" && error.problems[0].paths.includes("source.mjs") && /tree differs from wave w1/.test(error.message));
   assert.equal((await getInitiative({ projectRoot: root, initiative: INITIATIVE })).record.slices.download.status, "in-progress", "a slice that requires review never completes on a run alone");
   await writeFile(path.join(root, "test", "audit.test.mjs"), "// frozen audit test\n");
   await initiativeUpdate(root, [{ op: "set_status", slug: "audit", status: "in-progress" }, { op: "accept_design", slug: "audit", frozenTests: ["test/audit.test.mjs"], review: "none" }]);

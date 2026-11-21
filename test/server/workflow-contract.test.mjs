@@ -156,11 +156,11 @@ test("keeps visual review selection and procedure in its reference", async () =>
   assert.match(await skill("workflow"), /\[visual-review\.md\]\(references\/visual-review\.md\)/);
 });
 
-test("writes review browser configuration with an adaptive default", async () => {
+test("records the review browser as a personal setting with an adaptive default", async () => {
   const workflowInit = await skill("setup");
 
-  assert.match(workflowInit, /- Review browser: auto/);
-  assert.match(workflowInit, /`Review browser` defaults to `auto`/);
+  assert.match(workflowInit, /record the person's answers with `update_personal_settings`/);
+  assert.match(workflowInit, /`reviewBrowser` defaults to `auto`/);
 });
 
 test("all local skill and README links resolve", async () => {

@@ -54,6 +54,28 @@ const typedNote = (hostLabel: any) => `Prism cannot check a model you typed; ${h
 const earlierReason = (hostLabel: any, earlier: any) => `Prism kept the earlier model name ${earlier}, which ${hostLabel} cannot take as a model.`;
 const capitalized = (level: any) => `${level.charAt(0).toUpperCase()}${level.slice(1)}`;
 
+// A chosen value's refusal as a picker shows it: one the host does not offer, or one its report could not check, whose reason is
+// the host's own, such as a read that failed.
+function refusalOf(chosen: any) {
+  if (chosen?.state === "not-offered") return { hold: chosen.reason, error: `Not offered: ${chosen.reason}` };
+  if (chosen?.state === "unchecked") return { hold: chosen.reason, error: `Not checked: ${chosen.reason}` };
+  return null;
+}
+
+/**
+ * Where a report's options came from, as one sentence: the program Prism asked, its version when it reported one, and its path, so
+ * an outdated installation earlier on the review app's PATH shows at once. A report without a source answers null.
+ */
+export function sourceText(report: any) {
+  const source = report?.source;
+  if (!isRecord(source) || typeof source.executable !== "string" || !source.executable) return null;
+  const program = typeof source.program === "string" && source.program ? source.program : "The host";
+  if (report.state !== "ready") return `Prism asked ${program} at ${source.executable}.`;
+  return typeof source.version === "string" && source.version
+    ? `Listed by ${program} ${source.version} at ${source.executable}.`
+    : `Listed by ${program} at ${source.executable}, which did not report its version.`;
+}
+
 /**
  * Reads api/run-options through fetchOptions(query), which resolves to { status, json }: one read per distinct query, kept until
  * forget(), and at most two at once, since a browser opens only a few connections to the review app. A read that never answered is read again.
@@ -139,7 +161,9 @@ export function createRunChoices({ read, choose, changed = null }: any) {
   const section = make("div", "prism-run-choices", { "data-run-choices": "" });
   const note = make("p", "prism-run-choices-note", { role: "status" });
   note.hidden = true;
-  section.append(note);
+  const source = make("p", "prism-run-choices-source", { "data-run-source": "" });
+  source.hidden = true;
+  section.append(note, source);
   const pickers = new Map();
   const effortNames = new Map();
   let view: any = null;
@@ -157,6 +181,8 @@ export function createRunChoices({ read, choose, changed = null }: any) {
     if (field.kind === "run-choice") {
       const extra = make("div", "prism-run-choice-extra", { slot: "extra" });
       state.none = make("p", "prism-run-choice-none");
+      state.source = make("p", "prism-run-choice-source", { "data-run-source": "" });
+      state.source.hidden = true;
       state.name = make("prism-field", "prism-run-choice-name", { type: "text", label: "Model name", hint: "Press Enter to use this name as written." });
       state.effortHead = make("p", "prism-run-choice-effort-head");
       state.efforts = make("div", "prism-run-choice-efforts", { role: "group", "aria-label": "Effort" });
@@ -164,7 +190,7 @@ export function createRunChoices({ read, choose, changed = null }: any) {
       levels.textContent = "Levels come from the chosen model and change with it.";
       state.none.hidden = true;
       state.name.hidden = true;
-      extra.append(state.none, state.name, state.effortHead, state.efforts, levels);
+      extra.append(state.none, state.name, state.effortHead, state.efforts, levels, state.source);
       element.append(extra);
       state.efforts.addEventListener("click", (event: any) => {
         const button = event.target.closest?.("prism-button[data-effort]");
@@ -287,10 +313,10 @@ export function createRunChoices({ read, choose, changed = null }: any) {
       setAttr(element, "detail", value === null ? values[0]?.description || null : null);
       setAttr(element, "hint", field.hint ?? null);
       if (fresh) {
-        const reason = option?.chosen?.state === "not-offered" ? option.chosen.reason : null;
-        state.hold = reason;
-        setAttr(element, "invalid", Boolean(reason));
-        setAttr(element, "error", reason ? `Not offered: ${reason}` : null);
+        const refusal = refusalOf(option?.chosen);
+        state.hold = refusal?.hold ?? null;
+        setAttr(element, "invalid", Boolean(refusal));
+        setAttr(element, "error", refusal?.error ?? null);
       }
       return;
     }
@@ -309,6 +335,9 @@ export function createRunChoices({ read, choose, changed = null }: any) {
     setAttr(element, "detail", busy || choice.earlier !== undefined ? null : choice.effort === null ? "Host default effort" : `${effortName(choice.effort)} effort`);
     setAttr(state.none, "hidden", !(models?.reportedNone));
     setText(state.none, `${hostLabel} reported no models.`);
+    const listedBy = sourceText(report);
+    setAttr(state.source, "hidden", !listedBy);
+    setText(state.source, listedBy ?? "");
     setText(state.effortHead, `Effort for ${choice.earlier === undefined ? modelName : "Host default"}`);
     drawEfforts(state, efforts?.values?.length ? efforts.values : [HOST_DEFAULT], choice.earlier === undefined ? choice.effort : null);
     if (!writable) setAttr(element, "hint", field.hint ?? null);
@@ -318,10 +347,10 @@ export function createRunChoices({ read, choose, changed = null }: any) {
       setAttr(element, "error", `Not offered: ${earlierReason(hostLabel, choice.earlier)}`);
       setAttr(element, "hint", field.hint ?? null);
     } else if (fresh || !writable) {
-      const reason = [models, efforts].map((option) => option?.chosen).find((chosen) => chosen?.state === "not-offered")?.reason ?? null;
-      if (fresh) state.hold = reason;
-      setAttr(element, "invalid", Boolean(reason));
-      setAttr(element, "error", reason ? `Not offered: ${reason}` : null);
+      const refusal = [models, efforts].map((option) => refusalOf(option?.chosen)).find(Boolean) ?? null;
+      if (fresh) state.hold = refusal?.hold ?? null;
+      setAttr(element, "invalid", Boolean(refusal));
+      setAttr(element, "error", refusal?.error ?? null);
       setAttr(element, "hint", models?.chosen?.state === "typed" ? models.chosen.reason : field.hint ?? null);
     } else if (choice.typed && !listed) setAttr(element, "hint", typedNote(hostLabel));
     else if (!element.hasAttribute("hint")) setAttr(element, "hint", field.hint ?? null);
@@ -373,9 +402,13 @@ export function createRunChoices({ read, choose, changed = null }: any) {
     if (!view) return;
     const runFields = view.fields.filter(isRunField);
     placed(runFields, (state: any) => state.field.kind === "run-choice" || Boolean(optionIn(state.reportHost === view.host ? state.report : null, state.field.option)));
-    const reasons = [...new Set([...pickers.values()].filter((state) => state.reportHost === view.host && state.reportKey === state.key).map((state) => state.report?.reason).filter(Boolean))];
+    const current = [...pickers.values()].filter((state) => state.reportHost === view.host && state.reportKey === state.key);
+    const reasons = [...new Set(current.map((state) => state.report?.reason).filter(Boolean))];
     setText(note, reasons.join(" "));
     note.hidden = !reasons.length;
+    const sources = [...new Set(current.map((state) => sourceText(state.report)).filter(Boolean))];
+    setText(source, sources.join(" "));
+    source.hidden = !sources.length;
     changed?.();
   }
 

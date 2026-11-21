@@ -18,8 +18,8 @@ Start a review from a Prism checkout when no agent session is active:
 
 The browser opens on Attention, or on the artifact you name, and later visits restore the tabs you left open.
 
-`Review browser: auto` in `.prism/workflow.md` uses the internal browser in desktop sessions and the system browser in CLI sessions.
-Set `internal` or `external` to override this choice.
+Your [personal setting](workflow.md#personal-settings) `reviewBrowser` chooses the browser, and its default `auto` uses the internal browser in desktop sessions and the system browser in CLI sessions.
+Set it to `internal` or `external` to override this choice.
 The agent opens the internal browser on a review URL that carries no grant, so that tab can only read, as [Which tabs can make changes](#which-tabs-can-make-changes) explains.
 Answer the agent in the conversation instead, or ask it to present the review, which opens the system browser, or run `prism review` in the project.
 When the selected browser is unavailable, Prism presents the URL and source artifacts.
@@ -33,6 +33,12 @@ The **Settings** button, the gear at the start of the status bar, or Ctrl+, (Cmd
 **Appearance** offers the themes System, Light, and Dark and the densities Compact and Comfortable.
 A choice applies at once, and System follows the operating system again.
 **Layout** shows or hides the sidebar on windows wider than 1100 pixels and returns the sidebar to its default width.
+**Personal** shows your [personal settings](workflow.md#personal-settings), which stay on this machine and apply to every project and every host you run Prism in: **Questions** (Question tool or Numbered options), **Review browser** (Auto, Internal, or External), **Open at session start** (On or Off), and **Offer Prism** (Ask or Off).
+Each row shows the value Prism uses and where it comes from: **Your choice**, **Adopted from a repository's configuration**, **From this repository's configuration**, or **Default**.
+A choice saves at once on this machine, reaches no one else, and the row then says **Your choice**; agents see it the next time they read your settings.
+Settings reads your settings again each time it opens, so it shows a change an agent made meanwhile.
+Changing a personal setting needs a tab that [can make changes](#which-tabs-can-make-changes): a tab that can only read shows each value with its choices disabled under the read-only notice.
+When Prism cannot read `personal-settings.json` in its application folder, the section warns that it uses the repository's values and its defaults, and it refuses every change until you fix or remove the file, so nothing in it is overwritten.
 **Record store** says where the project's records live and opens the store's details.
 **Prism's own runs** chooses, once for this computer, the host and model of the runs that Prism starts on its own, such as a run that moves records to a new format.
 Its **Host** select offers **Any available host** and every host Prism supports, a host this computer lacks shown as unavailable with its reason, and its **Model** picker offers the models, efforts, and provider that the chosen host reports, as the models of an initiative's **Settings** do, or a model name typed as written.
@@ -105,7 +111,7 @@ A new tab opens right after the selected tab.
 Close a tab with its close button or a middle click, and when you close the last tab the page says that nothing is open.
 Tabs that an agent presents carry the agent mark before their title and stay open until you close them, and a presentation of several artifacts opens a tab for each of them and shows the first.
 An agent can present tabs as a named group, whose head shows the agent before the group's name: the avatar of the claim that agent held when it presented the group, whose hover text names the holder, the harness and model, the activity, and the time left, or else an agent avatar named by its harness and model.
-Tabs, buttons, menus, and other controls do not select their text when you click, double-click, or drag on them, while documents, code, figures, messages, and fields stay selectable.
+Tabs, buttons, menus, and other controls do not select their text when you click, double-click, or drag on them, while documents, code, figures, messages, and fields stay selectable, except a graph or diagram, which you drag to pan.
 The open tabs belong to the session, so every browser window of the session shows the same tabs, and a reload or a later visit restores them.
 When tabs do not fit, the strip scrolls sideways and keeps the selected tab in view, and a long title ends with an ellipsis whose full text shows on hover or focus.
 With the focus on a tab, the arrow keys, Home, and End move between tabs, Enter opens one, and Tab reaches that tab's close button.
@@ -124,9 +130,12 @@ In a window 600 pixels wide or less the button shows two avatars and one small c
 Opening it shows the **Agents** menu.
 Its **Needs you** group, left out while nothing needs you, lists each launched session that failed or waits for you with its initiative, its harness, its model, what it works on, its state, and how long it ran.
 A waiting session offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown, and a failed one offers **Open**, which opens [the Agents page](#the-agents-page) with its details shown.
-Below that, **Launched on this computer**, **Other sessions**, and **Expired claims** say how many there are, also at 0, and each opens the Agents page showing only those; **Open Agents** opens the whole page.
+Below that, **Launched from Prism** counts the launched sessions that are not archived, **Started outside Prism** the live claims, and **Expired claims** the claims that expired less than a day ago, also at 0, and each opens the Agents page showing only those; **Open Agents** opens the whole page.
 The menu lists no claim, so every claim shows on the Agents page.
 Wherever the browser shows a claim, on a slice, an initiative, the roadmap, the sidebar, or the Agents page, it names the harness the agent runs in and the model of the session's main agent as `<harness> · <model>`, such as `Codex · gpt-5.5`, when the claim records them, and `Agent` and no model otherwise.
+When a claim records a session that you can open from a link, such as a Claude Code on the web session, an inline claim, a claim's strip, and its row on the Agents page end with a **Session** link that opens that session in a new tab.
+Only the person whose session it is can open it, so a teammate may see a link that does not open for them.
+An avatar claim shows no link, and a claim whose host has no session to open, such as a local Claude Code or Codex session, shows none either.
 The sidebar shows a claimed slice's holder at the end of its row.
 Claims are read-only in the browser.
 
@@ -153,6 +162,7 @@ Questions recorded by an earlier Prism version show only their question.
 A design or correctness review needs Approve or Request changes, and Request changes also needs a note that says what should change.
 Approving the correctness review of a finished initiative lets the agent ship it, which in a project with a record store also accepts the Proposed ADRs that its slice designs link, as [Ship an initiative](workflow.md#ship-an-initiative) describes.
 The approval of a requirement or ADR takes the same answers, and its card names the file, its scope, its recorded status, and the whole status that approving records, wrapped onto further lines when it is long.
+When the agent names the initiative the approval serves, and the slice when there is one, the card's **Asked for** row links to them, and shows an id that the roadmap does not list yet, as requirements that start a new initiative do before their roadmap entry exists, as text marked not on the roadmap yet.
 Approving writes that status into the file's `Status:` line, and for `Approved` the day you answer into its `Approved:` line, as [Statuses change only at gates](shared-records.md#statuses-change-only-at-gates) describes.
 A decision takes one of its options, a note in your own words, or both.
 To answer in your own words after choosing an option, choose that option again, or press **Clear choice** beside **Your answer**.
@@ -255,8 +265,11 @@ Each picker shows the chosen model and effort, such as **Fable 5.2 · High effor
 While the review app asks the host for its options, each picker reads **Reading <host>’s models…**; a host that does not answer shows its reason, such as `Claude Code did not report its run options: it gave no answer within 20 seconds.`, and its pickers still offer the host's default and a model name you type.
 A model picker opens a list you can filter, with **Host default**, the models the host reports with their descriptions, and **Other model…** last, and below the list the effort levels of the chosen model, which change when you choose another model.
 A host or provider that reports no models says so, such as `Codex reported no models.`, and offers only the host's default and **Other model…**.
+The **Models** section, and each model picker below its effort levels, names the program its list came from, with the version that program reported and its path, such as `Listed by Claude Code 2.1.330 at /opt/homebrew/bin/claude.`, so a list of only older models points at an older installation that comes first on the review app's `PATH`.
+A host that reports no version says so, such as `Listed by Codex at /usr/local/bin/codex, which did not report its version.`, and a host that did not answer reads `Prism asked Claude Code at /opt/homebrew/bin/claude.`
 **Other model…** shows a **Model name** field: Enter takes a name of letters, digits, and `. _ - : / @ [ ] +` that starts with a letter or digit, and the picker then says `Prism cannot check a model you typed; Claude Code receives it as written.`
 A choice the host does not offer, such as a saved model this computer's host no longer lists or an effort the newly chosen model does not take, shows as **Not offered** with its reason until you choose a value the host offers.
+A saved choice the review app cannot check, because the host did not report its options or Codex could not list its models, shows as **Not checked** with the host's own reason, such as `Not checked: Claude Code did not report its run options: Not logged in.`, and **Apply** refuses it with that reason, so you can retry once the host answers instead of replacing a choice it may still offer.
 An earlier model name that Prism kept shows as not offered in the same way, and **Apply** sends it back as it was, so the change is refused until you choose another model for that agent.
 In the dialog, the options you pick wait for **Apply**, which counts them, such as **Apply 2 changes**, and applies them one by one; it stops at a change that is refused or that you do not confirm, and closes once all of them applied.
 **Cancel**, Esc, or **Close** closes the dialog and drops the changes you have not applied.
@@ -517,18 +530,21 @@ Its lead reads `Every agent working on this workspace, and every session launche
 It lists every launched session on this computer whose checkout shares this checkout's records, and every live or expired claim on the workspace's slices that no launched session here holds.
 A launched session holds the claims its own agent takes, so its slice shows in its row rather than in a row of its own.
 
-**Show** narrows the table: **All**, **Needs you**, **This computer**, **Other sessions**, and **Expired**, each with its count.
-**This computer** shows every launched session, and the addresses `agents:needs-you`, `agents:this-computer`, `agents:other`, and `agents:expired` open the page with that choice made.
+**Show** narrows the table: **All**, **Needs you**, **Launched from Prism**, **Started outside Prism**, **Expired**, and **Archived**, each with its count.
+**All** shows neither an archived session nor a claim whose lease passed a day ago or more, and counts only what it shows; a claim leaves it once its expiry is a day old.
+**Launched from Prism** shows the **Needs you** and **Launched from Prism** groups, every launched session that is not archived, **Expired** shows every expired claim however long ago it expired, and **Archived** shows only the archived sessions.
+The addresses `agents:needs-you`, `agents:this-computer`, `agents:other`, `agents:expired`, and `agents:archived` open the page with that choice made.
 
-The table's columns are **Agent**, **Host · model**, **Working on**, **State**, and **Time**, and a last column holds a row's one action.
-Its groups come in this order, each with its count, and a group without agents is left out:
+The table's columns are **Agent**, **Host · model**, **Working on**, **State**, and **Time**, and a last column holds a row's actions.
+Its groups come in this order, each with the count of what the Show choice shows of it, and a group without agents is left out:
 
 | Group | What it lists |
 | --- | --- |
 | Needs you | Launched sessions that failed, then those that wait for your answer, the latest launched first. |
-| Launched on this computer | Every other launched session, the latest launched first. |
-| Other sessions | Agents that hold a live claim, the claim that lapses first first. |
+| Launched from Prism | Every other launched session that is not archived, the latest launched first. |
+| Started outside Prism | Agents that hold a live claim, the claim that lapses first first. |
 | Claims that expired | Claims whose lease passed, the latest to lapse first. |
+| Archived | Archived launched sessions, the latest launched first, shown only under **Archived**. |
 
 A launched session's name is its initiative's title, which opens the initiative page, and under it the row says when it started, how its last run ended, and how many runs it had when more than one.
 A claim's name is the claim's label, such as `Dana on studio-mac`, which opens the slice it works on.
@@ -536,12 +552,13 @@ A claim's name is the claim's label, such as `Dana on studio-mac`, which opens t
 **Working on** says `Ended <time> ago: <reason>` for a failed session, and otherwise the activity and the slice, such as `design · Retention policy`, or the session's reason.
 **Time** is how long a launched session has run, which counts every second while it runs, `<n> min left` for a live claim, and `expired <time> ago` for an expired one.
 A session that waits offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown; a running session offers **Stop**; any other session offers **Open**, which unfolds its details under its row.
+A finished, failed, stopped, or blocked session that is not archived also offers **Archive** beside **Open**, and an archived one offers **Unarchive** there.
 A claim offers no action.
 
 The details of a session on an ACP agent start with the usage the agent reported for its last run: **Tokens** with the total and the cached tokens, such as `182,400 (12,000 cached)`, **Context** as the used and whole context, such as `61,200 of 200,000`, and **Cost** with its currency, such as `0.42 USD`, each `Not reported by <agent>` when the agent gave none.
 The details hold the session's reason, the command that continues it in a terminal while no run runs and the host reported its session id, `claude --resume <session id>`, `codex resume <thread id>`, or an ACP agent's declared `resumeCommand` with `{session}` replaced, with the folder to run it in and **Copy**, which copies the command, and the session's own actions, such as **Resume**.
 The page reads the list again every 5 seconds and after each action you apply there, and moves a claim to **Claims that expired** once its lease passes.
-In a tab that cannot make changes the page says so, **Stop** stays unavailable, and the details offer no action, while **Answer** still opens the question.
+In a tab that cannot make changes the page says so, **Stop**, **Archive**, **Unarchive**, and **Archive all ended** stay unavailable with the tip `This tab can only read.`, and the details offer no action, while **Answer** still opens the question.
 With no agent and no launched session it says `No agent works on this workspace, and nothing was launched on this computer.`.
 
 A launched session's state is one of these:
@@ -556,6 +573,19 @@ A launched session's state is one of these:
 | Stopped | You stopped the last run. |
 
 A session whose supervisor ended without recording the run's end shows `Prism stopped supervising this session; its host process may still run.`.
+
+### Archive a session
+
+Archive a session that ended so that it stops asking for you: an archived failed session leaves **Needs you**, the agents menu, and the mark on the top bar's **Agents** button.
+**Archive** on a finished, failed, stopped, or blocked session's row archives it, and the row leaves its group and every count at once while the toast says `Archived. The Archived filter keeps it.`.
+When the session ran again before you pressed it, the row stays and the toast says why, such as `Only a finished, failed, stopped, or blocked session can be archived.`.
+**Archive all ended** beside **Show** archives every finished, failed, stopped, and blocked session at once, without asking, and the toast counts them, such as `Archived 3 sessions. The Archived filter keeps them.`.
+It shows while the Show choice includes **Needs you** or **Launched from Prism** and one of the sessions it shows can be archived.
+
+**Show** **Archived** lists the archived sessions, each with its state, **Open**, which unfolds its terminal command, **Copy**, and **Resume** as for any launched session, and **Unarchive**, which brings it back to its group with the toast `Unarchived.`.
+An archived session that runs or waits for you again leaves the archive by itself, and shows in its group and counts again by the next refresh.
+An archived session is removed 14 days after its last run ended, as any other launched session is, and until then keeps its record and its terminal command.
+Archiving is kept on this computer only, beside the session's record, so it changes nothing in the project, its records, or its history, and a teammate's page is not affected.
 
 ### Stop, resume, or continue a session
 
@@ -606,6 +636,10 @@ Under its title a tag line names the slice's phase with its gate or status, such
 The tabs are Design, Views, Verification, Review, Files, and Change map.
 The Views tab counts the views, the Review tab the open findings, and the Files tab the slice folder's files.
 The Change map tab is last and marked Deprecated, because the Files tab and the verified result replace it; it stays until existing slices no longer need it.
+The Verification tab shows the latest verification run, and each frozen test, each failing test, and the run's log open in the side panel.
+A frozen test shows the content the design froze: the work tree's file, the copy Prism keeps for a slice that has not started, or, with a note, the changed file when no frozen copy is left.
+A failing test opens its frozen test at the line that names it when exactly one frozen test names it, and otherwise stays plain text, so it never opens a test that only shares its name.
+Open the log opens the run's output at its end: the whole log, or its last 2 MB when it is larger, on the machine that ran the command, and elsewhere the last 4,000 characters that the run record keeps, with a note naming the machine and where the full log is.
 The Review tab holds the slice's review ledger, which the review record's own page shows too.
 Its summary line names the current wave and whether it is open or accepted, counts the unresolved findings, those that block shipping until verified, the deferred ones, and open conflicts, and shows each reviewer with the result of their lane.
 The wave's run totals end the line, and choosing them shows the full table.
@@ -677,6 +711,7 @@ Take current intent from Approved requirements, Accepted ADRs, the glossary, and
 ## Documents and diagrams
 
 Prism stores diagrams as PlantUML `.puml` source files, and the browser renders them without creating image files.
+A graph or diagram larger than its card pans when you drag it with a mouse or pen, and with a finger on a touch screen, while a click on a link or a graph's item still opens it; its text is not selected by the drag, and Show source and Copy give the diagram's text.
 Markdown links open the linked file or heading in the review.
 A link to a missing file or a target outside the project is marked as missing, and an external link opens in a new browser tab.
 A store artifact's links resolve by its place in the store; see [Every scope in one view](#every-scope-in-one-view).
@@ -690,7 +725,10 @@ Code in source files, Markdown code blocks, previews, and diagram source is high
 Hover over or focus any internal link to preview its target.
 An open preview stays while the pointer crosses other links on its way to the preview, and switches to another link only when the pointer rests on it.
 An initiative preview shows its state, band, intent, and progress, and a slice preview shows its status and outcome.
-A link to a document section previews that section.
+A link to a document section previews that whole section, up to the next heading of its level, and a link to a document without a section previews the whole document.
+A link to a source file previews its first 400 lines, and a link to lines of one previews those lines.
+A preview is as wide as a readable column and never wider than the window, sits beside its link without covering it, and scrolls when its content is taller than the room there, fading at its end while more lies below.
+The preview follows its link when the page scrolls, and closes once the link leaves the window.
 A link to a PlantUML file previews the diagram drawn small enough to fit.
 A declared design view opened on its own page, or in the side panel, takes its question as its title with its kind above it, and the same line with its clause links under the title.
 A file's preview has a Show in side panel button, and Alt+click on a link does the same: the whole file opens in a panel beside the current page, at the linked heading or lines.
@@ -831,6 +869,8 @@ Each run records only a fingerprint of each file, its Git blob hash, and never i
 While the repository's code content is on, the page reads each file at the verified commit when a branch of the repository holds that commit.
 After a squash merge or force push removes the verified commit, the page reads the files at the commit of the default branch that Prism recorded when the initiative shipped.
 Each file is marked **same as verified** when its content at that commit is the content the run tested, and **changed after verification** when it differs, as for a file the run tested with an uncommitted change.
+**On branches** names the branches that hold that commit, up to five besides the default branch.
+When the default branch does not hold it, as for a feature branch not merged yet or a ship commit that a force push took off the default branch, the card says **not on the default branch yet**, unless the commit recorded at ship is on the default branch, as after a squash merge that kept the feature branch.
 When neither commit is in the repository's code clone, or the repository's code content is off or unreachable, each file is **not available** and the card says why; a slice without a passing run has no verified files yet.
 
 Work on a slice that exists only on the machine that holds it, unpushed or uncommitted, shows only as its presence under **Work in progress**, such as `in progress in feature-x on vm, not pushed`, named from the slice's latest verification run and its live claim, and never as its content.
@@ -881,8 +921,8 @@ A new session opens the review browser on its project when no review tab of any 
 Codex does not name the project when a session starts, so a Codex session opens the review browser at its first Prism tool call.
 Starting several sessions at once opens at most one window.
 Cloud, CI, print-mode, and display-less sessions open nothing.
-Add `- Review browser on start: off` under `## Interaction` in `.prism/workflow.md` to turn this off for a project, or set `PRISM_REVIEW_BROWSER_ON_START=off` to turn it off for every project you work on.
-`Review browser: internal` also turns it off, because only the agent can open the internal browser, and a tab there can only read.
+Set your [personal setting](workflow.md#personal-settings) `reviewBrowserOnStart` to `off` to turn this off for every project, or set `PRISM_REVIEW_BROWSER_ON_START=off` to turn it off for every process that has the variable, whatever your settings say.
+A `reviewBrowser` of `internal` also turns it off, because only the agent can open the internal browser, and a tab there can only read.
 It keeps its state in `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere.
 A session serves its project from its own review server when the shared app cannot start, and `PRISM_REVIEW_APP=off` makes every session do so.
 When a session falls back on its own, its page shows a banner with the reason, and the agent's review links say that the link belongs to that session, because another session may show the same project at a different link.

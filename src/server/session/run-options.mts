@@ -143,6 +143,11 @@ const isObject = (value: any) => value !== null && typeof value === "object" && 
 const cutName = (value: any) => text(value).slice(0, NAME_MAX);
 const cutDescription = (value: any) => text(value).slice(0, DESCRIPTION_MAX);
 const tooMany = (count: any, max: any, what: any) => (count > max ? `it listed more than ${max} ${what}` : null);
+// A host's version as it reports it in the same read that lists its models, or null when it reports none Prism can read.
+const VERSION_PATTERN = /^[0-9][0-9A-Za-z.+-]{0,39}$/;
+const versionOf = (value: any) => (typeof value === "string" && VERSION_PATTERN.test(value) ? value : null);
+// Codex names its version in its user agent, `<client>/<version> (<system>) ...`.
+const codexVersion = (userAgent: any) => versionOf(/^[^\s/]+\/([^\s/]+)/.exec(text(userAgent))?.[1] ?? null);
 
 const reports = new Map();
 
@@ -272,7 +277,7 @@ function claudeConversation(optionsRead: any) {
       const listed = models.filter(isObject);
       const excess = tooMany(listed.length, MAX_REPORT_MODELS, "models");
       if (excess) fail(excess);
-      else done({ state: "ready", models: listed.map(keptClaudeModel) });
+      else done({ state: "ready", version: versionOf(event.response.response?.claude_code_version), models: listed.map(keptClaudeModel) });
     }
   };
 }
@@ -281,7 +286,7 @@ function claudeConversation(optionsRead: any) {
 function codexConversation(optionsRead: any, provider: any) {
   const pending = new Map();
   const seenCursors = new Set();
-  const report: { state: string; providers: any[]; defaultProviderId: any; models: any[]; modelsError: any } = { state: "ready", providers: [], defaultProviderId: null, models: [], modelsError: null };
+  const report: { state: string; version: string | null; providers: any[]; defaultProviderId: any; models: any[]; modelsError: any } = { state: "ready", version: null, providers: [], defaultProviderId: null, models: [], modelsError: null };
   let nextId = 1;
   let pages = 0;
   let send: (message: unknown) => void = () => {};
@@ -319,6 +324,7 @@ function codexConversation(optionsRead: any, provider: any) {
       }
       const result = message.result;
       if (method === "initialize") {
+        report.version = codexVersion(result?.userAgent);
         send({ jsonrpc: "2.0", method: "initialized", params: {} });
         request("modelProvider/list", {});
         return;
@@ -443,22 +449,29 @@ const ADAPTERS: Record<string, any> = {
 const hostDefault = (description: any) => ({ value: null, name: "Host default", description });
 const offered = (value: any) => ({ value, state: "offered", reason: null });
 const notOffered = (value: any, reason: any) => ({ value, state: "not-offered", reason });
+// A choice that the host's report cannot check, because the read failed or the host could not list its models: the reason is the
+// host's own, so the choice is never refused as one the host does not offer.
+const unchecked = (value: any, reason: any) => ({ value, state: "unchecked", reason });
 
-function buildReport(definition: any, { purpose, provider, model, effort, typed }: any, raw: any) {
+function buildReport(definition: any, { purpose, provider, model, effort, typed }: any, raw: any, executable: any) {
   const { host, label } = definition;
   const adapter = ADAPTERS[host];
   const ready = raw.state === "ready";
+  const reason = !ready ? `${label} did not report its run options: ${raw.message}.` : raw.modelsError ? `${label} could not list its models: ${raw.modelsError}` : null;
+  // Without a model list, no model or effort can be checked; without a report, no provider either.
+  const modelsChecked = reason === null;
   const mapped = ready ? adapter.map(raw, purpose) : { providers: host === "codex" && purpose === "coordinator" ? { defaultDescription: "", values: [] } : null, models: [], allLevels: [], defaultModel: null };
   const options = [];
   if (mapped.providers) {
     const values = mapped.providers.values;
-    const chosen = provider === null || values.some((entry: any) => entry.value === provider) ? offered(provider) : notOffered(provider, choiceReasons.provider(label, provider));
+    const chosen = provider === null || values.some((entry: any) => entry.value === provider) ? offered(provider) : ready ? notOffered(provider, choiceReasons.provider(label, provider)) : unchecked(provider, reason);
     options.push({ id: "provider", name: "Provider", kind: "provider", values: [hostDefault(mapped.providers.defaultDescription), ...values], chosen });
   }
   const listed = model === null ? null : mapped.models.find((entry: any) => entry.value === model) ?? null;
   let modelChoice;
   if (model === null || listed) modelChoice = offered(model);
   else if (typed) modelChoice = { value: model, state: "typed", reason: choiceReasons.typed(label) };
+  else if (!modelsChecked) modelChoice = unchecked(model, reason);
   else modelChoice = notOffered(model, choiceReasons.model(label, model));
   options.push({
     id: "model",
@@ -475,16 +488,17 @@ function buildReport(definition: any, { purpose, provider, model, effort, typed 
   // A typed or host default model may gather the levels of every listed model, so the answer keeps the lowest MAX_MODEL_LEVELS.
   const efforts = rankEfforts(levels).slice(0, MAX_MODEL_LEVELS).map(({ value, description }) => ({ value, name: effortName(value), description }));
   const modelName = listed?.name ?? model ?? mapped.defaultModel?.name ?? "The host's default model";
-  const effortChoice = effort === null || efforts.some((entry) => entry.value === effort) ? offered(effort) : notOffered(effort, choiceReasons.effort(modelName, effort));
+  const effortChoice = effort === null || efforts.some((entry) => entry.value === effort) ? offered(effort) : !modelsChecked ? unchecked(effort, reason) : notOffered(effort, choiceReasons.effort(modelName, effort));
   options.push({ id: "effort", name: "Effort", kind: "effort", values: [hostDefault(adapter.effortDefault(effortModel)), ...efforts], chosen: effortChoice });
-  const reason = !ready ? `${label} did not report its run options: ${raw.message}.` : raw.modelsError ? `${label} could not list its models: ${raw.modelsError}` : null;
-  return { host, label, state: ready ? "ready" : "failed", reason, options };
+  // Where the options came from: the program Prism asked, and the version it reported in the same read, or null.
+  const source = { program: label, executable, version: ready ? raw.version ?? null : null };
+  return { host, label, state: ready ? "ready" : "failed", reason, source, options };
 }
 
 // An ACP agent's report: its model and thought_level options as model and effort, each led by the host default, for the coordinator,
 // and only the host defaults for child agents, whose models ACP gives a client no way to choose. A report that is not ready
 // offers only the host defaults, so a chosen value is refused as not offered.
-function buildAcpReport(definition: any, { purpose, model, effort, typed }: any, raw: any) {
+function buildAcpReport(definition: any, { purpose, model, effort, typed }: any, raw: any, executable: any) {
   const { host, label } = definition;
   const ready = raw.state === "ready";
   const coordinator = purpose === "coordinator";
@@ -506,27 +520,31 @@ function buildAcpReport(definition: any, { purpose, model, effort, typed }: any,
     { id: "effort", name: "Effort", kind: "effort", values: [hostDefault(coordinator ? (ready && raw.effort?.current ? `${raw.effort.current}, the agent's current effort.` : "") : childNote), ...efforts], chosen: effortChoice }
   ];
   const reason = ready ? null : raw.reason ?? `${label} did not report its run options: ${hostText(raw.message) || "it gave no reason"}.`;
-  return { host, label, state: ready ? "ready" : raw.state === "sign-in" ? "sign-in" : "failed", reason, options };
+  const source = { program: label, executable, version: ready ? versionOf(raw.version) : null };
+  return { host, label, state: ready ? "ready" : raw.state === "sign-in" ? "sign-in" : "failed", reason, source, options };
 }
 
 /**
  * The run options of a host for a purpose, `coordinator` or `agents`, with the selection marked: { host, label, state, reason,
- * options }, state being `ready`, `failed`, `sign-in` for an ACP agent that needs the person to sign in, or `unavailable` for a host
- * not found on this computer, which starts nothing.
+ * source, options }, state being `ready`, `failed`, `sign-in` for an ACP agent that needs the person to sign in, or `unavailable` for a
+ * host not found on this computer, which starts nothing.
+ * source is { program, executable, version } of the program read, version being null when it reported none, and null when unavailable.
+ * A chosen value is `offered`, `typed`, `not-offered` with the reason the host does not offer it, or `unchecked` with the host's
+ * reason when the report cannot check it.
  * A host, purpose, or name that breaks its rule throws a RunOptionsError and starts nothing.
  */
 export async function readRunOptions({ host, purpose, provider = null, model = null, effort = null, typed = false, checkout, env = process.env }: any) {
   const selection = checkedSelection({ host, purpose, provider, model, effort, typed }, env);
   const { definition } = selection;
   const resolved = (await resolveHost(definition.host, env))!;
-  if (!resolved?.available) return { host: definition.host, label: definition.label, state: "unavailable", reason: resolved?.reason ?? `${definition.label} was not found.`, options: [] };
+  if (!resolved?.available) return { host: definition.host, label: definition.label, state: "unavailable", reason: resolved?.reason ?? `${definition.label} was not found.`, source: null, options: [] };
   if (definition.acp) {
     // Child agents take only the host default, so their report needs no model set; the coordinator's sets the selected model.
     const acp = definition.acp as any;
     const raw = await keptReport(resolved, { checkout, env, provider: null, acp: { args: acp.args, env: acp.env }, model: selection.purpose === "coordinator" ? selection.model : null });
-    return buildAcpReport(definition, selection, raw);
+    return buildAcpReport(definition, selection, raw, resolved.executable);
   }
   // Only Codex has providers, so a Claude Code report is one per executable and checkout.
   const raw = await keptReport(resolved, { checkout, env, provider: definition.host === "codex" ? selection.provider : null });
-  return buildReport(definition, selection, raw);
+  return buildReport(definition, selection, raw, resolved.executable);
 }
