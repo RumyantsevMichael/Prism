@@ -97,3 +97,23 @@ test("a link naming a store artifact by its checkout path previews it by the sto
   assert.equal(await page.locator(".link-preview:not([hidden]) .prism-hover-card-body").evaluate((body) => body.hasAttribute("data-more")), false, "the fade goes at the end of the content");
   assert.deepEqual(page.errors, []);
 });
+
+test("a store document shown in the side panel from its checkout path links to other store artifacts that preview", { skip }, async (context) => {
+  const page = await workspacePage(context);
+  await page.evaluate(() => {
+    const chip = document.createElement("span");
+    chip.dataset.artifact = "docs/requirements/billing.md";
+    chip.textContent = "billing by checkout path";
+    document.querySelector("#workspace").prepend(chip);
+  });
+  await hover(page, page.getByText("billing by checkout path"));
+  page.reads.length = 0;
+  await shown(page).getByText("Show in side panel").click();
+  const link = page.locator("#side-panel a", { hasText: /^rounding$/ });
+  await link.waitFor();
+  assert.deepEqual(page.reads, ["ref=store:repositories/api/requirements/billing.md"], "the panel reads the store ref, as opening the link does");
+  assert.equal(await link.getAttribute("data-doc-link"), "store:repositories/api/requirements/totals.md", "the panel's links name store artifacts");
+  const preview = await hover(page, link);
+  assert.match(preview.text, /Paragraph 30 of/, "a link in the panel previews its section");
+  assert.deepEqual(page.errors, []);
+});
