@@ -24,11 +24,16 @@ It is not the move of a checkout's files into the store.
 ## 2. Write each artifact's content
 
 1. Write the whole artifact in the target format, keeping each source statement verbatim in the place the format gives it.
-2. When neither the source nor its Git history gives a required value, write `unknown`.
-3. When the source or an existing target is Approved or Accepted, keep its status, its dates, and every identity it has.
-4. Keep each entry of an existing target unchanged, and put the source's differing version of that entry under conflicts.
-5. For a glossary term that no decided requirement or ADR introduces, write its source as `migration`, which stands for this format migration.
-6. Add each source statement that the content does not keep to the leftover list, verbatim, with a proposed home such as the project instructions, the user guide, or another artifact.
+2. When a numbered requirement section holds more than one requirement, on several `Requirement:` lines or as several sentences that say `shall` on one, keep its first requirement in it and give each further requirement, in source order, a new numbered section at the end of the file, numbered on from the file's highest number.
+   - Keep in the section its number, anchor, title, Pattern, Disposition, Rationale, Related, and Supersedes.
+   - Give each new section `<a id="<m>"></a>`, `## <m>. <the section's title>`, the Pattern of its own sentence, the section's Disposition, the sentence verbatim as its Requirement, the section's Rationale, and as Related a link `[<file name>§<n>](#<n>)` to the section followed by the section's own Related links unless that is `n/a`.
+   - Take the Pattern from the sentence: `While` is State-driven, `When` is Event-driven, `Where` is Optional feature, `If … then` is Unwanted behavior, more than one of these is Complex, and none is Ubiquitous.
+   - Keep every section's number and anchor, never renumbering one, and never merge requirements into one `Requirement:` line.
+3. When neither the source nor its Git history gives a required value, write `unknown`.
+4. When the source or an existing target is Approved or Accepted, keep its status, its dates, and every identity it has.
+5. Keep each entry of an existing target unchanged, and put the source's differing version of that entry under conflicts.
+6. For a glossary term that no decided requirement or ADR introduces, write its source as `migration`, which stands for this format migration.
+7. Add each source statement that the content does not keep to the leftover list, verbatim, with a proposed home such as the project instructions, the user guide, or another artifact.
 
 - Don't
   - Add a statement that neither the source nor an existing target makes.
