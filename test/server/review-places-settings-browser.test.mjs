@@ -28,7 +28,7 @@ test("§45: the status bar starts with a Settings button as tall as the bar that
   await button.click();
   await settings(page).waitFor();
   const sections = await settings(page).getByRole("treeitem").allInnerTexts();
-  assert.deepEqual(sections.map((name) => name.trim()), ["Appearance", "Layout", "Personal", "Record store", "Prism's own runs", "About Prism"]);
+  assert.deepEqual(sections.map((name) => name.trim()), ["Appearance", "Layout", "Personal", "Record store", "Prism's own runs", "Coding agents", "About Prism"]);
   const theme = settings(page).getByRole("radiogroup", { name: "Theme" });
   const density = settings(page).getByRole("radiogroup", { name: "Density" });
   for (const name of ["System", "Light", "Dark"]) assert.equal(await theme.getByRole("radio", { name, exact: true }).count(), 1, `Theme offers ${name}`);

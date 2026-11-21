@@ -29,7 +29,7 @@ function codexThrough(threadId, options = {}) {
 }
 
 test("the host arguments are Claude Code's fixed flags with its session id, and Codex's app server alone", () => {
-  assert.deepEqual(hostArguments({ host: "claude-code", hostSessionId: UUID, resume: false }), ["-p", "--verbose", "--session-id", UUID, "--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "none"]);
+  assert.deepEqual(hostArguments({ host: "claude-code", hostSessionId: UUID, resume: false }), ["-p", "--verbose", "--session-id", UUID, "--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "host", "--permission-prompt-tool", "stdio"]);
   assert.equal(hostArguments({ host: "claude-code", hostSessionId: UUID, resume: true })[2], "--resume");
   assert.deepEqual(hostArguments({ host: "codex", hostSessionId: "t-1", resume: true }), ["app-server"]);
   assert.throws(() => hostArguments({ host: "claude-code", hostSessionId: "--dangerously-skip-permissions", resume: true }));

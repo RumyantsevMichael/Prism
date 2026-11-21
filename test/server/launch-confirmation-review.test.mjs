@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, realpath, rm, utimes, writeFile } from "node:fs/promise
 import os from "node:os";
 import path from "node:path";
 import test, { mock } from "node:test";
+import "./fixtures/no-host-path.mjs";
 
 // The confirmation's guarantees under timing and other processes: the cool-down and the launch window run from the dialog's end,
 // a dialog that ignores a polite stop is still ended, and only one dialog of this machine is open at a time.
@@ -27,7 +28,8 @@ setTimeout(() => process.exit(${plan.code}), ${plan.waitMs});
   chmodSync(file, 0o755);
   const asked = () => existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean).length : 0;
   const app = path.join(folder, "app");
-  const env = { PATH: `${bin}${path.delimiter}${path.dirname(process.execPath)}`, PRISM_REVIEW_APP_DIR: app, DISPLAY: ":0" };
+  // The test process's own PATH, which holds no real dialog program, keeps node and the shell's tools reachable.
+  const env = { PATH: `${bin}${path.delimiter}${process.env.PATH}`, PRISM_REVIEW_APP_DIR: app, DISPLAY: ":0" };
   return { env, asked, pending: path.join(app, "launches", "confirmation-pending.json") };
 }
 

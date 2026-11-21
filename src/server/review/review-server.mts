@@ -29,6 +29,7 @@ import { applyAction, componentIndexingStatus, listActions, listActionTargets, p
 import { archiveEndedLaunches, archiveLaunch, listLaunches, unarchiveLaunch } from "../session/launched-sessions.mjs";
 import { readRunOptions, runOptionsQuery } from "../session/run-options.mjs";
 import { listAgents } from "./agents.mjs";
+import { listCodingAgents } from "../session/coding-agents.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
 import { PersonalSettingsError, readPersonalSettings, updatePersonalSettings } from "../workflow/personal-settings.mjs";
@@ -797,7 +798,17 @@ const ACTION_STATUS: Record<string, any> = {
   invalid_choice: 409,
   supervision_lost: 409,
   stop_timeout: 409,
-  launch_failed: 500
+  // The refusals of an answer to a launched session's permission request.
+  unknown_request: 404,
+  approval_unavailable: 409,
+  approval_too_long: 409,
+  launch_failed: 500,
+  // The refusals of an install, update, or removal of a registry agent.
+  install_mismatch: 409,
+  install_running: 409,
+  install_refused: 409,
+  install_failed: 500,
+  agent_running: 409
 };
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
@@ -1639,11 +1650,15 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       try {
-        sendJson(response, 200, await readRunOptions({ ...runOptionsQuery(url.searchParams), checkout: projectRoot, env: process.env }));
+        sendJson(response, 200, await readRunOptions({ ...runOptionsQuery(url.searchParams, process.env), checkout: projectRoot, env: process.env }));
       } catch (error) {
         if (error?.name !== "RunOptionsError") throw error;
         sendJson(response, error.status, { code: error.code, message: error.message, ...(error.field ? { field: error.field } : {}) });
       }
+    } else if (route === "/api/coding-agents" && request.method === "GET") {
+      // The registry state, the registry agents for this computer with their install and update marks, and the installed and declared
+      // ACP agents with their launch availability, which stay listed while the registry is down; reading needs no write session.
+      sendJson(response, 200, await listCodingAgents({ env: process.env }));
     } else if (route === "/api/agents" && request.method === "GET") {
       // Every agent once: this computer's launched sessions and the workspace's claims that none of them holds; reading needs no write session.
       sendJson(response, 200, await listAgents({ projectRoot, env: process.env }));
@@ -1683,7 +1698,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
           const target = parseTarget(result.applied.target);
           // An approval or a comment belongs to no initiative, so its event names its artifact, as Attention's recent changes list it.
           const event = { ...result.applied, initiative: target?.initiative ?? (target?.kind === "launch" ? result.launch?.initiative ?? null : null), ...(result.artifact ? { artifact: result.artifact } : {}) };
-          if (onAction) await Promise.resolve(onAction(event, { shared: !["index", "machine"].includes(target?.kind), comment: result.comment ?? null })).catch(() => {});
+          if (onAction) await Promise.resolve(onAction(event, { shared: !["index", "machine", "agent"].includes(target?.kind), comment: result.comment ?? null })).catch(() => {});
           else notify("action", event);
         }
       } catch (error) {

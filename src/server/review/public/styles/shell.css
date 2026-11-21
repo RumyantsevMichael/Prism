@@ -522,6 +522,33 @@ body {
   margin-bottom: var(--prism-space-4);
 }
 
+/* Coding agents: a list of agent rows between the section's lead and the registry's note, each version muted beside its name. */
+.coding-agents-lead {
+  margin: 0 0 var(--prism-space-4);
+}
+
+.coding-agents-list {
+  margin-bottom: var(--prism-space-4);
+}
+
+.coding-agent-version {
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+.coding-agent-reason {
+  color: var(--prism-color-ink-muted);
+}
+
+.coding-agent-error {
+  color: var(--prism-color-danger);
+}
+
+.coding-agents-note {
+  margin: 0;
+}
+
 /* Personal: the section's notes above its rows, and each row's source under its hint. */
 .settings-notes {
   display: grid;

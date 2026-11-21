@@ -3604,6 +3604,13 @@ prism-row[wrap] .prism-row-title {
   max-width: 100%;
 }
 
+/* A stacked row's several marks and actions wrap within their column, a gap apart. */
+prism-row[stack] > .prism-row-kind,
+prism-row[stack] > .prism-row-action {
+  flex-wrap: wrap;
+  gap: var(--prism-space-2);
+}
+
 .prism-row-time {
   min-width: 0;
   overflow: hidden;
@@ -3622,6 +3629,25 @@ prism-row[wrap] .prism-row-title {
 
   .prism-row-kind,
   .prism-row-time {
+    display: none;
+  }
+
+  /* A stacked row keeps its kind and sets it and its action under the text, where each wraps onto lines of its own. */
+  prism-row[stack] {
+    row-gap: var(--prism-space-2);
+  }
+
+  prism-row[stack] > .prism-row-kind,
+  prism-row[stack] > .prism-row-action {
+    grid-column: 2 / -1;
+  }
+
+  prism-row[stack] > .prism-row-kind {
+    display: flex;
+  }
+
+  prism-row[stack] > .prism-row-kind:empty,
+  prism-row[stack] > .prism-row-action:empty {
     display: none;
   }
 }

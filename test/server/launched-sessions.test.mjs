@@ -17,7 +17,7 @@ test.after(() => rm(privateData, { recursive: true, force: true }));
 const posixOnly = process.platform === "win32" ? "process supervision is checked on POSIX here" : false;
 
 const module = () => import("../../dist/server/session/launched-sessions.mjs");
-const CLAUDE_FLAGS = ["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "none"];
+const CLAUDE_FLAGS = ["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "host", "--permission-prompt-tool", "stdio"];
 const claudeArgs = (flag, id) => ["-p", "--verbose", flag, id, ...CLAUDE_FLAGS];
 const prompt = (initiative) => ({ type: "user", message: { role: "user", content: `/prism:orchestrate ${initiative}` } });
 const CODEX_POLICY = { approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" };
@@ -199,14 +199,14 @@ test("a Claude Code run keeps its input open while a background task it reported
   assert.deepEqual(finished.exit, { code: 0, signal: null });
 });
 
-test("a Codex run answers every request the host sends it with an error, so Prism grants nothing", { skip: posixOnly }, async (t) => {
+test("a Codex approval that nobody answers before the turn ends is declined, so Prism grants nothing by itself", { skip: posixOnly }, async (t) => {
   const fixture = await launchFixture(t, { plans: { codex: [{ hold: 400, askApproval: true }] } });
   const { startLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "codex", env: fixture.env });
   await settledIn(fixture, launch.id, ["finished"]);
   const [run] = fixture.runs("codex");
   const answers = fixture.inputs(run.pid).filter((message) => message.id === "approval-1");
-  assert.deepEqual(answers, [{ jsonrpc: "2.0", id: "approval-1", error: { code: -32601, message: "Prism answers no host requests." } }]);
+  assert.deepEqual(answers, [{ jsonrpc: "2.0", id: "approval-1", result: { decision: "decline" } }]);
 });
 
 test("a session whose supervisor disappears shows failed instead of running", { skip: posixOnly }, async (t) => {
