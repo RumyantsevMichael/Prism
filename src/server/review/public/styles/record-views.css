@@ -602,11 +602,6 @@ body.has-maximized::after {
   background-color: var(--prism-color-sunken);
 }
 
-.graph-viewport.is-panning {
-  cursor: grabbing;
-  user-select: none;
-}
-
 .graph-svg {
   display: block;
   margin: 0 auto;

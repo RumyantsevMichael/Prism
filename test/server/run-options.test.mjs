@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
+import { forgetRunOptions } from "../../dist/server/session/run-options.mjs";
 import { optionOf, runOptions, runOptionsReview, valuesOf } from "./fixtures/run-options-hosts.mjs";
 import { settled } from "./fixtures/wait.mjs";
 
@@ -45,14 +47,14 @@ test("clause 3: a host that is not found on this computer answers unavailable wi
   const s = await runOptionsReview(t, { hosts: ["claude"] });
   const answer = await read(s, { host: "codex", for: "coordinator" });
   assert.equal(answer.status, 200);
-  assert.deepEqual(answer.json, { host: "codex", label: "Codex", state: "unavailable", reason: "Codex was not found: no codex executable on PATH.", options: [] });
+  assert.deepEqual(answer.json, { host: "codex", label: "Codex", state: "unavailable", reason: "Codex was not found: no codex executable on PATH.", source: null, options: [] });
   assert.equal(s.runs().length, 0);
 });
 
 test("clause 4: the options are provider, model, and effort in that order, and nothing else a host reports", { skip: posixOnly }, async (t) => {
   const s = await runOptionsReview(t);
   const claude = (await read(s, { host: "claude-code", for: "coordinator" })).json;
-  assert.deepEqual(Object.keys(claude).sort(), ["host", "label", "options", "reason", "state"]);
+  assert.deepEqual(Object.keys(claude).sort(), ["host", "label", "options", "reason", "source", "state"]);
   assert.deepEqual([claude.host, claude.label, claude.state, claude.reason], ["claude-code", "Claude Code", "ready", null]);
   assert.deepEqual(claude.options.map((option) => [option.id, option.name, option.kind]), [["model", "Model", "model"], ["effort", "Effort", "effort"]], "Claude Code reports no provider, and its permission mode, fast mode, output styles, and agents are no options");
   assert.deepEqual(Object.keys(optionOf(claude, "model")).sort(), ["chosen", "id", "kind", "name", "reportedNone", "values"]);
@@ -213,10 +215,28 @@ test("clause 13: a read that fails answers failed with the reason, and the host 
   const claude = (await read(s, { host: "claude-code", for: "coordinator", model: "fable" })).json;
   assert.deepEqual([claude.state, claude.reason], ["failed", "Claude Code did not report its run options: Not logged in."]);
   assert.deepEqual(claude.options.map((option) => [option.id, option.values.map((entry) => entry.value)]), [["model", [null]], ["effort", [null]]]);
-  assert.equal(optionOf(claude, "model").chosen.state, "not-offered");
+  assert.deepEqual(optionOf(claude, "model").chosen, { value: "fable", state: "unchecked", reason: "Claude Code did not report its run options: Not logged in." }, "a choice the failed read cannot check carries the read's reason, never a model the host does not offer");
+  assert.deepEqual(optionOf((await read(s, { host: "claude-code", for: "coordinator", effort: "high" })).json, "effort").chosen.state, "unchecked");
+  assert.deepEqual(claude.source, { program: "Claude Code", executable: path.join(s.bin, "claude"), version: null }, "a failed read still names the program Prism asked");
   assert.equal(optionOf((await read(s, { host: "claude-code", for: "coordinator", model: "fable", typed: 1 })).json, "model").chosen.state, "typed");
   const codex = (await read(s, { host: "codex", for: "coordinator" })).json;
   assert.deepEqual([codex.state, codex.reason], ["failed", "Codex did not report its run options: Authentication required."]);
+});
+
+test("each report names the program, path, and version its options came from, as the host reports them in the same read", { skip: posixOnly }, async (t) => {
+  const s = await runOptionsReview(t);
+  const claude = (await read(s, { host: "claude-code", for: "agents" })).json;
+  assert.deepEqual(claude.source, { program: "Claude Code", executable: path.join(s.bin, "claude"), version: "2.1.327" });
+  const codex = (await read(s, { host: "codex", for: "coordinator" })).json;
+  assert.deepEqual(codex.source, { program: "Codex", executable: path.join(s.bin, "codex"), version: "0.147.0" });
+  // A host that names no version, or one Prism cannot read, answers null rather than a guess.
+  forgetRunOptions();
+  await s.setCatalog({ ...(await s.readCatalog()), claude: { ...(await s.readCatalog()).claude, claude_code_version: null }, codex: { ...(await s.readCatalog()).codex, userAgent: "codex stub without a version" } });
+  assert.equal((await read(s, { host: "claude-code", for: "agents" })).json.source.version, null);
+  assert.equal((await read(s, { host: "codex", for: "coordinator" })).json.source.version, null);
+  forgetRunOptions();
+  await s.setCatalog({ ...(await s.readCatalog()), claude: { ...(await s.readCatalog()).claude, claude_code_version: "2.1.330\nrm -rf /" } });
+  assert.equal((await read(s, { host: "claude-code", for: "agents" })).json.source.version, null, "a version that is no version is left out");
 });
 
 test("clause 13: a host that gives no answer within the read time answers failed and is ended", { skip: posixOnly }, async (t) => {

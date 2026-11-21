@@ -140,6 +140,10 @@ let lastSnapshot = "";
 let renderedPath: any = null;
 let rebuilding = false;
 const scrollPositions = new Map();
+// A refresh of the shown page that waits while an overlay open in it, such as an initiative's Settings dialog, would close as the page is replaced,
+// and a build that finished while one was open, which replaces the page once the overlay closes.
+let refreshHeld = false;
+let heldBuild: any = null;
 let probes = { failures: 0, failingSince: null };
 // Live, retrying, or stopped: a stopped page keeps checking, and it returns to live when the same app or a handed-off successor answers.
 let connection = "live";
@@ -1467,7 +1471,7 @@ function diagramCard(diagram: any, { compact = false }: any = {}) {
       <prism-button variant="ghost" size="sm" data-action="source" aria-expanded="false">Show source</prism-button>
       <prism-button variant="ghost" size="sm" data-action="copy" tip="Copy PlantUML source">Copy</prism-button>
     </div>
-    <prism-canvas class="diagram-output"><prism-spinner label="Rendering diagram"></prism-spinner></prism-canvas>
+    <prism-canvas class="diagram-output" pannable><prism-spinner label="Rendering diagram"></prism-spinner></prism-canvas>
     <div class="diagram-source" hidden><prism-code language="plantuml"><pre><code>${highlight(diagram.source, "plantuml")}</code></pre></prism-code></div>`;
   return section;
 }
@@ -2231,24 +2235,27 @@ function controlsOf(root: any) {
   return [...root.querySelectorAll("button, a[href], input, textarea, select, summary, [tabindex]")];
 }
 
+// The open sections, the focused control, and its caret of the page showing, which a rebuild of the same page gives back,
+// with the page's height held so the workspace keeps its scroll position while the new view draws.
+function captureView(memory: any) {
+  memory.open = [...artifact!.querySelectorAll("prism-disclosure")].map((disclosure) => [disclosure.getAttribute("summary") ?? "", (disclosure as any).open]);
+  memory.focus = artifact!.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
+  // A control whose view names it with data-focus-key, such as a kit button whose own control sits in its shadow, gets its focus back by that name.
+  memory.focusKey = artifact!.contains(document.activeElement) ? (document!.activeElement!.closest("[data-focus-key]") as any)?.dataset.focusKey ?? null : null;
+  // A control that the new view takes over whole, such as the comment form with an unsent comment, is focused again as itself,
+  // since moving it to another scope renames its focus key and the controls before it can differ.
+  memory.focused = artifact!.contains(document.activeElement) ? document.activeElement : null;
+  memory.selection = memory.focused && "selectionStart" in memory.focused ? [memory.focused.selectionStart, memory.focused.selectionEnd] : null;
+  artifact!.style.minHeight = `${artifact!.offsetHeight}px`;
+}
+
 // A rebuilt view starts empty and renders graphs and diagrams asynchronously, so the old height is held until it is done
 // and then the scroll position, open sections, and focus come back; a newly opened path starts where its tab was left, or at the top.
 function beginRebuild(path: any) {
   const same = renderedPath === path;
   const memory: any = { path, top: same ? workspace!.scrollTop : scrollPositions.get(path) ?? 0, open: null, focus: -1, focusKey: null };
-  if (same) {
-    memory.open = [...artifact!.querySelectorAll("prism-disclosure")].map((disclosure) => [disclosure.getAttribute("summary") ?? "", (disclosure as any).open]);
-    memory.focus = artifact!.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
-    // A control whose view names it with data-focus-key, such as a kit button whose own control sits in its shadow, gets its focus back by that name.
-    memory.focusKey = artifact!.contains(document.activeElement) ? (document!.activeElement!.closest("[data-focus-key]") as any)?.dataset.focusKey ?? null : null;
-    // A control that the new view takes over whole, such as the comment form with an unsent comment, is focused again as itself,
-    // since moving it to another scope renames its focus key and the controls before it can differ.
-    memory.focused = artifact!.contains(document.activeElement) ? document.activeElement : null;
-    memory.selection = memory.focused && "selectionStart" in memory.focused ? [memory.focused.selectionStart, memory.focused.selectionEnd] : null;
-    artifact!.style.minHeight = `${artifact!.offsetHeight}px`;
-  } else {
-    artifact!.style.minHeight = "";
-  }
+  if (same) captureView(memory);
+  else artifact!.style.minHeight = "";
   rebuilding = true;
   linkPreview?.hide();
   // The new view is built out of sight beside the one showing and replaces it whole once it is drawn, graphs and diagrams included,
@@ -2262,11 +2269,38 @@ function beginRebuild(path: any) {
   return memory;
 }
 
+// A dialog, popover, or menu showing; a modeless dialog leaves the page usable behind it, so it holds nothing.
+const OVERLAYS = "prism-dialog:not([modeless]), prism-popover, prism-menu[for]";
+const overlayShowing = (overlay: any) => overlay.isOpen ?? overlay.hasAttribute("open");
+
+function pageOverlayOpen() {
+  return [...artifact!.querySelectorAll(OVERLAYS)].some(overlayShowing);
+}
+
+// Once the last overlay in the page closes, a held build replaces the page with what it was given back as the overlay left it,
+// and a held refresh reads the page again; a menu sends no close, so the next check of the project runs its refresh.
+function resumeHeld() {
+  if (pageOverlayOpen()) return;
+  const memory = heldBuild;
+  heldBuild = null;
+  if (memory && memory.generation === stageGeneration && memory.path === selectedPath && memory.stage.isConnected) {
+    refreshHeld = false;
+    captureView(memory);
+    swapIn(memory);
+    return;
+  }
+  if (refreshHeld && selectedPath) {
+    refreshHeld = false;
+    void showArtifact(selectedPath);
+  }
+}
+
 // Each rebuild, and each page written straight into the artifact area, starts a new generation, so a slower build that an earlier one began is dropped rather than shown over it.
 let stageGeneration = 0;
 
 function dropStages() {
   stageGeneration += 1;
+  heldBuild = null;
   for (const stage of workspace!.querySelectorAll(":scope > .artifact-stage")) stage.remove();
 }
 
@@ -2391,6 +2425,16 @@ function endRebuild(memory: any) {
     artifact!.style.minHeight = "";
     return;
   }
+  // A refresh that finished while an overlay opened in the page waits for it to close, since replacing the page would close it.
+  if (renderedPath === memory.path && pageOverlayOpen()) {
+    heldBuild = memory;
+    setBusy(false);
+    return;
+  }
+  swapIn(memory);
+}
+
+function swapIn(memory: any) {
   // The reader may have scrolled the page while the new view was built, so a refresh of the same page keeps where they are now.
   if (renderedPath === memory.path) memory.top = workspace!.scrollTop;
   artifact!.replaceChildren(...memory.stage.childNodes);
@@ -2646,6 +2690,12 @@ async function showArtifact(path: any) {
   if (path !== selectedPath) {
     return;
   }
+  // A refresh of the page showing waits while an overlay is open in it, and runs once the overlay closes.
+  if (renderedPath === path && pageOverlayOpen()) {
+    refreshHeld = true;
+    return;
+  }
+  refreshHeld = false;
   if (parseEntityRef(path)) {
     await showEntity(path);
     return;
@@ -2791,6 +2841,8 @@ function viewContext(path: any, state: any) {
     escapeHtml,
     showToast,
     fetchArtifact: (artifactPath: string) => fetchJson(`./api/artifact?${artifactQuery(localTab(artifactPath))}`),
+    // A view's own read route, such as a slice's frozen test or run log, answers JSON, and a refusal throws its text.
+    fetchJson: (url: string) => fetchJson(url),
     fetchEvidence: (id: string) => fetchJson(`./api/evidence?id=${encodeURIComponent(id)}`),
     hasArtifact: (artifactPath: string) => availableArtifacts.has(localTab(artifactPath)) || Boolean(parseEntityRef(artifactPath)),
     // A store artifact's scope label, which the record views show beside it, or null for any other file.
@@ -2822,7 +2874,9 @@ function viewContext(path: any, state: any) {
       if (path === selectedPath) pageBar.setActions(nodes);
     },
     sidePanel: {
-      show: (ref: any) => sidePanel.showFile(ref),
+      show: (ref: any, anchor: any = null, options: any = {}) => sidePanel.showFile(ref, anchor, options),
+      showContent: (content: any) => sidePanel.showContent(content),
+      current: () => sidePanel.current(),
       close: () => sidePanel.close(),
       isOpen: () => sidePanel.isOpen()
     },
@@ -3360,7 +3414,9 @@ async function initialize() {
     const docLink = (event!.target as any).closest("a[data-doc-link]");
     if (docLink) openRef(docLink.dataset.docLink, { keep: true });
   });
-  const overlayOpen = () => [...document.querySelectorAll("prism-dialog:not([modeless]), prism-popover, prism-menu")].some((overlay) => (overlay as any).isOpen ?? overlay.hasAttribute("open"));
+  const overlayOpen = () => [...document.querySelectorAll("prism-dialog:not([modeless]), prism-popover, prism-menu")].some(overlayShowing);
+  // A dialog's or popover's close runs its own handlers first, such as the dialog's return of focus, and then any refresh it held.
+  artifact!.addEventListener("prism-close", () => setTimeout(resumeHeld));
   document.addEventListener("keydown", (event) => {
     const typing = ["INPUT", "TEXTAREA"].includes((document.activeElement?.tagName as any)) || Boolean(document.activeElement?.closest?.("prism-field"));
     if ((event.key === "k" || event.key === "K") && (event.ctrlKey || event.metaKey)) {

@@ -13,7 +13,7 @@ process.env.PLUGIN_DATA = privateData;
 delete process.env.CLAUDE_PLUGIN_DATA;
 test.after(() => rm(privateData, { recursive: true, force: true }));
 const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scripts" : false;
-const FIELDS = ["id", "kind", "group", "name", "harness", "model", "initiative", "slice", "activity", "state", "reason", "expiresAt", "launch", "action"];
+const FIELDS = ["id", "kind", "group", "name", "harness", "model", "session", "initiative", "slice", "activity", "state", "reason", "expiresAt", "launch", "action"];
 const LAUNCH_FIELDS = ["id", "launchedAt", "runningMs", "runs", "endedAt", "exit", "resumeCommand", "waitingGate"];
 
 // A failed launch, a waiting one that holds a claim, a running one, and claims of other sessions: two live, one without a harness, and one expired.

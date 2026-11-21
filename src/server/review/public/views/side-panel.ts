@@ -31,8 +31,9 @@ function legacyWidth() {
 // The panel shows a file the way its tab shows it: Markdown rendered with its diagrams drawn, code highlighted with line numbers, a diagram drawn, and a record as highlighted source.
 function fileBody(data: any, { renderMarkdown }: { renderMarkdown: any }) {
   if (data.kind === "source") {
+    const note = data.note ? `<p class="side-panel-note">${escapeHtml(data.note)}</p>` : "";
     const lines = highlightLines(data.content.replace(/\r\n/g, "\n").replace(/\n$/, ""), languageOf(data.path));
-    return `<ol class="source-lines">${lines.map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol>`;
+    return `${note}<ol class="source-lines">${lines.map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol>`;
   }
   if (data.path.toLowerCase().endsWith(".md")) {
     return `<prism-doc class="document-content">${renderMarkdown(data.path, data.content, data.links) || '<p class="muted">The document is empty.</p>'}</prism-doc>`;
@@ -157,13 +158,16 @@ export function createSidePanel({ shell, sheet = null, fetchJson, fetchArtifact 
     else scrollTo(anchor);
   }
 
-  async function showFile(path: any, anchor = null) {
+  // A view may name where the file is read from, such as a slice's frozen test, with its own eyebrow and whether it also opens as a tab.
+  async function showFile(path: any, anchor = null, { url = null, eyebrow = null, tab = true }: { url?: string | null; eyebrow?: string | null; tab?: boolean } = {}) {
     const ticket = ++request;
-    const same = current?.ref === path;
-    current = { ref: path, anchor, content: same ? current.content : null, diagrams: same ? current.diagrams : null, folds: same ? current.folds : new Set() };
+    const source = url ?? `./api/artifact?path=${encodeURIComponent(path)}`;
+    const same = current?.ref === path && current?.url === source;
+    current = { ref: path, url: source, fromUrl: Boolean(url), tab, anchor, content: same ? current.content : null, diagrams: same ? current.diagrams : null, folds: same ? current.folds : new Set() };
     const named = describe(path);
-    const where = anchor ? ((anchor as any).match(LINE_RANGE) ? `lines ${(anchor as any).slice(1).replace("-", "–")}` : `#${anchor}`) : "";
-    header({ eyebrow: named.kind, name: named.label, detail: named.code ? [path, where].filter(Boolean).join(" · ") : where, ref: path, code: named.code });
+    const range = anchor ? (anchor as any).match(LINE_RANGE) : null;
+    const where = anchor ? (range ? (range[2] ? `lines ${(anchor as any).slice(1).replace("-", "–")}` : `line ${range[1]}`) : `#${anchor}`) : "";
+    header({ eyebrow: eyebrow ?? named.kind, name: named.label, detail: named.code ? [path, where].filter(Boolean).join(" · ") : where, ref: tab ? path : null, code: named.code });
     setOpen(true);
     if (same && current.content !== null) {
       scrollTo(anchor);
@@ -171,7 +175,7 @@ export function createSidePanel({ shell, sheet = null, fetchJson, fetchArtifact 
     }
     body!.innerHTML = '<p class="muted side-panel-loading">Loading…</p>';
     try {
-      const data = await fetchArtifact(path);
+      const data = await (url ? fetchJson(url) : fetchArtifact(path));
       if (ticket !== request) return;
       current.content = data.content;
       current.diagrams = JSON.stringify(data.diagrams ?? []);
@@ -182,15 +186,17 @@ export function createSidePanel({ shell, sheet = null, fetchJson, fetchArtifact 
     }
   }
 
-  // Shows prepared content, such as a review finding, with an optional tab to open for the whole record.
-  function showContent({ eyebrow, name, detail = null, html, ref = null }: { eyebrow: any; name: string; detail?: any; html: any; ref?: any }) {
+  // Shows prepared content, such as a review finding, with an optional tab to open for the whole record; content whose end matters most, such as a log, opens at its end.
+  function showContent({ eyebrow, name, detail = null, html, ref = null, at = "start" }: { eyebrow: any; name: string; detail?: any; html: any; ref?: any; at?: "start" | "end" }) {
     ++request;
     current = { ref, anchor: null, content: null, folds: new Set(), custom: true };
     header({ eyebrow, name, detail, ref });
     body!.innerHTML = html;
     for (const content of body!.querySelectorAll(".document-content")) decorateFolds(content, current.folds);
-    body!.scrollTop = 0;
     setOpen(true);
+    body!.scrollTop = at === "end" ? body!.scrollHeight : 0;
+    // In the bottom sheet the sheet scrolls rather than the body, so the end is brought into view once the sheet has laid it out.
+    if (at === "end" && inSheet()) requestAnimationFrame(() => body!.lastElementChild?.scrollIntoView({ block: "end" }));
   }
 
   function close() {
@@ -210,7 +216,7 @@ export function createSidePanel({ shell, sheet = null, fetchJson, fetchArtifact 
     if (!current?.ref || current.custom || current.content === null) return;
     const ticket = request;
     try {
-      const data = await fetchArtifact(current.ref);
+      const data = await (current.fromUrl ? fetchJson(current.url) : fetchArtifact(current.ref));
       const diagrams = JSON.stringify(data.diagrams ?? []);
       if (ticket !== request || !current || (data.content === current.content && diagrams === current.diagrams)) return;
       current.content = data.content;

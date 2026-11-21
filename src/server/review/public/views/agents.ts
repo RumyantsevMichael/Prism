@@ -170,7 +170,17 @@ function titleHtml(entry: any, ctx: any) {
   return `<prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${link}${facts ? `<span class="prism-lib-cell is-detail">${escapeHtml(facts)}</span>` : ""}</span>`;
 }
 
+// A claim's link to its holder's session, which opens in a new tab and only for the person whose session it is.
+function sessionLinkHtml(session: any) {
+  const url = typeof session?.url === "string" && /^https:\/\/[^\s"<>]+$/i.test(session.url) ? session.url : null;
+  if (!url) return "";
+  const where = typeof session.label === "string" && session.label.trim() ? session.label.trim() : "";
+  const tip = `Opens this session${where ? ` in ${where}` : ""} in a new tab. Only the person whose session it is can open it.`;
+  return `<prism-chip class="agents-session" href="${escapeHtml(url)}" target="_blank" label="${escapeHtml(where ? `Open session in ${where}` : "Open session")}" tip="${escapeHtml(tip)}"><prism-icon slot="start" name="external"></prism-icon>Session</prism-chip>`;
+}
+
 function actionHtml(entry: any, writable: any) {
+  if (entry.kind === "claim") return sessionLinkHtml(entry.session);
   if (entry.action === "answer") return '<prism-button size="sm" variant="primary" data-agent-action="answer" text="Answer"></prism-button>';
   // A tab that can only read shows each change it cannot send as unavailable, and says why.
   const lock = writable ? "" : ` disabled tip="${READ_ONLY_TIP}"`;

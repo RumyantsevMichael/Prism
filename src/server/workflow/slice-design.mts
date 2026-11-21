@@ -260,6 +260,28 @@ export async function installFrozenTests(projectRoot: string, initiative: string
   return contents.map(([relative]) => relative);
 }
 
+/**
+ * A frozen test of a slice's accepted design as the review app shows it, or null when the design does not freeze that path or no copy is left.
+ * state is frozen when the work tree holds the frozen content, staged when only the copy kept for a slice that has not started holds it,
+ * kept when that copy holds it while the work tree's file changed, and changed when only the changed work-tree file is left to show.
+ */
+export async function frozenTestContent(projectRoot: string, initiative: string, slice: string, relative: string) {
+  const design = await acceptedDesign(projectRoot, initiative, slice);
+  const item = design?.frozenTests.find((test: FrozenTest) => test.path === relative);
+  if (!item) return null;
+  const root = await realpath(projectRoot);
+  const current = await frozenBytes(root, relative);
+  if (current !== null && frozenDigest(current) === item.sha256) return { path: relative, bytes: current, state: "frozen" };
+  const { bytes } = await readRecord(root, { kind: "frozen-tests", initiative, slice }).catch(() => ({ bytes: null }));
+  let stored: any[] = [];
+  try { stored = bytes === null ? [] : parseStoreJson(bytes.toString("utf8")).tests ?? []; }
+  catch { stored = []; }
+  const kept = stored.find((entry) => entry?.path === relative && typeof entry.content === "string");
+  const keptBytes = kept ? Buffer.from(kept.content, "base64") : null;
+  if (keptBytes && frozenDigest(keptBytes) === item.sha256) return { path: relative, bytes: keptBytes, state: current === null ? "staged" : "kept" };
+  return current === null ? null : { path: relative, bytes: current, state: "changed" };
+}
+
 /** A frozen test's bytes from the work tree, or from the staged tests of a slice that has not started; null when neither holds it. */
 export async function readFrozenTestOf(projectRoot: string, initiative: string, relative: string) {
   const root = await realpath(projectRoot);
