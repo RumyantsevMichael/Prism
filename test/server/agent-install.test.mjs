@@ -35,7 +35,7 @@ test("clauses 47, 48, 54: an install asks a native dialog naming the agent, then
   const installed = await act(s, "agents.install", "opencode");
   assert.equal(installed.status, 200, installed.text);
   assert.equal(s.dialogs().length, 1);
-  const text = s.dialogs()[0].argv.join(" ");
+  const { text } = s.dialogs()[0];
   for (const part of ["OpenCode", "Fake Authors", "2.3.2", "MIT", "https://example.invalid/opencode", entry.distribution.binary[platformKey()].archive, "It runs with your permissions on this computer."]) assert.ok(text.includes(part), `the dialog names ${part}`);
   const record = JSON.parse(readFileSync(path.join(agentsFolder(s), "opencode", "2.3.2", "install.json"), "utf8"));
   assert.deepEqual([record.id, record.version, record.command, record.args], ["opencode", "2.3.2", path.join(agentsFolder(s), "opencode", "2.3.2", "agent"), ["opencode"]]);

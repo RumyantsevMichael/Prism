@@ -128,14 +128,17 @@ test("a resume whose initiative shipped while the confirmation was open starts n
   for (const entry of roadmap.initiatives) if (entry.id === INITIATIVE) entry.decision = { kind: "shipped", at: new Date().toISOString() };
   const shipped = path.join(s.bin, "shipped-roadmap.json");
   await writeFile(shipped, `${JSON.stringify(roadmap, null, 2)}\n`);
-  const zenity = path.join(s.bin, "zenity");
-  await writeFile(zenity, `#!${process.execPath}
+  // The same program stands in for zenity on Linux and osascript on macOS, and prints osascript's answer, which zenity's caller ignores.
+  for (const name of ["zenity", "osascript"]) {
+    const dialog = path.join(s.bin, name);
+    await writeFile(dialog, `#!${process.execPath}
 const { pathToFileURL } = require("node:url");
 import(pathToFileURL(${JSON.stringify(path.resolve("dist/server/workflow/record-store.mjs"))}).href)
   .then(({ writeRecord }) => writeRecord(${JSON.stringify(s.root)}, { kind: "roadmap" }, require("node:fs").readFileSync(${JSON.stringify(shipped)}, "utf8")))
-  .then(() => process.exit(0), () => process.exit(1));
+  .then(() => { process.stdout.write("button returned:Launch, gave up:false\\n"); process.exit(0); }, () => process.exit(1));
 `);
-  await chmod(zenity, 0o755);
+    await chmod(dialog, 0o755);
+  }
   const before = await historyOf(s.root);
   const resumed = await apply(s.base, { action: "launch.resume", target: `launch:${id}`, input: {}, revision: null }, s.headers);
   assert.equal(resumed.status, 409, resumed.text);

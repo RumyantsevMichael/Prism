@@ -97,11 +97,8 @@ const fileChange = (extra = {}) => ({ method: "item/fileChange/requestApproval",
 const patchStarted = (changes = CHANGES) => ({ method: "item/started", params: { startedAtMs: 1, item: { type: "fileChange", id: "item_patch", status: "inProgress", changes } } });
 const inputsOf = (s, host) => s.runs(host).flatMap((run) => s.inputs(run.pid));
 const claudeAnswer = (s) => settled(() => inputsOf(s, "claude").find((message) => message.type === "control_response"), Boolean);
-// The text that the zenity stub was asked to show, as zenity shows it: its --text argument with Pango entities and doubled backslashes read back.
-const dialogText = (dialog) => {
-  const raw = dialog.argv.find((arg) => arg.startsWith("--text="))?.slice("--text=".length) ?? dialog.argv.join(" ");
-  return raw.replace(/\\\\/g, "\\").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-};
+// The text that the dialog stub was asked to show, as the person reads it.
+const dialogText = (dialog) => dialog.text;
 const answers = (s) => s.entries().filter((entry) => entry.kind === "permission-answer");
 const codexAnswer = (s) => settled(() => inputsOf(s, "codex").find((message) => message.id === "approval-1" && message.method === undefined), Boolean);
 
