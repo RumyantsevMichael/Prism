@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { describeRecordStore } from "../workflow/record-store.mjs";
@@ -274,10 +275,14 @@ const validPid = (pid: unknown) => Number.isSafeInteger(pid) && (pid as number) 
  * Whether the record's last run still runs for the purpose of keeping the files it runs from: it has not ended and its supervisor or
  * host process is alive, whatever its heartbeat age, since a late heartbeat, as right after the computer wakes from sleep, does not
  * end a run; only when neither process can be checked does a heartbeat older than the stale age count it as ended.
+ * A run whose last heartbeat came before the computer last started ended with it, so a process that later took its supervisor's or
+ * host's process id never keeps it; the computer's uptime counts time asleep, so waking does not end a run.
  */
 export function launchRunInUse(record: any, now = Date.now()) {
   const run = record?.runs?.at(-1);
   if (!run || run.endedAt) return false;
+  const signs = [time(run.heartbeatAt), time(run.startedAt)].filter(Number.isFinite);
+  if (signs.length && Math.max(...signs) < now - os.uptime() * 1000) return false;
   if (validPid(run.supervisorPid) || validPid(run.hostPid)) return processAlive(run.supervisorPid) || processAlive(run.hostPid);
   return now - time(run.heartbeatAt) <= HEARTBEAT_STALE_MS;
 }

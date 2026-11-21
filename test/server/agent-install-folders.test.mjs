@@ -243,3 +243,28 @@ test("a run whose supervisor or host lives keeps its version folder and its agen
   await sweepUnusedVersions(env);
   assert.deepEqual(readdirSync(folder).sort(), ["1.1.0", "current.json"]);
 });
+
+test("a run from before the computer last started does not keep its version folder or its agent when a later process holds its process id", { skip: posixOnly }, async (t) => {
+  const { app, env } = await appFolder(t);
+  const folder = path.join(app, "agents", "opencode");
+  for (const version of ["1.0.0", "1.1.0"]) {
+    await mkdir(path.join(folder, version), { recursive: true });
+    await writeFile(path.join(folder, version, "agent"), "#!/bin/sh\n", { mode: 0o755 });
+    await writeFile(path.join(folder, version, "install.json"), JSON.stringify({ id: "opencode", name: "OpenCode", version, distribution: "binary", command: path.join(folder, version, "agent"), args: [], env: {}, installedAt: "2026-11-19T10:00:00.000Z" }));
+  }
+  await writeFile(path.join(folder, "current.json"), JSON.stringify({ version: "1.1.0" }));
+  // A process started after the restart that now holds the process ids the run recorded before power was lost.
+  const unrelated = spawn("sleep", ["60"], { stdio: "ignore" });
+  t.after(() => unrelated.kill());
+  const at = new Date(Date.now() - os.uptime() * 1000 - 2 * 60 * 60_000).toISOString();
+  const id = `launch-${"d".repeat(16)}`;
+  const launchFolder = path.join(app, "launches", id);
+  await mkdir(launchFolder, { recursive: true, mode: 0o700 });
+  await writeFile(path.join(launchFolder, "launch.json"), JSON.stringify({ id, initiative: "before-start", host: "acp-opencode", checkout: app, store: "test", createdAt: at, hostSessionId: "s1", coordinator: { provider: null, model: null, effort: null, typed: false },
+    runs: [{ number: 1, cause: "launch", token: "a".repeat(16), agentVersion: "1.0.0", supervisorPid: unrelated.pid, hostPid: unrelated.pid, startedAt: at, heartbeatAt: at, outputAt: at, model: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: 5000, stopRequestedAt: null }] }));
+  assert.deepEqual([...await versionsInUse("opencode", env)], []);
+  await sweepUnusedVersions(env);
+  assert.deepEqual(readdirSync(folder).sort(), ["1.1.0", "current.json"]);
+  await removeAgent({ id: "opencode", env });
+  assert.equal(existsSync(folder), false);
+});
