@@ -930,10 +930,11 @@ async function migrationRunContext(projectRoot: string, ref: string, id: string)
 }
 
 // A point as the run's page shows it: its kind and detail, its place in the question counted across the run, Prism's recommendation, the option it recommends, and how it was settled or answered.
-function runPoint(point: any, { number, answers, conflicts, sourceEntries, contentEntries }: any) {
+function runPoint(point: any, { number, answers, conflicts, sourceEntries, contentEntries, sourceLines }: any) {
   const { id, kind, settled, asked, ...detail } = point;
   const recommendation = asked?.recommendation ?? null;
   const extra: any = {};
+  if (kind === "leftover") extra.sourceLine = sourceLines?.get(id) ?? null;
   if (kind === "entry") {
     extra.sourceText = sourceEntries.find((entry: any) => entry.id === point.entry)?.text ?? null;
     extra.targetText = contentEntries.find((entry: any) => entry.id === point.entry)?.text ?? null;
@@ -966,11 +967,14 @@ async function loadMigrationRunView(projectRoot: string, id: string) {
   const migrations = record.migrations.map((migration: any) => {
     const sourceEntries = typeof migration.sourceText === "string" ? entriesFor(migration.type, migration.sourceText) : [];
     const contentEntries = typeof migration.content === "string" ? entriesFor(migration.type, migration.content) : [];
+    const map = statementMap(migration, { answers: answers ?? {} });
+    // A leftover point names its statement only, so its source line comes from the same split of the source that the statement map shows.
+    const sourceLines = new Map((map?.statements ?? []).filter((statement: any) => statement.landed?.kind === "leftover" && statement.landed.point).map((statement: any) => [statement.landed.point, statement.line]));
     return {
       id: migration.id, type: migration.type, source: migration.source, target: migration.target, separateSource: migration.separateSource, summary: migration.summary,
       status: headerStatus(migration.content), proposedAt: migration.proposedAt ?? null,
-      map: statementMap(migration, { answers: answers ?? {} }),
-      points: (migration.points ?? []).map((point: any) => runPoint(point, { number: numbers.get(point.id), answers, conflicts: migration.conflicts ?? [], sourceEntries, contentEntries }))
+      map,
+      points: (migration.points ?? []).map((point: any) => runPoint(point, { number: numbers.get(point.id), answers, conflicts: migration.conflicts ?? [], sourceEntries, contentEntries, sourceLines }))
     };
   });
   const runs = record.status === "failed" ? await allRuns(projectRoot).catch((): any[] => []) : [];

@@ -111,7 +111,7 @@ function control(point: any, migration: any, value: any) {
   const attributes = `data-answer-field="${e(point.id)}" data-recommended="${e(recommendationOf(point))}"`;
   switch (point.kind) {
     case "leftover":
-      return `<blockquote class="run-quote"><span>${e(point.statement)}</span></blockquote>
+      return `<blockquote class="run-quote"><span>${e(point.statement)}</span>${Number.isInteger(point.sourceLine) ? `<span class="muted">Line ${point.sourceLine} of the source</span>` : ""}</blockquote>
         <prism-field type="textarea" label="Its home" ${attributes} value="${e(value)}" required hint="Prism's recommendation, sent as it is unless you change it. 1 to ${TEXT_MAX} characters."></prism-field>`;
     case "unknown": {
       const status = migration.status ?? "migrated";
