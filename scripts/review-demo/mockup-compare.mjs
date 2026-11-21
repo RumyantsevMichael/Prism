@@ -32,6 +32,12 @@ const SCENES = {
     caption: "Attention with an open design gate, Settings open",
     ref: "attention",
     async open(page) {
+      // On a phone the app opens on the list, so the design gate is picked, as a person does, to show its card as the mockup does.
+      await page.evaluate(() => {
+        if (document.querySelector(".attention-inbox")?.dataset.pane !== "list") return;
+        const sheet = document.querySelector("[data-detail] .gate-visual-review")?.closest("[data-detail]");
+        [...document.querySelectorAll("prism-inbox-item")].find((item) => item.getAttribute("value") === sheet?.dataset.detail)?.click();
+      });
       // The mockup shows the design gate; the app lists every gate in one column, so the design gate is scrolled into view.
       await page.locator("#artifact .gate-visual-review").first().evaluate((element) => element.scrollIntoView({ block: "start" })).catch(() => {});
       await page.click("#settings-button");
