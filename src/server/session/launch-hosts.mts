@@ -478,7 +478,8 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
       respond("refuse");
       return;
     }
-    withdraw = permissions.ask({ action: cut(action), reason: cut(reason), canAllow }, respond);
+    // The whole text goes to the broker, which keeps its shown form and marks one too long to confirm in full.
+    withdraw = permissions.ask({ action: detached(redact(action)), reason: detached(redact(reason)), canAllow }, respond);
   };
   const refuseAsks = () => {
     for (const respond of [...asks]) respond("refuse");
@@ -532,10 +533,10 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
         if (event.type === "control_request" && event.request?.subtype === "can_use_tool" && typeof event.request_id === "string") {
           const request = event.request;
           const tool = text(request.tool_name) || "a tool";
-          const description = text(request.description).trim();
           const input = request.input !== null && typeof request.input === "object" && !Array.isArray(request.input) ? request.input : null;
           const requestId = event.request_id;
-          ask({ action: description ? `${tool} ${description}` : tool, reason: text(request.decision_reason), canAllow: input !== null }, (decision) => ({
+          // The action is the tool and the input that an approval allows, as compact JSON.
+          ask({ action: `${tool} ${JSON.stringify(request.input ?? null)}`, reason: text(request.decision_reason), canAllow: input !== null }, (decision) => ({
             type: "control_response",
             response: { subtype: "success", request_id: requestId, response: decision === "approve" ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: REFUSED_ON_ATTENTION } }
           }));

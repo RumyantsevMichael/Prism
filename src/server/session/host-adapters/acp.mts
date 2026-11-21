@@ -379,7 +379,7 @@ export function acpPermission(label: string, params: unknown) {
   const reject = once("reject_once");
   const kind = text(call.kind).trim() || "other";
   return {
-    ask: { action: text(call.title).trim() || `a tool of kind ${kind}`, reason: `${label} asks before it runs a tool of kind ${kind}.`, canAllow: allow !== undefined },
+    ask: { action: text(call.title).trim() ? text(call.title) : `a tool of kind ${kind}`, reason: `${label} asks before it runs a tool of kind ${kind}.`, canAllow: allow !== undefined },
     answer: (decision: PermissionDecision) => {
       const optionId = decision === "approve" ? allow : reject;
       return { outcome: optionId === undefined ? { outcome: "cancelled" } : { outcome: "selected", optionId } };

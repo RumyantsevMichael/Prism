@@ -799,6 +799,7 @@ const ACTION_STATUS: Record<string, any> = {
   // The refusals of an answer to a launched session's permission request.
   unknown_request: 404,
   approval_unavailable: 409,
+  approval_too_long: 409,
   launch_failed: 500
 };
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];

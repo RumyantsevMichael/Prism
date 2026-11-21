@@ -14,8 +14,8 @@ import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPerson
 import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
-import { approvalText, confirmApproval, confirmLaunch } from "../session/launch-confirmation.mjs";
-import { answerRequest, approvalUnavailable, launchRequests, waitingRequest } from "../session/permission-requests.mjs";
+import { confirmLaunch } from "../session/launch-confirmation.mjs";
+import { answerRequest, launchRequests } from "../session/permission-requests.mjs";
 import { HOSTS } from "../session/launch-hosts.mjs";
 import { isAcpHost } from "../session/acp-agents.mjs";
 import { LAUNCH_ID_PATTERN, launchFolder, readLaunchRecord } from "../session/launch-records.mjs";
@@ -687,16 +687,9 @@ const LAUNCH_RESUME = {
   }
 };
 
-// The title of an initiative as the roadmap names it, or its id.
-async function initiativeTitle(projectRoot: string, initiative: string) {
-  const roadmap = await readRoadmap(projectRoot).catch(() => null);
-  const title = roadmap?.loaded?.record?.initiatives?.find((item: any) => item?.id === initiative)?.title;
-  return typeof title === "string" && title ? title : initiative;
-}
-
 // An answer to one permission request of the session, which this machine's launch folder alone holds, so an answer that reaches the
-// machine any other way applies nothing. An approval asks the native dialog every time, whatever the launch window, and answers the
-// host only after the person allowed it there; a refusal asks nothing.
+// machine any other way applies nothing. An approval asks the run's supervisor to show the native dialog every time, whatever the launch
+// window, and the supervisor answers the host only after the person allowed that request there; a refusal asks nothing.
 const LAUNCH_PERMISSION = {
   ...launchBase,
   id: "launch.permission",
@@ -716,13 +709,8 @@ const LAUNCH_PERMISSION = {
   unavailableCode: () => "unknown_request",
   after: (values: any) => ({ request: values.request, decision: values.decision }),
   async launch({ projectRoot, context, env, values }: { projectRoot: string; context: any; env: NodeJS.ProcessEnv; values: any }) {
-    const request = await waitingRequest({ env, launch: context.launch, request: values.request });
-    if (values.decision === "approve") {
-      if (!request.canAllow) throw approvalUnavailable(request.hostLabel);
-      const initiative = await initiativeTitle(projectRoot, context.initiative);
-      await confirmApproval({ text: approvalText({ initiative, host: request.hostLabel, action: request.action, reason: request.reason }), env });
-    }
-    await answerRequest({ env, launch: context.launch, request: request.id, decision: values.decision });
+    // An approval only asks the run's supervisor to show the request's dialog, and answers with that dialog's outcome.
+    const request = await answerRequest({ env, launch: context.launch, request: values.request, decision: values.decision });
     const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
     return { launch: null, after: { decision: values.decision, action: request.action }, initiative: context.initiative, started: null, record: !shipped };
   }
