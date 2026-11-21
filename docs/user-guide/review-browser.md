@@ -126,6 +126,9 @@ A waiting session offers **Answer**, which opens Attention with the question it 
 Below that, **Launched from Prism** counts the launched sessions that are not archived, **Started outside Prism** the live claims, and **Expired claims** the claims that expired less than a day ago, also at 0, and each opens the Agents page showing only those; **Open Agents** opens the whole page.
 The menu lists no claim, so every claim shows on the Agents page.
 Wherever the browser shows a claim, on a slice, an initiative, the roadmap, the sidebar, or the Agents page, it names the harness the agent runs in and the model of the session's main agent as `<harness> · <model>`, such as `Codex · gpt-5.5`, when the claim records them, and `Agent` and no model otherwise.
+When a claim records a session that you can open from a link, such as a Claude Code on the web session, an inline claim, a claim's strip, and its row on the Agents page end with a **Session** link that opens that session in a new tab.
+Only the person whose session it is can open it, so a teammate may see a link that does not open for them.
+An avatar claim shows no link, and a claim whose host has no session to open, such as a local Claude Code or Codex session, shows none either.
 The sidebar shows a claimed slice's holder at the end of its row.
 Claims are read-only in the browser.
 

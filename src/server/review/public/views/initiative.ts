@@ -187,7 +187,7 @@ function headControls(data: any, ctx: any, ids: any) {
   const totals = summary ? `<prism-button id="${ids.totals}" size="sm" variant="ghost" class="initiative-totals" tip="Run totals of this initiative"><prism-icon name="clock" size="xs"></prism-icon><span>${summary}</span><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button>` : "";
   const lastRun = '<span class="initiative-last-run-slot" data-last-run-slot></span>';
   if (!ctx.actionApi) return `${lastRun}${totals}`;
-  return `${lastRun}${totals}<prism-button id="${ids.launch}" size="sm" class="initiative-launch" data-launch-open><prism-icon name="play" size="xs"></prism-icon><span>Launch</span></prism-button><prism-button size="sm" class="initiative-settings" data-initiative-settings-open><prism-icon name="settings" size="xs"></prism-icon><span>Settings</span></prism-button>`;
+  return `${lastRun}${totals}<prism-button id="${ids.launch}" size="sm" class="initiative-launch" data-launch-open data-focus-key="initiative-launch"><prism-icon name="play" size="xs"></prism-icon><span>Launch</span></prism-button><prism-button size="sm" class="initiative-settings" data-initiative-settings-open data-focus-key="initiative-settings"><prism-icon name="settings" size="xs"></prism-icon><span>Settings</span></prism-button>`;
 }
 
 // The overlays the head's controls open: the run totals, the run configuration, which saves its choices as the initiative's settings and
