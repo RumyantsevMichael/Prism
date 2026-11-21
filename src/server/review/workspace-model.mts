@@ -478,22 +478,33 @@ function coveringClaim(slices: any, slug: string) {
 // A view's source is shown in the page, so a source past this size is left out and the page says the view is too large to show.
 const VIEW_SOURCE_LIMIT = 256 * 1024;
 
+// A diagram's own title, from its first single-line PlantUML title, names a diagram that no Views line asks a question of.
+function diagramTitle(source: string | null) {
+  const title = source?.match(/^[ \t]*title[ \t]+(\S.*?)[ \t]*$/im)?.[1]?.replace(/^"(.*)"$/, "$1").trim();
+  return title || null;
+}
+
 /**
- * The views that a slice folder's slice.md declares, in their declared order, each as { path, file, kind, question, clauses, source, contract },
- * where contract is { path, slice, title } of the governing contract, the slice that holds it, and that slice's title, or null when no slice.md above the folder has a Contract.
+ * The views of a slice folder: first those its slice.md declares, in their declared order, each as { path, file, kind, question, clauses, source, contract, declared: true },
+ * where contract is { path, slice, title, ref } of the governing contract, the slice that holds it, and that slice's title, or null when no slice.md above the folder has a Contract.
  * A declaration of an unknown kind is left out, since the design check refuses it.
+ * Then each PlantUML file directly in the folder that no Views line names, as { path, file, kind: "diagram", title, question: null, clauses: [], source, contract, declared: false },
+ * so that a design written before Views sections existed still shows its diagrams.
  */
 async function folderViews(projectRoot: string, initiative: any, slug: string, plans: any) {
   const artifacts = initiative.slices[slug];
-  if (!artifacts?.narrative) return [];
-  const design = await readText(projectRoot, artifacts.narrative);
-  if (design === null) return [];
-  const declared = readViews(design, artifacts.folder, { plans }).views.filter((view) => VIEW_KINDS.includes(view.kind));
-  if (!declared.length) return [];
+  if (!artifacts) return [];
+  const design = artifacts.narrative ? await readText(projectRoot, artifacts.narrative) : null;
+  const read = readViews(design, artifacts.folder, { plans }).views;
+  const declared = read.filter((view) => VIEW_KINDS.includes(view.kind));
+  const named = new Set(read.map((view) => view.path));
+  const others = (artifacts.files ?? []).filter((file: string) => file.endsWith(".puml") && path.posix.dirname(file) === artifacts.folder && !named.has(file));
+  if (!declared.length && !others.length) return [];
   const governing = await governingContract(projectRoot, artifacts.folder, plans ?? initiative.directory).catch(() => null);
   const owner = governing ? Object.keys(initiative.slices).find((key) => initiative.slices[key].narrative === governing.path) ?? null : null;
   const contract = governing ? { path: governing.path, slice: owner, title: owner ? initiative.record.slices[owner]?.title ?? owner : null, ref: owner ? `slice:${initiative.id}/${owner}` : null } : null;
-  return Promise.all(declared.map(async (view) => {
+  const shown = (source: string | null) => source !== null && source.length <= VIEW_SOURCE_LIMIT ? source : null;
+  const listed = await Promise.all(declared.map(async (view) => {
     const source = await readText(projectRoot, view.path);
     return {
       path: view.path,
@@ -501,16 +512,23 @@ async function folderViews(projectRoot: string, initiative: any, slug: string, p
       kind: view.kind,
       question: view.question,
       clauses: view.clauses,
-      source: source !== null && source.length <= VIEW_SOURCE_LIMIT ? source : null,
+      source: shown(source),
       missing: source === null,
-      contract
+      contract,
+      declared: true
     };
   }));
+  const unasked = await Promise.all(others.map(async (file: string) => {
+    const source = await readText(projectRoot, file);
+    const name = path.posix.basename(file);
+    return { path: file, file: name, kind: "diagram", title: diagramTitle(source) ?? name, question: null, clauses: [], source: shown(source), missing: source === null, contract, declared: false };
+  }));
+  return [...listed, ...unasked];
 }
 
 /**
  * The Views tab of a slice: the views of its own folder, and for a scope whose design planned slices, each planned slice with its title and views;
- * a planned slice that declares no views is listed in without by its title.
+ * a planned slice whose folder has no views and no diagrams is listed in without by its title.
  */
 async function loadSliceViews(projectRoot: string, initiative: any, slug: string) {
   const plans = (await readCheckoutConfig(projectRoot).catch(() => null))?.paths?.plans?.replace(/\/+$/, "") ?? null;
