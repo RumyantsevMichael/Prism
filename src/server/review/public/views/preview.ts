@@ -284,12 +284,14 @@ export function createLinkPreview({ root, fetchJson, fetchArtifact, renderMarkdo
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !popover.hidden) hide();
   });
-  // The card stays where its link was, so scrolling the page or resizing the window closes it; scrolling inside the card reads on.
-  document.addEventListener("scroll", (event) => {
-    if (!popover.hidden && !popover.contains(event.target)) hide();
-  }, true);
-  window.addEventListener("resize", () => {
-    if (!popover.hidden) hide();
-  });
+  // The card follows its link when the page scrolls or the window resizes, and closes once the link leaves the window; scrolling inside the card reads on.
+  const follow = (event: any) => {
+    if (popover.hidden || !anchorElement || popover.contains(event.target)) return;
+    const rect = anchorElement.getBoundingClientRect();
+    if (!anchorElement.isConnected || rect.bottom < 0 || rect.top > window.innerHeight) hide();
+    else popover.place(anchorElement);
+  };
+  document.addEventListener("scroll", follow, { capture: true, passive: true });
+  window.addEventListener("resize", follow);
   return { hide };
 }
