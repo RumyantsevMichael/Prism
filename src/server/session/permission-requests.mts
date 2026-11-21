@@ -30,7 +30,7 @@ const OUTCOME_AFTER_REMOVAL_MS = 3000;
 export type PermissionDecision = "approve" | "refuse";
 
 /** One pending request as its file keeps it; cut is true when its action or reason was cut to PERMISSION_TEXT_MAX characters. */
-export interface PermissionRequest { id: string; launch: string; run: string; host: string; hostLabel: string; action: string; reason: string; canAllow: boolean; cut: boolean; askedAt: string }
+export interface PermissionRequest { id: string; launch: string; run: string; host: string; hostLabel: string; action: string; reason: string; canAllow: boolean; unavailable: string | null; cut: boolean; askedAt: string }
 
 export const newRequestId = () => `perm-${randomBytes(8).toString("hex")}`;
 const permissionsFolder = (folder: string) => path.join(folder, FOLDER);
@@ -83,7 +83,7 @@ async function readJson(file: string, maxBytes = MAX_REQUEST_BYTES) {
 function wellFormed(value: any): PermissionRequest | null {
   if (!value || typeof value !== "object" || !REQUEST_ID_PATTERN.test(value.id) || !LAUNCH_ID_PATTERN.test(value.launch) || typeof value.run !== "string") return null;
   if (typeof value.host !== "string" || typeof value.action !== "string" || Number.isNaN(Date.parse(value.askedAt))) return null;
-  return { id: value.id, launch: value.launch, run: value.run, host: value.host, hostLabel: stored(value.hostLabel) || value.host, action: stored(value.action), reason: stored(value.reason), canAllow: value.canAllow === true, cut: value.cut === true, askedAt: value.askedAt };
+  return { id: value.id, launch: value.launch, run: value.run, host: value.host, hostLabel: stored(value.hostLabel) || value.host, action: stored(value.action), reason: stored(value.reason), canAllow: value.canAllow === true, unavailable: typeof value.unavailable === "string" && value.unavailable ? value.unavailable.slice(0, UNAVAILABLE_MAX) : null, cut: value.cut === true, askedAt: value.askedAt };
 }
 
 async function readRequest(folder: string, id: string) {
@@ -92,9 +92,9 @@ async function readRequest(folder: string, id: string) {
 }
 
 /** Keeps a request of a launch's run waiting in its private folder, with its action and reason already in their kept form. */
-export async function recordRequest(folder: string, request: Omit<PermissionRequest, "askedAt"> & { askedAt?: string }) {
+export async function recordRequest(folder: string, request: Omit<PermissionRequest, "askedAt" | "unavailable"> & { unavailable?: string | null; askedAt?: string }) {
   await mkdir(permissionsFolder(folder), { recursive: true, mode: 0o700 });
-  const kept = { ...request, askedAt: request.askedAt ?? new Date().toISOString() };
+  const kept = { ...request, unavailable: request.unavailable ?? null, askedAt: request.askedAt ?? new Date().toISOString() };
   await writeAtomically(requestFile(folder, request.id), `${JSON.stringify(kept, null, 2)}\n`, { mode: 0o600 });
   return kept;
 }
@@ -158,7 +158,9 @@ export async function pendingRequests({ env = process.env, store }: { env?: Node
 }
 
 const unknownRequest = (id: unknown) => new LaunchError("unknown_request", `No permission request ${String(id)} waits in this session.`);
-export const approvalUnavailable = (label: string) => new LaunchError("approval_unavailable", `${label} offers no way to allow only this one request, so Prism cannot approve it.`);
+// Why a request cannot be approved, when its host says more than that it offers no single-use allow, is kept to this many characters.
+const UNAVAILABLE_MAX = 1200;
+export const approvalUnavailable = (label: string, reason: string | null = null) => new LaunchError("approval_unavailable", reason || `${label} offers no way to allow only this one request, so Prism cannot approve it.`);
 export const approvalTooLong = (label: string) => new LaunchError("approval_too_long", `${label} asked for more than a confirmation shows in full, 1,000 characters, so Prism can only refuse it.`);
 
 /** The request that waits in the running run of the launch on this machine, or a LaunchError unknown_request. */
@@ -231,7 +233,7 @@ async function askApproval(env: NodeJS.ProcessEnv, launch: string, found: Permis
 
 /**
  * Answers a request that waits in the launch. A refusal is written for the run's supervisor to answer the host. An approval is refused
- * with approval_unavailable when the request offers no single-use allow and with approval_too_long when its text was cut, before any
+ * with approval_too_long when its text was cut and with approval_unavailable when Prism cannot allow it, before any
  * dialog; otherwise it asks the supervisor for the request's dialog and answers with the dialog's outcome.
  */
 export async function answerRequest({ env = process.env, launch, request, decision }: { env?: NodeJS.ProcessEnv; launch: string; request: string; decision: PermissionDecision }) {
@@ -241,14 +243,17 @@ export async function answerRequest({ env = process.env, launch, request, decisi
     await refuseRequest(env, launch, found);
     return found;
   }
-  if (!found.canAllow) throw approvalUnavailable(found.hostLabel);
   if (found.cut) throw approvalTooLong(found.hostLabel);
+  if (!found.canAllow) throw approvalUnavailable(found.hostLabel, found.unavailable);
   await askApproval(env, launch, found);
   return found;
 }
 
-/** What a host asks: the action and reason it names, as the host sent them, and whether it offers a single-use allow. */
-export interface PermissionAsk { action: string; reason: string; canAllow: boolean }
+/**
+ * What a host asks: the action and reason it names, as the host sent them, and whether Prism can allow it; unavailable says why a
+ * request that cannot be allowed can only be refused, when that is more than that its host offers no single-use allow.
+ */
+export interface PermissionAsk { action: string; reason: string; canAllow: boolean; unavailable?: string }
 
 /** The request whose dialog the supervisor shows: its kept action and reason, which are what the dialog names. */
 export interface ShownRequest { id: string; action: string; reason: string }
@@ -261,7 +266,7 @@ export interface ShownRequest { id: string; action: string; reason: string }
  * withdrawn right after it was asked never lingers.
  */
 export function permissionBroker({ folder, launch, run, host, hostLabel, confirm }: { folder: string; launch: string; run: string; host: string; hostLabel: string; confirm: (request: ShownRequest) => Promise<unknown> }) {
-  const waiting = new Map<string, { action: string; reason: string; canAllow: boolean; cut: boolean; respond: (decision: PermissionDecision) => void }>();
+  const waiting = new Map<string, { action: string; reason: string; canAllow: boolean; unavailable: string | null; cut: boolean; respond: (decision: PermissionDecision) => void }>();
   const handled = new Set<string>();
   let queue: Promise<unknown> = Promise.resolve();
   let closed = false;
@@ -278,8 +283,8 @@ export function permissionBroker({ folder, launch, run, host, hostLabel, confirm
     if (!entry) return;
     let outcome: any;
     try {
-      if (!entry.canAllow) throw approvalUnavailable(hostLabel);
       if (entry.cut) throw approvalTooLong(hostLabel);
+      if (!entry.canAllow) throw approvalUnavailable(hostLabel, entry.unavailable);
       await confirm({ id, action: entry.action, reason: entry.reason });
       // The request may have been refused, withdrawn, or ended while the dialog was open, and then nothing is allowed.
       if (closed || waiting.get(id) !== entry) throw unknownRequest(id);
@@ -297,9 +302,10 @@ export function permissionBroker({ folder, launch, run, host, hostLabel, confirm
       const id = newRequestId();
       const action = keptText(ask.action);
       const reason = keptText(ask.reason);
-      const entry = { action: action.text, reason: reason.text, canAllow: ask.canAllow, cut: action.cut || reason.cut, respond };
+      const unavailable = ask.canAllow ? null : ask.unavailable ? ask.unavailable.slice(0, UNAVAILABLE_MAX) : null;
+      const entry = { action: action.text, reason: reason.text, canAllow: ask.canAllow, unavailable, cut: action.cut || reason.cut, respond };
       waiting.set(id, entry);
-      void later(async () => { if (!closed && waiting.has(id)) await recordRequest(folder, { id, launch, run, host, hostLabel, action: entry.action, reason: entry.reason, canAllow: entry.canAllow, cut: entry.cut }); });
+      void later(async () => { if (!closed && waiting.has(id)) await recordRequest(folder, { id, launch, run, host, hostLabel, action: entry.action, reason: entry.reason, canAllow: entry.canAllow, unavailable: entry.unavailable, cut: entry.cut }); });
       return () => {
         if (waiting.get(id) === entry) waiting.delete(id);
         void later(() => removeRequest(folder, id));

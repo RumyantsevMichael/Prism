@@ -20,6 +20,8 @@ const KILL_GRACE_MS = 2000;
 const NAME_MAX = 100;
 const DESCRIPTION_MAX = 300;
 const MAX_VALUES = 1000;
+// How many tool calls a run keeps the title, kind, and raw input of, for the permission requests that name them.
+const KEPT_TOOL_CALLS = 64;
 
 /** An agent's error answer, or a failure of the connection, with the JSON-RPC code where the agent gave one. */
 export class AcpError extends Error {
@@ -366,20 +368,28 @@ export interface AcpConversationOptions {
   ask: (ask: PermissionAsk, answer: (decision: PermissionDecision) => unknown) => void;
 }
 
+/** What the earlier tool_call and tool_call_update session updates said of one tool call: the latest title, kind, and rawInput each set. */
+export interface KnownToolCall { title?: unknown; kind?: unknown; rawInput?: unknown }
+const TOOL_CALL_FIELDS = ["title", "kind", "rawInput"] as const;
+const isSet = (value: unknown) => value !== undefined && value !== null;
+
 /**
- * An ACP permission request as Prism asks the person: the tool call's title as the action, and an answer that selects the request's
- * allow_once option for an approval, and its reject_once option, else cancelled, for a refusal; no other option is ever selected.
+ * An ACP permission request as Prism asks the person: the tool call's title and its raw input as compact JSON as the action, each of
+ * title, kind, and rawInput that the request leaves out taken from `known`, and an answer that selects the request's allow_once option
+ * for an approval, and its reject_once option, else cancelled, for a refusal; no other option is ever selected.
  */
-export function acpPermission(label: string, params: unknown) {
+export function acpPermission(label: string, params: unknown, known: KnownToolCall = {}) {
   const values = isObject(params) ? params : {};
-  const call = isObject(values.toolCall) ? values.toolCall : {};
+  const sent = isObject(values.toolCall) ? values.toolCall : {};
+  const call: Record<string, any> = {};
+  for (const field of TOOL_CALL_FIELDS) call[field] = isSet(sent[field]) ? sent[field] : known[field];
   const offered = (Array.isArray(values.options) ? values.options : []).filter((option: unknown) => isObject(option) && typeof option.optionId === "string" && option.optionId);
   const once = (kind: string) => offered.find((option: any) => option.kind === kind)?.optionId as string | undefined;
   const allow = once("allow_once");
   const reject = once("reject_once");
   const kind = text(call.kind).trim() || "other";
   return {
-    ask: { action: text(call.title).trim() ? text(call.title) : `a tool of kind ${kind}`, reason: `${label} asks before it runs a tool of kind ${kind}.`, canAllow: allow !== undefined },
+    ask: { action: `${text(call.title).trim() ? text(call.title) : `a tool of kind ${kind}`}${isSet(call.rawInput) ? ` ${JSON.stringify(call.rawInput)}` : ""}`, reason: `${label} asks before it runs a tool of kind ${kind}.`, canAllow: allow !== undefined },
     answer: (decision: PermissionDecision) => {
       const optionId = decision === "approve" ? allow : reject;
       return { outcome: optionId === undefined ? { outcome: "cancelled" } : { outcome: "selected", optionId } };
@@ -397,6 +407,7 @@ export function acpPermission(label: string, params: unknown) {
 export function acpConversation(options: AcpConversationOptions) {
   const { label, initiative, checkout, hostSessionId, resume, coordinator, env, launch, facts, write, close, cut } = options;
   const pending = new Map<number, string>();
+  const toolCalls = new Map<string, KnownToolCall>();
   let nextId = 1;
   let sessionId: string | null = null;
   let configOptions: unknown[] = [];
@@ -561,7 +572,8 @@ export function acpConversation(options: AcpConversationOptions) {
         if (message.method === "session/request_permission") {
           // The request waits for the person on Attention; the run keeps waiting until it is answered.
           const { id } = message;
-          const permission = acpPermission(label, message.params);
+          const callId = message.params?.toolCall?.toolCallId;
+          const permission = acpPermission(label, message.params, typeof callId === "string" ? toolCalls.get(callId) : undefined);
           options.ask(permission.ask, (decision) => ({ jsonrpc: "2.0", id, result: permission.answer(decision) }));
           return;
         }
@@ -593,6 +605,15 @@ export function acpConversation(options: AcpConversationOptions) {
         if (isObject(update.cost) && Number.isFinite(update.cost.amount) && typeof update.cost.currency === "string" && /^[A-Za-z]{1,8}$/.test(update.cost.currency)) usage.cost = { amount: update.cost.amount, currency: update.cost.currency };
         facts.usage = { ...usage };
       } else if (update.sessionUpdate === "config_option_update" && Array.isArray(update.configOptions)) configOptions = update.configOptions;
+      else if ((update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") && typeof update.toolCallId === "string" && update.toolCallId) {
+        // Each field that an update sets replaces the one kept; only the KEPT_TOOL_CALLS most recently updated calls are kept.
+        const key = update.toolCallId;
+        const kept: KnownToolCall = { ...toolCalls.get(key) };
+        for (const field of TOOL_CALL_FIELDS) if (isSet(update[field])) kept[field] = update[field];
+        toolCalls.delete(key);
+        toolCalls.set(key, kept);
+        if (toolCalls.size > KEPT_TOOL_CALLS) toolCalls.delete(toolCalls.keys().next().value!);
+      }
     }
   };
 }
