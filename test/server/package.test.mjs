@@ -16,7 +16,9 @@ test("uses host-specific portable MCP launch paths", async () => {
   assert.deepEqual(claudeMcp.mcpServers["prism-review"], {
     command: "node",
     args: ["${CLAUDE_PLUGIN_ROOT}/dist/server/mcp.mjs"],
-    env: { NODE_USE_ENV_PROXY: "1" }
+    // Its own tool timeout overrides a short MCP_TOOL_TIMEOUT, such as a cloud session's, so a gate wait reaches the background handoff.
+    timeout: 100000000,
+    env: { NODE_USE_ENV_PROXY: "1", PRISM_TOOL_TIMEOUT_MS: "100000000" }
   });
   assert.equal(codexManifest.mcpServers, "./.codex-mcp.json");
   assert.deepEqual(codexMcp.mcpServers["prism-review"], {

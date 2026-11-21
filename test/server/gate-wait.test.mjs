@@ -9,6 +9,7 @@ import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { answerUserGate, readCoordinationState, updateCoordinationState } from "../../dist/server/workflow/state.mjs";
+import { MAX_WAIT_MINUTES } from "../../dist/server/workflow/gate-wait.mjs";
 import { waitForGateAnswers } from "../../dist/hooks/wait-for-gate-answers.mjs";
 import { Readable } from "node:stream";
 import { readdir } from "node:fs/promises";
@@ -33,7 +34,7 @@ async function project(context) {
 
 function server(context, root, clientName, { version = "2.1.296", environment = {} } = {}) {
   const env = isolatedEnv({ PRISM_REVIEW_APP_DIR: path.join(root, ".app"), PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_GATE_WAIT_HEARTBEAT_MS: "200", PRISM_GATE_WAIT_SETTLE_MS: "600", CLAUDE_PROJECT_DIR: root });
-  for (const name of ["MCP_TOOL_TIMEOUT", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"]) delete env[name];
+  for (const name of ["MCP_TOOL_TIMEOUT", "PRISM_TOOL_TIMEOUT_MS", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"]) delete env[name];
   Object.assign(env, environment);
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
   const messages = [];
@@ -140,6 +141,8 @@ test("returns at once when the host would cancel the wait before backgrounding i
   for (const [options, reason] of [
     [{ environment: { MCP_TOOL_TIMEOUT: "60000" } }, /MCP_TOOL_TIMEOUT \(60000 ms\) ends the call before Claude Code moves it to the background \(120000 ms\)/],
     [{ environment: { MCP_TOOL_TIMEOUT: "60000", CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: "30000" } }, null],
+    [{ environment: { MCP_TOOL_TIMEOUT: "60000", PRISM_TOOL_TIMEOUT_MS: "100000000" } }, null],
+    [{ environment: { PRISM_TOOL_TIMEOUT_MS: "60000" } }, /The prism-review server timeout \(60000 ms\) ends the call before Claude Code moves it to the background/],
     [{ environment: { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" } }, /disabled/],
     [{ version: "2.1.100" }, /predates background tool calls/]
   ]) {
@@ -154,6 +157,14 @@ test("returns at once when the host would cancel the wait before backgrounding i
       assert.equal(response.result.structuredContent.status, "timeout", JSON.stringify(options));
     }
   }
+});
+
+// A cloud session sets MCP_TOOL_TIMEOUT to one minute; the plugin's own server timeout outlasts the longest wait, and the server is told the same value.
+test("the plugin's server timeout outlasts the longest wait and is the one the server checks", async () => {
+  const config = JSON.parse(await readFile(new URL("../../.claude-mcp.json", import.meta.url), "utf8")).mcpServers["prism-review"];
+  assert.equal(typeof config.timeout, "number");
+  assert.ok(config.timeout > MAX_WAIT_MINUTES * 60000, `${config.timeout} ms does not outlast ${MAX_WAIT_MINUTES} minutes`);
+  assert.equal(config.env.PRISM_TOOL_TIMEOUT_MS, String(config.timeout));
 });
 
 test("waits on several gates and collects answers given in one visit", async (context) => {
