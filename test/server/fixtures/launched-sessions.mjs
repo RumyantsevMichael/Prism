@@ -15,6 +15,7 @@ export { INITIATIVE };
 export const FOREIGN_SESSION = {
   CLAUDECODE: "1",
   CLAUDE_CODE_SESSION_ID: "99999999-9999-4999-8999-999999999999",
+  CLAUDE_CODE_REMOTE_SESSION_ID: "cse_01ForeignWebSession99",
   CLAUDE_CODE_ENTRYPOINT: "cli",
   CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/foreign.sock",
   CLAUDE_CODE_MESSAGING_TOKEN: "foreign-token",
@@ -53,7 +54,7 @@ let plans = {};
 try { plans = JSON.parse(readFileSync(process.env.PRISM_STUB_PLANS, "utf8")); } catch {}
 const list = plans[host] ?? [];
 const plan = list[Math.min(previous.length, list.length - 1)] ?? {};
-const watched = ${JSON.stringify(["PRISM_LAUNCH", "PRISM_STUB_MARKER"])}.concat(${JSON.stringify(Object.keys({ CLAUDECODE: 1, CLAUDE_CODE_SESSION_ID: 1, CLAUDE_CODE_ENTRYPOINT: 1, CLAUDE_CODE_MESSAGING_SOCKET: 1, CLAUDE_CODE_MESSAGING_TOKEN: 1, CLAUDE_PROJECT_DIR: 1, CLAUDE_PLUGIN_ROOT: 1, CLAUDE_PLUGIN_DATA: 1, CODEX_THREAD_ID: 1 }))});
+const watched = ${JSON.stringify(["PRISM_LAUNCH", "PRISM_STUB_MARKER"])}.concat(${JSON.stringify(Object.keys({ CLAUDECODE: 1, CLAUDE_CODE_SESSION_ID: 1, CLAUDE_CODE_REMOTE_SESSION_ID: 1, CLAUDE_CODE_ENTRYPOINT: 1, CLAUDE_CODE_MESSAGING_SOCKET: 1, CLAUDE_CODE_MESSAGING_TOKEN: 1, CLAUDE_PROJECT_DIR: 1, CLAUDE_PLUGIN_ROOT: 1, CLAUDE_PLUGIN_DATA: 1, CODEX_THREAD_ID: 1 }))});
 const env = Object.fromEntries(watched.map((name) => [name, process.env[name] ?? null]));
 const keep = "setInterval(() => {}, 1000)";
 const children = (plan.children ?? []).map((kind) => {

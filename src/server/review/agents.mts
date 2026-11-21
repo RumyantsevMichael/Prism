@@ -19,6 +19,7 @@ function launchEntry(launch: any, title: string, claim: any, archived: boolean) 
     name: title,
     harness: launch.hostLabel ?? launch.host ?? null,
     model: launch.model ?? null,
+    session: null,
     initiative: { id: launch.initiative, title },
     slice: claim ? { ref: claim.ref, title: claim.sliceTitle } : null,
     activity: claim ? claim.activity : null,

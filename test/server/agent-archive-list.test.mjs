@@ -14,7 +14,7 @@ process.env.PLUGIN_DATA = privateData;
 delete process.env.CLAUDE_PLUGIN_DATA;
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
-const FIELDS = ["id", "kind", "group", "name", "harness", "model", "initiative", "slice", "activity", "state", "reason", "expiresAt", "launch", "action"];
+const FIELDS = ["id", "kind", "group", "name", "harness", "model", "session", "initiative", "slice", "activity", "state", "reason", "expiresAt", "launch", "action"];
 const LAUNCH_FIELDS = ["id", "launchedAt", "runningMs", "runs", "endedAt", "exit", "resumeCommand", "waitingGate"];
 const VIEW_FIELDS = ["answerWaits", "checkout", "endedAt", "exit", "holder", "host", "hostLabel", "id", "initiative", "launchedAt", "model", "reason", "resumeCommand", "runningMs", "runs", "state", "waitingGate"];
 
