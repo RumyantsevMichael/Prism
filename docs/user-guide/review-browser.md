@@ -408,6 +408,9 @@ One install, update, or removal runs at a time on a computer, and another one me
 
 A launched session is a headless Claude Code, Codex, or [ACP agent](#acp-agents) session that runs Prism's orchestrate skill for one initiative on this computer, started from the review page.
 It works on the initiative as an agent you started in a terminal would, and you watch, stop, and resume it from the page.
+At the start of each launch and each resume, Prism tells the run that no person reads its messages.
+The run then asks you only through a gate that the review page shows, or it decides by itself where its autonomy lets it.
+Claude Code gets this note as an appended system prompt, Codex as the instructions of its thread, and an ACP agent as the last text block of its prompt.
 
 ### Launch an initiative
 

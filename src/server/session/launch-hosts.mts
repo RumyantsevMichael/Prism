@@ -55,6 +55,9 @@ const CLAUDE_FLAGS = Object.freeze(["--input-format", "stream-json", "--output-f
 // The permission policy of every Codex thread that Prism starts or resumes: the host's automatic review decides what it can, and asks
 // Prism only the rest.
 const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" });
+// The fixed start note of every launched run, its launch and each resume: Claude Code reads it through --append-system-prompt,
+// Codex as the developerInstructions of its thread, and an ACP agent as the last text block of its prompt.
+export const LAUNCH_NOTE = "Prism launched this run headless, so no person reads your messages or replies. When you need the person, ask only through a Prism gate: record it with update_coordination_state and wait for the answer with wait_for_user_gate. Where your autonomy lets you, decide by yourself and continue the work. Never end a turn with a question in your reply, because nobody sees it.";
 const CODEX_CLIENT = Object.freeze({ clientInfo: { name: "prism-launch", version: "1" }, capabilities: { experimentalApi: true } });
 // The answer to every request that a host sends Prism other than a permission request, such as a question.
 export const HOST_REQUEST_REFUSAL = Object.freeze({ code: -32601, message: "Prism answers no host requests." });
@@ -229,7 +232,7 @@ export function hostArguments({ host, hostSessionId, resume, coordinator = null,
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
     const { model, effort } = coordinatorOf(coordinator);
-    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS, ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
+    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS, "--append-system-prompt", LAUNCH_NOTE, ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
   }
   if (host === "codex") return ["app-server"];
   if (acp) return [...acp.args];
@@ -248,9 +251,9 @@ export function claudePrompt(initiative: string) {
 export function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null }: { checkout: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown }) {
   const { model, provider } = coordinatorOf(coordinator);
   const chosen = { ...(model === null ? {} : { model }), ...(provider === null ? {} : { modelProvider: provider }) };
-  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY, ...chosen } };
+  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY, ...chosen, developerInstructions: LAUNCH_NOTE } };
   if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
-  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY, ...chosen } };
+  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY, ...chosen, developerInstructions: LAUNCH_NOTE } };
 }
 
 /** The Codex request that starts the run's one orchestrate turn, with the effort of the coordinator's choice, left out for the host default. */

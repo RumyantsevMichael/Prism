@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pluginPath } from "../../plugin-root.mjs";
-import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, lineSplitter, MODEL_PATTERN, strippedEnvironment, validHostSessionId } from "../launch-hosts.mjs";
+import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, LAUNCH_NOTE, lineSplitter, MODEL_PATTERN, strippedEnvironment, validHostSessionId } from "../launch-hosts.mjs";
 import { toolsListed } from "../options-read-marker.mjs";
 import type { PermissionAsk, PermissionDecision } from "../permission-requests.mjs";
 
@@ -498,7 +498,7 @@ export function acpConversation(options: AcpConversationOptions) {
     }
     const first = embedded ? { type: "resource", resource: { uri: SKILL_URI, mimeType: "text/markdown", text: skill } } : { type: "text", text: skill };
     prompting = true;
-    request("session/prompt", { sessionId, prompt: [first, { type: "text", text: launchInstruction(initiative) }] });
+    request("session/prompt", { sessionId, prompt: [first, { type: "text", text: launchInstruction(initiative) }, { type: "text", text: LAUNCH_NOTE }] });
   };
   const opened = (method: string, result: any) => {
     const id = method === "session/new" ? result?.sessionId : hostSessionId;

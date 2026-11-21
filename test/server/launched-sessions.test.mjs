@@ -18,7 +18,9 @@ const posixOnly = process.platform === "win32" ? "process supervision is checked
 
 const module = () => import("../../dist/server/session/launched-sessions.mjs");
 const CLAUDE_FLAGS = ["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "host", "--permission-prompt-tool", "stdio"];
-const claudeArgs = (flag, id) => ["-p", "--verbose", flag, id, ...CLAUDE_FLAGS];
+// headless-run-questions §2: every run is told at its start that no person reads its messages.
+const { LAUNCH_NOTE } = await import("../../dist/server/session/launch-hosts.mjs");
+const claudeArgs = (flag, id) => ["-p", "--verbose", flag, id, ...CLAUDE_FLAGS, "--append-system-prompt", LAUNCH_NOTE];
 const prompt = (initiative) => ({ type: "user", message: { role: "user", content: `/prism:orchestrate ${initiative}` } });
 const CODEX_POLICY = { approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" };
 const methods = (messages) => messages.filter((message) => message.method).map((message) => message.method);
@@ -104,7 +106,7 @@ test("a Codex launch runs app-server, starts a thread with the automatic review 
   assert.equal(new Set(ids).size, 3, "each request has its own id");
   assert.equal(request(messages, "initialized").id, undefined, "initialized is a notification");
   assert.deepEqual(request(messages, "initialize").params, { clientInfo: { name: "prism-launch", version: "1" }, capabilities: { experimentalApi: true } });
-  assert.deepEqual(request(messages, "thread/start").params, { cwd: fixture.root, ...CODEX_POLICY });
+  assert.deepEqual(request(messages, "thread/start").params, { cwd: fixture.root, ...CODEX_POLICY, developerInstructions: LAUNCH_NOTE });
   assert.deepEqual(request(messages, "turn/start").params, { threadId: CODEX_THREAD, input: [{ type: "text", text: `$prism:orchestrate ${INITIATIVE}` }] });
   assert.deepEqual(fixture.closed(run.pid), { results: 1, interrupted: false }, "the input closed once the turn completed");
   assert.deepEqual(finished.exit, { code: 0, signal: null });
@@ -264,7 +266,7 @@ test("a resume runs the same host session again with the resume form of the same
   assert.deepEqual(resumedCodex.argv, ["app-server"]);
   const messages = fixture.inputs(resumedCodex.pid);
   assert.deepEqual(methods(messages), ["initialize", "initialized", "thread/resume", "turn/start"]);
-  assert.deepEqual(request(messages, "thread/resume").params, { threadId: CODEX_THREAD, cwd: fixture.root, ...CODEX_POLICY });
+  assert.deepEqual(request(messages, "thread/resume").params, { threadId: CODEX_THREAD, cwd: fixture.root, ...CODEX_POLICY, developerInstructions: LAUNCH_NOTE });
   assert.deepEqual(request(messages, "turn/start").params, { threadId: CODEX_THREAD, input: [{ type: "text", text: "$prism:orchestrate search" }] });
 });
 
