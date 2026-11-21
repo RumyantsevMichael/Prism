@@ -19,6 +19,8 @@ import { hostArguments, hostConversation, hostEnvironment, redactSessionId, reso
 // The tail of a host's standard error that a run keeps in run-<n>.stderr of its launch folder, with the host session id redacted.
 const STDERR_KEEP = 64 * 1024;
 const STDERR_LINE_MAX = 300;
+// The raw tail held while the host runs: the kept size and as much again, so the id is redacted before the kept text is cut.
+const STDERR_HELD = 2 * STDERR_KEEP;
 // A stack frame: a line whose first word after spaces is `at`.
 const STACK_FRAME = /^\s*at(\s|$)/;
 const OUTPUT_DRAIN_MS = 2000;
@@ -35,6 +37,19 @@ const STOP_FINISH_MS = 2000;
 // exit, the handle sends nothing; no process is ever ended by a looked-up process id.
 function forceEndHost(child: any) {
   try { child.kill("SIGKILL"); } catch {}
+}
+
+/**
+ * The text of run-<n>.stderr: the held raw tail with every named session id redacted, whatever its characters, then cut to its last
+ * STDERR_KEEP bytes. A held tail that lost its start may begin inside an id, which no redaction matches, so the length of the longest
+ * id, and the replacement characters of a split character, are dropped from its start after the redaction.
+ */
+export function keptStderr(held: Buffer, trimmed: boolean, ids: unknown[]) {
+  const named = ids.filter((id): id is string => typeof id === "string" && id.length > 0);
+  let text = named.reduce((value, id) => redactSessionId(value, id), held.toString("utf8"));
+  if (trimmed) text = text.slice(Math.max(0, ...named.map((id) => id.length)) + 3);
+  const bytes = Buffer.from(text, "utf8");
+  return bytes.length > STDERR_KEEP ? bytes.subarray(bytes.length - STDERR_KEEP).toString("utf8") : text;
 }
 
 /** The last non-blank line of a host's standard error that is no stack frame, or null. */
@@ -85,6 +100,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
+  let stderrTrimmed = false;
 
   // Every listener is attached as soon as the host process exists, so no early output or exit is missed.
   const watch = (child: any) => {
@@ -175,7 +191,10 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
       });
       child.stderr.on("data", (chunk: any) => {
         stderr = Buffer.concat([stderr, chunk]);
-        if (stderr.length > STDERR_KEEP) stderr = stderr.subarray(stderr.length - STDERR_KEEP);
+        if (stderr.length > STDERR_HELD) {
+          stderr = stderr.subarray(stderr.length - STDERR_HELD);
+          stderrTrimmed = true;
+        }
       });
       const drained = new Promise<void>((done) => {
         let open = 2;
@@ -202,14 +221,14 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
         clearInterval(heartbeat);
         const { facts } = conversation;
         // The id is replaced before the text is cut, so no cut leaves part of it behind.
-        const kept = redactSessionId(stderr.toString("utf8"), record.hostSessionId ?? facts.hostSessionId);
+        const kept = keptStderr(stderr, stderrTrimmed, [record.hostSessionId, facts.hostSessionId, facts.agentSessionId]);
         await writeAtomically(path.join(folder, `run-${number}.stderr`), kept, { mode: 0o600 }).catch(() => {});
         await update((current: any) => {
           if (!current.hostSessionId && facts.hostSessionId) current.hostSessionId = facts.hostSessionId;
           const run = current.runs.find((entry: any) => entry.token === token);
           if (!run) return;
           const last = lastReasonLine(redactSessionId(kept, current.hostSessionId));
-          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, failure: facts.failure, stderr: last?.slice(0, STDERR_LINE_MAX) ?? null, ...(acp ? { usage: facts.usage } : {}) });
+          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, failure: facts.failure, stderr: last?.slice(0, STDERR_LINE_MAX) ?? null, ...(acp ? { usage: facts.usage, settled: facts.settled } : {}) });
           if (!run.stopRequestedAt && request) run.stopRequestedAt = new Date(requestTime(request)).toISOString();
         });
         resolve();

@@ -281,7 +281,8 @@ function stateOf(record: any, status: any, label: string, gates: any) {
   const stderr = lastErrorLine(run.stderr);
   const tail = stderr ? ` ${stderr}` : "";
   if (run.exit?.signal) return { state: "failed", reason: `${label} ended by signal ${run.exit.signal}.${tail}` };
-  if (run.exit && run.exit.code !== 0) return { state: "failed", reason: `${label} ended with exit code ${run.exit.code}.${tail}` };
+  // An ACP run that never settled, as when its agent exits before its prompt answers, fails with its exit status even when that is 0.
+  if (run.exit && (run.exit.code !== 0 || run.settled === false)) return { state: "failed", reason: `${label} ended with exit code ${run.exit.code}.${tail}` };
   if (gates.waiting) return { state: "waiting", reason: null };
   const refusals = Array.isArray(run.refusals) ? run.refusals : [];
   if (refusals.length) {

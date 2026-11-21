@@ -75,10 +75,15 @@ export function validHostSessionId(value: unknown): value is string {
   return typeof value === "string" && HOST_SESSION_ID_PATTERN.test(value);
 }
 
-/** The text with every occurrence of the host session id, in any letter case, replaced by a placeholder; the pattern keeps the id free of regular expression syntax. */
+const REGEX_SYNTAX = /[.*+?^${}()|[\]\\]/g;
+
+/**
+ * The text with every occurrence of the host session id, in any letter case, replaced by a placeholder; any non-empty id counts, also
+ * one that HOST_SESSION_ID_PATTERN refuses, such as an ACP agent's opaque session id, and its characters are matched literally.
+ */
 export function redactSessionId<T>(text: T, hostSessionId: unknown): T {
-  if (typeof text !== "string" || !validHostSessionId(hostSessionId)) return text;
-  return text.replace(new RegExp(hostSessionId, "gi"), SESSION_ID_PLACEHOLDER) as T;
+  if (typeof text !== "string" || typeof hostSessionId !== "string" || !hostSessionId) return text;
+  return text.replace(new RegExp(hostSessionId.replace(REGEX_SYNTAX, "\\$&"), "gi"), SESSION_ID_PLACEHOLDER) as T;
 }
 
 /** Claude Code's or Codex's definition, or null for any other host. */
@@ -366,7 +371,9 @@ const digestKey = (id: string) => createHash("sha256").update(Buffer.from(id, "u
  * closes the input once the host has answered it, or at once for a Codex run that has not sent turn/start yet.
  */
 export interface HostRefusal { tool: string; reason: string }
-export interface HostFacts { hostSessionId: string | null; turnId: string | null; model: string | null; refusals: HostRefusal[]; refusalCount: number; hostError: string | null; failure: string | null; usage: any }
+// agentSessionId is the session id an ACP agent named, whatever its characters, kept only to redact it; settled is false while an ACP
+// run has no outcome of its own, so an agent that exits 0 before its prompt answers fails the run.
+export interface HostFacts { hostSessionId: string | null; agentSessionId: string | null; settled: boolean; turnId: string | null; model: string | null; refusals: HostRefusal[]; refusalCount: number; hostError: string | null; failure: string | null; usage: any }
 export interface HostConversationOptions {
   initiative: string;
   checkout: string;
@@ -382,7 +389,7 @@ export interface HostConversationOptions {
 }
 
 export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null }: HostConversationOptions) {
-  const facts: HostFacts = { hostSessionId: null, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null };
+  const facts: HostFacts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
   const named = (value: unknown) => {
@@ -393,7 +400,7 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     onModel(facts.model);
   };
   let inputOpen = true;
-  const redact = (value: string) => redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId);
+  const redact = (value: string) => redactSessionId(redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId), facts.agentSessionId);
   // The id is replaced before the text is cut, so no cut leaves part of it behind.
   const cut = (value: string) => detached(redact(value).slice(0, REFUSAL_REASON_MAX));
   const hostError = (value: string) => cut(value || HOST_ERROR_FALLBACK);

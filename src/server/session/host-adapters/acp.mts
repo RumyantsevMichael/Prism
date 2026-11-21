@@ -339,7 +339,7 @@ const finiteTokens = (usage: unknown) => {
   return Object.keys(counts).length ? counts : null;
 };
 
-export interface AcpRunFacts { hostSessionId: string | null; model: string | null; hostError: string | null; failure: string | null; usage: AcpUsage | null; refusals: { tool: string; reason: string }[]; refusalCount: number }
+export interface AcpRunFacts { hostSessionId: string | null; agentSessionId: string | null; settled: boolean; model: string | null; hostError: string | null; failure: string | null; usage: AcpUsage | null; refusals: { tool: string; reason: string }[]; refusalCount: number }
 
 export interface AcpConversationOptions {
   label: string;
@@ -392,6 +392,7 @@ export function acpConversation(options: AcpConversationOptions) {
     write({ jsonrpc: "2.0", id, method, params });
   };
   const fail = (reason: string) => {
+    facts.settled = true;
     facts.failure = cut(reason);
     close();
   };
@@ -461,6 +462,8 @@ export function acpConversation(options: AcpConversationOptions) {
       return;
     }
     sessionId = id;
+    // Whatever its characters, the id is redacted from every reason and the kept standard error; only a valid one is recorded.
+    facts.agentSessionId = id;
     if (method === "session/new" && validHostSessionId(id)) {
       facts.hostSessionId = id;
       options.onSessionId(id);
@@ -507,6 +510,7 @@ export function acpConversation(options: AcpConversationOptions) {
     }
     if (method === "session/prompt") {
       promptDone = true;
+      facts.settled = true;
       usage.tokens = finiteTokens(result?.usage);
       facts.usage = { ...usage };
       const stopReason = text(result?.stopReason);
@@ -523,6 +527,7 @@ export function acpConversation(options: AcpConversationOptions) {
     start: () => request("initialize", { protocolVersion: ACP_PROTOCOL_VERSION, clientCapabilities: {}, clientInfo: { name: "prism-launch", version: "1" } }),
     interrupt() {
       stopAsked = true;
+      facts.settled = true;
       if (prompting && !promptDone) sendCancel();
       else close();
     },
@@ -551,6 +556,7 @@ export function acpConversation(options: AcpConversationOptions) {
             fail(acpReasons.signIn(label, authMethods));
             return;
           }
+          facts.settled = true;
           facts.hostError = cut(text(message.error?.message) || "The agent gave no reason.");
           close();
           return;
