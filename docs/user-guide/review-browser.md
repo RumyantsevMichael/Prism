@@ -276,7 +276,7 @@ Besides Claude Code and Codex, Prism lists as a host each Agent Client Protocol 
 Every host list reads the declarations and installs again on each request, so an agent you declare, install, or remove appears or disappears without restarting the review app.
 The **Host** setting lists Claude Code, then Codex, then the installed agents in the order they were installed, then the declared ones in file order, each as `acp-<id>` with its label.
 Prism's own runs do not run on ACP agents, so **Prism's own runs** lists each of them as unavailable.
-Launching a session on an ACP agent is Planned: until then, **Launch** names the agent and says that Prism does not run launched sessions on it yet.
+**Launch** starts a [launched session](#launched-sessions) on an ACP agent as on Claude Code or Codex, and [What runs](#what-runs) says how it runs there.
 
 To show an ACP agent's models and efforts, the review app starts the agent's own command in the checkout, opens one session with Prism's tools, reads the options the agent reports, and closes the session without sending it any prompt.
 The **Coordinator** picker lists the agent's models in the agent's order and the efforts of the chosen model lowest first, each after **Host default**, and leaves out every other option the agent reports, such as its mode.
@@ -326,7 +326,7 @@ An agent whose command is not found shows its reason, such as `Gemini CLI was no
 
 ## Launched sessions
 
-A launched session is a headless Claude Code or Codex session that runs Prism's orchestrate skill for one initiative on this computer, started from the review page.
+A launched session is a headless Claude Code, Codex, or [ACP agent](#acp-agents) session that runs Prism's orchestrate skill for one initiative on this computer, started from the review page.
 It works on the initiative as an agent you started in a terminal would, and you watch, stop, and resume it from the page.
 
 ### Launch an initiative
@@ -374,11 +374,21 @@ A computer that cannot show the dialog refuses every launch with `This computer 
 
 Claude Code runs as `claude -p --verbose --session-id <session id> --input-format stream-json --output-format stream-json --permission-mode auto --permission-prompts none` with the prompt `/prism:orchestrate <initiative>`.
 Codex runs as `codex app-server` with the approval policy `on-request`, the automatic approval reviewer, and the `workspace-write` sandbox, and the prompt `$prism:orchestrate <initiative>`.
+An ACP agent runs as the command, arguments, and environment of its declaration or install record, and Prism declares no file system or terminal capability to it.
+Prism opens one session in the checkout whose only MCP server is Prism's own, run by the review app's Node with `NODE_USE_ENV_PROXY=1`, `PRISM_LAUNCH`, and the review app folder, and it sets the agent's automatic mode, the declaration's `autoMode` or else the agent's `auto` mode, then the coordinator's model and effort, before the prompt.
+Prism never sets a mode that bypasses or accepts all permissions, such as `bypassPermissions` or `agent-full-access`, even when a declaration names it, and an agent without an automatic mode keeps its own.
+A value the agent does not offer fails the run before its prompt with `<label> does not offer <value> for <option>.`.
+Prism waits up to 60 seconds for its tools to start in the agent's session, and an agent that does not start them ends with `<label> did not start Prism's tools, so it cannot run Prism's workflow.` and receives no prompt.
+Prism's skills are not installed in an ACP agent, so the prompt carries the text of the orchestrate skill, as an attached resource where the agent takes one, and the instruction to run it for the initiative and to read every other skill file it names with Prism's `get_skill` tool.
+The agent answers no other request of Prism's, and a permission request it asks is cancelled, so the action it asked for does not run and the session shows it as refused; approving such requests on Attention is Planned.
+A run on an ACP agent fails with `<label> stopped: <reason>.` when the agent stops for a refusal, its token limit, or its turn limit.
 Each runs in the checkout's folder with the review app's environment, without the variables of an agent session that the review app may have inherited, and with `PRISM_LAUNCH` set to the launch's id.
 The host's own permission handling and the project's own host settings apply: Prism grants no permission and answers no question of the host itself, so an action the host's automatic handling refuses ends as a refusal that the session shows.
 A session keeps running when the review app exits, idles out, restarts, or is replaced by a newer release, because a supervisor process of its own starts and watches the host.
 Each launched session keeps its record in `launches/<launch id>/` in the review app folder, readable only by you, and Prism removes it 14 days after the session's last run ended.
 The host's session id stays in that record on this computer: no shared record, history entry, or log holds it, and only this computer's page shows it, in the command that continues the session in a terminal.
+Each run keeps the last 64 KiB of its host's standard error, with the host's session id replaced, in `run-<n>.stderr` of the launch's folder, and a run that failed without an error answer gives as its reason the last line of that text that is not a stack frame.
+A run on an ACP agent also keeps the usage the agent reported: the tokens of its answer, the context used and its size, and the cost, each shown as not reported when the agent gave none.
 Each run also keeps the model its host reports as soon as the host names it, from Claude Code's first `init` event or from the result of Codex's thread start or resume, and a launched session names the model of its latest run; a run whose host names no model, or a value longer than 128 characters or holding a control character, keeps none.
 
 ### How the review app reads a host's models
@@ -422,7 +432,7 @@ A claim's name is the claim's label, such as `Dana on studio-mac`, which opens t
 A session that waits offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown; a running session offers **Stop**; any other session offers **Open**, which unfolds its details under its row.
 A claim offers no action.
 
-The details hold the session's reason, the command that continues it in a terminal while no run runs and the host reported its session id, `claude --resume <session id>` or `codex resume <thread id>`, with the folder to run it in and **Copy**, which copies the command, and the session's own actions, such as **Resume**.
+The details hold the session's reason, the command that continues it in a terminal while no run runs and the host reported its session id, `claude --resume <session id>`, `codex resume <thread id>`, or an ACP agent's declared `resumeCommand` with `{session}` replaced, with the folder to run it in and **Copy**, which copies the command, and the session's own actions, such as **Resume**.
 The page reads the list again every 5 seconds and after each action you apply there, and moves a claim to **Claims that expired** once its lease passes.
 In a tab that cannot make changes the page says so, **Stop** stays unavailable, and the details offer no action, while **Answer** still opens the question.
 With no agent and no launched session it says `No agent works on this workspace, and nothing was launched on this computer.`.
@@ -443,11 +453,13 @@ A session whose supervisor ended without recording the run's end shows `Prism st
 ### Stop, resume, or continue a session
 
 **Stop** interrupts the host's turn as the host's own Stop button does, after which the host ends its turn and exits by itself.
+An ACP agent receives `session/cancel` while its prompt runs, and Prism closes its input once the prompt answers, or at once before the prompt.
 When the host still runs 10 seconds after you stopped it, Prism ends the host process; `PRISM_LAUNCH_STOP_GRACE_MS` sets another wait in milliseconds.
 A stop ends only the host process, so a process that the host or its agent started and detached may keep running, as after the host's own Stop button.
 **Stop** stays available while a run runs, also after the initiative shipped.
 
 **Resume** starts the same host session again headless, with the dialog unless the launch window is open.
+An ACP agent reopens its session with `session/resume`, or with `session/load` when it cannot resume, and Prism sets the recorded mode, model, and effort again and sends the prompt again; an agent that can do neither fails with `<label> cannot resume a session.`.
 It is unavailable while the session runs, after the initiative shipped, while another launched session of the initiative runs, while the host's executable is not on `PATH`, and when the host never reported its session id.
 To continue a session in a terminal instead, run its command in its folder once no run runs.
 
