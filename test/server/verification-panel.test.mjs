@@ -6,11 +6,11 @@ import path from "node:path";
 import test from "node:test";
 import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
-// Git and the run logs use a private home and plugin data, so a recorded log path starts with ~.
+// Git and the run logs use a private home and plugin data, so a recorded log path starts with ~; Windows reads the home folder from USERPROFILE.
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-verification-panel-data-")));
 await writeFile(path.join(privateData, "gitconfig"), "");
 Object.assign(process.env, {
-  PLUGIN_DATA: privateData, HOME: privateData, GIT_CONFIG_GLOBAL: path.join(privateData, "gitconfig"), GIT_CONFIG_NOSYSTEM: "1",
+  PLUGIN_DATA: privateData, HOME: privateData, USERPROFILE: privateData, GIT_CONFIG_GLOBAL: path.join(privateData, "gitconfig"), GIT_CONFIG_NOSYSTEM: "1",
   GIT_AUTHOR_NAME: "Prism Test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "Prism Test", GIT_COMMITTER_EMAIL: "test@example.invalid"
 });
 delete process.env.CLAUDE_PLUGIN_DATA;
