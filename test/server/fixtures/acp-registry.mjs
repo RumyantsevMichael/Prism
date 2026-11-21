@@ -9,6 +9,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { crc32, deflateRawSync } from "node:zlib";
+import { hiddenProgram } from "./no-host-path.mjs";
 
 /** This computer's registry platform key, such as linux-x86_64, linux-x86_64-musl, or darwin-aarch64. */
 export function platformKey() {
@@ -18,12 +19,14 @@ export function platformKey() {
   return `${system}-${arch}${musl ? "-musl" : ""}`;
 }
 
-// The package programs whose presence decides whether an npx or uvx agent can be installed, and the hosts Prism runs itself.
-const WITHHELD = new Set(["npm", "npx", "uv", "uvx", "claude", "codex"]);
+// The package programs whose presence decides whether an npx or uvx agent can be installed; no test process finds the hosts that
+// Prism runs itself, the native dialog programs, or a well-known coding agent either.
+const WITHHELD = new Set(["npm", "npx", "uv", "uvx"]);
 
 /**
  * Gives the fixture a PATH of its stub folder and one folder of links to every other program of its PATH, without npm, npx, uv,
- * uvx, claude, and codex, so that what this computer has installed decides nothing; packageTools adds stub npm and uv to the stub folder.
+ * uvx, or any program that the test guard hides, so that what this computer has installed decides nothing; packageTools adds stub
+ * npm and uv to the stub folder.
  */
 async function withoutPackageTools(fixture) {
   const folder = path.join(path.dirname(fixture.log), "system-tools");
@@ -33,7 +36,7 @@ async function withoutPackageTools(fixture) {
     let names = [];
     try { names = readdirSync(source); } catch { continue; }
     for (const name of names) {
-      if (linked.has(name) || WITHHELD.has(name)) continue;
+      if (linked.has(name) || WITHHELD.has(name) || hiddenProgram(name)) continue;
       const target = path.join(source, name);
       try { if (!statSync(target).isFile()) continue; } catch { continue; }
       linked.add(name);

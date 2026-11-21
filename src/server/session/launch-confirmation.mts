@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { access, constants, link, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, constants, link, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { hostDefinition } from "./launch-hosts.mjs";
@@ -227,12 +228,28 @@ async function executableFile(file: string) {
   }
 }
 
+// Node's test runner sets NODE_TEST_CONTEXT in each test process, and every server it spawns with that environment inherits it.
+// There a dialog program counts only when it really lies in the temporary directory, where a test puts its stub, so no test shows
+// a real dialog on any platform, also where the suite cannot take the real program off PATH, such as powershell.exe on Windows.
+const underTestRunner = (env: NodeJS.ProcessEnv) => Boolean(env.NODE_TEST_CONTEXT || process.env.NODE_TEST_CONTEXT);
+
+async function testStub(file: string) {
+  try {
+    const [real, temporary] = await Promise.all([realpath(file), realpath(os.tmpdir())]);
+    const relative = path.relative(temporary, real);
+    return relative !== "" && relative.split(path.sep)[0] !== ".." && !path.isAbsolute(relative);
+  } catch {
+    return false;
+  }
+}
+
 async function findOnPath(env: NodeJS.ProcessEnv, name: string) {
   const value = env.PATH ?? env.Path ?? "";
+  const testing = underTestRunner(env);
   for (const entry of value.split(path.delimiter)) {
     if (!entry || !path.isAbsolute(entry)) continue;
     const file = path.join(entry, name);
-    if (await executableFile(file)) return file;
+    if (await executableFile(file) && (!testing || await testStub(file))) return file;
   }
   return null;
 }
