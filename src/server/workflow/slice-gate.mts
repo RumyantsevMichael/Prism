@@ -33,6 +33,8 @@ export async function contentTree(projectRoot: string, config: WorkflowConfig, {
   try {
     const index = path.join(temporary, "index");
     const env = { ...process.env, GIT_INDEX_FILE: index, GIT_OPTIONAL_LOCKS: "0" };
+    const roadmap = roadmapPaths(config);
+    const excluded = [RECORD_DIRECTORY, config.paths.plans, roadmap?.record, roadmap?.projection].filter(Boolean) as string[];
     if (commit) await git(root, ["read-tree", commit], env, timeoutMs);
     else {
       // The copy keeps the index's modification time, so Git still re-reads a file changed in the same timestamp tick as the index ("racy" entries) instead of trusting its cached size and time.
@@ -41,11 +43,11 @@ export async function contentTree(projectRoot: string, config: WorkflowConfig, {
         const { atime, mtime } = await stat(source);
         await utimes(index, atime, mtime);
       }).catch(() => {});
-      await git(root, ["add", "-A", "--", "."], env);
+      // Excluded paths are never added, so a record written or replaced while Git reads the work tree cannot fail the add.
+      await git(root, ["add", "-A", "--", ".", ...excluded.map((excludedPath) => `:(exclude)${excludedPath}`)], env);
     }
-    const roadmap = roadmapPaths(config);
-    const excluded = [RECORD_DIRECTORY, config.paths.plans, roadmap?.record, roadmap?.projection].filter(Boolean) as string[];
-    await git(root, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ...excluded], env, timeoutMs);
+    // The removal is forced because a record written while the project is hashed differs from both the temporary index and HEAD, which Git otherwise refuses to unstage.
+    await git(root, ["rm", "-r", "-q", "-f", "--cached", "--ignore-unmatch", "--", ...excluded], env, timeoutMs);
     return await git(root, ["write-tree"], env, timeoutMs);
   } catch (error) {
     throw new SliceDesignError("verification_unavailable", `Verification needs a git work tree to identify what it tested: ${error.stderr?.trim() || error.message}`);
