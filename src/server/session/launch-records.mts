@@ -249,6 +249,20 @@ export function lastRunStatus(record: any, now = Date.now()) {
   return "running";
 }
 
+// A supervisor that marked a start this long ago no longer counts as starting, so a reused process id never holds a start forever.
+const STARTING_STALE_MS = 10 * 60 * 1000;
+
+/**
+ * Whether a live supervisor is starting a run of the record that it has not recorded yet: it marked the start in `starting` before it
+ * read which host or agent version to start, and the run record that names its token replaces the mark.
+ */
+export function launchStarting(record: any, now = Date.now()) {
+  const mark = record?.starting;
+  if (typeof mark?.token !== "string" || tokenVoided(record, mark.token)) return false;
+  if (record.runs.some((run: any) => run?.token === mark.token)) return false;
+  return processAlive(mark.supervisorPid) && now - time(mark.at) <= STARTING_STALE_MS;
+}
+
 /** Whether one of the record's runs runs under a live supervisor. */
 export function launchRunning(record: any, now = Date.now()) {
   return lastRunStatus(record, now) === "running";

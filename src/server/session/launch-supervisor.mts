@@ -13,10 +13,12 @@
 // request whose dialog the person confirmed. When the run ends or is stopped, every request still waiting is refused and removed.
 // After a run that exited 0, it resumes the session once when the person answered here, during the run, a gate that is still pending.
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { launchCoordinator, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
+import { isAcpHost } from "./acp-agents.mjs";
 import { hostArguments, hostConversation, hostEnvironment, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 import { approvalText, confirmApproval } from "./launch-confirmation.mjs";
 import { permissionBroker, shownForm } from "./permission-requests.mjs";
@@ -87,11 +89,19 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     }).catch(() => {});
     return queue;
   };
-  const failStart = (message: any) => update((record: any) => { record.startFailure = { token, message, at: new Date().toISOString() }; });
+  const failStart = (message: any) => update((record: any) => {
+    record.startFailure = { token, message, at: new Date().toISOString() };
+    if (record.starting?.token === token) delete record.starting;
+  });
 
   const record = await readLaunchRecord(folder);
   if (!record) return;
   const resume = record.runs.length > 0;
+  // A start on an ACP agent is marked before the agent's current version is read, so that no sweep or update of any process removes a
+  // version folder while this run has not yet recorded the version it starts on; the run's record replaces the mark.
+  if (isAcpHost(record.host)) {
+    await update((current: any) => { current.starting = { token, supervisorPid: process.pid, at: new Date().toISOString() }; });
+  }
   const resolved = await resolveHost(record.host, env);
   if (!resolved?.available) {
     await failStart(resolved?.reason ?? `Unknown host ${record.host}.`);
@@ -169,6 +179,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
         const at = new Date().toISOString();
         update((current: any) => {
           delete current.startFailure;
+          if (current.starting?.token === token) delete current.starting;
           current.runs.push({ number, cause, token, supervisorPid: process.pid, hostPid: child.pid, ...(acp ? { agentVersion } : {}), startedAt: at, heartbeatAt: at, outputAt: null, model: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: graceMs, stopRequestedAt: null });
         }).then(() => markSpawned(true));
         heartbeat = setInterval(() => update((current: any) => {
@@ -269,6 +280,10 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
   const started: any = await withRunStartLock(folder, async () => {
     const current = await readLaunchRecord(folder);
     if (!current || tokenVoided(current, token)) return null;
+    if (acp?.install && !existsSync(acp.install.folder)) {
+      await failStart(`${resolved.label} could not be started: its version ${agentVersion} is no longer installed.`);
+      return null;
+    }
     let child;
     try {
       child = (spawn as any)(resolved.command, [...resolved.prefix, ...args], { cwd: record.checkout, env: acp ? hostEnvironment(env, record.id, acp) : env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
@@ -281,6 +296,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     // Wrapped, so the lock is released once the run is recorded rather than when the host ends.
     return { ended: watched.ended };
   });
+  if (!started) await update((current: any) => { if (current.starting?.token === token) delete current.starting; });
   if (started) await started.ended;
   await queue;
   // Once this run ended, the earlier versions of its registry agent that no other session runs on are removed, whichever process updated it.

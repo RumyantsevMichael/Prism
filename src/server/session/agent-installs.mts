@@ -11,7 +11,7 @@ import { ACP_HOST_PREFIX, ACP_ID_PATTERN, agentsFolder, launchRule, readInstalls
 import { downloadUrlRefusal, npxPackage, readRegistry, uvxPackage, type RegistryAgent } from "./acp-registry.mjs";
 import { ArchiveError, extractTarGz, extractZip } from "./archive-extract.mjs";
 import { resolveDefinition } from "./launch-hosts.mjs";
-import { LaunchError, launchRunning, listLaunchRecords, processAlive } from "./launch-records.mjs";
+import { LaunchError, launchRunning, launchStarting, listLaunchRecords, processAlive } from "./launch-records.mjs";
 
 // Installing, updating, and removing registry agents in the review app folder's agents/ folder, one at a time on this machine.
 // Nothing of a download runs before the person confirms it in a native dialog, no install, build, or lifecycle script runs at any time,
@@ -181,23 +181,27 @@ async function withInstallSlot<T>(env: NodeJS.ProcessEnv, action: (staging: stri
 
 // ---- Sessions on an agent ----
 
+// The launches on the agent that run now or whose supervisor is starting a run, which has not yet recorded the version it starts on.
 const runningOn = async (env: NodeJS.ProcessEnv, id: string) => {
   const host = `${ACP_HOST_PREFIX}${id}`;
-  return (await listLaunchRecords(env)).filter(({ record }) => record?.host === host && launchRunning(record)).map(({ record }) => record);
+  const now = Date.now();
+  return (await listLaunchRecords(env)).filter(({ record }) => record?.host === host && (launchRunning(record, now) || launchStarting(record, now))).map(({ record }) => record);
 };
 
-/** Whether a launched session of this machine runs on the agent now, on any version. */
+/** Whether a launched session of this machine runs on the agent now, or is starting on it, on any version. */
 export async function agentRunning(id: string, env: NodeJS.ProcessEnv = process.env) {
   return (await runningOn(env, id)).length > 0;
 }
 
 /**
  * The version folders of the agent, in lowercase, that the running launched sessions of this machine run on, as each run's record names
- * the version it started on, or null when a running session's run names none, so that every version counts as in use.
+ * the version it started on, or null when a running session's run names none or a session is starting a run on the agent, since it
+ * may start on any version, so that every version counts as in use.
  */
 export async function versionsInUse(id: string, env: NodeJS.ProcessEnv = process.env): Promise<Set<string> | null> {
   const used = new Set<string>();
   for (const record of await runningOn(env, id)) {
+    if (launchStarting(record)) return null;
     const version = record.runs.at(-1)?.agentVersion;
     if (typeof version !== "string" || !VERSION_FOLDER.test(version)) return null;
     used.add(version.toLowerCase());

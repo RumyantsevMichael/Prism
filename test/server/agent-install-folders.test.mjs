@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { closeSync, constants, existsSync, openSync, readFileSync, readdirSync, writeSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -151,4 +151,53 @@ test("an install removes what ended installs left in staging, but not a staging 
   assert.equal(await install(env), "action_unavailable");
   assert.deepEqual(readdirSync(staging), [live]);
   assert.deepEqual(readdirSync(path.join(app, "agents")).sort(), [".staging"], "no lock or temporary lock file is left");
+});
+
+test("a launch that is starting keeps every version folder until its run records the version it starts on", { skip: posixOnly }, async (t) => {
+  const { app, env } = await appFolder(t);
+  const folder = path.join(app, "agents", "opencode");
+  const started = path.join(app, "agent-started");
+  const layOut = async (version) => {
+    await mkdir(path.join(folder, version), { recursive: true });
+    const agent = path.join(folder, version, "agent");
+    await writeFile(agent, `#!/bin/sh\necho ${version} > "${started}"\n`);
+    await chmod(agent, 0o755);
+    return JSON.stringify({ id: "opencode", name: "OpenCode", version, distribution: "binary", command: agent, args: [], env: {}, installedAt: "2026-11-19T10:00:00.000Z" });
+  };
+  const earlier = await layOut("1.0.0");
+  // The earlier version's install record is a named pipe, so the supervisor stops right after it read that 1.0.0 is current, and goes
+  // on only once this test writes the record: the window between choosing a version and recording the run is held open, not raced.
+  const record = path.join(folder, "1.0.0", "install.json");
+  assert.equal(spawnSync("mkfifo", [record]).status, 0);
+  await writeFile(path.join(folder, "current.json"), JSON.stringify({ version: "1.0.0" }));
+  const checkout = await mkdtemp(path.join(os.tmpdir(), "prism-starting-checkout-"));
+  t.after(() => rm(checkout, { recursive: true, force: true }));
+  const id = `launch-${"c".repeat(16)}`;
+  const launchFolder = path.join(app, "launches", id);
+  await mkdir(launchFolder, { recursive: true, mode: 0o700 });
+  const launchRecord = () => JSON.parse(readFileSync(path.join(launchFolder, "launch.json"), "utf8"));
+  await writeFile(path.join(launchFolder, "launch.json"), JSON.stringify({ id, initiative: "starting", host: "acp-opencode", checkout, store: "test", createdAt: new Date().toISOString(), hostSessionId: null, coordinator: { provider: null, model: null, effort: null, typed: false }, runs: [] }));
+  const supervisorFile = new URL("../../dist/server/session/launch-supervisor.mjs", import.meta.url).pathname;
+  const supervisor = spawn(process.execPath, [supervisorFile, launchFolder, "launch", "a".repeat(16)], { cwd: checkout, env: { ...env, PRISM_ACP_AGENTS: path.join(app, "no-declarations.json") }, stdio: "ignore" });
+  const exited = new Promise((done) => supervisor.on("close", done));
+  t.after(() => supervisor.kill());
+  // A writer opens without blocking only once the supervisor is reading the pipe, so it has chosen 1.0.0 and not yet recorded its run.
+  let writer = null;
+  while (writer === null) {
+    try { writer = openSync(record, constants.O_WRONLY | constants.O_NONBLOCK); } catch (error) { if (error.code !== "ENXIO") throw error; await new Promise((done) => setTimeout(done, 20)); }
+  }
+  assert.equal(launchRecord().runs.length, 0);
+  // An update to 1.1.0 finishes now, and a sweep runs in the window.
+  await writeFile(path.join(folder, "1.1.0", "install.json"), await layOut("1.1.0"));
+  await writeFile(path.join(folder, "current.json"), JSON.stringify({ version: "1.1.0" }));
+  await sweepUnusedVersions(env);
+  assert.ok(existsSync(path.join(folder, "1.0.0", "agent")), "the version folder that a starting launch chose stays");
+  writeSync(writer, earlier);
+  closeSync(writer);
+  await exited;
+  const run = launchRecord().runs[0];
+  assert.equal(run?.agentVersion, "1.0.0", JSON.stringify(launchRecord()));
+  assert.equal(readFileSync(started, "utf8").trim(), "1.0.0", "the agent started from the version folder it chose");
+  assert.equal(launchRecord().starting, undefined, "the run record replaced the start's mark");
+  assert.equal(existsSync(path.join(folder, "1.0.0")), false, "once the run ended, its version went in the supervisor's own sweep");
 });
