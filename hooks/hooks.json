@@ -106,6 +106,17 @@
         ]
       },
       {
+        "matcher": "^(AskUserQuestion|request_user_input)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-questions-in-gates.mjs\"",
+            "statusMessage": "Prism: keeping questions in open gates",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "mcp__.*prism-review__.*",
         "hooks": [
           {

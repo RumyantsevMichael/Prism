@@ -338,11 +338,11 @@ function viewCount(views: any) {
 
 function viewsPanel(views: any, ctx: any) {
   if (!viewCount(views)) {
-    const none = views?.without?.length ? `<p class="slice-views-none">${escapeHtml(views.without.map((entry: any) => entry.title).join(", "))} ${views.without.length === 1 ? "declares" : "declare"} no views.</p>` : "";
-    return emptyState("No views", "This design declares no views. Its contract and Changes are on the Design tab.") + none;
+    const none = views?.without?.length ? `<p class="slice-views-none">${escapeHtml(views.without.map((entry: any) => entry.title).join(", "))} ${views.without.length === 1 ? "has" : "have"} no views or diagrams.</p>` : "";
+    return emptyState("No views", "This design declares no views and its folder holds no diagrams. Its contract and Changes are on the Design tab.") + none;
   }
   const group = (entry: any) => `<prism-panel class="slice-views-group" variant="plain" level="2" region heading="${escapeHtml(entry.title)}" eyebrow="Planned slice"><div slot="tools">${artifactChip(`slice:${ctx.sliceId}/${entry.slug}`, ctx, "Open slice")}</div>${entry.views.map((view: any) => viewCardHtml(view, 3)).join("")}</prism-panel>`;
-  const none = views.without.length ? `<p class="slice-views-none">${escapeHtml(views.without.map((entry: any) => entry.title).join(", "))} ${views.without.length === 1 ? "declares" : "declare"} no views.</p>` : "";
+  const none = views.without.length ? `<p class="slice-views-none">${escapeHtml(views.without.map((entry: any) => entry.title).join(", "))} ${views.without.length === 1 ? "has" : "have"} no views or diagrams.</p>` : "";
   return `<section class="slice-views" data-views aria-label="Views">${views.own.map((view: any) => viewCardHtml(view)).join("")}${views.slices.map(group).join("")}${none}</section>`;
 }
 
