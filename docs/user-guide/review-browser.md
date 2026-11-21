@@ -192,6 +192,25 @@ A change that a record store sync brings from another machine appears the next t
 Only a tab that Prism opened can answer; see [Which tabs can make changes](#which-tabs-can-make-changes).
 See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-the-browser) for the tool timeout that the Claude Code wait needs.
 
+### Format migration runs
+
+A [format migration run](workflow.md#format-migrations) that waits for your answers is a question on Attention, which counts its asked points.
+A run that failed is a failed verification with its reason until a later run of its files follows it, and a run that waits for a host is a problem with the reason.
+Each opens the run's page, at the address `migration-run:<run id>`, which an agent can also open with `present_review`.
+The page is titled `Format migration` with the kind of file, and for a record store scope its scope label, and shows the run's status, why Prism started it, when, and each file of the run with its path and scope.
+For each file it shows the summary of what changes and why, and in place of a line diff its statement map: each statement of the source, word for word in source order with its line, and where it landed, followed under **Added by the format** by each line the format added that holds no source statement.
+Text that an agent wrote, such as a summary, a recommendation, or a path inside it, is shown as plain text and never becomes a link.
+
+While the run asks, the page is its one question.
+It numbers every point across the run, says what each asks, such as `Which value is missing?` or `Do these entries mean the same?`, and shows Prism's recommendation.
+Each answer already holds that recommendation, so you change only what you disagree with and press **Send answers** once for the whole run.
+Prism then applies every file of the run together, or none of them.
+A value may be `unknown` only for a Draft requirement file or a Proposed ADR, and a value takes no line break.
+When a run moves a separate source into another file, the page says that Prism removes the source once every statement has a home, and offers no choice to keep it.
+After the run applied, the page shows each statement map, each point Prism settled with its reason, and each point you answered with your answer and who answered when.
+After the run failed, the page shows the reason and offers **Run again**, which starts a new run of the files that still break their format.
+A file in a record store that a run migrated says on its page `Prism migrated this file into its format`, with the date and a link to the run's page.
+
 ## Changes you make in the page
 
 Every change that the review page makes is an action: answering a question, changing an initiative setting, commenting on a file in the record store, rebuilding an index, or launching, stopping, or resuming a launched session.
@@ -375,7 +394,7 @@ Its groups come in this order, each with its count, and a group without agents i
 | Other sessions | Agents that hold a live claim, the claim that lapses first first. |
 | Claims that expired | Claims whose lease passed, the latest to lapse first. |
 
-A launched session's name is its initiative's title, which opens the initiative page, or `Format migration <run id>` for a format migration run's session, and under it the row says when it started, how its last run ended, and how many runs it had when more than one.
+A launched session's name is its initiative's title, which opens the initiative page, or for a format migration run's session `Format migration` with the type's label, such as `Format migration · Requirements`, which opens the run's page, and under it the row says when it started, how its last run ended, and how many runs it had when more than one.
 A claim's name is the claim's label, such as `Dana on studio-mac`, which opens the slice it works on.
 **Host · model** names the harness and the model as `<harness> · <model>`, the harness alone without a model, and `Agent` when nothing names them.
 **Working on** says `Ended <time> ago: <reason>` for a failed session, and otherwise the activity and the slice, such as `design · Retention policy`, or the session's reason.

@@ -158,7 +158,7 @@ const SPECIMENS: Record<string, any> = {
   "prism-icon": {
     decorative: ICON_NAMES.map((name) => `<prism-icon name="${name}"></prism-icon>`).join(""),
     labelled: `<prism-icon name="warning" label="Warning"></prism-icon><prism-icon name="info" label="Information"></prism-icon>`,
-    tones: `<prism-icon name="store" tone="ok"></prism-icon><prism-icon name="store" tone="warn"></prism-icon><prism-icon name="store" tone="danger"></prism-icon><prism-icon name="store"></prism-icon>`,
+    tones: `<prism-icon name="store" tone="accent"></prism-icon><prism-icon name="store" tone="ok"></prism-icon><prism-icon name="store" tone="warn"></prism-icon><prism-icon name="store" tone="danger"></prism-icon><prism-icon name="store"></prism-icon>`,
     sizes: `<prism-icon name="agent"></prism-icon><prism-icon name="agent" size="sm"></prism-icon><prism-icon name="agent" size="xs"></prism-icon>`,
     "long-text": `<prism-chip tone="info"><prism-icon name="info" size="xs"></prism-icon>${LONG}</prism-chip>`,
     "unbroken-name": `<prism-chip><prism-icon name="file" size="xs"></prism-icon>${UNBROKEN}</prism-chip>`

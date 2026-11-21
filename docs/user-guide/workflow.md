@@ -154,8 +154,8 @@ Once the host started, the run is `running` and `get_migration_run` names the se
 When no host is available, the run waits as `waiting-for-host` with the reason `No host is available on this machine:` and each host's reason, and the next check of the project on a computer where a host is available launches it.
 When a run's session ends, by its exit, a host error, or a stop, while the run is still `starting`, `running`, or `continuing`, the run fails with `The run's session ended before the run finished:` and the session's last reason, and applies nothing.
 A session that ends after its run asked its question leaves the run `asking`.
-Continuing a run once the person answers is Planned: Prism will resume its session with the same prompt, or launch a new one on an available host when it cannot be resumed.
-Running a failed run again is Planned: it will start a new run with the cause `rerun` that holds the artifacts of the failed run's set that still break their format.
+Once you answer a run's question, the run is `continuing`: Prism resumes its session with the same prompt, or launches a new one on an available host when it cannot be resumed, and the run waits as `waiting-for-host` when none is available.
+Running a failed run again from its page in the review browser starts a new run with the cause `rerun` that holds the artifacts of the failed run's set that still break their format, and a run that is not failed, or that a later run of its set follows, cannot run again.
 An artifact has at most one open run: when it changes into a newer version that still breaks its format, its open run fails with a reason that names it, Prism stops that run's session on this computer, and a new run migrates the new version.
 A run whose session's supervision was lost, or whose session ended without reporting it, fails with that reason at the next check on the computer that ran it, and a run that never launched its session within 5 minutes fails with `The run's session never started:` and why.
 A run's session reads only, because it reads artifact text that others wrote.
@@ -185,12 +185,12 @@ An `unknown` point says whether the target may keep the value unknown, which onl
 
 Once every artifact of the set has a proposal, the session calls `finish_migration_run`.
 When nothing was asked, Prism applies the run without a person.
-Otherwise it asks the person once, with every asked point of the run and each recommendation, and the run waits as `asking`; answering the question in the review browser is Planned.
+Otherwise it asks the person once, with every asked point of the run and each recommendation, and the run waits as `asking` until you answer it on the run's page in the review browser, as [Format migration runs](review-browser.md#format-migration-runs) describes.
 A run that asked once and still holds an unanswered point when it finishes again fails with `The run asked again after the person answered.`
 A run that cannot migrate its set is failed with `fail_migration_run` and a reason.
 
 A run applies all its format migrations or none.
-It writes each migration's content with the person's chosen values and entries and with the migration's id after each glossary `Source: migration`, so the term's source is the run's format migration, and removes a separate source only when the person chose to remove it.
+It writes each migration's content with the person's chosen values and entries and with the migration's id after each glossary `Source: migration`, so the term's source is the run's format migration, and removes a separate source, since the answer gives every leftover a home before the source goes.
 A source or target that changed since its proposal, a target that the write check refuses, or a target that cannot be written fails the run with that reason and changes nothing, so a failed run applies nothing, and a checkout file the run wrote before a later step failed is put back.
 The write check of a run is strict: `unknown` stays only in a target that will be a Draft requirement file or a Proposed ADR.
 A run's record that changed after its proposals were checked, or whose paths leave the project, is refused with `record_invalid` or `invalid_input` and applies nothing.

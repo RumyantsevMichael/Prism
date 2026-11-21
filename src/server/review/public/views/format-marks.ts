@@ -34,3 +34,22 @@ export function formatBanner(format: any) {
   if (!format) return "";
   return `<div class="document-notice"><prism-banner data-format-mark tone="warning" heading="This file breaks its format">${findingsList(format.findings)}</prism-banner></div>`;
 }
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function dayText(value: any) {
+  const day = new Date(value ?? "");
+  return value && !Number.isNaN(day.getTime()) ? `${day.getDate()} ${MONTHS[day.getMonth()]} ${day.getFullYear()}` : "";
+}
+
+/**
+ * The note above the document of a store artifact whose accepted version a format migration run recorded: that Prism migrated it, when, and a link to the run's page,
+ * or nothing for any other file. review is the read's artifact review, which names the run as acceptedFrom { migration, at }.
+ */
+export function migratedNote(review: any) {
+  const from = review?.acceptedFrom;
+  if (!from || typeof from.migration !== "string") return "";
+  const ref = `migration-run:${from.migration}`;
+  const day = dayText(from.at);
+  const kept = review.changed ? "The file changed since, so its accepted version is still the migrated file." : "Its accepted version is the migrated file, so its status stays as a person decided it.";
+  return `<div class="document-notice"><prism-banner tone="info" heading="Prism migrated this file into its format"><p>${day ? `On ${escapeHtml(day)}. ` : ""}${kept} <a href="./review?artifact=${encodeURIComponent(ref)}" data-doc-link="${escapeHtml(ref)}">See what changed and why</a></p></prism-banner></div>`;
+}

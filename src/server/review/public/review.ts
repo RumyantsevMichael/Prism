@@ -4,7 +4,7 @@ import { renderView } from "./views/registry.js";
 import { closeEvidence, openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, KNOWLEDGE_PAGES, parseEntityRef, recordKind, recordLabel, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
-import { formatBadgeElement, formatBanner } from "./views/format-marks.js";
+import { formatBadgeElement, formatBanner, migratedNote } from "./views/format-marks.js";
 import { highlight, highlightLines, languageOf } from "./views/highlight.js";
 import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, linkTargets, markCurrentSection, renderText, revealInDocument } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
@@ -1504,6 +1504,9 @@ function describe(path: any) {
   return { ...recordLabel(path, titleIndex()), code: false };
 }
 
+// The names of the format migration runs whose pages were open, by ref.
+const runTitles = new Map<string, string>();
+
 function pageLabel(path: any) {
   const parsed = parseEntityRef(path);
   if (!parsed) {
@@ -1517,6 +1520,7 @@ function pageLabel(path: any) {
   const indexed = (navigation.index?.find((entry) => (entry as any).ref === path) as any)?.label;
   if (indexed) return indexed;
   if (currentContext?.ref === path) return currentContext.value.trail.at(-1)?.label ?? path;
+  if (parsed.kind === "migration-run") return runTitles.get(path) ?? "Format migration";
   return parsed.kind === "slice" ? parsed.slug : parsed.id;
 }
 
@@ -2217,6 +2221,8 @@ async function refreshContext(path: any) {
   }
   contextSnapshot = snapshot;
   currentContext = { ref: path, value };
+  // A format migration run's tab keeps the name its context gave it after another tab is selected.
+  if (parseEntityRef(path)?.kind === "migration-run") runTitles.set(path, value.trail?.at(-1)?.label ?? "Format migration");
   renderNavigation();
   pageBar.setTrail(trailOf(path), path);
   const history = artifact!.querySelector("[data-shipped-history]");
@@ -2718,6 +2724,7 @@ async function showArtifact(path: any) {
       </div>
     </header>
     ${formatBanner(data.format)}
+    ${migratedNote(data.artifact)}
     ${view ? viewNoteHtml(view, "view-note view-header-note") : ""}
     ${artifactReviewHtml(data, state)}
     <div class="document-history" data-shipped-history>${documentHistoryHtml(path)}</div>
