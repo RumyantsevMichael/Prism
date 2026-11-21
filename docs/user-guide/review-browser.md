@@ -104,7 +104,7 @@ A new tab opens right after the selected tab.
 Close a tab with its close button or a middle click, and when you close the last tab the page says that nothing is open.
 Tabs that an agent presents carry the agent mark before their title and stay open until you close them, and a presentation of several artifacts opens a tab for each of them and shows the first.
 An agent can present tabs as a named group, whose head shows the agent before the group's name: the avatar of the claim that agent held when it presented the group, whose hover text names the holder, the harness and model, the activity, and the time left, or else an agent avatar named by its harness and model.
-Tabs, buttons, menus, and other controls do not select their text when you click, double-click, or drag on them, while documents, code, figures, messages, and fields stay selectable.
+Tabs, buttons, menus, and other controls do not select their text when you click, double-click, or drag on them, while documents, code, figures, messages, and fields stay selectable, except a graph or diagram, which you drag to pan.
 The open tabs belong to the session, so every browser window of the session shows the same tabs, and a reload or a later visit restores them.
 When tabs do not fit, the strip scrolls sideways and keeps the selected tab in view, and a long title ends with an ellipsis whose full text shows on hover or focus.
 With the focus on a tab, the arrow keys, Home, and End move between tabs, Enter opens one, and Tab reaches that tab's close button.
@@ -520,6 +520,7 @@ Take current intent from Approved requirements, Accepted ADRs, the glossary, and
 ## Documents and diagrams
 
 Prism stores diagrams as PlantUML `.puml` source files, and the browser renders them without creating image files.
+A graph or diagram larger than its card pans when you drag it with a mouse or pen, and with a finger on a touch screen, while a click on a link or a graph's item still opens it; its text is not selected by the drag, and Show source and Copy give the diagram's text.
 Markdown links open the linked file or heading in the review.
 A link to a missing file or a target outside the project is marked as missing, and an external link opens in a new browser tab.
 A store artifact's links resolve by its place in the store; see [Every scope in one view](#every-scope-in-one-view).
