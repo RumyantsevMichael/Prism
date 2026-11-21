@@ -11,7 +11,7 @@ import { ACP_HOST_PREFIX, ACP_ID_PATTERN, agentsFolder, launchRule, readInstalls
 import { downloadUrlRefusal, npxPackage, readRegistry, uvxPackage, type RegistryAgent } from "./acp-registry.mjs";
 import { ArchiveError, extractTarGz, extractZip } from "./archive-extract.mjs";
 import { resolveDefinition } from "./launch-hosts.mjs";
-import { LaunchError, launchRunning, launchStarting, listLaunchRecords, processAlive } from "./launch-records.mjs";
+import { LaunchError, launchRunInUse, launchStarting, listLaunchRecords, processAlive } from "./launch-records.mjs";
 
 // Installing, updating, and removing registry agents in the review app folder's agents/ folder, one at a time on this machine.
 // Nothing of a download runs before the person confirms it in a native dialog, no install, build, or lifecycle script runs at any time,
@@ -181,11 +181,12 @@ async function withInstallSlot<T>(env: NodeJS.ProcessEnv, action: (staging: stri
 
 // ---- Sessions on an agent ----
 
-// The launches on the agent that run now or whose supervisor is starting a run, which has not yet recorded the version it starts on.
+// The launches on the agent whose last run has not ended while its supervisor or host process lives, however late its heartbeat, or
+// whose supervisor is starting a run, which has not yet recorded the version it starts on.
 const runningOn = async (env: NodeJS.ProcessEnv, id: string) => {
   const host = `${ACP_HOST_PREFIX}${id}`;
   const now = Date.now();
-  return (await listLaunchRecords(env)).filter(({ record }) => record?.host === host && (launchRunning(record, now) || launchStarting(record, now))).map(({ record }) => record);
+  return (await listLaunchRecords(env)).filter(({ record }) => record?.host === host && (launchRunInUse(record, now) || launchStarting(record, now))).map(({ record }) => record);
 };
 
 /** Whether a launched session of this machine runs on the agent now, or is starting on it, on any version. */

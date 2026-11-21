@@ -5,7 +5,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { installAgent, sweepUnusedVersions } from "../../dist/server/session/agent-installs.mjs";
+import { installAgent, removeAgent, sweepUnusedVersions, versionsInUse } from "../../dist/server/session/agent-installs.mjs";
 import { INITIATIVE, TARGET, acpFixture, apply, get, setSettings } from "./fixtures/acp-agents.mjs";
 import { binaryAgent, platformKey, registryFixture } from "./fixtures/acp-registry.mjs";
 import { settled } from "./fixtures/wait.mjs";
@@ -200,4 +200,46 @@ test("a launch that is starting keeps every version folder until its run records
   assert.equal(readFileSync(started, "utf8").trim(), "1.0.0", "the agent started from the version folder it chose");
   assert.equal(launchRecord().starting, undefined, "the run record replaced the start's mark");
   assert.equal(existsSync(path.join(folder, "1.0.0")), false, "once the run ended, its version went in the supervisor's own sweep");
+});
+
+test("a run whose supervisor or host lives keeps its version folder and its agent however late its heartbeat", { skip: posixOnly }, async (t) => {
+  const { app, env } = await appFolder(t);
+  const folder = path.join(app, "agents", "opencode");
+  for (const version of ["1.0.0", "1.1.0"]) {
+    await mkdir(path.join(folder, version), { recursive: true });
+    await writeFile(path.join(folder, version, "agent"), "#!/bin/sh\n", { mode: 0o755 });
+    await writeFile(path.join(folder, version, "install.json"), JSON.stringify({ id: "opencode", name: "OpenCode", version, distribution: "binary", command: path.join(folder, version, "agent"), args: [], env: {}, installedAt: "2026-11-19T10:00:00.000Z" }));
+  }
+  await writeFile(path.join(folder, "current.json"), JSON.stringify({ version: "1.1.0" }));
+  // Stand-ins for a supervisor and its host that still run, as right after the computer wakes, before the next heartbeat lands.
+  const supervisor = spawn("sleep", ["60"], { stdio: "ignore" });
+  const host = spawn("sleep", ["60"], { stdio: "ignore" });
+  t.after(() => { supervisor.kill(); host.kill(); });
+  const id = `launch-${"e".repeat(16)}`;
+  const launchFolder = path.join(app, "launches", id);
+  await mkdir(launchFolder, { recursive: true, mode: 0o700 });
+  const at = new Date(Date.now() - 5 * 60_000).toISOString();
+  const writeRun = (run) => writeFile(path.join(launchFolder, "launch.json"), JSON.stringify({ id, initiative: "late", host: "acp-opencode", checkout: app, store: "test", createdAt: at, hostSessionId: "s1", coordinator: { provider: null, model: null, effort: null, typed: false },
+    runs: [{ number: 1, cause: "launch", token: "a".repeat(16), agentVersion: "1.0.0", startedAt: at, heartbeatAt: new Date(Date.now() - 61_000).toISOString(), outputAt: at, model: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: 5000, stopRequestedAt: null, ...run }] }));
+  const remove = () => removeAgent({ id: "opencode", env }).then(() => null, (error) => error.code ?? error.message);
+  await writeRun({ supervisorPid: supervisor.pid, hostPid: host.pid });
+  assert.deepEqual([...await versionsInUse("opencode", env)], ["1.0.0"]);
+  await sweepUnusedVersions(env);
+  assert.ok(existsSync(path.join(folder, "1.0.0", "agent")), "the folder a live run started on stays");
+  assert.equal(await remove(), "agent_running");
+  // The supervisor ended first; the host it started still runs from the folder.
+  supervisor.kill();
+  await new Promise((done) => supervisor.once("close", done));
+  await sweepUnusedVersions(env);
+  assert.ok(existsSync(path.join(folder, "1.0.0", "agent")), "the folder a live host runs from stays");
+  assert.equal(await remove(), "agent_running");
+  // Once both ended, the late heartbeat no longer matters and the run counts as ended.
+  host.kill();
+  await new Promise((done) => host.once("close", done));
+  assert.deepEqual([...await versionsInUse("opencode", env)], []);
+  // A run that names no process to check ends by its heartbeat age alone.
+  await writeRun({ supervisorPid: null, hostPid: null });
+  assert.deepEqual([...await versionsInUse("opencode", env)], []);
+  await sweepUnusedVersions(env);
+  assert.deepEqual(readdirSync(folder).sort(), ["1.1.0", "current.json"]);
 });

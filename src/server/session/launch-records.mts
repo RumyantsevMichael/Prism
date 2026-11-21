@@ -268,6 +268,20 @@ export function launchRunning(record: any, now = Date.now()) {
   return lastRunStatus(record, now) === "running";
 }
 
+const validPid = (pid: unknown) => Number.isSafeInteger(pid) && (pid as number) > 0;
+
+/**
+ * Whether the record's last run still runs for the purpose of keeping the files it runs from: it has not ended and its supervisor or
+ * host process is alive, whatever its heartbeat age, since a late heartbeat, as right after the computer wakes from sleep, does not
+ * end a run; only when neither process can be checked does a heartbeat older than the stale age count it as ended.
+ */
+export function launchRunInUse(record: any, now = Date.now()) {
+  const run = record?.runs?.at(-1);
+  if (!run || run.endedAt) return false;
+  if (validPid(run.supervisorPid) || validPid(run.hostPid)) return processAlive(run.supervisorPid) || processAlive(run.hostPid);
+  return now - time(run.heartbeatAt) <= HEARTBEAT_STALE_MS;
+}
+
 function lastErrorLine(text: string) {
   if (typeof text !== "string") return null;
   const line = text.split(/\r?\n/).map((part) => part.trim()).filter(Boolean).at(-1);
