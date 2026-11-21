@@ -15,6 +15,7 @@ import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservati
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
 import { declaredView, governingContract, readViews, VIEW_KINDS } from "../workflow/view-declarations.mjs";
 import { appliedArtifactActions, pendingApprovalGates, readStoreArtifactAt, storeArtifactStatuses, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
+import { servedWorkItem } from "../workflow/artifact-status.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { recordChanges } from "./record-changes.mjs";
@@ -945,11 +946,35 @@ async function approvalGates(projectRoot: string) {
   // An id that another pending gate holds too names no single gate, so the card says why its answer is refused.
   const holders = new Map();
   for (const gate of gates) holders.set(gate.id, (holders.get(gate.id) ?? 0) + 1);
-  return gates.map((gate: any) => ({
+  const workItem = servedWorkItems(projectRoot);
+  return Promise.all(gates.map(async (gate: any) => ({
     type: "gate", id: gate.id, kind: "approval", status: gate.status, recorded: gate.recorded, question: gate.question, context: gate.context ?? null, options: null, recommended: null,
     askedAt: gate.askedAt, answer: null, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope }, changed: gate.changed,
+    workItem: await workItem(servedWorkItem(gate)),
     ...(holders.get(gate.id) > 1 ? { ambiguous: true } : {})
-  }));
+  })));
+}
+
+/**
+ * The work item an approval gate serves as its card names it: { initiative: { id, title, known }, slice: { slug, title, known } or null }, or null when the gate names none.
+ * An initiative is known once the roadmap lists it or its record exists, as requirements approved before their roadmap entry name the id it will take,
+ * and a slice once the initiative's record holds it; the card links only what is known. Each initiative is read once per Attention load.
+ */
+function servedWorkItems(projectRoot: string) {
+  let roadmap: Promise<any> | null = null;
+  const records = new Map<string, Promise<any>>();
+  return async (served: any) => {
+    if (!served) return null;
+    roadmap ??= loadRoadmapView(projectRoot).catch(() => ({ items: [] }));
+    if (!records.has(served.initiative)) records.set(served.initiative, readInitiative(projectRoot, served.initiative).then(({ loaded }: any) => loaded, () => ({ exists: false })));
+    const [view, loaded] = await Promise.all([roadmap, records.get(served.initiative)]);
+    const item = (view.items ?? []).find((entry: any) => entry.id === served.initiative);
+    const slices = loaded.record?.slices ?? {};
+    const initiative = { id: served.initiative, title: item?.title ?? slices[loaded.analysis?.root]?.title ?? served.initiative, known: Boolean(item) || Boolean(loaded.exists) };
+    if (served.slice === null) return { initiative, slice: null };
+    const known = Object.hasOwn(slices, served.slice);
+    return { initiative, slice: { slug: served.slice, title: known ? slices[served.slice].title ?? served.slice : served.slice, known } };
+  };
 }
 
 // The applied actions on the store artifacts the checkout sees, approvals from their status records and comments from their own files, which belong to no initiative's history.
