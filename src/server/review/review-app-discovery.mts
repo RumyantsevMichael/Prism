@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { appendFile, lstat, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
-import type { Stats } from "node:fs";
+import { appendFile, lstat, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
@@ -100,8 +100,30 @@ export async function trustedDirectory(directory: string) {
   }
 }
 
+// An earlier release created the folder with the default mode, and a mode given to mkdir never changes a folder that exists, so a folder that
+// this user owns and that others can only read is made private once and said so on stderr. A folder that others can write may hold entries
+// they placed, and one reached through a link or owned by another user is not this user's to change, so each stays refused.
+// The folder is opened without following a link, and its handle is checked and changed, so no link swapped in after the check is changed.
+export async function tightenDirectory(directory: string) {
+  if (process.platform === "win32") return false;
+  const handle = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW).catch(() => null);
+  if (!handle) return false;
+  try {
+    const info = await handle.stat();
+    if (!info.isDirectory() || info.uid !== process.getuid!() || (info.mode & 0o077) === 0 || (info.mode & 0o022) !== 0) return false;
+    await handle.chmod(0o700);
+    process.stderr.write(`Prism made its app folder ${directory} private to this user, because an earlier release had created it readable by others.\n`);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function prepareDirectory(directory: string) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
+  await tightenDirectory(directory);
   if (!(await trustedDirectory(directory))) {
     throw new Error("The review app state directory is not private to this user.");
   }

@@ -3,7 +3,7 @@ import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { pause } from "./fixtures/wait.mjs";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { chmod, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { chmod, chown, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -1219,14 +1219,65 @@ test("a session falls back within the start deadline when a started app never an
   assert.equal(await review.reviewUrl([]), url.href, "the fallback sticks for the session, so the project keeps one URL");
 });
 
-test("a session does not trust a state directory that others can read", { skip: !POSIX }, async (context) => {
+// An earlier release created the folder with the default mode, and a mode passed to mkdir never changes a folder that exists already.
+test("a session tightens its own state directory that others can read, and reports it once", { skip: !POSIX }, async (context) => {
   const directory = await appDirectory(context);
   await mkdir(directory, { recursive: true });
   await chmod(directory, 0o755);
-  const root = await project(context, "untrusted");
+  const reports = [];
+  const write = process.stderr.write;
+  process.stderr.write = (chunk, ...rest) => (String(chunk).includes(directory) && reports.push(String(chunk)), write.call(process.stderr, chunk, ...rest));
+  defer(context, () => { process.stderr.write = write; });
+  const root = await project(context, "tightened");
+  const url = new URL(await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]));
+  assert.ok(url.pathname.includes("/w/"), "the shared app serves the project");
+  assert.equal((await stat(directory)).mode & 0o777, 0o700);
+  const second = await project(context, "tightened-again");
+  await (await pool(context, { app: { directory } }).get(second, "task")).reviewUrl([]);
+  process.stderr.write = write;
+  assert.equal(reports.filter((line) => /private/.test(line)).length, 1, "the tightening is reported once");
+});
+
+// Another user could have placed entries in a folder they can write, so tightening it would trust what they left there.
+// A folder that others can only read is tightened instead, by the test above.
+test("a session does not trust a state directory that others can read", { skip: !POSIX }, async (context) => {
+  const directory = await appDirectory(context);
+  await mkdir(directory, { recursive: true });
+  await chmod(directory, 0o777);
+  const root = await project(context, "writable");
   const url = new URL(await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]));
   assert.ok(!url.pathname.includes("/w/"));
+  assert.equal((await stat(directory)).mode & 0o777, 0o777, "the folder is left as it was");
   await assert.rejects(readFile(path.join(directory, "review-app.json")), { code: "ENOENT" }, "nothing is written to an untrusted directory");
+});
+
+test("a session does not trust a state directory reached through a symbolic link", { skip: !POSIX }, async (context) => {
+  const directory = await appDirectory(context);
+  const target = `${directory}-target`;
+  await mkdir(target, { recursive: true });
+  await chmod(target, 0o755);
+  await symlink(target, directory);
+  const root = await project(context, "linked");
+  const url = new URL(await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]));
+  assert.ok(!url.pathname.includes("/w/"));
+  assert.equal((await stat(target)).mode & 0o777, 0o755, "the linked folder is left as it was");
+  await assert.rejects(readFile(path.join(target, "review-app.json")), { code: "ENOENT" }, "nothing is written through the link");
+});
+
+// Only a superuser can make a folder that another user owns, so elsewhere the test uses the file system's root, which root owns.
+test("a session does not trust a state directory that another user owns", { skip: !POSIX }, async (context) => {
+  let directory = "/";
+  if (process.getuid() === 0) {
+    directory = await appDirectory(context);
+    await mkdir(directory, { recursive: true });
+    await chmod(directory, 0o755);
+    await chown(directory, 65534, 65534);
+  }
+  const before = (await stat(directory)).mode & 0o777;
+  const root = await project(context, "foreign");
+  const url = new URL(await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]));
+  assert.ok(!url.pathname.includes("/w/"));
+  assert.equal((await stat(directory)).mode & 0o777, before, "another user's folder is left as it was");
 });
 
 // Every open tab lists the projects every few seconds, so the list keeps each project's gate count rather than reading every project's records each time.
