@@ -9,6 +9,11 @@
   vertical-align: middle;
 }
 
+/* A hidden button takes no room, as a hidden native one does. */
+:host([hidden]) {
+  display: none;
+}
+
 :host([size="sm"]) {
   height: var(--prism-control-height-sm);
 }

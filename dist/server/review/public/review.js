@@ -119,6 +119,8 @@ let lastSnapshot = "";
 let renderedPath = null;
 let rebuilding = false;
 const scrollPositions = /* @__PURE__ */ new Map();
+let refreshHeld = false;
+let heldBuild = null;
 let probes = { failures: 0, failingSince: null };
 let connection = "live";
 let pendingAnchor = null;
@@ -1226,7 +1228,7 @@ function diagramCard(diagram, { compact = false } = {}) {
       <prism-button variant="ghost" size="sm" data-action="source" aria-expanded="false">Show source</prism-button>
       <prism-button variant="ghost" size="sm" data-action="copy" tip="Copy PlantUML source">Copy</prism-button>
     </div>
-    <prism-canvas class="diagram-output"><prism-spinner label="Rendering diagram"></prism-spinner></prism-canvas>
+    <prism-canvas class="diagram-output" pannable><prism-spinner label="Rendering diagram"></prism-spinner></prism-canvas>
     <div class="diagram-source" hidden><prism-code language="plantuml"><pre><code>${highlight(diagram.source, "plantuml")}</code></pre></prism-code></div>`;
   return section2;
 }
@@ -1855,19 +1857,19 @@ function documentHistoryHtml(path) {
 function controlsOf(root) {
   return [...root.querySelectorAll("button, a[href], input, textarea, select, summary, [tabindex]")];
 }
+function captureView(memory) {
+  memory.open = [...artifact.querySelectorAll("prism-disclosure")].map((disclosure) => [disclosure.getAttribute("summary") ?? "", disclosure.open]);
+  memory.focus = artifact.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
+  memory.focusKey = artifact.contains(document.activeElement) ? document.activeElement.closest("[data-focus-key]")?.dataset.focusKey ?? null : null;
+  memory.focused = artifact.contains(document.activeElement) ? document.activeElement : null;
+  memory.selection = memory.focused && "selectionStart" in memory.focused ? [memory.focused.selectionStart, memory.focused.selectionEnd] : null;
+  artifact.style.minHeight = `${artifact.offsetHeight}px`;
+}
 function beginRebuild(path) {
   const same = renderedPath === path;
   const memory = { path, top: same ? workspace.scrollTop : scrollPositions.get(path) ?? 0, open: null, focus: -1, focusKey: null };
-  if (same) {
-    memory.open = [...artifact.querySelectorAll("prism-disclosure")].map((disclosure) => [disclosure.getAttribute("summary") ?? "", disclosure.open]);
-    memory.focus = artifact.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
-    memory.focusKey = artifact.contains(document.activeElement) ? document.activeElement.closest("[data-focus-key]")?.dataset.focusKey ?? null : null;
-    memory.focused = artifact.contains(document.activeElement) ? document.activeElement : null;
-    memory.selection = memory.focused && "selectionStart" in memory.focused ? [memory.focused.selectionStart, memory.focused.selectionEnd] : null;
-    artifact.style.minHeight = `${artifact.offsetHeight}px`;
-  } else {
-    artifact.style.minHeight = "";
-  }
+  if (same) captureView(memory);
+  else artifact.style.minHeight = "";
   rebuilding = true;
   linkPreview?.hide();
   dropStages();
@@ -1878,9 +1880,30 @@ function beginRebuild(path) {
   workspace.append(memory.stage);
   return memory;
 }
+const OVERLAYS = "prism-dialog:not([modeless]), prism-popover, prism-menu[for]";
+const overlayShowing = (overlay) => overlay.isOpen ?? overlay.hasAttribute("open");
+function pageOverlayOpen() {
+  return [...artifact.querySelectorAll(OVERLAYS)].some(overlayShowing);
+}
+function resumeHeld() {
+  if (pageOverlayOpen()) return;
+  const memory = heldBuild;
+  heldBuild = null;
+  if (memory && memory.generation === stageGeneration && memory.path === selectedPath && memory.stage.isConnected) {
+    refreshHeld = false;
+    captureView(memory);
+    swapIn(memory);
+    return;
+  }
+  if (refreshHeld && selectedPath) {
+    refreshHeld = false;
+    void showArtifact(selectedPath);
+  }
+}
 let stageGeneration = 0;
 function dropStages() {
   stageGeneration += 1;
+  heldBuild = null;
   for (const stage of workspace.querySelectorAll(":scope > .artifact-stage")) stage.remove();
 }
 function writeArtifact(html) {
@@ -1984,6 +2007,14 @@ function endRebuild(memory) {
     artifact.style.minHeight = "";
     return;
   }
+  if (renderedPath === memory.path && pageOverlayOpen()) {
+    heldBuild = memory;
+    setBusy(false);
+    return;
+  }
+  swapIn(memory);
+}
+function swapIn(memory) {
   if (renderedPath === memory.path) memory.top = workspace.scrollTop;
   artifact.replaceChildren(...memory.stage.childNodes);
   memory.stage.remove();
@@ -2218,6 +2249,11 @@ async function showArtifact(path) {
   if (path !== selectedPath) {
     return;
   }
+  if (renderedPath === path && pageOverlayOpen()) {
+    refreshHeld = true;
+    return;
+  }
+  refreshHeld = false;
   if (parseEntityRef(path)) {
     await showEntity(path);
     return;
@@ -2349,6 +2385,8 @@ function viewContext(path, state) {
     escapeHtml,
     showToast,
     fetchArtifact: (artifactPath) => fetchJson(`./api/artifact?${artifactQuery(localTab(artifactPath))}`),
+    // A view's own read route, such as a slice's frozen test or run log, answers JSON, and a refusal throws its text.
+    fetchJson: (url) => fetchJson(url),
     fetchEvidence: (id) => fetchJson(`./api/evidence?id=${encodeURIComponent(id)}`),
     hasArtifact: (artifactPath) => availableArtifacts.has(localTab(artifactPath)) || Boolean(parseEntityRef(artifactPath)),
     // A store artifact's scope label, which the record views show beside it, or null for any other file.
@@ -2370,6 +2408,8 @@ function viewContext(path, state) {
     },
     openEvidence: (id, label) => openEvidence(id, label, viewContext(path, state)),
     actionApi,
+    // The tab's write session header, which a view's own write routes, such as the Agents page's archive, send.
+    writeHeaders,
     // Names one of Prism's records by title and kind, or a repository file by its path, as the page bar and the palette do.
     describe,
     recordTitle: (recordPath) => (navigation.index ?? []).find((entry) => entry.ref === recordPath)?.label ?? null,
@@ -2378,7 +2418,9 @@ function viewContext(path, state) {
       if (path === selectedPath) pageBar.setActions(nodes);
     },
     sidePanel: {
-      show: (ref) => sidePanel.showFile(ref),
+      show: (ref, anchor = null, options = {}) => sidePanel.showFile(ref, anchor, options),
+      showContent: (content) => sidePanel.showContent(content),
+      current: () => sidePanel.current(),
       close: () => sidePanel.close(),
       isOpen: () => sidePanel.isOpen()
     },
@@ -2845,7 +2887,8 @@ async function initialize() {
     const docLink = event.target.closest("a[data-doc-link]");
     if (docLink) openRef(docLink.dataset.docLink, { keep: true });
   });
-  const overlayOpen = () => [...document.querySelectorAll("prism-dialog:not([modeless]), prism-popover, prism-menu")].some((overlay) => overlay.isOpen ?? overlay.hasAttribute("open"));
+  const overlayOpen = () => [...document.querySelectorAll("prism-dialog:not([modeless]), prism-popover, prism-menu")].some(overlayShowing);
+  artifact.addEventListener("prism-close", () => setTimeout(resumeHeld));
   document.addEventListener("keydown", (event) => {
     const typing = ["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) || Boolean(document.activeElement?.closest?.("prism-field"));
     if ((event.key === "k" || event.key === "K") && (event.ctrlKey || event.metaKey)) {

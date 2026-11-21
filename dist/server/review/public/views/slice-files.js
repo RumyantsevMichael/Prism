@@ -10,6 +10,14 @@ function fileRow(file) {
   const removed = file.blob === null ? '<span class="muted">removed</span>' : "";
   return `<li data-slice-file><code class="slice-file-path">${escapeHtml(file.path)}</code>${removed}${badge(file.state, TONES[file.state] ?? "neutral")}</li>`;
 }
+function branchesHeld(held) {
+  if (!held) return null;
+  const name = (branch) => chip(escapeHtml(branch), { tip: branch });
+  if (held.onDefault) return `<span class="chip-row" data-slice-branches>${name(held.defaultBranch)}${badge("default branch", "success")}</span>`;
+  const more = held.branchCount > held.branches.length ? `<span class="muted">and ${held.branchCount - held.branches.length} more</span>` : "";
+  const landed = !held.defaultBranch ? "" : held.shippedOnDefault ? badge("ship commit on the default branch", "success") : badge("not on the default branch yet", "warning");
+  return `<span class="chip-row" data-slice-branches>${held.branches.map(name).join("")}${more}${landed}</span>`;
+}
 function sliceFilesCard(answer) {
   if (!answer.files.length) return card("Verified files", emptyState("No verified files", answer.message ?? ""), { eyebrow: "After verification" });
   const counts = Object.keys(TONES).map((state) => [state, answer.files.filter((file) => file.state === state).length]).filter(([, count]) => count);
@@ -18,6 +26,7 @@ function sliceFilesCard(answer) {
     ${keyValues([
     ["Shown at", answer.shown ? `${escapeHtml(SOURCES[answer.shown.source] ?? answer.shown.source)} ${commit(answer.shown.commit)}` : null],
     ["Repository", answer.repository ? escapeHtml(answer.repository) : null],
+    ["On branches", branchesHeld(answer.held)],
     ["Verified", commit(answer.verified)],
     ["Recorded at ship", commit(answer.shipped)]
   ])}

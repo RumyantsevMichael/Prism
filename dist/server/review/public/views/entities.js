@@ -28,7 +28,7 @@ const KNOWLEDGE_PAGES = Object.freeze({ diagrams: "Diagrams", touched: "Touched 
 function parseEntityRef(ref) {
   if (SECTIONS.includes(ref)) return { kind: ref };
   if (ref === "launches") return { kind: "agents" };
-  const group = /^agents:(needs-you|this-computer|other|expired)$/.exec(ref ?? "");
+  const group = /^agents:(needs-you|this-computer|other|expired|archived)$/.exec(ref ?? "");
   if (group) return { kind: "agents", page: group[1] };
   let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "attention", page: match[1] };

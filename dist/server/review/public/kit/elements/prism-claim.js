@@ -6,20 +6,22 @@ const VARIANTS = ["avatar", "inline", "strip"];
 const ACTIVITIES = ["design", "implementation"];
 class PrismClaim extends Base {
   static tag = "prism-claim";
-  static observedAttributes = ["label", "host", "model", "activity", "claimed-at", "renewed-at", "expires-at", "variant"];
+  static observedAttributes = ["label", "host", "model", "session-url", "session-label", "activity", "claimed-at", "renewed-at", "expires-at", "variant"];
   static catalog = {
     purpose: "Shows which agent holds a slice, for what activity, and how long its claim has left; an expired claim says how long ago it lapsed. It is read-only and holds no control.",
     options: [
       { name: "label", values: ["text"], default: "", description: "The holder's label, as the claim records it; every holder is an agent." },
       { name: "host", values: ["text"], default: "", description: "The harness the agent runs in, such as Claude Code or Codex, shown in place of the word Agent; without it the claim says Agent." },
       { name: "model", values: ["text"], default: "", description: "The model the claim records for its agent, shown after the harness or Agent as <host or Agent> \xB7 <model>; without it the claim names no model." },
+      { name: "session-url", values: ["URL"], default: "", description: "An https address that opens the holder's session, such as a Claude Code on the web session; an inline claim and a strip then end with a Session link chip that opens it in a new tab, and an avatar shows none. Only the session's owner can open it, which the chip's tooltip says." },
+      { name: "session-label", values: ["text"], default: "", description: "Where session-url opens the session, such as Claude Code on the web, named in the Session chip's tooltip; without it the tooltip says only that it opens the session." },
       { name: "activity", values: ACTIVITIES, default: "implementation", description: "What the holder is doing, in words with a facet in the design or build phase color." },
       { name: "claimed-at", values: ["time"], default: "", description: "When the claim started; a strip shows it as since <time>." },
       { name: "renewed-at", values: ["time"], default: "", description: "When the claim was last renewed; the strip's lease meter runs from it to expires-at." },
       { name: "expires-at", values: ["time"], default: "", description: "When the claim lapses; the time left shows in words and updates every minute." },
       { name: "variant", values: VARIANTS, default: "inline", description: "avatar shows only the avatar with the text as its tooltip, inline adds the holder, activity, and time left with the exact times as its tooltip, and strip is a full-width band that adds since, the last renewal, how long ago it was claimed, and the lease meter, with the exact times as its tooltip too." }
     ],
-    states: ["avatar", "inline", "strip", "expired", "expired-strip", "model"],
+    states: ["avatar", "inline", "strip", "expired", "expired-strip", "model", "session", "session-strip"],
     keyboard: ["A claim takes no keys; an avatar claim's text is its accessible description, and a shortened inline claim joins the Tab order to show its full text."]
   };
   connectedCallback() {
@@ -48,6 +50,20 @@ class PrismClaim extends Base {
     const host = (this.getAttribute("host") ?? "").trim() || "Agent";
     const model = (this.getAttribute("model") ?? "").trim();
     return model ? `${host} \xB7 ${model}` : host;
+  }
+  /** The https address of the holder's session, or null. */
+  get sessionUrl() {
+    const value = (this.getAttribute("session-url") ?? "").trim();
+    return /^https:\/\/[^\s"<>]+$/i.test(value) ? value : null;
+  }
+  /** A chip that opens the holder's session in a new tab, or null without a session address. */
+  sessionChip() {
+    const url = this.sessionUrl;
+    if (!url) return null;
+    const where = (this.getAttribute("session-label") ?? "").trim();
+    const chip = make(this, "prism-chip", "prism-claim-session", { href: url, target: "_blank", label: where ? `Open session in ${where}` : "Open session", tip: `Opens this session${where ? ` in ${where}` : ""} in a new tab. Only the person whose session it is can open it.` });
+    chip.append(make(this, "prism-icon", null, { slot: "start", name: "external" }), "Session");
+    return chip;
   }
   /** The claim's text in one line: the holder, its harness or Agent and model, the activity, and the time left. */
   get tooltipText() {
@@ -80,7 +96,7 @@ class PrismClaim extends Base {
     } else if (variant === "inline") {
       const text = make(this, "span", "prism-claim-text");
       text.append(holder(), " ", activity(), " ", parts.time);
-      this.replaceChildren(parts.avatar, text);
+      this.replaceChildren(...[parts.avatar, text, this.sessionChip()].filter(Boolean));
       watchShortening(this, text);
     } else {
       const lines = make(this, "span", "prism-claim-lines");
@@ -92,6 +108,8 @@ class PrismClaim extends Base {
       parts.since = make(this, "span", "prism-claim-since");
       parts.renewed = make(this, "span", "prism-claim-renewed");
       parts.report.append(parts.since, parts.renewed);
+      const session = this.sessionChip();
+      if (session) first.append(" ", session);
       lines.append(first, parts.report);
       const lease = make(this, "span", "prism-claim-lease");
       const words = make(this, "span", "prism-claim-lease-words");

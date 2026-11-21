@@ -96,6 +96,9 @@ const isObject = (value) => value !== null && typeof value === "object" && !Arra
 const cutName = (value) => text(value).slice(0, NAME_MAX);
 const cutDescription = (value) => text(value).slice(0, DESCRIPTION_MAX);
 const tooMany = (count, max, what) => count > max ? `it listed more than ${max} ${what}` : null;
+const VERSION_PATTERN = /^[0-9][0-9A-Za-z.+-]{0,39}$/;
+const versionOf = (value) => typeof value === "string" && VERSION_PATTERN.test(value) ? value : null;
+const codexVersion = (userAgent) => versionOf(/^[^\s/]+\/([^\s/]+)/.exec(text(userAgent))?.[1] ?? null);
 const reports = /* @__PURE__ */ new Map();
 function forgetRunOptions() {
   reports.clear();
@@ -234,14 +237,14 @@ function claudeConversation(optionsRead) {
       const listed = models.filter(isObject);
       const excess = tooMany(listed.length, MAX_REPORT_MODELS, "models");
       if (excess) fail(excess);
-      else done({ state: "ready", models: listed.map(keptClaudeModel) });
+      else done({ state: "ready", version: versionOf(event.response.response?.claude_code_version), models: listed.map(keptClaudeModel) });
     }
   };
 }
 function codexConversation(optionsRead, provider) {
   const pending = /* @__PURE__ */ new Map();
   const seenCursors = /* @__PURE__ */ new Set();
-  const report = { state: "ready", providers: [], defaultProviderId: null, models: [], modelsError: null };
+  const report = { state: "ready", version: null, providers: [], defaultProviderId: null, models: [], modelsError: null };
   let nextId = 1;
   let pages = 0;
   let send = () => {
@@ -280,6 +283,7 @@ function codexConversation(optionsRead, provider) {
       }
       const result = message.result;
       if (method === "initialize") {
+        report.version = codexVersion(result?.userAgent);
         send({ jsonrpc: "2.0", method: "initialized", params: {} });
         request("modelProvider/list", {});
         return;
@@ -387,21 +391,25 @@ const ADAPTERS = {
 const hostDefault = (description) => ({ value: null, name: "Host default", description });
 const offered = (value) => ({ value, state: "offered", reason: null });
 const notOffered = (value, reason) => ({ value, state: "not-offered", reason });
-function buildReport(definition, { purpose, provider, model, effort, typed }, raw) {
+const unchecked = (value, reason) => ({ value, state: "unchecked", reason });
+function buildReport(definition, { purpose, provider, model, effort, typed }, raw, executable) {
   const { host, label } = definition;
   const adapter = ADAPTERS[host];
   const ready = raw.state === "ready";
+  const reason = !ready ? `${label} did not report its run options: ${raw.message}.` : raw.modelsError ? `${label} could not list its models: ${raw.modelsError}` : null;
+  const modelsChecked = reason === null;
   const mapped = ready ? adapter.map(raw, purpose) : { providers: host === "codex" && purpose === "coordinator" ? { defaultDescription: "", values: [] } : null, models: [], allLevels: [], defaultModel: null };
   const options = [];
   if (mapped.providers) {
     const values = mapped.providers.values;
-    const chosen = provider === null || values.some((entry) => entry.value === provider) ? offered(provider) : notOffered(provider, choiceReasons.provider(label, provider));
+    const chosen = provider === null || values.some((entry) => entry.value === provider) ? offered(provider) : ready ? notOffered(provider, choiceReasons.provider(label, provider)) : unchecked(provider, reason);
     options.push({ id: "provider", name: "Provider", kind: "provider", values: [hostDefault(mapped.providers.defaultDescription), ...values], chosen });
   }
   const listed = model === null ? null : mapped.models.find((entry) => entry.value === model) ?? null;
   let modelChoice;
   if (model === null || listed) modelChoice = offered(model);
   else if (typed) modelChoice = { value: model, state: "typed", reason: choiceReasons.typed(label) };
+  else if (!modelsChecked) modelChoice = unchecked(model, reason);
   else modelChoice = notOffered(model, choiceReasons.model(label, model));
   options.push({
     id: "model",
@@ -415,18 +423,18 @@ function buildReport(definition, { purpose, provider, model, effort, typed }, ra
   const levels = !ready ? [] : effortModel ? effortModel.levels : mapped.allLevels;
   const efforts = rankEfforts(levels).slice(0, MAX_MODEL_LEVELS).map(({ value, description }) => ({ value, name: effortName(value), description }));
   const modelName = listed?.name ?? model ?? mapped.defaultModel?.name ?? "The host's default model";
-  const effortChoice = effort === null || efforts.some((entry) => entry.value === effort) ? offered(effort) : notOffered(effort, choiceReasons.effort(modelName, effort));
+  const effortChoice = effort === null || efforts.some((entry) => entry.value === effort) ? offered(effort) : !modelsChecked ? unchecked(effort, reason) : notOffered(effort, choiceReasons.effort(modelName, effort));
   options.push({ id: "effort", name: "Effort", kind: "effort", values: [hostDefault(adapter.effortDefault(effortModel)), ...efforts], chosen: effortChoice });
-  const reason = !ready ? `${label} did not report its run options: ${raw.message}.` : raw.modelsError ? `${label} could not list its models: ${raw.modelsError}` : null;
-  return { host, label, state: ready ? "ready" : "failed", reason, options };
+  const source = { program: label, executable, version: ready ? raw.version ?? null : null };
+  return { host, label, state: ready ? "ready" : "failed", reason, source, options };
 }
 async function readRunOptions({ host, purpose, provider = null, model = null, effort = null, typed = false, checkout, env = process.env }) {
   const selection = checkedSelection({ host, purpose, provider, model, effort, typed });
   const { definition } = selection;
   const resolved = await resolveHost(definition.host, env);
-  if (!resolved.available) return { host: definition.host, label: definition.label, state: "unavailable", reason: resolved.reason, options: [] };
+  if (!resolved.available) return { host: definition.host, label: definition.label, state: "unavailable", reason: resolved.reason, source: null, options: [] };
   const raw = await keptReport(resolved, { checkout, env, provider: definition.host === "codex" ? selection.provider : null });
-  return buildReport(definition, selection, raw);
+  return buildReport(definition, selection, raw, resolved.executable);
 }
 export {
   EFFORT_PATTERN,

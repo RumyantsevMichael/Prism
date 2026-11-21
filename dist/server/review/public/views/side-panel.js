@@ -26,8 +26,9 @@ function legacyWidth() {
 }
 function fileBody(data, { renderMarkdown }) {
   if (data.kind === "source") {
+    const note2 = data.note ? `<p class="side-panel-note">${escapeHtml(data.note)}</p>` : "";
     const lines = highlightLines(data.content.replace(/\r\n/g, "\n").replace(/\n$/, ""), languageOf(data.path));
-    return `<ol class="source-lines">${lines.map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol>`;
+    return `${note2}<ol class="source-lines">${lines.map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol>`;
   }
   if (data.path.toLowerCase().endsWith(".md")) {
     return `<prism-doc class="document-content">${renderMarkdown(data.path, data.content, data.links) || '<p class="muted">The document is empty.</p>'}</prism-doc>`;
@@ -131,13 +132,15 @@ function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mount
     if (keepScroll) body.scrollTop = top;
     else scrollTo(anchor);
   }
-  async function showFile(path, anchor = null) {
+  async function showFile(path, anchor = null, { url = null, eyebrow = null, tab = true } = {}) {
     const ticket = ++request;
-    const same = current?.ref === path;
-    current = { ref: path, anchor, content: same ? current.content : null, diagrams: same ? current.diagrams : null, folds: same ? current.folds : /* @__PURE__ */ new Set() };
+    const source2 = url ?? `./api/artifact?path=${encodeURIComponent(path)}`;
+    const same = current?.ref === path && current?.url === source2;
+    current = { ref: path, url: source2, tab, anchor, content: same ? current.content : null, diagrams: same ? current.diagrams : null, folds: same ? current.folds : /* @__PURE__ */ new Set() };
     const named = describe(path);
-    const where = anchor ? anchor.match(LINE_RANGE) ? `lines ${anchor.slice(1).replace("-", "\u2013")}` : `#${anchor}` : "";
-    header({ eyebrow: named.kind, name: named.label, detail: named.code ? [path, where].filter(Boolean).join(" \xB7 ") : where, ref: path, code: named.code });
+    const range = anchor ? anchor.match(LINE_RANGE) : null;
+    const where = anchor ? range ? range[2] ? `lines ${anchor.slice(1).replace("-", "\u2013")}` : `line ${range[1]}` : `#${anchor}` : "";
+    header({ eyebrow: eyebrow ?? named.kind, name: named.label, detail: named.code ? [path, where].filter(Boolean).join(" \xB7 ") : where, ref: tab ? path : null, code: named.code });
     setOpen(true);
     if (same && current.content !== null) {
       scrollTo(anchor);
@@ -145,7 +148,7 @@ function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mount
     }
     body.innerHTML = '<p class="muted side-panel-loading">Loading\u2026</p>';
     try {
-      const data = await fetchJson(`./api/artifact?path=${encodeURIComponent(path)}`);
+      const data = await fetchJson(source2);
       if (ticket !== request) return;
       current.content = data.content;
       current.diagrams = JSON.stringify(data.diagrams ?? []);
@@ -155,14 +158,15 @@ function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mount
       body.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
     }
   }
-  function showContent({ eyebrow, name, detail = null, html, ref = null }) {
+  function showContent({ eyebrow, name, detail = null, html, ref = null, at = "start" }) {
     ++request;
     current = { ref, anchor: null, content: null, folds: /* @__PURE__ */ new Set(), custom: true };
     header({ eyebrow, name, detail, ref });
     body.innerHTML = html;
     for (const content of body.querySelectorAll(".document-content")) decorateFolds(content, current.folds);
-    body.scrollTop = 0;
     setOpen(true);
+    body.scrollTop = at === "end" ? body.scrollHeight : 0;
+    if (at === "end" && inSheet()) requestAnimationFrame(() => body.lastElementChild?.scrollIntoView({ block: "end" }));
   }
   function close() {
     ++request;
@@ -177,7 +181,7 @@ function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mount
     if (!current?.ref || current.custom || current.content === null) return;
     const ticket = request;
     try {
-      const data = await fetchJson(`./api/artifact?path=${encodeURIComponent(current.ref)}`);
+      const data = await fetchJson(current.url ?? `./api/artifact?path=${encodeURIComponent(current.ref)}`);
       const diagrams = JSON.stringify(data.diagrams ?? []);
       if (ticket !== request || !current || data.content === current.content && diagrams === current.diagrams) return;
       current.content = data.content;

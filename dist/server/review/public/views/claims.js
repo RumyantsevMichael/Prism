@@ -18,7 +18,7 @@ function claimOf(slices, slug, now = Date.now()) {
   return null;
 }
 function claimAttributes(claim) {
-  return Object.entries({ label: claim.label, host: claim.host, model: claim.model, activity: ACTIVITIES[claim.activity] ?? "implementation", "claimed-at": claim.claimedAt, "renewed-at": claim.renewedAt, "expires-at": claim.expiresAt }).filter(([, value]) => typeof value === "string" && value).map(([name, value]) => ` ${name}="${escapeHtml(value)}"`).join("");
+  return Object.entries({ label: claim.label, host: claim.host, model: claim.model, "session-url": claim.session?.url, "session-label": claim.session?.label, activity: ACTIVITIES[claim.activity] ?? "implementation", "claimed-at": claim.claimedAt, "renewed-at": claim.renewedAt, "expires-at": claim.expiresAt }).filter(([, value]) => typeof value === "string" && value).map(([name, value]) => ` ${name}="${escapeHtml(value)}"`).join("");
 }
 function claimChip(held, variant = "inline") {
   const claim = held?.claim;

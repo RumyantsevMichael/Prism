@@ -4,8 +4,8 @@ import { createPoller } from "./poller.js";
 import { badge, escapeHtml } from "./util.js";
 const REFRESH_MS = 5e3;
 const COUNT_LINKS = Object.freeze([
-  ["Launched on this computer", "thisComputer", "play", "agents:this-computer"],
-  ["Other sessions", "other", "agent", "agents:other"],
+  ["Launched from Prism", "thisComputer", "play", "agents:this-computer"],
+  ["Started outside Prism", "other", "agent", "agents:other"],
   ["Expired claims", "expired", "clock", "agents:expired"]
 ]);
 function shortRunningText(ms) {

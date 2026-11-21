@@ -316,6 +316,11 @@ function execute(command, cwd, { signal, timeoutMs, onProgress, logPath = null }
     child.on("close", (code, exitSignal) => finish(code, exitSignal));
   });
 }
+function homeRelative(file) {
+  const home = os.homedir();
+  const relative = path.relative(home, file);
+  return home && relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? `~/${relative.split(path.sep).join("/")}` : file;
+}
 async function logPathFor(dataDirectory, root, initiative, slice, id) {
   try {
     const directory = path.join(dataDirectoryOf(dataDirectory), "verification-logs", digest(root).slice(0, 16), initiative, slice);
@@ -406,6 +411,7 @@ async function verificationRun({ root, initiative, slice, target, key, design, s
   }
   if (treeId(entry.tree)) Object.assign(entry, await runFiles(root, design, entry.tree));
   entry.checkout = await checkoutOf(root, config, entry.tree).catch(() => null);
+  if (log) entry.log = homeRelative(log);
   const { output = entry.outputTail, ...recorded } = entry;
   const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, recorded);
   return { id, path: stored.path, ...recorded, ...log ? { log } : {}, output };
@@ -795,6 +801,7 @@ export {
   checkoutOf,
   configuredTestCommand,
   failingTests,
+  homeRelative,
   publicRemote,
   reportContractDefects,
   repositoryOf,

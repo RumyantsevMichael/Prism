@@ -114,6 +114,22 @@ async function sameVerifiedContent(projectRoot, config, verifiedTree, ignored) {
     await rm(temporary, { recursive: true, force: true });
   }
 }
+const STALE_PATHS_SHOWN = 20;
+async function reviewStale(projectRoot, review, latest) {
+  if (!review.tree || !latest || review.tree === latest.tree) return null;
+  const paths = await changedPaths(projectRoot, review.tree, latest.tree);
+  const shown = (paths ?? []).slice(0, STALE_PATHS_SHOWN), more = (paths?.length ?? 0) - shown.length;
+  const named = paths === null ? "" : paths.length ? ` The paths that changed since the reviewed result: ${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}.` : "";
+  return { code: "review_stale", message: `The accepted review ${review.wave} covers an earlier verified result.${named} Review the current result in a new wave.`, ...paths === null ? {} : { paths } };
+}
+async function checkReviewCompletion(input) {
+  const result = await checkReviewGate(input);
+  if (input.gate !== "completion" || !result.wave) return result;
+  const design = await acceptedDesign(input.projectRoot, input.initiative, input.slice);
+  if (!design || design.review !== "required") return result;
+  const stale = await reviewStale(input.projectRoot, result, await latestVerification(input.projectRoot, input.initiative, input.slice));
+  return stale ? { ...result, ready: false, problems: [...result.problems, stale] } : result;
+}
 async function checkSliceGate({ projectRoot, initiative, slice, gate }) {
   const design = await acceptedDesign(projectRoot, initiative, slice);
   if (!design) return checkReviewGate({ projectRoot, initiative, slice, gate });
@@ -135,12 +151,14 @@ async function checkSliceGate({ projectRoot, initiative, slice, gate }) {
   if (design.review === "required") {
     review = await checkReviewGate({ projectRoot, initiative, slice, gate: "completion" }).catch((error) => ({ ready: false, problems: [{ code: error.code ?? "evidence_missing", message: error.message }] }));
     problems.push(...review.problems ?? []);
-    if (review.ready && review.tree && review.tree !== latest?.tree) problems.push({ code: "review_stale", message: `The accepted review ${review.wave} covers an earlier verified result. Review the current result in a new wave.` });
+    const stale = review.ready ? await reviewStale(projectRoot, review, latest) : null;
+    if (stale) problems.push(stale);
   }
   return { ready: problems.length === 0, design: true, ...latest ? { verification: latest.id, tree: latest.tree } : {}, ...review?.wave ? { wave: review.wave } : {}, problems };
 }
 export {
   changedPaths,
+  checkReviewCompletion,
   checkSliceGate,
   checkoutSegment,
   contentTree,

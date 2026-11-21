@@ -16,14 +16,26 @@ const STATES = Object.freeze({
   working: ["Working", "info"],
   expired: ["Expired", "neutral"]
 });
-const GROUPS = Object.freeze([["needs-you", "Needs you"], ["launched", "Launched on this computer"], ["other", "Other sessions"], ["expired", "Claims that expired"]]);
+const GROUPS = Object.freeze([["needs-you", "Needs you"], ["launched", "Launched from Prism"], ["other", "Started outside Prism"], ["expired", "Claims that expired"], ["archived", "Archived"]]);
 const SHOWS = Object.freeze([
   ["all", "All", "all", ["needs-you", "launched", "other", "expired"]],
   ["needs-you", "Needs you", "needsYou", ["needs-you"]],
-  ["this-computer", "This computer", "thisComputer", ["needs-you", "launched"]],
-  ["other", "Other sessions", "other", ["other"]],
-  ["expired", "Expired", "expired", ["expired"]]
+  ["this-computer", "Launched from Prism", "thisComputer", ["needs-you", "launched"]],
+  ["other", "Started outside Prism", "other", ["other"]],
+  ["expired", "Expired", "expired", ["expired"]],
+  ["archived", "Archived", "archived", ["archived"]]
 ]);
+const ENDED_STATES = Object.freeze(["finished", "failed", "stopped", "blocked"]);
+function archivable(entry) {
+  return entry.kind === "launch" && entry.group !== "archived" && ENDED_STATES.includes(entry.state);
+}
+function archivedText(count) {
+  if (count === 1) return "Archived 1 session. The Archived filter keeps it.";
+  return count ? `Archived ${count} sessions. The Archived filter keeps them.` : "No ended session was left to archive.";
+}
+const groupAfterUnarchive = (entry) => entry.state === "failed" || entry.state === "waiting" ? "needs-you" : "launched";
+const READ_ONLY_TIP = "This tab can only read.";
+const EXPIRED_IN_ALL_MS = 24 * 60 * 60 * 1e3;
 function runningText(ms) {
   const total = Math.max(0, Math.floor((Number(ms) || 0) / 1e3));
   const hours = Math.floor(total / 3600);
@@ -89,14 +101,19 @@ function order(left, right) {
   if (left.group === "other") return at(left.expiresAt) - at(right.expiresAt) || left.id.localeCompare(right.id);
   return at(right.expiresAt) - at(left.expiresAt) || left.id.localeCompare(right.id);
 }
-function countsOf(entries) {
+function inAll(entry, now = Date.now()) {
+  if (entry.group === "archived") return false;
+  return !(entry.group === "expired" && at(entry.expiresAt) && now - at(entry.expiresAt) >= EXPIRED_IN_ALL_MS);
+}
+function countsOf(entries, now = Date.now()) {
   const count = (accept) => entries.filter(accept).length;
   return {
-    all: entries.length,
+    all: count((entry) => inAll(entry, now)),
     needsYou: count((entry) => entry.group === "needs-you"),
-    thisComputer: count((entry) => entry.kind === "launch"),
+    thisComputer: count((entry) => entry.kind === "launch" && entry.group !== "archived"),
     other: count((entry) => entry.group === "other"),
-    expired: count((entry) => entry.group === "expired")
+    expired: count((entry) => entry.group === "expired"),
+    archived: count((entry) => entry.group === "archived")
   };
 }
 const KIND_ICONS = { launch: "play", claim: "agent", expired: "clock" };
@@ -107,11 +124,22 @@ function titleHtml(entry, ctx) {
   const link = ref && ctx.hasArtifact(ref) ? `<a href="./review?artifact=${encodeURIComponent(ref)}" data-artifact="${escapeHtml(ref)}">${escapeHtml(entry.name ?? "")}</a>` : `<span>${escapeHtml(entry.name ?? "")}</span>`;
   return `<prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${link}${facts ? `<span class="prism-lib-cell is-detail">${escapeHtml(facts)}</span>` : ""}</span>`;
 }
+function sessionLinkHtml(session) {
+  const url = typeof session?.url === "string" && /^https:\/\/[^\s"<>]+$/i.test(session.url) ? session.url : null;
+  if (!url) return "";
+  const where = typeof session.label === "string" && session.label.trim() ? session.label.trim() : "";
+  const tip = `Opens this session${where ? ` in ${where}` : ""} in a new tab. Only the person whose session it is can open it.`;
+  return `<prism-chip class="agents-session" href="${escapeHtml(url)}" target="_blank" label="${escapeHtml(where ? `Open session in ${where}` : "Open session")}" tip="${escapeHtml(tip)}"><prism-icon slot="start" name="external"></prism-icon>Session</prism-chip>`;
+}
 function actionHtml(entry, writable) {
+  if (entry.kind === "claim") return sessionLinkHtml(entry.session);
   if (entry.action === "answer") return '<prism-button size="sm" variant="primary" data-agent-action="answer" text="Answer"></prism-button>';
-  if (entry.action === "stop") return `<prism-button size="sm" variant="ghost" data-agent-action="stop" text="Stop"${writable ? "" : ' disabled tip="This tab can only read."'}></prism-button>`;
-  if (entry.action === "open") return '<prism-button size="sm" variant="ghost" data-agent-action="open" text="Open"></prism-button>';
-  return "";
+  const lock = writable ? "" : ` disabled tip="${READ_ONLY_TIP}"`;
+  if (entry.action === "stop") return `<prism-button size="sm" variant="ghost" data-agent-action="stop" text="Stop"${lock}></prism-button>`;
+  const open = entry.action === "open" ? '<prism-button size="sm" variant="ghost" data-agent-action="open" text="Open"></prism-button>' : "";
+  if (entry.kind === "launch" && entry.group === "archived") return `${open}<prism-button size="sm" variant="ghost" data-agent-action="unarchive" text="Unarchive"${lock}></prism-button>`;
+  if (archivable(entry)) return `${open}<prism-button size="sm" variant="ghost" data-agent-action="archive" text="Archive"${lock}></prism-button>`;
+  return open;
 }
 function detailsHtml(entry) {
   const command = entry.launch?.resumeCommand;
@@ -129,7 +157,7 @@ async function render(container, entity, ctx) {
   container.innerHTML = `<div class="agents">
     <div class="agents-notice" data-agents-notice></div>
     <p class="error agents-error" role="alert" hidden></p>
-    <div class="agents-toolbar" data-agents-toolbar hidden><prism-segmented label="Show" value="${escapeHtml(state.show)}" wrap data-agents-show>${showChoices}</prism-segmented></div>
+    <div class="agents-toolbar" data-agents-toolbar hidden><prism-segmented label="Show" value="${escapeHtml(state.show)}" wrap data-agents-show>${showChoices}</prism-segmented><prism-button class="agents-archive-ended" size="sm" data-agents-archive-ended text="Archive all ended" hidden></prism-button></div>
     <prism-lib-table class="agents-table" data-agents-table hidden><div class="prism-lib-row is-head" aria-hidden="true">${columns}</div></prism-lib-table>
     <div class="agents-none" data-agents-none hidden>${emptyState(EMPTY_TEXT)}</div>
   </div>`;
@@ -137,6 +165,7 @@ async function render(container, entity, ctx) {
   const headRow = table.querySelector(".prism-lib-row.is-head");
   const toolbar = container.querySelector("[data-agents-toolbar]");
   const show = container.querySelector("[data-agents-show]");
+  const archiveAll = container.querySelector("[data-agents-archive-ended]");
   const empty = container.querySelector("[data-agents-none]");
   const noticeSlot = container.querySelector("[data-agents-notice]");
   const errorLine = container.querySelector(".agents-error");
@@ -153,11 +182,24 @@ async function render(container, entity, ctx) {
   const rows = /* @__PURE__ */ new Map();
   const drafts = state.actionDrafts ??= {};
   let entries = [];
+  let allOut = "";
+  const outOfAll = (now) => entries.filter((entry) => !inAll(entry, now)).map((entry) => entry.id).join("\n");
   let loaded = false;
   let readOnly = typeof ctx.canWrite === "function" ? !ctx.canWrite() : false;
+  let writes = 0;
   bindLinks(table, ctx);
+  const paintArchiveAll = () => {
+    if (readOnly) {
+      archiveAll.setAttribute("disabled", "");
+      archiveAll.setAttribute("tip", READ_ONLY_TIP);
+    } else if (!archiveAll.hasAttribute("data-busy")) {
+      archiveAll.removeAttribute("disabled");
+      archiveAll.removeAttribute("tip");
+    }
+  };
   const noteReadOnly = () => {
     if (readOnly && !noticeSlot.childElementCount) noticeSlot.innerHTML = readOnlyNotice();
+    paintArchiveAll();
   };
   noteReadOnly();
   const api = {
@@ -258,10 +300,12 @@ async function render(container, entity, ctx) {
     if (row.clock.textContent !== time) row.clock.textContent = time;
     paintDetails(row);
   }
-  function layout() {
+  function layout(now = Date.now()) {
     entries.sort(order);
-    const counts = countsOf(entries);
+    const counts = countsOf(entries, now);
     const shown = SHOWS.find(([value]) => value === state.show)?.[3] ?? SHOWS[0][3];
+    const showing = state.show === "all" || !SHOWS.some(([value]) => value === state.show) ? (entry) => inAll(entry, now) : () => true;
+    allOut = outOfAll(now);
     for (const [value, , key] of SHOWS) {
       const slot = show.querySelector(`[data-show-count="${value}"]`);
       if (slot && slot.textContent !== String(counts[key])) slot.textContent = String(counts[key]);
@@ -270,20 +314,24 @@ async function render(container, entity, ctx) {
     let visibleRows = 0;
     for (const [group] of GROUPS) {
       const members = entries.filter((entry) => entry.group === group);
-      const visible = shown.includes(group) && members.length > 0;
+      const kept = new Set(members.filter(showing));
+      const visible = shown.includes(group) && kept.size > 0;
       const head = groupHeads.get(group);
       head.hidden = !visible;
       const count = head.querySelector("prism-badge");
-      if (count.textContent !== String(members.length)) count.textContent = String(members.length);
+      if (count.textContent !== String(kept.size)) count.textContent = String(kept.size);
       sequence.push(head);
       for (const entry of members) {
         const row = rows.get(entry.id);
-        row.element.hidden = !visible;
-        if (visible) visibleRows += 1;
+        const rowVisible = visible && kept.has(entry);
+        row.element.hidden = !rowVisible;
+        if (rowVisible) visibleRows += 1;
         sequence.push(row.element);
       }
     }
     nothing.hidden = visibleRows > 0;
+    const offers = (shown.includes("needs-you") || shown.includes("launched")) && entries.some((entry) => shown.includes(entry.group) && showing(entry) && archivable(entry));
+    if (archiveAll.hidden === offers) archiveAll.hidden = !offers;
     sequence.push(nothing);
     let previous = null;
     for (const node of sequence) {
@@ -295,6 +343,37 @@ async function render(container, entity, ctx) {
     table.hidden = none;
     toolbar.hidden = none;
     empty.hidden = !none;
+  }
+  function regroup(ids, group) {
+    const moved = new Set(ids);
+    entries = entries.map((entry) => {
+      if (!moved.has(entry.id)) return entry;
+      const row = rows.get(entry.id);
+      const next = { ...entry, group: typeof group === "function" ? group(entry) : group };
+      if (row) {
+        row.entry = next;
+        paint(row);
+      }
+      return next;
+    });
+    layout();
+  }
+  async function send(route, body) {
+    const headers = { "Content-Type": "application/json", ...typeof ctx.writeHeaders === "function" ? ctx.writeHeaders() : {} };
+    const response = await fetch(`./api/agents/${route}`, { method: "POST", headers, body: JSON.stringify(body) }).catch(() => null);
+    if (!response) return { status: 0, json: { message: "The review app did not answer, so nothing changed. Try again in a moment." } };
+    return { status: response.status, json: await response.json().catch(() => ({ message: "The server returned an unreadable response." })) };
+  }
+  async function change(route, body, done) {
+    const result = await send(route, body);
+    if (result.status === 200) {
+      writes += 1;
+      done(result.json);
+    } else {
+      ctx.showToast(result.json?.message ?? "The change could not be made.");
+    }
+    void refresh();
+    return result;
   }
   function showAgents(list) {
     const now = Date.now();
@@ -319,11 +398,13 @@ async function render(container, entity, ctx) {
   }
   const refresh = coalesce(async () => {
     try {
+      const before = writes;
       const response = await fetch("./api/agents", { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.message ?? "The agents could not be read.");
       errorLine.hidden = true;
       loaded = true;
+      if (before !== writes) return void refresh();
       showAgents(Array.isArray(body.agents) ? body.agents : []);
     } catch (error) {
       errorLine.textContent = loaded ? `The list could not be refreshed: ${error.message}` : error.message;
@@ -342,11 +423,26 @@ async function render(container, entity, ctx) {
       }
       paint(row, now);
     }
-    if (moved) layout();
+    if (moved || outOfAll(now) !== allOut) layout(now);
   }
   show.addEventListener("change", (event) => {
     state.show = event.detail?.value ?? show.value;
     layout();
+  });
+  archiveAll.addEventListener("click", async () => {
+    if (readOnly || archiveAll.hasAttribute("disabled")) return;
+    archiveAll.setAttribute("data-busy", "");
+    archiveAll.setAttribute("disabled", "");
+    try {
+      await change("archive", { ended: true }, (answer) => {
+        const ids = (Array.isArray(answer?.archived) ? answer.archived : []).map((id) => `launch:${id}`);
+        regroup(ids, "archived");
+        ctx.showToast(archivedText(ids.length));
+      });
+    } finally {
+      archiveAll.removeAttribute("data-busy");
+      paintArchiveAll();
+    }
   });
   table.addEventListener("click", async (event) => {
     const copy = event.target.closest("[data-copy-command]");
@@ -371,6 +467,22 @@ async function render(container, entity, ctx) {
       state.openAgents = isOpen(row) ? state.openAgents.filter((id) => id !== row.entry.id) : [...state.openAgents, row.entry.id];
       return paint(row);
     }
+    if (what === "archive" || what === "unarchive") {
+      if (readOnly || button.hasAttribute("disabled")) return;
+      button.setAttribute("disabled", "");
+      const id = row.entry.id;
+      const result = await change(what, { launch: row.entry.launch.id }, () => {
+        if (what === "archive") {
+          regroup([id], "archived");
+          ctx.showToast("Archived. The Archived filter keeps it.");
+        } else {
+          regroup([id], groupAfterUnarchive);
+          ctx.showToast("Unarchived.");
+        }
+      });
+      if (result.status !== 200) button.removeAttribute("disabled");
+      return;
+    }
     if (what === "stop") {
       button.setAttribute("disabled", "");
       const result = await api.apply({ action: "launch.stop", target: `launch:${row.entry.launch.id}`, input: {}, revision: null });
@@ -392,12 +504,17 @@ async function render(container, entity, ctx) {
 }
 export {
   EMPTY_TEXT,
+  ENDED_STATES,
+  EXPIRED_IN_ALL_MS,
   GROUPS,
   REFRESH_MS,
   SHOWS,
+  archivable,
+  archivedText,
   countsOf,
   exitText,
   hostText,
+  inAll,
   launchFacts,
   render,
   runningText,

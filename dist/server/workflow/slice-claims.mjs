@@ -5,8 +5,9 @@ import { runGit } from "./record-store-sync.mjs";
 import { hostLabel } from "../review/workspace-identity.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { isAgentModel } from "../session/agent-models.mjs";
+import { environmentSessionLink, isSessionLink } from "../session/session-links.mjs";
 const CLAIM_ACTIVITIES = Object.freeze(["design", "implementation"]);
-const CLAIM_FIELDS = ["schemaVersion", "slug", "holder", "label", "host", "model", "activity", "claimedAt", "renewedAt", "expiresAt", "nonce"];
+const CLAIM_FIELDS = ["schemaVersion", "slug", "holder", "label", "host", "model", "session", "activity", "claimedAt", "renewedAt", "expiresAt", "nonce"];
 const HOST_LIMIT = 64;
 const renewFromEnv = (value) => /^\d+$/.test(String(value ?? "").trim()) && Number(value) >= 10 && Number(value) <= 6e5 ? Number(value) : null;
 const SETTINGS = { leaseMs: 30 * 60 * 1e3, renewMs: renewFromEnv(process.env.PRISM_CLAIM_RENEW_MS) ?? 10 * 60 * 1e3 };
@@ -17,7 +18,7 @@ const digestHolder = (value) => {
   const id = typeof value === "string" ? value.trim() : "";
   return id ? `session-${createHash("sha256").update(id).digest("hex").slice(0, 16)}` : null;
 };
-const identity = { holder: sessionHolder() ?? randomBytes(8).toString("hex"), label: null, host: null };
+const identity = { holder: sessionHolder() ?? randomBytes(8).toString("hex"), label: null, host: null, session: environmentSessionLink() };
 const holderOf = (sessionId) => digestHolder(sessionId);
 function harnessName(clientInfo) {
   for (const value of [clientInfo?.title, clientInfo?.name]) {
@@ -49,6 +50,7 @@ function configureClaims(settings = {}) {
   if (typeof settings.holder === "string") identity.holder = settings.holder;
   if (settings.label !== void 0) identity.label = settings.label;
   if (settings.host !== void 0) identity.host = settings.host;
+  if (settings.session !== void 0) identity.session = settings.session;
   if (timer) {
     clearInterval(timer);
     timer = null;
@@ -56,6 +58,7 @@ function configureClaims(settings = {}) {
   }
 }
 const claimHolder = () => callSession.getStore() ?? identity.holder;
+const claimSession = () => callSession.getStore() === void 0 ? identity.session : null;
 async function claimLabel(folder) {
   if (identity.label) return identity.label;
   if (!labels.has(folder)) {
@@ -87,12 +90,13 @@ function parseClaim(slug, bytes) {
   for (const key of ["claimedAt", "renewedAt", "expiresAt"]) if (typeof claim[key] !== "string" || !Number.isFinite(Date.parse(claim[key]))) problems.push(`${key} must be a date-time`);
   if (!CLAIM_ACTIVITIES.includes(claim.activity)) problems.push(`activity must be ${CLAIM_ACTIVITIES.join(" or ")}`);
   if (problems.length) return { problem: `${slug}: the claim record is invalid: ${problems.join("; ")}.` };
-  return { claim: Object.fromEntries(CLAIM_FIELDS.filter((key) => Object.hasOwn(claim, key) && (key !== "model" || isAgentModel(claim.model))).map((key) => [key, claim[key]])) };
+  const kept = (key) => Object.hasOwn(claim, key) && (key !== "model" || isAgentModel(claim.model)) && (key !== "session" || isSessionLink(claim.session));
+  return { claim: Object.fromEntries(CLAIM_FIELDS.filter(kept).map((key) => [key, key === "session" ? { kind: claim.session.kind, id: claim.session.id } : claim[key]])) };
 }
-function newClaim(previous, { slug, holder, label, host = null, model = null, activity, now }) {
+function newClaim(previous, { slug, holder, label, host = null, model = null, session = null, activity, now }) {
   const at = new Date(now).toISOString();
   const kept = previous?.holder === holder && previous.activity === activity && isLive(previous, now);
-  return { schemaVersion: 1, slug, holder, label, ...host ? { host } : {}, ...isAgentModel(model) ? { model } : {}, activity, claimedAt: kept ? previous.claimedAt : at, renewedAt: at, expiresAt: new Date(now + SETTINGS.leaseMs).toISOString(), nonce: randomBytes(12).toString("hex") };
+  return { schemaVersion: 1, slug, holder, label, ...host ? { host } : {}, ...isAgentModel(model) ? { model } : {}, ...isSessionLink(session) ? { session: { kind: session.kind, id: session.id } } : {}, activity, claimedAt: kept ? previous.claimedAt : at, renewedAt: at, expiresAt: new Date(now + SETTINGS.leaseMs).toISOString(), nonce: randomBytes(12).toString("hex") };
 }
 const renewedClaim = (claim, now) => ({ ...claim, renewedAt: new Date(now).toISOString(), expiresAt: new Date(now + SETTINGS.leaseMs).toISOString() });
 const ancestors = (slices, slug) => {
@@ -206,6 +210,7 @@ export {
   claimHolder,
   claimHost,
   claimLabel,
+  claimSession,
   claimView,
   claimedMessage,
   configureClaims,

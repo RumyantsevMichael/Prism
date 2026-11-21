@@ -30,10 +30,15 @@ async function change(directory, edit) {
 `, { mode: 384 });
   }));
 }
-async function recordAskedGates(projectRoot, gateIds, { directory = gateWaitDirectory(), now = /* @__PURE__ */ new Date() } = {}) {
+async function recordAskedGates(projectRoot, gateIds, { directory = gateWaitDirectory(), now = /* @__PURE__ */ new Date(), session = null } = {}) {
   if (!gateIds.length) return;
   const root = await real(projectRoot);
-  await change(directory, (listed) => [...listed.filter((entry) => !gateIds.includes(entry.gate)), ...gateIds.map((gate) => ({ gate, projectRoot: root, askedAt: now.toISOString() }))]);
+  await change(directory, (listed) => [...listed.filter((entry) => !gateIds.includes(entry.gate)), ...gateIds.map((gate) => ({ gate, projectRoot: root, askedAt: now.toISOString(), ...typeof session === "string" && session ? { session } : {} }))]);
+}
+async function sessionAskedGates(projectRoot, session, { directory = gateWaitDirectory() } = {}) {
+  if (typeof session !== "string" || !session) return /* @__PURE__ */ new Set();
+  const root = await real(projectRoot);
+  return new Set((await readEntries(fileOf(directory))).filter((entry) => entry.projectRoot === root && entry.session === session).map((entry) => entry.gate));
 }
 async function askedGates(projectRoot, { directory = gateWaitDirectory() } = {}) {
   const root = await real(projectRoot);
@@ -49,5 +54,6 @@ async function forgetAskedGates(projectRoot, gateIds, { directory = gateWaitDire
 export {
   askedGates,
   forgetAskedGates,
-  recordAskedGates
+  recordAskedGates,
+  sessionAskedGates
 };

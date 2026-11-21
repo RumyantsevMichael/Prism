@@ -69,7 +69,7 @@ class PrismChip extends Base {
   render() {
     const mode = this.mode;
     if (this.control && this.rendered === mode) {
-      if (mode === "link") this.control.setAttribute("href", this.getAttribute("href"));
+      if (mode === "link") this.linkTo();
       return;
     }
     this.rendered = mode;
@@ -85,17 +85,17 @@ class PrismChip extends Base {
       slot.addEventListener("slotchange", show);
       show();
     }
-    if (mode === "link") {
-      this.control.setAttribute("href", this.getAttribute("href"));
-      const target = this.getAttribute("target");
-      if (target) {
-        this.control.setAttribute("target", target);
-        this.control.setAttribute("rel", "noopener");
-      }
-    }
+    if (mode === "link") this.linkTo();
     if (this.control) setAttribute(this.control, "aria-label", this.getAttribute("label") || null);
     this.showPressed();
     if (this.isConnected) remeasure(this);
+  }
+  // A link chip's address and target, set again when either changes; a link that opens elsewhere gives the page it opens neither this page nor its address.
+  linkTo() {
+    this.control.setAttribute("href", this.getAttribute("href"));
+    const target = this.getAttribute("target");
+    setAttribute(this.control, "target", target || null);
+    setAttribute(this.control, "rel", target ? "noopener noreferrer" : null);
   }
   // A button chip with pressed is a toggle whose state assistive technology reads from aria-pressed.
   showPressed() {

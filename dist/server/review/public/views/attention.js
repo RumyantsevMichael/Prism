@@ -186,13 +186,23 @@ function answerForm(item, draft) {
     <p class="gate-error" id="gate-error-${key}" role="alert"${draft.error ? "" : " hidden"}>${escapeHtml(draft.error ?? "")}</p>
   </div>`;
 }
-function approvalSubject(item) {
+function servedWork(item, ctx) {
+  const work = item.workItem;
+  if (!work?.initiative) return "";
+  const { initiative, slice } = work;
+  const unknown = (id, why) => `<span class="approval-work-part"><code class="approval-path" data-code-subject>${escapeHtml(id)}</code> <span class="muted">${why}</span></span>`;
+  const parts = [initiative.known ? `<span class="approval-work-part">${artifactLink(`initiative:${initiative.id}`, ctx, initiative.title)}</span>` : unknown(initiative.id, "not on the roadmap yet")];
+  if (slice) parts.push(initiative.known && slice.known ? `<span class="approval-work-part">${artifactLink(`slice:${initiative.id}/${slice.slug}`, ctx, slice.title)}</span>` : unknown(slice.slug, "no slice yet"));
+  return `<span class="approval-work">${parts.join('<span class="approval-work-separator" aria-hidden="true">\u203A</span>')}</span>`;
+}
+function approvalSubject(item, ctx) {
   const scope = item.artifact.scope?.label ?? "workspace";
   const status = (text, modifier) => `<span class="approval-status-value ${modifier}">${escapeHtml(text)}</span>`;
   const change = item.recorded && item.recorded !== item.status ? `<span class="approval-status">${status(item.recorded, "is-recorded")}<span class="approval-status-arrow" aria-hidden="true">\u2192</span><span class="sr-only">to</span>${status(item.status, "is-approved")}</span>` : `<span class="approval-status">${status(item.status, "is-approved")}</span>`;
   return `${keyValues([
     ["File", `<code class="approval-path" data-code-subject>${escapeHtml(item.artifact.path)}</code>`],
     ["Scope", chip(escapeHtml(scope))],
+    ["Asked for", servedWork(item, ctx)],
     ["Approving records", change]
   ])}
     ${item.ambiguous ? `<p class="notice">Another pending approval holds this question's id, so an answer cannot tell which file it approves and is refused. The agent asks again for the file it means.</p>` : ""}
@@ -209,7 +219,7 @@ function gateDetail(item, ctx, draft) {
     </header>
     <div class="gate-body">
       <div class="gate-main">
-        ${approvalSubject(item)}
+        ${approvalSubject(item, ctx)}
         ${gateContext(item, ctx)}
       </div>
       ${answerForm(item, draft)}

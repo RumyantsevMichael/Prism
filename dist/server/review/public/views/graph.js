@@ -253,27 +253,6 @@ function enablePanZoom(section, state) {
       apply(state.scale * (event.deltaY < 0 ? 1.08 : 0.92));
     }
   }, { passive: false });
-  let drag = null;
-  viewport.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || event.target.closest(".graph-node")) {
-      return;
-    }
-    drag = { x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop };
-    viewport.setPointerCapture(event.pointerId);
-    viewport.classList.add("is-panning");
-  });
-  viewport.addEventListener("pointermove", (event) => {
-    if (drag) {
-      viewport.scrollLeft = drag.left - (event.clientX - drag.x);
-      viewport.scrollTop = drag.top - (event.clientY - drag.y);
-    }
-  });
-  const end = () => {
-    drag = null;
-    viewport.classList.remove("is-panning");
-  };
-  viewport.addEventListener("pointerup", end);
-  viewport.addEventListener("pointercancel", end);
 }
 export {
   enablePanZoom,

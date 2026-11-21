@@ -39,7 +39,7 @@ import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-disco
 import { checkpointPause, effectiveSettings, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, claimedByUpdate, getInitiative, initiativeAcknowledgement, initiativeWork, readInitiative, requireClaimedWork, updateInitiative } from "./workflow/initiative.mjs";
-import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
+import { ROADMAP_TOOLS, RoadmapError, getRoadmap, roadmapAcknowledgement, updateRoadmap } from "./workflow/roadmap.mjs";
 import { ARTIFACT_TOOLS, artifactAtLocation, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
 import { savedComment } from "./workflow/artifact-comments.mjs";
 import { keptExplanation, shownPath } from "./workflow/artifact-migration.mjs";
@@ -755,7 +755,7 @@ const tools = [
   },
   {
     name: "update_coordination_state",
-    description: "Apply a validated atomic update to an initiative's coordination state, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision; an update that only resolves gates by id goes through after other changes, such as the browser answer that prompted it.",
+    description: "Apply a validated atomic update to an initiative's coordination state, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision; an update that only resolves gates by id goes through after other changes, such as the browser answer that prompted it. The result is brief: the new revision, the opened gates, and the state without the person's history and setting marks and without each pending gate's context and artifacts, which get_coordination_state reads.",
     inputSchema: {
       type: "object",
       properties: {
@@ -892,7 +892,7 @@ function progress(progressToken, value, message) {
 }
 async function noteApprovalDelivery(name, projectRoot, value) {
   try {
-    if (name === "update_artifact") await recordAskedGates(projectRoot, (value.artifacts ?? []).map((entry) => entry.gate).filter((gate) => typeof gate === "string"));
+    if (name === "update_artifact") await recordAskedGates(projectRoot, (value.artifacts ?? []).map((entry) => entry.gate).filter((gate) => typeof gate === "string"), { session: claimHolder() });
     else if (typeof value.latestAnswer?.gate === "string") await forgetAskedGates(projectRoot, [value.latestAnswer.gate]);
   } catch {
   }
@@ -1033,6 +1033,15 @@ async function callStateTool(name, argumentsValue) {
   if (resultValue?.state?.closed) {
     const { closed, ...state } = resultValue.state;
     resultValue = { ...resultValue, state };
+  }
+  if (name === "update_coordination_state" && resultValue?.state) {
+    const { history, personSettings, ...state } = resultValue.state;
+    const pending = Array.isArray(state.pending) ? state.pending.map((gate) => {
+      if (!gate || typeof gate !== "object") return gate;
+      const { context, artifacts, ...brief } = gate;
+      return brief;
+    }) : state.pending;
+    resultValue = { ...resultValue, state: { ...state, ...pending === void 0 ? {} : { pending } } };
   }
   const content = [{ type: "text", text: stateContent(resultValue) }, ...await shippedHistoryContent(projectRoot, resultValue?.shippedHistory)];
   if (Array.isArray(resultValue?.keptSettings) && resultValue.keptSettings.length) content.push({ type: "text", text: keptSettingsText(resultValue.keptSettings) });
@@ -1490,7 +1499,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   if (["get_roadmap", "update_roadmap", "get_initiative", "update_initiative"].includes(name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     const input2 = { ...argumentsValue, projectRoot };
-    let value = name === "get_roadmap" ? await getRoadmap(input2) : name === "update_roadmap" ? await updateRoadmap(input2) : name === "get_initiative" ? await getInitiative(input2) : initiativeAcknowledgement(await updateInitiative(input2), input2.operations);
+    let value = name === "get_roadmap" ? await getRoadmap(input2) : name === "update_roadmap" ? roadmapAcknowledgement(await updateRoadmap(input2), input2.operations) : name === "get_initiative" ? await getInitiative(input2) : initiativeAcknowledgement(await updateInitiative(input2), input2.operations);
     if (name === "get_initiative") value = { ...value, runTotals: await readInitiativeRecordRunTotals(projectRoot, value.initiative, value) };
     value = await withRecordStore(projectRoot, value);
     const marks = name === "get_initiative" ? await historyMarksContent(projectRoot, value.shippedHistory) : name === "get_roadmap" ? await Promise.all((value.markedHistory ?? []).map(async (item) => ({ type: "text", text: await historyMarksText(projectRoot, item.initiative, item.marked) }))) : [];

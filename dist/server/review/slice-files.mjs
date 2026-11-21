@@ -13,6 +13,13 @@ async function shippedCommit(projectRoot, initiative, slice) {
   const recorded = decision?.kind === "shipped" ? decision.slices?.[slice] : null;
   return hashOrNull(recorded?.shipped);
 }
+async function heldAt(code, repository, commit, shipped) {
+  const where = (at) => code.branchesHolding ? code.branchesHolding(repository, at).catch(() => null) : null;
+  const held = await where(commit);
+  if (!held) return null;
+  const shippedOnDefault = !shipped ? false : shipped === commit ? held.onDefault : (await where(shipped))?.onDefault === true;
+  return { ...held, shippedOnDefault };
+}
 async function sliceFiles(projectRoot, initiative, slice, code = null) {
   const run = await latestPassingRun(projectRoot, initiative, slice);
   if (!run) return { initiative, slice, repository: null, verified: null, shipped: null, shown: null, files: [], message: "The slice has no passing verification run yet, so it has no verified files to show." };
@@ -20,13 +27,14 @@ async function sliceFiles(projectRoot, initiative, slice, code = null) {
   const verified = hashOrNull(run.checkout?.head);
   const shipped = await shippedCommit(projectRoot, initiative, slice);
   const recorded = (Array.isArray(run.files) ? run.files : []).filter((file) => typeof file?.path === "string").map((file) => ({ path: file.path, blob: hashOrNull(file.blob) }));
-  const answer = (shown, blobs, message) => ({
+  const answer = (shown, blobs, message, held = null) => ({
     initiative,
     slice,
     repository,
     verified,
     shipped,
     shown,
+    held,
     files: recorded.map((file) => {
       if (!shown) return { ...file, shownBlob: null, state: "not available" };
       const shownBlob = blobs.get(file.path) ?? null;
@@ -42,7 +50,7 @@ async function sliceFiles(projectRoot, initiative, slice, code = null) {
   for (const [commit, source] of [[verified, "verified"], [shipped, "ship"]]) {
     if (!commit || !await code.reachable(repository, commit)) continue;
     const blobs = await code.blobs(repository, commit, paths);
-    if (blobs) return answer({ commit, source }, blobs, null);
+    if (blobs) return answer({ commit, source }, blobs, null, await heldAt(code, repository, commit, shipped));
   }
   return answer(null, null, `Neither the verified commit nor a commit recorded at ship is in the code clone of ${repository}, so the review app cannot show the slice's files; work that was never pushed shows only as its presence.`);
 }

@@ -268,6 +268,35 @@ function expired(record, now = Date.now()) {
   if (status === "none") return !Number.isFinite(end) || now - end > UNSTARTED_STALE_MS;
   return Number.isFinite(end) && now - end > RETENTION_MS;
 }
+const ARCHIVE_FILE = "archive.json";
+const ENDED_STATES = /* @__PURE__ */ new Set(["finished", "failed", "stopped", "blocked"]);
+function launchEnded(state) {
+  return typeof state === "string" && ENDED_STATES.has(state);
+}
+async function readArchiveMark(folder) {
+  try {
+    const info = await lstat(path.join(folder, ARCHIVE_FILE));
+    if (!info.isFile() || info.size > 4096) return null;
+    const value = JSON.parse(await readFile(path.join(folder, ARCHIVE_FILE), "utf8"));
+    if (!value || typeof value !== "object" || typeof value.archivedAt !== "string" || !Number.isFinite(Date.parse(value.archivedAt))) return null;
+    if (!Number.isSafeInteger(value.runs) || value.runs < 1) return null;
+    return { archivedAt: value.archivedAt, runs: value.runs };
+  } catch {
+    return null;
+  }
+}
+async function writeArchiveMark(folder, { archivedAt, runs }) {
+  const file = path.join(folder, ARCHIVE_FILE);
+  await writeAtomically(file, `${JSON.stringify({ archivedAt, runs }, null, 2)}
+`, { mode: 384 });
+  if (process.platform !== "win32") await chmod(file, 384);
+}
+async function removeArchiveMark(folder) {
+  await rm(path.join(folder, ARCHIVE_FILE), { force: true });
+}
+function archivedNow(mark, record, state) {
+  return mark !== null && Array.isArray(record?.runs) && record.runs.length === mark.runs && launchEnded(state);
+}
 async function removeLaunchFolder(folder) {
   await rm(folder, { recursive: true, force: true });
 }
@@ -282,11 +311,13 @@ export {
   LaunchError,
   RETENTION_MS,
   SUPERVISION_LOST,
+  archivedNow,
   createLaunchFolder,
   expired,
   gateFacts,
   lastRunStatus,
   launchCoordinator,
+  launchEnded,
   launchFolder,
   launchRunning,
   launchView,
@@ -295,15 +326,18 @@ export {
   newLaunchId,
   prepareLaunchesDirectory,
   processAlive,
+  readArchiveMark,
   readGateRecord,
   readLaunchRecord,
   readStopRequest,
+  removeArchiveMark,
   removeLaunchFolder,
   stopGraceMs,
   storeLocation,
   tokenVoided,
   voidToken,
   withRunStartLock,
+  writeArchiveMark,
   writeGateRecord,
   writeLaunchRecord,
   writeStopRequest

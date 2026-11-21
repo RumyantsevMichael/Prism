@@ -16,11 +16,14 @@ import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservati
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
 import { declaredView, governingContract, readViews, VIEW_KINDS } from "../workflow/view-declarations.mjs";
 import { appliedArtifactActions, pendingApprovalGates, readStoreArtifactAt, storeArtifactStatuses, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
+import { servedWorkItem } from "../workflow/artifact-status.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { recordChanges } from "./record-changes.mjs";
 import { relativeLinkTargets } from "./artifact-links.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
+import { keptSession, sessionFields } from "../session/session-links.mjs";
+import { failingTestLinks } from "./verification-view.mjs";
 async function readWorkflowConfig(projectRoot) {
   const config = await readCheckoutConfig(projectRoot);
   return await isStoreWithoutCheckout(projectRoot) ? { ...config, diagnostics: [] } : config;
@@ -50,7 +53,7 @@ function forgetWorkspace() {
 }
 const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "code", "agents"]);
 const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", code: "Code", agents: "Agents" });
-const AGENT_GROUP_PAGES = Object.freeze(["needs-you", "this-computer", "other", "expired"]);
+const AGENT_GROUP_PAGES = Object.freeze(["needs-you", "this-computer", "other", "expired", "archived"]);
 async function recordFile(root, key) {
   const located = await locateRecord(root, key);
   return located.legacy ?? located.path;
@@ -294,7 +297,7 @@ async function withExpiredClaims(projectRoot, id, read) {
     const { claim } = parseClaim(slice, bytes);
     if (!claim || isLive(claim, now) || !Object.hasOwn(slices, slice) || slices[slice].claim) continue;
     copy ??= { ...slices };
-    copy[slice] = { ...slices[slice], expiredClaim: { holder: claim.holder, label: claim.label, ...claim.host ? { host: claim.host } : {}, ...claim.model ? { model: claim.model } : {}, activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
+    copy[slice] = { ...slices[slice], expiredClaim: { holder: claim.holder, label: claim.label, ...claim.host ? { host: claim.host } : {}, ...claim.model ? { model: claim.model } : {}, ...sessionFields(claim), activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
   }
   return copy ? { ...read, loaded: { ...read.loaded, record: { ...read.loaded.record, slices: copy } } } : read;
 }
@@ -303,7 +306,7 @@ function sliceClaims(slices, { holders = false } = {}) {
   for (const [slug, slice] of Object.entries(slices ?? {})) {
     const claim = slice?.claim ?? slice?.expiredClaim;
     if (!claim || typeof claim.label !== "string") continue;
-    claims.push({ slug, sliceTitle: slice.title ?? slug, ...holders ? { holder: typeof claim.holder === "string" ? claim.holder : null } : {}, label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
+    claims.push({ slug, sliceTitle: slice.title ?? slug, ...holders ? { holder: typeof claim.holder === "string" ? claim.holder : null } : {}, label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, ...keptSession(claim), activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
   }
   return claims;
 }
@@ -325,7 +328,7 @@ async function claimedSlices(projectRoot, id) {
 function holdingClaim(slices, slug) {
   for (let owner = slug; owner !== null && owner !== void 0 && slices && Object.hasOwn(slices, owner); owner = slices[owner].parent ?? null) {
     const claim = slices[owner].claim;
-    if (claim && typeof claim.label === "string" && (owner === slug || claim.activity === "design")) return { label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null };
+    if (claim && typeof claim.label === "string" && (owner === slug || claim.activity === "design")) return { label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, ...keptSession(claim), activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null };
   }
   return null;
 }
@@ -404,17 +407,24 @@ function coveringClaim(slices, slug) {
   return null;
 }
 const VIEW_SOURCE_LIMIT = 256 * 1024;
+function diagramTitle(source) {
+  const title = source?.match(/^[ \t]*title[ \t]+(\S.*?)[ \t]*$/im)?.[1]?.replace(/^"(.*)"$/, "$1").trim();
+  return title || null;
+}
 async function folderViews(projectRoot, initiative, slug, plans) {
   const artifacts = initiative.slices[slug];
-  if (!artifacts?.narrative) return [];
-  const design = await readText(projectRoot, artifacts.narrative);
-  if (design === null) return [];
-  const declared = readViews(design, artifacts.folder, { plans }).views.filter((view) => VIEW_KINDS.includes(view.kind));
-  if (!declared.length) return [];
+  if (!artifacts) return [];
+  const design = artifacts.narrative ? await readText(projectRoot, artifacts.narrative) : null;
+  const read = readViews(design, artifacts.folder, { plans }).views;
+  const declared = read.filter((view) => VIEW_KINDS.includes(view.kind));
+  const named = new Set(read.map((view) => view.path));
+  const others = (artifacts.files ?? []).filter((file) => file.endsWith(".puml") && path.posix.dirname(file) === artifacts.folder && !named.has(file));
+  if (!declared.length && !others.length) return [];
   const governing = await governingContract(projectRoot, artifacts.folder, plans ?? initiative.directory).catch(() => null);
   const owner = governing ? Object.keys(initiative.slices).find((key) => initiative.slices[key].narrative === governing.path) ?? null : null;
   const contract = governing ? { path: governing.path, slice: owner, title: owner ? initiative.record.slices[owner]?.title ?? owner : null, ref: owner ? `slice:${initiative.id}/${owner}` : null } : null;
-  return Promise.all(declared.map(async (view) => {
+  const shown = (source) => source !== null && source.length <= VIEW_SOURCE_LIMIT ? source : null;
+  const listed = await Promise.all(declared.map(async (view) => {
     const source = await readText(projectRoot, view.path);
     return {
       path: view.path,
@@ -422,11 +432,18 @@ async function folderViews(projectRoot, initiative, slug, plans) {
       kind: view.kind,
       question: view.question,
       clauses: view.clauses,
-      source: source !== null && source.length <= VIEW_SOURCE_LIMIT ? source : null,
+      source: shown(source),
       missing: source === null,
-      contract
+      contract,
+      declared: true
     };
   }));
+  const unasked = await Promise.all(others.map(async (file) => {
+    const source = await readText(projectRoot, file);
+    const name = path.posix.basename(file);
+    return { path: file, file: name, kind: "diagram", title: diagramTitle(source) ?? name, question: null, clauses: [], source: shown(source), missing: source === null, contract, declared: false };
+  }));
+  return [...listed, ...unasked];
 }
 async function loadSliceViews(projectRoot, initiative, slug) {
   const plans = (await readCheckoutConfig(projectRoot).catch(() => null))?.paths?.plans?.replace(/\/+$/, "") ?? null;
@@ -457,7 +474,8 @@ async function loadSliceView(projectRoot, id, slug, { intelligenceDirectories } 
   if (!initiative.record || !Object.hasOwn(initiative.record.slices, slug)) throw new Error(`The initiative ${id} has no slice ${slug}.`);
   const slice = initiative.record.slices[slug];
   const derived = initiative.derived;
-  const verification = await latestVerification(projectRoot, id, slug).catch(() => null);
+  const latest = await latestVerification(projectRoot, id, slug).catch(() => null);
+  const verification = latest?.failing?.length ? { ...latest, failingLinks: await failingTestLinks(projectRoot, id, slug, latest.failing).catch(() => []) } : latest;
   const { document: changeMapDocument, ...changeMap } = await derivedChangeMapState(projectRoot, id, slug, slice.design, verification) ?? {};
   const totals = await loadInitiativeRunTotals(projectRoot, initiative);
   const runTotals = totals === null ? null : totals.slices[slug] ?? { slice: totals.initiative, waves: [], designRuns: [], withDescendants: totals.initiative };
@@ -790,7 +808,8 @@ async function approvalGates(projectRoot) {
   const gates = await pendingApprovalGates(projectRoot).catch(() => []);
   const holders = /* @__PURE__ */ new Map();
   for (const gate of gates) holders.set(gate.id, (holders.get(gate.id) ?? 0) + 1);
-  return gates.map((gate) => ({
+  const workItem = servedWorkItems(projectRoot);
+  return Promise.all(gates.map(async (gate) => ({
     type: "gate",
     id: gate.id,
     kind: "approval",
@@ -807,8 +826,25 @@ async function approvalGates(projectRoot) {
     artifacts: [],
     artifact: { path: gate.artifact.path, scope: gate.artifact.scope },
     changed: gate.changed,
+    workItem: await workItem(servedWorkItem(gate)),
     ...holders.get(gate.id) > 1 ? { ambiguous: true } : {}
-  }));
+  })));
+}
+function servedWorkItems(projectRoot) {
+  let roadmap = null;
+  const records = /* @__PURE__ */ new Map();
+  return async (served) => {
+    if (!served) return null;
+    roadmap ??= loadRoadmapView(projectRoot).catch(() => ({ items: [] }));
+    if (!records.has(served.initiative)) records.set(served.initiative, readInitiative(projectRoot, served.initiative).then(({ loaded: loaded2 }) => loaded2, () => ({ exists: false })));
+    const [view, loaded] = await Promise.all([roadmap, records.get(served.initiative)]);
+    const item = (view.items ?? []).find((entry) => entry.id === served.initiative);
+    const slices = loaded.record?.slices ?? {};
+    const initiative = { id: served.initiative, title: item?.title ?? slices[loaded.analysis?.root]?.title ?? served.initiative, known: Boolean(item) || Boolean(loaded.exists) };
+    if (served.slice === null) return { initiative, slice: null };
+    const known = Object.hasOwn(slices, served.slice);
+    return { initiative, slice: { slug: served.slice, title: known ? slices[served.slice].title ?? served.slice : served.slice, known } };
+  };
 }
 async function artifactChanges(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);

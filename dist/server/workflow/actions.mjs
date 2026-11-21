@@ -238,6 +238,7 @@ function runOptionsReader(projectRoot, env) {
   };
 }
 const optionOf = (report, id) => report.options.find((item) => item.id === id) ?? null;
+const refusedChoice = (report) => ["model", "effort"].map((id) => optionOf(report, id)?.chosen).find((chosen) => chosen?.state === "not-offered" || chosen?.state === "unchecked")?.reason ?? null;
 const RUN_CHOICE_HINTS = {
   coordinator: "Only coordinates: it plans the order of work, starts the agents below and asks you at gates. It writes no code.",
   designImplementation: "Writes each slice's design, tests and code.",
@@ -261,6 +262,7 @@ async function checkHostChoices(context, { host, provider, choices }, refuse) {
     if (!validProvider(provider)) throw refuse("provider", NAME_RULE_MESSAGES.provider);
     const base = await context.readOptions({ host, purpose: "coordinator" });
     if (base.state === "unavailable") throw refuse("host", base.reason);
+    if (base.state === "failed") throw refuse("provider", base.reason);
     if (!optionOf(base, "provider")?.values.some((item) => item.value === provider)) throw refuse("provider", choiceReasons.provider(label, provider));
   }
   for (const { name, purpose, choice: choice2 } of choices) {
@@ -271,10 +273,9 @@ async function checkHostChoices(context, { host, provider, choices }, refuse) {
     if (choice2.effort === null && (choice2.model === null || choice2.typed)) continue;
     const report = await context.readOptions({ host, purpose, provider, model: choice2.model, effort: choice2.effort, typed: choice2.typed });
     if (report.state === "unavailable") throw refuse("host", report.reason);
-    for (const id of ["model", "effort"]) {
-      const chosen = optionOf(report, id)?.chosen;
-      if (chosen?.state === "not-offered") throw refuse(name, chosen.reason);
-    }
+    if (report.state === "failed") throw refuse(name, report.reason);
+    const refused = refusedChoice(report);
+    if (refused) throw refuse(name, refused);
   }
 }
 const refuseChoice = (name, message) => invalid(name, "A value that the host reports, the host default, or a model name typed as such.", message);
@@ -481,10 +482,8 @@ async function checkedLaunchChoices(context, host) {
     if (choice2.earlier !== void 0) throw notOffered(kindLabel, earlierReason(label, choice2.earlier));
     if (choice2.effort === null && (choice2.model === null || choice2.typed)) continue;
     const read = await report(kindLabel, { purpose, provider, model: choice2.model, effort: choice2.effort, typed: choice2.typed });
-    for (const id of ["model", "effort"]) {
-      const chosen = optionOf(read, id)?.chosen;
-      if (chosen?.state === "not-offered") throw notOffered(kindLabel, chosen.reason);
-    }
+    const refused = refusedChoice(read);
+    if (refused) throw notOffered(kindLabel, refused);
   }
   const { model, effort, typed } = entry.coordinator;
   return { provider, model, effort, typed };

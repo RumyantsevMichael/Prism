@@ -1,18 +1,20 @@
 // Generated from src/server/review/agents.mts by scripts/native-build/compile.mjs.
-import { listLaunches } from "../session/launched-sessions.mjs";
+import { archivedLaunches, listLaunches } from "../session/launched-sessions.mjs";
 import { loadHeldClaims, loadRoadmapView } from "./workspace-model.mjs";
-const GROUPS = ["needs-you", "launched", "other", "expired"];
+const GROUPS = ["needs-you", "launched", "other", "expired", "archived"];
+const EXPIRED_COUNTED_MS = 24 * 60 * 60 * 1e3;
 const time = (value) => Date.parse(value ?? "") || 0;
 const launchAction = (state) => state === "waiting" ? "answer" : state === "running" ? "stop" : "open";
-const launchGroup = (state) => state === "failed" || state === "waiting" ? "needs-you" : "launched";
-function launchEntry(launch, title, claim) {
+const launchGroup = (state, archived) => archived ? "archived" : state === "failed" || state === "waiting" ? "needs-you" : "launched";
+function launchEntry(launch, title, claim, archived) {
   return {
     id: `launch:${launch.id}`,
     kind: "launch",
-    group: launchGroup(launch.state),
+    group: launchGroup(launch.state, archived),
     name: title,
     harness: launch.hostLabel ?? launch.host ?? null,
     model: launch.model ?? null,
+    session: null,
     initiative: { id: launch.initiative, title },
     slice: claim ? { ref: claim.ref, title: claim.sliceTitle } : null,
     activity: claim ? claim.activity : null,
@@ -31,6 +33,7 @@ function claimEntry(claim, expired) {
     name: claim.label,
     harness: claim.host ?? null,
     model: claim.model ?? null,
+    session: claim.session ?? null,
     initiative: { id: claim.initiative, title: claim.initiativeTitle },
     slice: { ref: claim.ref, title: claim.sliceTitle },
     activity: claim.activity,
@@ -59,19 +62,21 @@ async function listAgents({ projectRoot, env = process.env, now = Date.now() }) 
   for (const claim of claims) if (!titles.has(claim.initiative)) titles.set(claim.initiative, claim.initiativeTitle);
   const lapsed = (claim) => claim.expired || time(claim.expiresAt) <= now;
   const holds = (launch, claim) => typeof launch.holder === "string" && claim.holder === launch.holder && claim.initiative === launch.initiative;
+  const archived = await archivedLaunches({ launches, env });
   const agents = [];
   for (const launch of launches) {
     const live = claims.find((claim) => holds(launch, claim) && !lapsed(claim)) ?? null;
-    agents.push(launchEntry(launch, titles.get(launch.initiative) ?? launch.initiative, live));
+    agents.push(launchEntry(launch, titles.get(launch.initiative) ?? launch.initiative, live, archived.has(launch.id)));
   }
   for (const claim of claims) {
     if (launches.some((launch) => holds(launch, claim))) continue;
     agents.push(claimEntry(claim, lapsed(claim)));
   }
   agents.sort(order);
-  const count = (accept) => agents.filter(accept).length;
+  const counted = agents.filter((agent) => agent.group !== "archived" && !(agent.group === "expired" && now - time(agent.expiresAt) >= EXPIRED_COUNTED_MS));
+  const count = (accept) => counted.filter(accept).length;
   const counts = {
-    all: agents.length,
+    all: counted.length,
     needsYou: count((agent) => agent.group === "needs-you"),
     failed: count((agent) => agent.kind === "launch" && agent.state === "failed"),
     waiting: count((agent) => agent.kind === "launch" && agent.state === "waiting"),

@@ -80,9 +80,14 @@ function createPageBar({ root, onBack, onForward, onOpen, onPlace = () => {
     action.replaceChildren(symbol);
     return action;
   }
+  let focusAfterClear = -1;
   function setActions(nodes) {
+    let focused = [...actions.children].findIndex((action) => action.contains(document.activeElement));
+    if (focused < 0 && focusAfterClear >= 0 && (!document.activeElement || document.activeElement === document.body)) focused = focusAfterClear;
+    focusAfterClear = nodes.length === 0 ? focused : -1;
     actions.replaceChildren(...nodes.map(asIcon));
     actions.hidden = nodes.length === 0;
+    if (focused >= 0 && nodes.length) actions.children[focused]?.focus?.({ preventScroll: true });
   }
   setActions([]);
   return { setHistory, setTrail, setActions };

@@ -27,7 +27,7 @@ const assessmentSchema = { oneOf: [
 ] };
 const GET_REVIEW_SCHEMA = obj({ ...common, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 }, section: { enum: ["findings", "waves", "assessments", "conflicts", "legacy", "history"] }, wave: str }, ["projectRoot", "initiative", "slice"]);
 const UPDATE_REVIEW_SCHEMA = obj({ ...common, delivery: str, actor: obj({ id: str, role: { enum: ["coordinator", "delivery", "reviewer"] } }), operations: arr({ oneOf: [
-  obj({ op: { const: "start_wave" }, id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, snapshotId: hashField, comparisonId: hashField, base: str, lanes: arr(laneSchema), afterGate: str }, ["op", "id", "mode", "lanes"]),
+  obj({ op: { const: "start_wave" }, id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, snapshotId: hashField, comparisonId: hashField, base: str, lanes: arr(laneSchema), lanesFrom: str, afterGate: str }, ["op", "id", "mode"]),
   obj({ op: { const: "assign_delivery" }, worker: str }),
   obj({ op: { const: "open_finding" }, lane: str, localId: str, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str, clause: str }, ["op", "lane", "localId", "title", "severity", "affectedPath", "evidence", "conditionToClose"]),
   obj({ op: { const: "revise_finding" }, id: str, clause: str, clearClause: { const: true }, conditionToClose: str, reason: str }, ["op", "id", "reason"]),
@@ -188,6 +188,40 @@ async function blockForDesign(input, planned) {
     return { sliceStatus: "blocked", defects: planned.defects.length };
   });
 }
+const changedTreePaths = async (projectRoot, from, to) => (await import("../workflow/slice-gate.mjs")).changedPaths(projectRoot, from, to);
+const CARRY_INPUTS = ["mode", "deltaRevision", "baselineId", "snapshotId", "comparisonId", "tree", "base"];
+async function carryRefusal(projectRoot, review, previous, old, wave, lane) {
+  if (!previous) return { code: "carry_source_missing", lane: lane.id, message: "the earlier wave is not another wave of this review" };
+  if (!old) return { code: "carry_source_missing", lane: lane.id, message: `the wave ${previous.id} has no lane ${lane.id}` };
+  if (old.result?.status !== "CLEAN") return { code: "carry_source_not_clean", lane: lane.id, message: `the lane ${lane.id} of wave ${previous.id} is ${old.result?.status ?? "not submitted"}, not CLEAN` };
+  if (old.result.digest !== laneDigest(review, previous, old)) return { code: "carry_findings_changed", lane: lane.id, message: `the findings or assessments of lane ${lane.id} changed after wave ${previous.id} submitted it` };
+  const changed = CARRY_INPUTS.find((key) => canonical(previous[key] ?? null) !== canonical(wave[key] ?? null));
+  if (changed) {
+    const paths = changed === "tree" ? await changedTreePaths(projectRoot, previous.tree, wave.tree) : null;
+    const shown = (paths ?? []).slice(0, 20), more = (paths?.length ?? 0) - shown.length;
+    return {
+      code: "carry_inputs_changed",
+      lane: lane.id,
+      input: changed,
+      ...paths ? { paths } : {},
+      message: `the wave's ${changed} differs from wave ${previous.id}${paths?.length ? `, with changes in ${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}` : ""}`
+    };
+  }
+  if (old.reviewer !== lane.reviewer) return { code: "carry_lane_changed", lane: lane.id, field: "reviewer", message: `the lane's reviewer is ${lane.reviewer}, and wave ${previous.id} had ${old.reviewer}` };
+  if (canonical(old.coverage) !== canonical(lane.coverage)) {
+    const added = lane.coverage.filter((item) => !old.coverage.includes(item)), removed = old.coverage.filter((item) => !lane.coverage.includes(item));
+    return {
+      code: "carry_lane_changed",
+      lane: lane.id,
+      field: "coverage",
+      added,
+      removed,
+      message: `the lane's coverage differs from wave ${previous.id}${added.length ? `, adding ${added.join(", ")}` : ""}${removed.length ? `, dropping ${removed.join(", ")}` : ""}${!added.length && !removed.length ? " in its order" : ""}; start_wave with lanesFrom copies an earlier wave's lanes exactly`
+    };
+  }
+  if (review.exchangeWorkers.includes(lane.reviewer)) return { code: "carry_reviewer_exchanged", lane: lane.id, message: `the reviewer ${lane.reviewer} exchanged information with other workers, so it is no longer independent` };
+  return null;
+}
 const FOLLOW_UP_LIMIT = 500;
 async function deferFindings(input, review, wave, gateId, deferrals, actor, at) {
   const design = await acceptedDesign(input.projectRoot, input.initiative, input.slice);
@@ -239,7 +273,9 @@ const laneOf = (wave, lane) => {
   return value;
 };
 const requireRole = (review, actor, role) => {
-  if (actor.role !== role || role === "coordinator" && actor.id !== review.coordinator || role === "delivery" && actor.id !== review.delivery) throw conservationError("gate_blocked", "This worker does not own the requested review change.");
+  if (actor.role !== role) throw conservationError("gate_blocked", `This worker does not own the requested review change: it needs the ${role} role, and the actor has ${actor.role}.`, { problems: [{ code: "actor_role", expected: role, actual: actor.role }] });
+  const expected = role === "coordinator" ? review.coordinator : role === "delivery" ? review.delivery : void 0;
+  if (expected !== void 0 && actor.id !== expected) throw conservationError("gate_blocked", `This worker does not own the requested review change: this slice's review records ${expected} as its ${role}, and the actor is ${actor.id}. Pass actor id ${expected}.`, { problems: [{ code: "actor_id", role, expected, actual: actor.id }] });
 };
 function reviewer(review, wave, actor, lane, fresh = false) {
   requireRole(review, actor, "reviewer");
@@ -717,7 +753,14 @@ async function updateReview(input) {
         const wave2 = lastWave(review), op = operation.op;
         if (op === "start_wave") {
           requireRole(review, input.actor, "coordinator");
-          const next = operation;
+          const next = { ...operation };
+          if (next.lanes === void 0 === (next.lanesFrom === void 0)) throw conservationError("validation_failed", "Pass either lanes or lanesFrom, the id of an earlier wave of this review whose lanes the new wave copies.");
+          if (next.lanesFrom !== void 0) {
+            const source = review.waves.find((item) => item.id === next.lanesFrom);
+            if (!source) throw conservationError("validation_failed", `The review has no wave ${next.lanesFrom} to copy lanes from.`);
+            next.lanes = source.lanes.map((lane) => ({ id: lane.id, reviewer: lane.reviewer, coverage: [...lane.coverage] }));
+          }
+          delete next.lanesFrom;
           if (review.waves.some((item) => item.id === next.id) || !next.lanes.length || new Set(next.lanes.map((lane) => lane.id)).size !== next.lanes.length || next.lanes.some((lane) => !lane.coverage.length || lane.reviewer === review.coordinator || review.deliveryWorkers.includes(lane.reviewer))) throw conservationError("validation_failed", "Assign distinct review lanes and independent reviewers.");
           const requiredLanes = review.waves.filter((item) => item.mode === next.mode).flatMap((item) => item.lanes.map((lane) => lane.id));
           if (requiredLanes.some((id) => !next.lanes.some((lane) => lane.id === id))) throw conservationError("gate_blocked", "A correction wave must retain every required lane from earlier waves in this review mode.");
@@ -872,7 +915,8 @@ async function updateReview(input) {
             requireRole(review, input.actor, "coordinator");
             const previous = review.waves.find((item) => item.id === operation.fromWave && item.id !== wave2.id), lane = laneOf(wave2, operation.lane);
             const old = previous?.lanes.find((item) => item.id === lane.id);
-            if (!previous || !old || old.result?.status !== "CLEAN" || old.result.digest !== laneDigest(review, previous, old) || canonical([previous.mode, previous.deltaRevision, previous.baselineId, previous.snapshotId, previous.comparisonId, previous.tree ?? null, previous.base ?? null]) !== canonical([wave2.mode, wave2.deltaRevision, wave2.baselineId, wave2.snapshotId, wave2.comparisonId, wave2.tree ?? null, wave2.base ?? null]) || canonical([old.reviewer, old.coverage]) !== canonical([lane.reviewer, lane.coverage]) || review.exchangeWorkers.includes(lane.reviewer)) throw conservationError("gate_blocked", "A lane can carry forward only with unchanged inputs, coverage, findings and an independent reviewer.");
+            const refused = await carryRefusal(input.projectRoot, review, previous, old, wave2, lane);
+            if (refused || !previous) throw conservationError("gate_blocked", `A lane can carry forward only with unchanged inputs, coverage, findings and an independent reviewer: ${refused?.message}`, { problems: [refused] });
             if (review.assessments.some((item) => item.wave === wave2.id && item.lane === lane.id)) throw conservationError("gate_blocked", "A current lane assessment prevents carry-forward.");
             for (const assessment of review.assessments.filter((item) => item.wave === previous.id && item.lane === lane.id)) review.assessments.push({ ...assessment, id: `${wave2.id}/${assessment.id}`, wave: wave2.id });
             lane.result = { status: "CLEAN", reviewer: lane.reviewer, digest: laneDigest(review, wave2, lane) };

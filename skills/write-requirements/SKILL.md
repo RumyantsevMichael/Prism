@@ -89,7 +89,7 @@ Reverse traceability uses repository link searches instead of a central backlink
 ## 4. Obtain approval
 
 - In a project with a store:
-  1. For each Draft file or amended Approved file, call `update_artifact` with an `ask_approval` operation, with the status to set when it is not `Approved` and context for a person who has not followed the work, which records an [approval gate](../workflow/SKILL.md#common-terms).
+  1. For each Draft file or amended Approved file, call `update_artifact` with an `ask_approval` operation, with the status to set when it is not `Approved`, context for a person who has not followed the work, and the initiative the file serves as `initiative`, the id its roadmap entry has or will take, which records an [approval gate](../workflow/SKILL.md#common-terms).
   2. Tell the user to answer each gate in the review browser.
   3. For each file, call `wait_for_user_gate` with the file as `artifact` and its gate id.
   4. When the person requests changes, revise the file from the note and ask again.

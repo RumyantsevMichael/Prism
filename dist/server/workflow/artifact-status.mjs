@@ -53,10 +53,13 @@ function shippedAcceptance(value) {
 }
 const boundedText = (value, max) => typeof value === "string" && value.length <= max;
 const optionalText = (value, max) => value === void 0 || value === null || boundedText(value, max);
+const WORK_ITEM_ID = /^[A-Za-z0-9_-]{1,200}$/;
+const optionalWorkItemId = (value) => value === void 0 || typeof value === "string" && WORK_ITEM_ID.test(value);
 const optionalPerson = (value) => value === void 0 || value === null || isRecord(value) && boundedText(value.name, 200) && optionalText(value.host, 255);
 function wellFormedGate(kind, gate) {
   if (typeof gate.id !== "string" || !gate.id || gate.id.length > 200 || !askableStatus(kind, gate.status, gate.shipped) || !VERSION.test(gate.version ?? "")) return false;
   if (!boundedText(gate.question, GATE_TEXT_MAX) || !gate.question || !optionalText(gate.context, GATE_TEXT_MAX)) return false;
+  if (!optionalWorkItemId(gate.initiative) || !optionalWorkItemId(gate.slice) || gate.slice !== void 0 && gate.initiative === void 0 && gate.shipped === void 0) return false;
   if (!optionalText(gate.askedAt, 64) || !optionalText(gate.closedAt, 64) || !optionalText(gate.closed, 64) || !optionalText(gate.supersededBy, 200)) return false;
   if (gate.answer === void 0) return true;
   const answer = gate.answer;
@@ -111,7 +114,7 @@ function statusMismatch(kind, file, text, record) {
   const message = kind === "adrs" && /^accepted$/i.test(written ?? "") ? `${says}, but its recorded status is ${record.status}. An ADR becomes Accepted only when a person confirms that an initiative whose slice.md links it ships, which records the acceptance; another status changes at an approval gate. ${treated}` : `${says}, but its recorded status is ${record.status}. ${approval}${kind === "adrs" ? " An ADR becomes Accepted only when its initiative ships." : ""} ${treated}`;
   return { written, recorded: record.status, message };
 }
-function askApproval(kind, file, record, { status, question, context, version, shipped, now = /* @__PURE__ */ new Date() }) {
+function askApproval(kind, file, record, { status, question, context, version, shipped, initiative, slice, now = /* @__PURE__ */ new Date() }) {
   if (!hasStatus(kind)) throw notAStatusArtifact(file);
   const wanted = typeof status === "string" ? status.trim() : shipped ? SHIP_STATUS : "Approved";
   if (!wanted || wanted.length > STATUS_MAX || /[\r\n]/.test(wanted)) throw fail("validation_failed", `The status of an approval gate is one line of 1 to ${STATUS_MAX} characters, such as Approved.`);
@@ -132,6 +135,9 @@ function askApproval(kind, file, record, { status, question, context, version, s
     question: typeof question === "string" && question.trim() ? question.trim() : `Approve ${file} as ${wanted}?`,
     context: typeof context === "string" && context.trim() ? context.trim() : null,
     askedAt: at,
+    // The work item the gate serves, so Attention can link the card to it; an acceptance after a ship serves its shipped initiative.
+    ...typeof initiative === "string" ? { initiative } : {},
+    ...typeof slice === "string" ? { slice } : {},
     ...shipped ? { shipped: { initiative: shipped.initiative, verifiedBy: shipped.verifiedBy } } : {}
   };
   const superseded = record.pending.map((earlier) => ({ ...earlier, closedAt: at, closed: "superseded", supersededBy: gate.id }));
@@ -292,6 +298,10 @@ function mergeStatusRecord({ path: file, base, local, upstream }) {
   };
   return { contents: serializeRecord(record) };
 }
+function servedWorkItem(gate) {
+  const initiative = gate.initiative ?? gate.shipped?.initiative ?? null;
+  return initiative === null ? null : { initiative, slice: gate.slice ?? null };
+}
 function waitableGates(record) {
   const shape = (gate) => ({ id: gate.id, kind: "approval", status: gate.status, question: gate.question, context: gate.context ?? null, options: APPROVAL_OPTIONS, askedAt: gate.askedAt, ...gate.answer ? { answer: gate.answer } : {} });
   return [...record.pending.map(shape), ...record.closed.filter((gate) => gate.answer).map(shape)];
@@ -318,6 +328,7 @@ export {
   parseRecord,
   rewriteStatusLines,
   serializeRecord,
+  servedWorkItem,
   shippedAcceptance,
   statusFields,
   statusMismatch,

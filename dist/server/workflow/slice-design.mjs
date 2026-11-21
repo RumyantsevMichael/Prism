@@ -218,6 +218,25 @@ async function installFrozenTests(projectRoot, initiative, slice, frozenTests) {
   for (const [relative, content] of contents) await restore(root, relative, content);
   return contents.map(([relative]) => relative);
 }
+async function frozenTestContent(projectRoot, initiative, slice, relative) {
+  const design = await acceptedDesign(projectRoot, initiative, slice);
+  const item = design?.frozenTests.find((test) => test.path === relative);
+  if (!item) return null;
+  const root = await realpath(projectRoot);
+  const current = await frozenBytes(root, relative);
+  if (current !== null && frozenDigest(current) === item.sha256) return { path: relative, bytes: current, state: "frozen" };
+  const { bytes } = await readRecord(root, { kind: "frozen-tests", initiative, slice }).catch(() => ({ bytes: null }));
+  let stored = [];
+  try {
+    stored = bytes === null ? [] : parseStoreJson(bytes.toString("utf8")).tests ?? [];
+  } catch {
+    stored = [];
+  }
+  const kept = stored.find((entry) => entry?.path === relative && typeof entry.content === "string");
+  const keptBytes = kept ? Buffer.from(kept.content, "base64") : null;
+  if (keptBytes && frozenDigest(keptBytes) === item.sha256) return { path: relative, bytes: keptBytes, state: current === null ? "staged" : "kept" };
+  return current === null ? null : { path: relative, bytes: current, state: "changed" };
+}
 async function readFrozenTestOf(projectRoot, initiative, relative) {
   const root = await realpath(projectRoot);
   const bytes = await frozenBytes(root, relative);
@@ -238,6 +257,7 @@ export {
   checkFrozenTests,
   designProblems,
   digestFrozenTests,
+  frozenTestContent,
   installFrozenTests,
   latestDependentsRun,
   latestPassingRun,
