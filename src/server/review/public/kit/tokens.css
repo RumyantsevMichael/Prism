@@ -77,6 +77,9 @@
   --prism-doc-tab-slot: var(--prism-control-height-sm);
   --prism-palette-width: 800px;
   --prism-preview-width: 260px;
+  /* A hover card is as wide as a readable column of a document, and at most this share of the window tall, so a linked section reads in place. */
+  --prism-hover-card-width: 600px;
+  --prism-hover-card-height: 70vh;
   /* At this window width and below, a menu marked sheet spans the window, as the phone layout's menus do; the shell's own phone breakpoint is the same width. */
   --prism-sheet-width: 720px;
   --prism-measure: 76ch;

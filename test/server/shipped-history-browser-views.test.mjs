@@ -105,7 +105,7 @@ test("a link preview of a shipped initiative's slice document carries the label 
     if (!response.ok) throw new Error(`${route} answered ${response.status}`);
     return response.json();
   };
-  const options = { fetchJson, renderMarkdown: () => "", kindLabel: (kind) => kind };
+  const options = { fetchJson, fetchArtifact: (ref) => fetchJson(`./api/artifact?path=${encodeURIComponent(ref)}`), renderMarkdown: () => "", kindLabel: (kind) => kind };
   const ref = `docs/plans/${INITIATIVE}/slice.md`;
   const plain = await previewHtml({ ref }, options);
   assert.ok(plain.includes(LABEL), "the preview carries the shipped history label");

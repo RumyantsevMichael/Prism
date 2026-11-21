@@ -36,6 +36,7 @@ import { PrismListbox } from "./elements/prism-listbox.js";
 import { PrismListItem } from "./elements/prism-list-item.js";
 import { PrismDialog } from "./elements/prism-dialog.js";
 import { PrismPopover } from "./elements/prism-popover.js";
+import { PrismHoverCard } from "./elements/prism-hover-card.js";
 import { PrismPicker } from "./elements/prism-picker.js";
 import { PrismDisclosure } from "./elements/prism-disclosure.js";
 import { PrismEmptyState } from "./elements/prism-empty-state.js";
@@ -106,6 +107,7 @@ export const KIT_ELEMENTS = [
   PrismListItem,
   PrismDialog,
   PrismPopover,
+  PrismHoverCard,
   PrismPicker,
   PrismDisclosure,
   PrismEmptyState,

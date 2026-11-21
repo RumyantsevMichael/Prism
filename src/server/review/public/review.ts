@@ -3347,6 +3347,9 @@ async function initialize() {
       openRef(ref, options);
     }
   });
+  // The side panel and link previews read a file the way opening it does, by the store ref a checkout path names,
+  // so a panel, a preview, and the page they open never disagree about which artifact it is, and a store document's links resolve in the store.
+  const previewArtifact = (ref: any) => fetchJson(`./api/artifact?${artifactQuery(localTab(ref))}`);
   sidePanel = createSidePanel({
     shell: appShell,
     // A view's clause or contract opens on the contract's page, so the panel closes rather than show the view beside it.
@@ -3359,6 +3362,7 @@ async function initialize() {
     // A page's Side panel button follows the panel, however it opens or closes.
     onChange: (open: any) => document.dispatchEvent(new CustomEvent("prism:side-panel", { detail: { open } })),
     fetchJson,
+    fetchArtifact: previewArtifact,
     renderMarkdown: (path: any, content: any, links: any) => renderText(path, content, markdownOptions(path, links)),
     // The panel draws a diagram as the same card its page shows, without the name its header already gives, and fitted to the panel's width.
     mountDiagram: async (target: any, diagram: any) => {
@@ -3378,6 +3382,7 @@ async function initialize() {
   linkPreview = createLinkPreview({
     root: workspace,
     fetchJson,
+    fetchArtifact: previewArtifact,
     renderMarkdown: (path: any, content: any, links: any) => renderText(path, content, markdownOptions(path, links)),
     kindLabel: (kind: any) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,
@@ -3389,6 +3394,7 @@ async function initialize() {
   panelPreview = createLinkPreview({
     root: sidePanel.body,
     fetchJson,
+    fetchArtifact: previewArtifact,
     renderMarkdown: (path: any, content: any, links: any) => renderText(path, content, markdownOptions(path, links)),
     kindLabel: (kind: any) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,

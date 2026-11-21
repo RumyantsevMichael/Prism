@@ -551,7 +551,10 @@ Code in source files, Markdown code blocks, previews, and diagram source is high
 Hover over or focus any internal link to preview its target.
 An open preview stays while the pointer crosses other links on its way to the preview, and switches to another link only when the pointer rests on it.
 An initiative preview shows its state, band, intent, and progress, and a slice preview shows its status and outcome.
-A link to a document section previews that section.
+A link to a document section previews that whole section, up to the next heading of its level, and a link to a document without a section previews the whole document.
+A link to a source file previews its first 400 lines, and a link to lines of one previews those lines.
+A preview is as wide as a readable column and never wider than the window, sits beside its link without covering it, and scrolls when its content is taller than the room there, fading at its end while more lies below.
+The preview follows its link when the page scrolls, and closes once the link leaves the window.
 A link to a PlantUML file previews the diagram drawn small enough to fit.
 A declared design view opened on its own page, or in the side panel, takes its question as its title with its kind above it, and the same line with its clause links under the title.
 A file's preview has a Show in side panel button, and Alt+click on a link does the same: the whole file opens in a panel beside the current page, at the linked heading or lines.

@@ -50,7 +50,7 @@ const NARROW = "(max-width: 720px)";
  * Opening another item replaces the current one. At 720px and below the island opens in `sheet`, a prism-dialog that rises from the bottom edge.
  * `describe(path)` names a file: { label, kind, code }, where code marks a repository file whose path is the subject.
  */
-export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mountDiagram = null, onOpenTab, onOpenClause = null, onChange, describe = (path: any) => ({ label: path.split("/").pop() || path, kind: "File", code: true }) }: { shell: any; sheet?: any; fetchJson: any; renderMarkdown: any; mountDiagram?: any; onOpenTab: any; onOpenClause?: any; onChange: any; describe?: any }) {
+export function createSidePanel({ shell, sheet = null, fetchJson, fetchArtifact = (path: any) => fetchJson(`./api/artifact?path=${encodeURIComponent(path)}`), renderMarkdown, mountDiagram = null, onOpenTab, onOpenClause = null, onChange, describe = (path: any) => ({ label: path.split("/").pop() || path, kind: "File", code: true }) }: { shell: any; sheet?: any; fetchJson: any; fetchArtifact?: any; renderMarkdown: any; mountDiagram?: any; onOpenTab: any; onOpenClause?: any; onChange: any; describe?: any }) {
   const root = document.getElementById("side-panel");
   const home = { parent: root!.parentElement, next: root!.nextSibling };
   const source = document.getElementById("side-panel-source");
@@ -163,7 +163,7 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
     const ticket = ++request;
     const source = url ?? `./api/artifact?path=${encodeURIComponent(path)}`;
     const same = current?.ref === path && current?.url === source;
-    current = { ref: path, url: source, tab, anchor, content: same ? current.content : null, diagrams: same ? current.diagrams : null, folds: same ? current.folds : new Set() };
+    current = { ref: path, url: source, fromUrl: Boolean(url), tab, anchor, content: same ? current.content : null, diagrams: same ? current.diagrams : null, folds: same ? current.folds : new Set() };
     const named = describe(path);
     const range = anchor ? (anchor as any).match(LINE_RANGE) : null;
     const where = anchor ? (range ? (range[2] ? `lines ${(anchor as any).slice(1).replace("-", "–")}` : `line ${range[1]}`) : `#${anchor}`) : "";
@@ -175,7 +175,7 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
     }
     body!.innerHTML = '<p class="muted side-panel-loading">Loading…</p>';
     try {
-      const data = await fetchJson(source);
+      const data = await (url ? fetchJson(url) : fetchArtifact(path));
       if (ticket !== request) return;
       current.content = data.content;
       current.diagrams = JSON.stringify(data.diagrams ?? []);
@@ -216,7 +216,7 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
     if (!current?.ref || current.custom || current.content === null) return;
     const ticket = request;
     try {
-      const data = await fetchJson(current.url ?? `./api/artifact?path=${encodeURIComponent(current.ref)}`);
+      const data = await (current.fromUrl ? fetchJson(current.url) : fetchArtifact(current.ref));
       const diagrams = JSON.stringify(data.diagrams ?? []);
       if (ticket !== request || !current || (data.content === current.content && diagrams === current.diagrams)) return;
       current.content = data.content;

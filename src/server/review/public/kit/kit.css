@@ -234,6 +234,7 @@ prism-doc-tabs[fade-start][fade-end] {
 
 prism-menu,
 prism-popover,
+prism-hover-card,
 .prism-dialog-surface,
 prism-toast[shown] {
   --prism-color-line-control: var(--prism-color-glass-control);
@@ -730,12 +731,12 @@ prism-dialog[open] {
 }
 
 /* The parts a light-DOM container renders hide with the hidden attribute, whatever display they take. */
-:is(prism-panel, prism-tree, prism-listbox, prism-dialog, prism-popover, prism-disclosure, prism-banner, prism-empty-state, prism-toast, prism-claim, prism-stepper, prism-breadcrumbs, prism-code, prism-row, prism-page-sub) [hidden] {
+:is(prism-panel, prism-tree, prism-listbox, prism-dialog, prism-popover, prism-hover-card, prism-disclosure, prism-banner, prism-empty-state, prism-toast, prism-claim, prism-stepper, prism-breadcrumbs, prism-code, prism-row, prism-page-sub) [hidden] {
   display: none !important;
 }
 
-:where(prism-panel, prism-tree, prism-listbox, prism-dialog, prism-popover, prism-disclosure, prism-banner, prism-empty-state, prism-toast, prism-claim, prism-stepper, prism-breadcrumbs, prism-doc, prism-code),
-:where(prism-panel, prism-tree, prism-listbox, prism-dialog, prism-popover, prism-disclosure, prism-banner, prism-empty-state, prism-toast, prism-claim, prism-stepper, prism-breadcrumbs, prism-doc, prism-code) * {
+:where(prism-panel, prism-tree, prism-listbox, prism-dialog, prism-popover, prism-hover-card, prism-disclosure, prism-banner, prism-empty-state, prism-toast, prism-claim, prism-stepper, prism-breadcrumbs, prism-doc, prism-code),
+:where(prism-panel, prism-tree, prism-listbox, prism-dialog, prism-popover, prism-hover-card, prism-disclosure, prism-banner, prism-empty-state, prism-toast, prism-claim, prism-stepper, prism-breadcrumbs, prism-doc, prism-code) * {
   box-sizing: border-box;
 }
 
@@ -1923,6 +1924,82 @@ prism-popover:focus-visible {
 
 .prism-popover-body > :last-child {
   margin-bottom: 0;
+}
+
+/* ---------- prism-hover-card: glass beside a link, whose head stays while its body scrolls ---------- */
+
+prism-hover-card {
+  position: fixed;
+  z-index: var(--prism-layer-popup);
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  max-width: min(var(--prism-hover-card-width), calc(100vw - 2 * var(--prism-space-3)));
+  max-height: var(--prism-hover-card-height);
+  overflow: hidden;
+  font-size: var(--prism-font-size-sm);
+  line-height: var(--prism-line-height);
+}
+
+/* A wide card takes its full width whatever its content, so it keeps its size while the pointer moves between links to documents. */
+prism-hover-card[wide] {
+  width: min(var(--prism-hover-card-width), calc(100vw - 2 * var(--prism-space-3)));
+}
+
+prism-hover-card[hidden],
+prism-hover-card:not(:defined) {
+  display: none;
+}
+
+.prism-hover-card-head {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  gap: var(--prism-space-2);
+  padding: var(--prism-space-3) var(--prism-space-5) 0;
+}
+
+.prism-hover-card-body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--prism-space-4) var(--prism-space-5);
+  overflow-wrap: anywhere;
+}
+
+.prism-hover-card-body[data-more] {
+  mask-image: linear-gradient(to top, transparent, var(--prism-color-ink) var(--prism-space-7));
+}
+
+.prism-hover-card-head:not([hidden]) + .prism-hover-card-body {
+  padding-top: var(--prism-space-2);
+}
+
+.prism-hover-card-body > :first-child {
+  margin-top: 0;
+}
+
+.prism-hover-card-body > :last-child {
+  margin-bottom: 0;
+}
+
+.prism-hover-card-body h3 {
+  margin: var(--prism-space-1) 0 var(--prism-space-2);
+  font-size: var(--prism-font-size-md);
+}
+
+.prism-hover-card-body p {
+  margin: var(--prism-space-2) 0;
+}
+
+.prism-hover-card-body .eyebrow {
+  margin: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------- prism-picker: a label, one field-like button with the value and its detail, a hint or error, and a popover to choose in ---------- */

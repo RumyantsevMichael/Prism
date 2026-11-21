@@ -9,21 +9,24 @@ import { viewKind } from "./design-views.js";
 const SHOW_DELAY_MS = 400;
 const HIDE_DELAY_MS = 200;
 const CACHE_MS = 10000;
-const BLOCK_LIMIT = 8;
-const SOURCE_LINES = 14;
-const RANGE_LINES = 40;
-// A diagram shrinks to fit a preview larger than a text preview, within the window, and never grows past its drawn size.
+// A source file previews whole up to this many lines, and a line range up to as many from its start, since the card scrolls.
+const SOURCE_LINES = 400;
+// A diagram shrinks to fit the card, within the window, and never grows past its drawn size.
 const DIAGRAM_WIDTH = 560;
 const DIAGRAM_HEIGHT = 400;
 
+const isHeading = (node: any) => /^H[1-6]$/.test(node.tagName);
+
+// A link with an anchor previews the whole section it names: a heading and everything up to the next heading of its level or above,
+// or a block and everything up to the next heading. A link without one previews the whole document.
 function sectionOf(container: any, anchor: any) {
-  const target = anchorTarget(container, anchor);
-  const heading = target && /^H[1-6]$/.test(target.tagName) ? target : null;
+  const target = anchor ? anchorTarget(container, anchor) : null;
+  const heading = target && isHeading(target) ? target : null;
   const start = target ?? container.firstElementChild;
   const blocks = [];
-  const level = heading ? Number(heading.tagName[1]) : 0;
-  for (let node = start; node && blocks.length < BLOCK_LIMIT; node = node.nextElementSibling) {
-    if (heading && node !== heading && /^H[1-6]$/.test(node.tagName) && Number(node.tagName[1]) <= level) break;
+  const level = heading ? Number(heading.tagName[1]) : 7;
+  for (let node = start; node; node = node.nextElementSibling) {
+    if (target && node !== target && isHeading(node) && Number(node.tagName[1]) <= level) break;
     // Copies drop heading ids so the preview never duplicates an id of the open document.
     const copy = node.cloneNode(true);
     copy.removeAttribute("id");
@@ -59,7 +62,7 @@ function entitySummary(entity: any) {
 // A line range previews those lines with their numbers, up to a cap, so a planned change shows the code it touches.
 function sourceRange(data: any, start: any, end: any) {
   const all = highlightLines(data.content.replace(/\r\n/g, "\n"), languageOf(data.path));
-  const last = Math.min(end, all.length, start + RANGE_LINES - 1);
+  const last = Math.min(end, all.length, start + SOURCE_LINES - 1);
   const lines = all.slice(start - 1, last).map((line, index) => `<li data-line="${start + index}"><code>${line || " "}</code></li>`).join("");
   const more = end > last ? `<p class="muted">${end - last} more lines; open the file to see them all.</p>` : "";
   return `<p class="preview-source" data-code-subject>${escapeHtml(data.path)} · lines ${start}–${end}</p><ol class="source-lines preview-lines" data-code-subject>${lines}</ol>${more}`;
@@ -105,9 +108,10 @@ async function fileSummary(data: any, anchor: any, { renderMarkdown, kindLabel, 
   if (data.kind === "source") {
     const range = anchor?.match(LINE_RANGE);
     if (range) return sourceRange(data, Number(range[1]), Number(range[2] ?? range[1]));
-    const lines = data.content.split(/\r?\n/).slice(0, SOURCE_LINES).join("\n");
+    const all = data.content.split(/\r?\n/);
     const language = languageOf(data.path);
-    return `${head}<prism-code${language ? ` language="${language}"` : ""}><pre><code>${highlight(lines, language)}</code></pre></prism-code>`;
+    const more = all.length > SOURCE_LINES ? `<p class="muted">${all.length - SOURCE_LINES} more lines; open the file to see them all.</p>` : "";
+    return `${head}<prism-code${language ? ` language="${language}"` : ""}><pre><code>${highlight(all.slice(0, SOURCE_LINES).join("\n"), language)}</code></pre></prism-code>${more}`;
   }
   if (data.kind) return `${head}<h3>${escapeHtml(kindLabel(data.kind))}</h3>`;
   if (data.path.toLowerCase().endsWith(".puml")) return diagramSummary(head, data.content, drawDiagram);
@@ -124,18 +128,21 @@ async function documentHistory(ref: any, fetchJson: any) {
   return context?.shippedHistory ?? null;
 }
 
-/** The preview of an internal link's target: an entity's summary, or a file's start or linked section under any shipped history label it carries. */
-export async function previewHtml({ ref, anchor = null }: { ref: any; anchor?: any }, { fetchJson, renderMarkdown, kindLabel, drawDiagram = null, describe = null }: { fetchJson: any; renderMarkdown: any; kindLabel: any; drawDiagram?: any; describe?: any }) {
+/**
+ * The preview of an internal link's target: an entity's summary, or a whole file or its linked section under any shipped history label it carries.
+ * A file is read with fetchArtifact, the page's own read of a tab, so a link previews exactly the artifact that following it opens.
+ */
+export async function previewHtml({ ref, anchor = null }: { ref: any; anchor?: any }, { fetchJson, fetchArtifact, renderMarkdown, kindLabel, drawDiagram = null, describe = null }: { fetchJson: any; fetchArtifact: any; renderMarkdown: any; kindLabel: any; drawDiagram?: any; describe?: any }) {
   if (parseEntityRef(ref)) return entitySummary(await fetchJson(`./api/entity?ref=${encodeURIComponent(ref)}`));
-  const [data, history] = await Promise.all([fetchJson(`./api/artifact?path=${encodeURIComponent(ref)}`), documentHistory(ref, fetchJson)]);
+  const [data, history] = await Promise.all([fetchArtifact(ref), documentHistory(ref, fetchJson)]);
   return `${shippedHistoryHtml(history)}${await fileSummary(data, anchor, { renderMarkdown, kindLabel, drawDiagram, describe })}`;
 }
 
 // Hovering or focusing an internal link shows what it points to: an entity's summary, the start of a file or the linked section, or a diagram drawn small.
 // A file's preview offers to show the whole file in the side panel when the page has one.
 // The preview is a hover card on glass that only repeats what the link leads to, so it is no landmark or dialog of its own.
-export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, currentPath, drawDiagram = null, onShowInPanel = null, describe = null }: { root: any; fetchJson: any; renderMarkdown: any; kindLabel: any; currentPath: any; drawDiagram?: any; onShowInPanel?: any; describe?: any }) {
-  const popover = document.createElement("div");
+export function createLinkPreview({ root, fetchJson, fetchArtifact, renderMarkdown, kindLabel, currentPath, drawDiagram = null, onShowInPanel = null, describe = null }: { root: any; fetchJson: any; fetchArtifact: any; renderMarkdown: any; kindLabel: any; currentPath: any; drawDiagram?: any; onShowInPanel?: any; describe?: any }) {
+  const popover: any = document.createElement("prism-hover-card");
   popover.className = "link-preview";
   popover.hidden = true;
   document.body.appendChild(popover);
@@ -159,20 +166,9 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
     const key = `${ref}#${anchor ?? ""}`;
     const cached = cache.get(key);
     if (cached && Date.now() - cached.at < CACHE_MS) return cached.html;
-    const html = await previewHtml({ ref, anchor }, { fetchJson, renderMarkdown, kindLabel, drawDiagram, describe });
+    const html = await previewHtml({ ref, anchor }, { fetchJson, fetchArtifact, renderMarkdown, kindLabel, drawDiagram, describe });
     cache.set(key, { at: Date.now(), html });
     return html;
-  }
-
-  function place() {
-    const rect = anchorElement.getBoundingClientRect();
-    const width = popover.offsetWidth;
-    const height = popover.offsetHeight;
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
-    const below = rect.bottom + 8;
-    const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - height - 8) : below;
-    popover.style.left = `${left}px`;
-    popover.style.top = `${top}px`;
   }
 
   async function show(element: any) {
@@ -182,11 +178,13 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
     try {
       const html = await load(target);
       if (current !== request || anchorElement !== element || !element.isConnected) return;
-      popover.innerHTML = html;
+      const content = document.createElement("div");
+      content.className = "link-preview-content";
+      content.innerHTML = html;
+      const parts: any[] = [content];
       if (onShowInPanel && !parseEntityRef(target.ref)) {
-        const bar = document.createElement("div");
-        bar.className = "link-preview-actions";
         const button = document.createElement("prism-button");
+        button.setAttribute("slot", "actions");
         button.setAttribute("variant", "ghost");
         button.setAttribute("size", "sm");
         button.textContent = "Show in side panel";
@@ -195,14 +193,15 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
           hide();
           onShowInPanel(target.ref, target.anchor);
         });
-        bar.append(button);
-        popover.prepend(bar);
+        parts.unshift(button);
       }
-      popover.hidden = false;
+      popover.replaceContent(...parts);
+      // A document, a source file, or a diagram takes the card's full width, so the card keeps its size while the pointer moves between such links.
+      popover.toggleAttribute("wide", Boolean(content.querySelector("prism-doc, prism-code, .preview-lines, .preview-diagram")));
       // A previewed diagram is recolored for the theme from the runtime's SVG text each time it shows.
       const sheet = popover.querySelector("[data-diagram-sheet]");
       if (sheet) themeDiagram(sheet.querySelector("svg"));
-      place();
+      popover.showAt(element);
     } catch {
       if (current === request) hide();
     }
@@ -285,5 +284,14 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !popover.hidden) hide();
   });
+  // The card follows its link when the page scrolls or the window resizes, and closes once the link leaves the window; scrolling inside the card reads on.
+  const follow = (event: any) => {
+    if (popover.hidden || !anchorElement || popover.contains(event.target)) return;
+    const rect = anchorElement.getBoundingClientRect();
+    if (!anchorElement.isConnected || rect.bottom < 0 || rect.top > window.innerHeight) hide();
+    else popover.place(anchorElement);
+  };
+  document.addEventListener("scroll", follow, { capture: true, passive: true });
+  window.addEventListener("resize", follow);
   return { hide };
 }
