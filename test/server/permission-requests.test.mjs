@@ -4,13 +4,15 @@ import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { INITIATIVE, TARGET, acpFixture, apply, fakeEntry, get, launches, setSettings } from "./fixtures/acp-agents.mjs";
+import { permissionHosts } from "./fixtures/permission-hosts.mjs";
 import { pause, settled } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/launched-sessions.md §29, §30, §31, and §32.
 // Contract clauses 32 to 41 of docs/plans/harness-client-protocol/slice.md: every host's permission request waits on Attention,
-// an approval applies only after a native confirmation on this machine that shows the whole request, escaped, and only for that one
-// request, no file that another process writes approves anything, a request too long to show can only be refused, a refusal needs
-// no dialog, and a request whose session ends is withdrawn.
+// an approval applies only after a native confirmation on this machine that shows the whole request, escaped, with everything that
+// the allow covers, and only for that one request, no file that another process writes approves anything, a request too long to
+// show, or whose allow would cover what Prism cannot show or would last beyond it, can only be refused, a refusal needs no dialog,
+// and a request whose session ends, or whose file change changes while it waits, is withdrawn.
 
 const posixOnly = process.platform === "win32" ? "the stub hosts and dialogs are POSIX scripts" : false;
 const PERMISSION_FLAGS = ["--permission-mode", "auto", "--permission-prompts", "host", "--permission-prompt-tool", "stdio"];
@@ -69,6 +71,30 @@ async function onCodex(t) {
   await setSettings(s.root, INITIATIVE, { host: "codex" });
   return s;
 }
+// A Codex run whose approval request the wrapper of permission-hosts.mjs replaces with the request and notifications of `plan`.
+async function onCodexWith(t, plan) {
+  const s = await onCodex(t);
+  const hosts = await permissionHosts(s);
+  await hosts.setPlan({ codex: plan });
+  return s;
+}
+// An ACP run whose permission request the wrapper of permission-hosts.mjs rewrites under `plan`.
+async function onAgentWith(t, plan) {
+  const s = await acpFixture(t, { plans: { gemini: { permission: {} } } });
+  const hosts = await permissionHosts(s);
+  await hosts.setPlan({ acp: plan });
+  await s.declare([{ ...fakeEntry(s, "gemini", { label: "Gemini CLI" }), command: hosts.acp }]);
+  await setSettings(s.root, INITIATIVE, { host: "acp-gemini" });
+  return s;
+}
+// The shown form of clause 33 for text with no control or format character: each backslash doubled.
+const shownForm = (value) => value.replace(/\\/g, "\\\\");
+const CHANGES = [
+  { path: "src/report.txt", kind: { type: "update", move_path: null }, diff: "@@ -1 +1 @@\n-draft\n+final\n" },
+  { path: "src/new.txt", kind: { type: "add" }, diff: "hello\n" }
+];
+const fileChange = (extra = {}) => ({ method: "item/fileChange/requestApproval", params: { itemId: "item_patch", startedAtMs: 1, reason: "Codex wants to edit two files.", ...extra } });
+const patchStarted = (changes = CHANGES) => ({ method: "item/started", params: { startedAtMs: 1, item: { type: "fileChange", id: "item_patch", status: "inProgress", changes } } });
 const inputsOf = (s, host) => s.runs(host).flatMap((run) => s.inputs(run.pid));
 const claudeAnswer = (s) => settled(() => inputsOf(s, "claude").find((message) => message.type === "control_response"), Boolean);
 // The text that the zenity stub was asked to show, as zenity shows it: its --text argument with Pango entities and doubled backslashes read back.
@@ -259,6 +285,84 @@ test("clauses 37, 38: Codex gets accept for an approval and decline for a refusa
     const answered = await codexAnswer(s);
     assert.deepEqual(answered.result, { decision: expected });
   }
+});
+
+test("clause 33: a Codex file change shows the paths and diffs of its item, which Codex sent before the request, and an approval answers accept", { skip: posixOnly }, async (t) => {
+  const s = await onCodexWith(t, { before: [patchStarted()], request: fileChange() });
+  const id = await launchRun(s);
+  const [request] = await pending(s);
+  const action = shownForm(`File change ${JSON.stringify({ changes: CHANGES })}`);
+  assert.deepEqual([request.host.id, request.action, request.reason], ["codex", action, "Codex wants to edit two files."]);
+  const approved = await decide(s, id, request.id, "approve");
+  assert.equal(approved.status, 200, approved.text);
+  assert.ok(dialogText(s.dialogs().at(-1)).split("\n").includes(`Action: ${action}`), "the dialog shows every path and diff that the allow covers");
+  assert.deepEqual((await codexAnswer(s)).result, { decision: "accept" });
+});
+
+test("clauses 33, 37: a Codex file change whose item Prism did not see cannot be approved, asks no dialog, and can be refused", { skip: posixOnly }, async (t) => {
+  const s = await onCodexWith(t, { request: fileChange() });
+  const id = await launchRun(s);
+  const [request] = await pending(s);
+  assert.equal(request.action, "A file change that Codex did not describe");
+  const before = s.dialogs().length;
+  const refused = await decide(s, id, request.id, "approve");
+  assert.equal(refused.json.code, "approval_unavailable");
+  assert.match(refused.text, /Codex did not say which files this change writes, so Prism can only refuse it\./);
+  assert.equal(s.dialogs().length, before, "no dialog is shown");
+  assert.equal((await attention(s)).permissions.length, 1, "the request still waits");
+  await decide(s, id, request.id, "refuse");
+  assert.deepEqual((await codexAnswer(s)).result, { decision: "decline" });
+});
+
+test("clauses 33, 37: a Codex file change that asks for writes under a folder for the rest of the session shows the folder and can only be refused", { skip: posixOnly }, async (t) => {
+  const s = await onCodexWith(t, { before: [patchStarted()], request: fileChange({ grantRoot: "/home/person" }) });
+  const id = await launchRun(s);
+  const [request] = await pending(s);
+  assert.equal(request.action, shownForm(`File change ${JSON.stringify({ changes: CHANGES, grantRoot: "/home/person" })}`));
+  const before = s.dialogs().length;
+  const refused = await decide(s, id, request.id, "approve");
+  assert.equal(refused.json.code, "approval_unavailable");
+  assert.match(refused.text, /Codex asks to allow writes under \/home\/person for the rest of the session, so Prism can only refuse it\./);
+  assert.equal(s.dialogs().length, before, "no dialog is shown for an allow that lasts beyond the request");
+  const inputs = inputsOf(s, "codex");
+  assert.equal(inputs.some((message) => message.id === "approval-1" && message.method === undefined), false, "Codex is answered nothing");
+  await decide(s, id, request.id, "refuse");
+  assert.deepEqual((await codexAnswer(s)).result, { decision: "decline" });
+});
+
+test("clause 40: a Codex file change whose patch changes while its request waits is declined and withdrawn", { skip: posixOnly }, async (t) => {
+  const changed = [{ path: "/etc/hosts", kind: { type: "update", move_path: null }, diff: "+0.0.0.0 example.com\n" }];
+  const s = await onCodexWith(t, { before: [patchStarted()], request: fileChange(), after: [{ method: "item/fileChange/patchUpdated", params: { itemId: "item_patch", changes: changed } }] });
+  await launchRun(s);
+  await pending(s);
+  assert.deepEqual((await codexAnswer(s))?.result, { decision: "decline" }, "Codex is told the changed patch was declined");
+  assert.deepEqual(await settled(async () => (await attention(s)).permissions, (list) => list.length === 0), []);
+});
+
+test("clause 33: an ACP request shows the tool call's raw input after its title, and an approval answers allow_once", { skip: posixOnly }, async (t) => {
+  const rawInput = { file_path: "/home/person/.ssh/authorized_keys", content: "ssh-ed25519 AAAA" };
+  const s = await onAgentWith(t, { toolCall: { toolCallId: "t1", title: "Write file", kind: "edit", rawInput } });
+  const id = await launchRun(s);
+  const [request] = await pending(s);
+  const action = `Write file ${JSON.stringify(rawInput)}`;
+  assert.equal(request.action, action);
+  const approved = await decide(s, id, request.id, "approve");
+  assert.equal(approved.status, 200, approved.text);
+  assert.ok(dialogText(s.dialogs().at(-1)).split("\n").includes(`Action: ${action}`), "the dialog shows the input that the allow covers");
+  assert.deepEqual((await settled(() => answers(s)[0], Boolean)).outcome, { outcome: "selected", optionId: "yes" });
+});
+
+test("clause 33: an ACP request that names only its tool call takes the title, kind, and raw input of that call's earlier updates", { skip: posixOnly }, async (t) => {
+  const rawInput = { command: "rm -rf build" };
+  const before = [
+    { sessionUpdate: "tool_call", toolCallId: "t1", title: "Run a command", kind: "execute", status: "pending" },
+    { sessionUpdate: "tool_call", toolCallId: "t0", title: "Other call", kind: "read", rawInput: { path: "x" } },
+    { sessionUpdate: "tool_call_update", toolCallId: "t1", rawInput }
+  ];
+  const s = await onAgentWith(t, { before, toolCall: { toolCallId: "t1" } });
+  await launchRun(s);
+  const [request] = await pending(s);
+  assert.deepEqual([request.action, request.reason], [`Run a command ${JSON.stringify(rawInput)}`, "Gemini CLI asks before it runs a tool of kind execute."]);
 });
 
 test("clause 38: a refusal answers an ACP agent with its reject_once option, else cancelled", { skip: posixOnly }, async (t) => {
