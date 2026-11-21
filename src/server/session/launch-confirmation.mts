@@ -26,8 +26,11 @@ const COOLDOWN_FILE = "confirmation-cooldown.json";
 const PENDING_FILE = "confirmation-pending.json";
 const UNAVAILABLE_PREFIX = "This computer cannot show a confirmation outside the browser: ";
 const STDERR_MAX = 500;
-const ZENITY_ARGS = Object.freeze(["--question", "--default-cancel", "--title=Prism", "--ok-label=Launch", "--cancel-label=Cancel", "--timeout=120"]);
-const OSASCRIPT_DIALOG = "display dialog (item 1 of argv) with title \"Prism\" buttons {\"Cancel\", \"Launch\"} default button \"Cancel\" cancel button \"Cancel\" with icon caution giving up after 120";
+// The buttons of a dialog: a launch's, and an approval's of a launched session's permission request; the cancelling one is the default.
+const LAUNCH_BUTTONS = Object.freeze({ ok: "Launch", cancel: "Cancel" });
+const APPROVAL_BUTTONS = Object.freeze({ ok: "Allow", cancel: "Refuse" });
+const zenityArgs = (buttons: { ok: string; cancel: string }) => ["--question", "--default-cancel", "--title=Prism", `--ok-label=${buttons.ok}`, `--cancel-label=${buttons.cancel}`, "--timeout=120"];
+const osascriptDialog = (buttons: { ok: string; cancel: string }) => `display dialog (item 1 of argv) with title "Prism" buttons {"${buttons.cancel}", "${buttons.ok}"} default button "${buttons.cancel}" cancel button "${buttons.cancel}" with icon caution giving up after 120`;
 const POWERSHELL_COMMAND = "$r = (New-Object -ComObject WScript.Shell).Popup($env:PRISM_LAUNCH_CONFIRM_TEXT, 120, 'Prism', 4 + 48 + 256); if ($r -eq 6) { exit 10 } elseif ($r -eq 7) { exit 11 } elseif ($r -eq -1) { exit 12 } else { exit 13 }";
 const UNIX_DIALOG_PLATFORMS = new Set(["linux", "freebsd", "openbsd"]);
 
@@ -52,6 +55,11 @@ function qtText(text: string) {
 
 export function confirmationText({ label, initiative, checkout }: { label: string; initiative: string; checkout: string }) {
   return `Start a ${label} session on this computer that runs Prism's orchestrate skill for the initiative ${initiative} in ${checkout}? Further launches in the next 30 minutes will start without asking.`;
+}
+
+/** The text of an approval's dialog: the initiative, the host, the action, and the reason that the host named. */
+export function approvalText({ initiative, host, action, reason }: { initiative: string; host: string; action: string; reason: string }) {
+  return `Allow ${host} to do this once, in its session for the initiative ${initiative}?\n\nAction: ${action}\nReason: ${reason || "none given"}\n\nPrism allows only this one request; anything else the session asks is asked again.`;
 }
 
 function unavailable(missing: any, { verbatim = false }: any = {}) {
@@ -207,7 +215,7 @@ async function findOnPath(env: NodeJS.ProcessEnv, name: string) {
  * The dialog of this platform: { command, args, env, killAfterMs, read } where read({ code, stdout, stderr, timedOut })
  * answers "confirmed", "declined", "unanswered", or a LaunchError; or a LaunchError when this machine has no dialog.
  */
-export async function nativeDialog({ text, env = process.env, platform = process.platform }: { text: string; env?: NodeJS.ProcessEnv; platform?: any }) {
+export async function nativeDialog({ text, env = process.env, platform = process.platform, buttons = LAUNCH_BUTTONS }: { text: string; env?: NodeJS.ProcessEnv; platform?: any; buttons?: { ok: string; cancel: string } }) {
   if (UNIX_DIALOG_PLATFORMS.has(platform)) {
     const display = env.DISPLAY || env.WAYLAND_DISPLAY;
     if (!display) return unavailable("no graphical display (DISPLAY or WAYLAND_DISPLAY) is set for the review app");
@@ -215,7 +223,7 @@ export async function nativeDialog({ text, env = process.env, platform = process
     if (zenity) {
       return {
         command: zenity,
-        args: [...ZENITY_ARGS, `--text=${pangoText(text)}`],
+        args: [...zenityArgs(buttons), `--text=${pangoText(text)}`],
         env,
         killAfterMs: DIALOG_BACKSTOP_MS,
         read: ({ code, stderr, timedOut }: { code: any; stderr: any; timedOut: any }) => {
@@ -231,7 +239,7 @@ export async function nativeDialog({ text, env = process.env, platform = process
     if (kdialog) {
       return {
         command: kdialog,
-        args: ["--title", "Prism", "--yes-label", "Launch", "--no-label", "Cancel", "--warningyesno", qtText(text)],
+        args: ["--title", "Prism", "--yes-label", buttons.ok, "--no-label", buttons.cancel, "--warningyesno", qtText(text)],
         env,
         killAfterMs: DIALOG_MS,
         read: ({ code, timedOut }: { code: any; timedOut: any }) => {
@@ -249,7 +257,7 @@ export async function nativeDialog({ text, env = process.env, platform = process
     if (!osascript) return unavailable("osascript was not found on PATH");
     return {
       command: osascript,
-      args: ["-e", "on run argv", "-e", OSASCRIPT_DIALOG, "-e", "end run", text],
+      args: ["-e", "on run argv", "-e", osascriptDialog(buttons), "-e", "end run", text],
       env,
       // A start failure is an osascript error: its message stands in for the standard error.
       readsStartFailure: true,
@@ -258,7 +266,7 @@ export async function nativeDialog({ text, env = process.env, platform = process
         if (timedOut) return "unanswered";
         if (code === 0) {
           if (/gave up:\s*true/.test(stdout)) return "unanswered";
-          return /button returned:\s*Launch\b/.test(stdout) && /gave up:\s*false/.test(stdout) ? "confirmed" : "declined";
+          return new RegExp(`button returned:\\s*${buttons.ok}\\b`).test(stdout) && /gave up:\s*false/.test(stdout) ? "confirmed" : "declined";
         }
         if (stderr.includes("(-128)")) return "declined";
         return unavailable(`osascript failed: ${stderr.trim().slice(0, STDERR_MAX)}`, { verbatim: true });
@@ -369,6 +377,32 @@ export async function confirmLaunch({ initiative, host, checkout, env = process.
     await startCooldown(env, endedAt);
     if (answer === "declined") throw new LaunchError("confirmation_declined", "You declined the launch.");
     throw new LaunchError("confirmation_timeout", "Nobody answered the confirmation within 2 minutes.");
+  } finally {
+    await release();
+  }
+}
+
+/**
+ * Confirms one approval of a launched session's permission request outside the page, every time: no launch window and no cool-down
+ * apply, and the dialog's default refuses. Resolves once the person allowed it, or rejects with a LaunchError whose code names why not,
+ * confirmation_declined when the person refused.
+ */
+export async function confirmApproval({ text, env = process.env, platform = process.platform }: { text: string; env?: NodeJS.ProcessEnv; platform?: any }) {
+  await prepareLaunchesDirectory(env);
+  const pending = () => new LaunchError("confirmation_pending", "Another confirmation is waiting for your answer.");
+  if (await dialogOpen(env)) throw pending();
+  const dialog = await nativeDialog({ text, env, platform, buttons: APPROVAL_BUTTONS });
+  if (dialog instanceof LaunchError) throw dialog;
+  const release = await takePendingSlot(env, Date.now());
+  if (!release) throw pending();
+  try {
+    const outcome = await runDialog(dialog);
+    if (outcome.spawnError && !dialog.readsStartFailure) throw unavailable(`${path.basename(dialog.command)} could not be started`);
+    const answer = dialog.read(outcome);
+    if (answer instanceof LaunchError) throw answer;
+    if (answer === "confirmed") return { asked: true };
+    if (answer === "declined") throw new LaunchError("confirmation_declined", "You refused the request in the confirmation, so it still waits.");
+    throw new LaunchError("confirmation_timeout", "Nobody answered the confirmation within 2 minutes, so the request still waits.");
   } finally {
     await release();
   }

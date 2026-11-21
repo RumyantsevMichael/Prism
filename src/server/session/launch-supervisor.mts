@@ -8,6 +8,8 @@
 // process itself through the handle of the child process it started. It starts, watches, and signals only the host process, never
 // a process that the host started.
 // It names its launch folder on its command line, so any process on this machine can find it.
+// Each permission request of the host waits in the launch folder until a review server of this machine writes its answer there, and
+// the supervisor then answers the host once; when the run ends or is stopped, every request still waiting is refused and removed.
 // After a run that exited 0, it resumes the session once when the person answered here, during the run, a gate that is still pending.
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -15,6 +17,7 @@ import { pathToFileURL } from "node:url";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { launchCoordinator, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
 import { hostArguments, hostConversation, hostEnvironment, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { permissionBroker } from "./permission-requests.mjs";
 
 // The tail of a host's standard error that a run keeps in run-<n>.stderr of its launch folder, with the host session id redacted.
 const STDERR_KEEP = 64 * 1024;
@@ -106,7 +109,9 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
   const watch = (child: any) => {
     // The host's input is written only through the conversation, which closes it once the host's work is over.
     child.stdin.on("error", () => {});
+    const permissions = permissionBroker({ folder, launch: record.id, run: token, host: record.host, hostLabel: resolved.label });
     const conversation = hostConversation(record.host, {
+      permissions,
       acp: acp && { label: resolved.label, autoMode: acp.autoMode ?? null, env, launch: record.id, agentPid: () => child.pid ?? null },
       initiative: record.initiative,
       checkout: record.checkout,
@@ -153,6 +158,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
         // A stop request counts only for this run's token; the stop is recorded before the host is asked to end.
         let checking = false;
         stopPoll = setInterval(async () => {
+          void permissions.poll();
           if (checking || stopping || exited) return;
           checking = true;
           try {
@@ -218,6 +224,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
         const read = stopping ? null : await readStopRequest(folder);
         const request = read?.token === token && requestTime(read) <= Date.parse(endedAt) ? read : null;
         conversation.end();
+        await permissions.close();
         clearInterval(heartbeat);
         const { facts } = conversation;
         // The id is replaced before the text is cut, so no cut leaves part of it behind.

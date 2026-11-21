@@ -269,8 +269,12 @@ function lastEnd(record: any, status: string): number | null {
   return null;
 }
 
-function stateOf(record: any, status: any, label: string, gates: any) {
+export const asksToAllow = (action: string) => `Asks you to allow: ${action}.`;
+
+function stateOf(record: any, status: any, label: string, gates: any, permission: { action: string } | null) {
   const run = record.runs.at(-1);
+  // A run that waits on a permission request waits on the person before any gate.
+  if (status === "running" && permission) return { state: "waiting", reason: asksToAllow(permission.action) };
   if (status === "running") return { state: gates.waiting ? "waiting" : "running", reason: null };
   if (status === "lost") return { state: "failed", reason: SUPERVISION_LOST };
   if (run.stopRequestedAt) return { state: "stopped", reason: null };
@@ -302,12 +306,13 @@ function stateOf(record: any, status: any, label: string, gates: any) {
  * model is the last run's recorded model, holder the claim holder that the host session takes claims as, and only resumeCommand
  * names the host session id.
  * gates is gateFacts of the launch as the page's checkout reads its initiative's coordination state; without it no gate is counted.
+ * permission is the oldest permission request that waits in the running run, which makes the launch waiting on it.
  */
-export function launchView(record: any, { now = Date.now(), gates = null }: { now?: number; gates?: { waiting?: boolean; answerWaits?: boolean; waitingGate?: string | null } | null } = {}) {
+export function launchView(record: any, { now = Date.now(), gates = null, permission = null }: { now?: number; gates?: { waiting?: boolean; answerWaits?: boolean; waitingGate?: string | null } | null; permission?: { action: string } | null } = {}) {
   const status = lastRunStatus(record, now);
   const label = hostDefinition(record.host)?.label ?? record.host;
   const facts = { waiting: gates?.waiting === true, answerWaits: status !== "running" && gates?.answerWaits === true };
-  const { state, reason: hostText } = stateOf(record, status, label, facts);
+  const { state, reason: hostText } = stateOf(record, status, label, facts, permission);
   const reason = redactSessionId(hostText, record.hostSessionId);
   const runningMs = record.runs.reduce((sum: any, run: any, index: number) => {
     const start = time(run.startedAt);

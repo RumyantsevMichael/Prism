@@ -38,6 +38,7 @@ import {
   writeLaunchRecord,
   writeStopRequest
 } from "./launch-records.mjs";
+import { launchRequests } from "./permission-requests.mjs";
 
 // Starting, listing, resuming, and stopping launched sessions: headless host sessions that Prism runs for one initiative on this machine.
 // Each run runs under a detached supervisor, so the session outlives the process that started it.
@@ -396,7 +397,7 @@ export async function listLaunches({ projectRoot, env = process.env, now = Date.
     }
     return pendingOf.get(initiative);
   };
-  const viewOf = async (folder: string, record: any) => launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative)) });
+  const viewOf = async (folder: string, record: any) => launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative)), permission: (await launchRequests(folder, record, at))[0] ?? null });
   const launches: any[] = [];
   const candidates: { folder: string; record: any }[] = [];
   for (const { folder, record } of await listLaunchRecords(env)) {

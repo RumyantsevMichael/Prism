@@ -14,10 +14,11 @@ import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPerson
 import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
-import { confirmLaunch } from "../session/launch-confirmation.mjs";
+import { approvalText, confirmApproval, confirmLaunch } from "../session/launch-confirmation.mjs";
+import { answerRequest, approvalUnavailable, launchRequests, waitingRequest } from "../session/permission-requests.mjs";
 import { HOSTS } from "../session/launch-hosts.mjs";
 import { isAcpHost } from "../session/acp-agents.mjs";
-import { LAUNCH_ID_PATTERN } from "../session/launch-records.mjs";
+import { LAUNCH_ID_PATTERN, launchFolder, readLaunchRecord } from "../session/launch-records.mjs";
 import { AUTOMATIC, AUTOMATIC_LABEL, PrismRunsError, readPrismRunsChoice, writePrismRunsChoice } from "../session/prism-runs.mjs";
 import { choiceReasons, nameRuleBreach, NAME_RULE_MESSAGES, readRunOptions, RUN_KINDS, validProvider } from "../session/run-options.mjs";
 import {
@@ -178,7 +179,10 @@ async function readTarget(projectRoot: string, parsed: any, indexer: any, state 
     const resumeReason = status === "running" ? "The session is running." : await resumeRefusal({ id: parsed.launch, env });
     // A shipped initiative's state is history, so its sessions cannot resume; they stay stoppable, since orchestrate ships while its host runs.
     const shipped = await shippedDecision(projectRoot, view.initiative).catch(() => null);
-    return { ...parsed, view, initiative: view.initiative, running: status === "running", resumeReason, shipped };
+    // The permission requests that wait in the session's running run on this machine, read from its private launch folder alone.
+    const folder = launchFolder(env, parsed.launch);
+    const permissions = await launchRequests(folder, await readLaunchRecord(folder)).catch(() => []);
+    return { ...parsed, view, initiative: view.initiative, running: status === "running", resumeReason, shipped, permissions };
   }
   if (parsed.kind === "machine") {
     // The choice is checked against what this computer's hosts report, read in the page's checkout.
@@ -683,6 +687,47 @@ const LAUNCH_RESUME = {
   }
 };
 
+// The title of an initiative as the roadmap names it, or its id.
+async function initiativeTitle(projectRoot: string, initiative: string) {
+  const roadmap = await readRoadmap(projectRoot).catch(() => null);
+  const title = roadmap?.loaded?.record?.initiatives?.find((item: any) => item?.id === initiative)?.title;
+  return typeof title === "string" && title ? title : initiative;
+}
+
+// An answer to one permission request of the session, which this machine's launch folder alone holds, so an answer that reaches the
+// machine any other way applies nothing. An approval asks the native dialog every time, whatever the launch window, and answers the
+// host only after the person allowed it there; a refusal asks nothing.
+const LAUNCH_PERMISSION = {
+  ...launchBase,
+  id: "launch.permission",
+  kinds: ["launch"],
+  label: "Answer the permission request",
+  effect: "Allows or refuses one permission request of the session; you confirm an approval outside the browser every time, and it allows only that one request.",
+  target: (context: any) => context.reference,
+  // A shipped initiative's session may still ask, and its requests stay answerable.
+  ownsShipped: true,
+  // Attention offers it on each request, so the session's own list of actions does not.
+  listed: false,
+  fields: () => [
+    text("request", "Request", 40, { required: true }),
+    choice("decision", "Decision", [option("approve", "Allow", "The host does this once, after you confirm outside the browser."), option("refuse", "Refuse", "The host is told that you refused.")], { required: true })
+  ],
+  unavailable: (context: any) => (context.permissions.length ? null : "The session asks for no permission."),
+  unavailableCode: () => "unknown_request",
+  after: (values: any) => ({ request: values.request, decision: values.decision }),
+  async launch({ projectRoot, context, env, values }: { projectRoot: string; context: any; env: NodeJS.ProcessEnv; values: any }) {
+    const request = await waitingRequest({ env, launch: context.launch, request: values.request });
+    if (values.decision === "approve") {
+      if (!request.canAllow) throw approvalUnavailable(request.hostLabel);
+      const initiative = await initiativeTitle(projectRoot, context.initiative);
+      await confirmApproval({ text: approvalText({ initiative, host: request.hostLabel, action: request.action, reason: request.reason }), env });
+    }
+    await answerRequest({ env, launch: context.launch, request: request.id, decision: values.decision });
+    const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
+    return { launch: null, after: { decision: values.decision, action: request.action }, initiative: context.initiative, started: null, record: !shipped };
+  }
+};
+
 // ---- This computer ----
 
 // The host and model of Prism's own runs, such as the runs that move records to a new format: one choice per computer, kept in the
@@ -734,7 +779,7 @@ const MACHINE_PRISM_RUNS = {
 };
 
 /** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, MACHINE_PRISM_RUNS];
+const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, MACHINE_PRISM_RUNS];
 
 /** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
 export const actionEffect = (id: string) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
@@ -790,7 +835,7 @@ export async function listActions({ projectRoot, target, indexer = prismIndexer,
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
   const context = await readTarget(projectRoot, parsed, indexer, undefined, env, checkouts);
-  return { target, actions: definitionsFor(parsed.kind).map((definition) => view(definition, context)) };
+  return { target, actions: definitionsFor(parsed.kind).filter((definition: any) => definition.listed !== false).map((definition) => view(definition, context)) };
 }
 
 // ---- Input ----
@@ -1025,7 +1070,7 @@ async function applyLaunchAction({ projectRoot, definition, context, request, en
   const checked = await check(definition, context, request);
   let outcome;
   try {
-    outcome = await definition.launch({ projectRoot, context, env });
+    outcome = await definition.launch({ projectRoot, context, env, values: checked?.after ?? null });
   } catch (error) {
     throw launchRefusal(error);
   }

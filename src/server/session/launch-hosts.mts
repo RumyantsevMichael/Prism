@@ -4,6 +4,7 @@ import path from "node:path";
 import { acpHostDefinition, acpHosts, isAcpHost } from "./acp-agents.mjs";
 import { isAgentModel } from "./agent-models.mjs";
 import { acpConversation } from "./host-adapters/acp.mjs";
+import type { PermissionAsk, PermissionDecision } from "./permission-requests.mjs";
 
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
 // Nothing here takes a value from the review page except the initiative identifier, checked by the caller, the host, and the
@@ -47,11 +48,14 @@ export const STRIPPED_VARIABLES = Object.freeze([
   "CODEX_THREAD_ID"
 ]);
 
-const CLAUDE_FLAGS = Object.freeze(["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "none"]);
-// The permission policy of every Codex thread that Prism starts or resumes: the host's automatic review decides, and Prism grants nothing.
+// Claude Code decides what it can in its auto mode and sends Prism each permission prompt that it still asks, as a can_use_tool
+// control request on its standard output.
+const CLAUDE_FLAGS = Object.freeze(["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "host", "--permission-prompt-tool", "stdio"]);
+// The permission policy of every Codex thread that Prism starts or resumes: the host's automatic review decides what it can, and asks
+// Prism only the rest.
 const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" });
 const CODEX_CLIENT = Object.freeze({ clientInfo: { name: "prism-launch", version: "1" }, capabilities: { experimentalApi: true } });
-// The answer to every request that a Codex app-server sends Prism, such as an approval or a question.
+// The answer to every request that a host sends Prism other than a permission request, such as a question.
 export const HOST_REQUEST_REFUSAL = Object.freeze({ code: -32601, message: "Prism answers no host requests." });
 export const MAX_LINE_BYTES = 1024 * 1024;
 // What a run keeps of host text: each refusal reason and host error is cut to REFUSAL_REASON_MAX characters, a run records its
@@ -252,6 +256,42 @@ export function codexTurnRequest({ threadId, initiative, coordinator = null }: {
   return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}` }], ...(effort === null ? {} : { effort }) } };
 }
 
+const CODEX_APPROVALS: ReadonlySet<string> = new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"]);
+const isPlainObject = (value: unknown): value is Record<string, any> => value !== null && typeof value === "object" && !Array.isArray(value);
+
+// The action of a Codex approval request: the command, the file change's path, or the permissions asked.
+function codexAction(method: string, params: Record<string, any>) {
+  if (method === "item/commandExecution/requestApproval") {
+    const command = Array.isArray(params.command) ? params.command.filter((part: unknown) => typeof part === "string").join(" ") : text(params.command);
+    return command.trim() || "a command";
+  }
+  if (method === "item/fileChange/requestApproval") {
+    const changes = Array.isArray(params.changes) ? params.changes : isPlainObject(params.changes) ? Object.keys(params.changes).map((file) => ({ path: file })) : [];
+    const paths = [text(params.path), text(params.grantRoot), ...changes.map((change: any) => text(change?.path))].filter(Boolean);
+    return paths.length ? paths.join(", ") : "a file change";
+  }
+  const asked = isPlainObject(params.permissions) ? JSON.stringify(params.permissions) : "";
+  return asked ? `Permissions ${asked}` : "permissions";
+}
+
+/**
+ * A Codex approval request as Prism asks the person: { ask, answer }, or null for any other request. An approval answers accept, or for a
+ * permissions request the requested permissions for the turn alone; a refusal answers decline, or for a permissions request no permission.
+ */
+export function codexApproval(method: string, params: unknown) {
+  if (!CODEX_APPROVALS.has(method)) return null;
+  const values = isPlainObject(params) ? params : {};
+  const reason = text(values.reason);
+  if (method === "item/permissions/requestApproval") {
+    const requested = isPlainObject(values.permissions) ? values.permissions : null;
+    return {
+      ask: { action: codexAction(method, values), reason, canAllow: requested !== null },
+      answer: (decision: PermissionDecision) => (decision === "approve" ? { permissions: requested, scope: "turn" } : { permissions: {}, scope: "turn" })
+    };
+  }
+  return { ask: { action: codexAction(method, values), reason, canAllow: true }, answer: (decision: PermissionDecision) => ({ decision: decision === "approve" ? "accept" : "decline" }) };
+}
+
 /** The stream-json line that Claude Code's own Stop button sends: an interrupt control request with a request id that Prism chooses. */
 export function claudeInterrupt(requestId: string) {
   return { type: "control_request", request_id: requestId, request: { subtype: "interrupt" } };
@@ -386,9 +426,20 @@ export interface HostConversationOptions {
   onModel?: (model: string) => void;
   /** An ACP agent's run: its label and automatic mode, the starter's environment, the launch id, and the agent's process id. */
   acp?: { label: string; autoMode: string | null; env: NodeJS.ProcessEnv; launch: string; agentPid: () => number | null } | null;
+  /**
+   * Where the host's permission requests wait for the person: ask() keeps one waiting, calls respond once it is answered, and returns
+   * the function that withdraws it. Without it every permission request is refused at once.
+   */
+  permissions?: PermissionBroker | null;
 }
 
-export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null }: HostConversationOptions) {
+export interface PermissionBroker { ask(ask: PermissionAsk, respond: (decision: PermissionDecision) => void): () => void }
+
+/** The message with which the host's permission request is answered for a decision; approve answers only a single-use allow. */
+export type PermissionAnswer = (decision: PermissionDecision) => unknown;
+export const REFUSED_ON_ATTENTION = "The person refused this on Attention.";
+
+export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null, permissions = null }: HostConversationOptions) {
   const facts: HostFacts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
@@ -408,8 +459,33 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
   const write = (message: unknown) => {
     if (inputOpen) send(message);
   };
+  // Each permission request waits until the person answers it, and one that still waits when the run's input closes, or when the
+  // person stops the run, is refused first. A request is answered once; an approval of one that offers no single-use allow is refused.
+  const asks = new Set<(decision: PermissionDecision) => void>();
+  const ask = ({ action, reason, canAllow }: PermissionAsk, answer: PermissionAnswer) => {
+    if (!inputOpen) return;
+    let withdraw = () => {};
+    let done = false;
+    const respond = (decision: PermissionDecision) => {
+      if (done) return;
+      done = true;
+      asks.delete(respond);
+      withdraw();
+      write(answer(decision === "approve" && canAllow ? "approve" : "refuse"));
+    };
+    asks.add(respond);
+    if (!permissions) {
+      respond("refuse");
+      return;
+    }
+    withdraw = permissions.ask({ action: cut(action), reason: cut(reason), canAllow }, respond);
+  };
+  const refuseAsks = () => {
+    for (const respond of [...asks]) respond("refuse");
+  };
   const close = () => {
     if (!inputOpen) return;
+    refuseAsks();
     inputOpen = false;
     closeInput();
   };
@@ -431,7 +507,8 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     inputOpen: () => inputOpen,
     cut,
     named,
-    onSessionId
+    onSessionId,
+    ask
   });
 
   // Claude Code: the prompt is one stream-json user message, and the input closes at a result event once every background task
@@ -452,6 +529,18 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
         write(claudeInterrupt(interruptId));
       },
       event(event: any) {
+        if (event.type === "control_request" && event.request?.subtype === "can_use_tool" && typeof event.request_id === "string") {
+          const request = event.request;
+          const tool = text(request.tool_name) || "a tool";
+          const description = text(request.description).trim();
+          const input = request.input !== null && typeof request.input === "object" && !Array.isArray(request.input) ? request.input : null;
+          const requestId = event.request_id;
+          ask({ action: description ? `${tool} ${description}` : tool, reason: text(request.decision_reason), canAllow: input !== null }, (decision) => ({
+            type: "control_response",
+            response: { subtype: "success", request_id: requestId, response: decision === "approve" ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: REFUSED_ON_ATTENTION } }
+          }));
+          return;
+        }
         if (event.type === "control_response") {
           if (interruptId !== null && event.response?.request_id === interruptId) close();
           return;
@@ -570,6 +659,12 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
       event(message: any) {
         const hasId = typeof message.id === "string" || typeof message.id === "number";
         if (hasId && typeof message.method === "string") {
+          const approval = codexApproval(message.method, message.params);
+          if (approval) {
+            const { id } = message;
+            ask(approval.ask, (decision) => ({ jsonrpc: "2.0", id, result: approval.answer(decision) }));
+            return;
+          }
           write({ jsonrpc: "2.0", id: message.id, error: { ...HOST_REQUEST_REFUSAL } });
           return;
         }
@@ -631,6 +726,10 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     send: (message: unknown) => { if (!inputOpen) return false; send(message); return true; },
     closeInput: close,
     /** Sends the host's interrupt for a stop; a run whose input is already closed gets none. */
-    interrupt: () => { if (inputOpen) handle.interrupt(); }
+    interrupt: () => {
+      if (!inputOpen) return;
+      refuseAsks();
+      handle.interrupt();
+    }
   };
 }

@@ -796,6 +796,9 @@ const ACTION_STATUS: Record<string, any> = {
   invalid_choice: 409,
   supervision_lost: 409,
   stop_timeout: 409,
+  // The refusals of an answer to a launched session's permission request.
+  unknown_request: 404,
+  approval_unavailable: 409,
   launch_failed: 500
 };
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];

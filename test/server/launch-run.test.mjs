@@ -9,7 +9,7 @@ import { settled } from "./fixtures/wait.mjs";
 
 const posixOnly = process.platform === "win32" ? "the stub hosts and dialogs are POSIX scripts" : false;
 const TARGET = `initiative:${INITIATIVE}`;
-const LAUNCH_FLAGS = ["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "none"];
+const LAUNCH_FLAGS = ["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "host", "--permission-prompt-tool", "stdio"];
 
 const state = async (root) => {
   const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");

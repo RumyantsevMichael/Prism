@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { pluginPath } from "../../plugin-root.mjs";
 import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, lineSplitter, MODEL_PATTERN, strippedEnvironment, validHostSessionId } from "../launch-hosts.mjs";
 import { toolsListed } from "../options-read-marker.mjs";
+import type { PermissionAsk, PermissionDecision } from "../permission-requests.mjs";
 
 // The Agent Client Protocol (ACP) version 1 client: JSON-RPC 2.0 over an agent's standard input and output. Prism declares no
 // client capability, so an agent asks it for no file or terminal, and every request the agent sends is answered with
@@ -361,13 +362,36 @@ export interface AcpConversationOptions {
   cut: (value: string) => string;
   named: (model: unknown) => void;
   onSessionId: (id: string) => void;
+  /** Keeps a permission request waiting for the person and answers it once with the message for the decision. */
+  ask: (ask: PermissionAsk, answer: (decision: PermissionDecision) => unknown) => void;
+}
+
+/**
+ * An ACP permission request as Prism asks the person: the tool call's title as the action, and an answer that selects the request's
+ * allow_once option for an approval, and its reject_once option, else cancelled, for a refusal; no other option is ever selected.
+ */
+export function acpPermission(label: string, params: unknown) {
+  const values = isObject(params) ? params : {};
+  const call = isObject(values.toolCall) ? values.toolCall : {};
+  const offered = (Array.isArray(values.options) ? values.options : []).filter((option: unknown) => isObject(option) && typeof option.optionId === "string" && option.optionId);
+  const once = (kind: string) => offered.find((option: any) => option.kind === kind)?.optionId as string | undefined;
+  const allow = once("allow_once");
+  const reject = once("reject_once");
+  const kind = text(call.kind).trim() || "other";
+  return {
+    ask: { action: text(call.title).trim() || `a tool of kind ${kind}`, reason: `${label} asks before it runs a tool of kind ${kind}.`, canAllow: allow !== undefined },
+    answer: (decision: PermissionDecision) => {
+      const optionId = decision === "approve" ? allow : reject;
+      return { outcome: optionId === undefined ? { outcome: "cancelled" } : { outcome: "selected", optionId } };
+    }
+  };
 }
 
 /**
  * One launched run's conversation with an ACP agent: initialize, session/new with Prism's server or a resume of the recorded session
  * with session/resume or session/load, the automatic mode and the coordinator's model and effort with session/set_config_option, a wait
  * until Prism's server listed its tools, and one session/prompt with the orchestrate skill and the instruction. Every request of the
- * agent other than session/request_permission is answered with HOST_REQUEST_REFUSAL. A stop sends session/cancel once while the prompt
+ * agent other than session/request_permission is answered with HOST_REQUEST_REFUSAL, and a permission request waits for the person. A stop sends session/cancel once while the prompt
  * runs and closes the input when it answers, or closes the input at once before the prompt. It answers { start, interrupt, event }.
  */
 export function acpConversation(options: AcpConversationOptions) {
@@ -535,12 +559,10 @@ export function acpConversation(options: AcpConversationOptions) {
       const hasId = typeof message.id === "string" || typeof message.id === "number";
       if (hasId && typeof message.method === "string") {
         if (message.method === "session/request_permission") {
-          // Prism grants no permission to a launched agent yet: the request is cancelled, which an agent never reads as an approval.
-          const call = isObject(message.params?.toolCall) ? message.params.toolCall : {};
-          const tool = cut(text(call.title) || text(call.kind) || "a tool").slice(0, 100);
-          facts.refusalCount += 1;
-          if (facts.refusals.length < 20) facts.refusals.push({ tool, reason: cut(`${label} asked to run ${tool}, and Prism grants no permission to a launched agent.`) });
-          write({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "cancelled" } } });
+          // The request waits for the person on Attention; the run keeps waiting until it is answered.
+          const { id } = message;
+          const permission = acpPermission(label, message.params);
+          options.ask(permission.ask, (decision) => ({ jsonrpc: "2.0", id, result: permission.answer(decision) }));
           return;
         }
         write({ jsonrpc: "2.0", id: message.id, error: { ...HOST_REQUEST_REFUSAL } });
