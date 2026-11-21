@@ -5,6 +5,7 @@ import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import "./fixtures/no-host-path.mjs";
 
 // The confirmation outside the web page: one native dialog per platform, a 30-minute launch window that it opens,
 // and a refusal wherever no native dialog can be shown. Stub dialog programs on PATH record what they were asked.
@@ -44,8 +45,8 @@ setTimeout(() => process.exit(plan.code ?? 0), plan.waitMs ?? 10);
   const app = path.join(folder, "app");
   const asked = () => existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
   const setPlan = (value) => writeFile(plans, JSON.stringify(value));
-  // PATH keeps node's own folder so the stubs' interpreter is found, but no system folder that could hold a real dialog program.
-  const env = { PATH: `${bin}${path.delimiter}${path.dirname(process.execPath)}`, PRISM_REVIEW_APP_DIR: app };
+  // PATH keeps the test process's own PATH so the stubs' interpreter is found, from which the guard took every real dialog program.
+  const env = { PATH: `${bin}${path.delimiter}${process.env.PATH}`, PRISM_REVIEW_APP_DIR: app };
   return { env, asked, setPlan, app };
 }
 

@@ -65,6 +65,16 @@ button {
   white-space: nowrap;
 }
 
+/* The icon that the icon attribute draws keeps the distance a leading slotted icon keeps. */
+.lead {
+  margin-inline-end: var(--prism-space-3);
+  vertical-align: middle;
+}
+
+.lead[hidden] {
+  display: none;
+}
+
 ::slotted(prism-icon) {
   margin-inline-end: var(--prism-space-3);
   vertical-align: middle;

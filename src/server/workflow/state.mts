@@ -12,6 +12,7 @@ import { refuseShipped } from "./shipped-history.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { HOSTS } from "../session/launch-hosts.mjs";
+import { isAcpHost } from "../session/acp-agents.mjs";
 import { NAME_RULE_MESSAGES, RUN_KINDS, validEffort, validModel, validProvider } from "../session/run-options.mjs";
 
 const SCHEMA_VERSION = 1;
@@ -25,7 +26,10 @@ const SETTING_KEYS = new Set(INITIATIVE_SETTINGS);
 
 // The models setting keeps one entry per supported host: a provider and a run choice { model, effort, typed } per kind, each part
 // left out for the host default, so the stored value is compact and a host the person never chose for holds nothing.
+// An ACP agent is kept by its acp-<id> name, which the host list of the machine that runs it resolves.
 const RUN_HOSTS: string[] = HOSTS.map(({ host }) => host);
+const runHost = (host: unknown) => (typeof host === "string" && RUN_HOSTS.includes(host)) || isAcpHost(host);
+const HOST_NAMES = `${RUN_HOSTS.join(", ")}, or acp-<id>`;
 const KIND_NAMES: string[] = RUN_KINDS.map(({ kind }) => kind);
 const AGENT_KINDS: string[] = RUN_KINDS.filter(({ purpose }) => purpose === "agents").map(({ kind }) => kind);
 // The earlier models value named one model per role for every host; each role is now an agent kind, and each name a typed choice,
@@ -119,7 +123,6 @@ const REASON_LIMIT = 1000;
 const REVIEW_CHOICES = new Set(["approve", "request-changes"]);
 const STATE_MAX_BYTES = 1024 * 1024;
 const SETTING_VALUES: Record<string, Set<string>> = {
-  host: new Set(RUN_HOSTS),
   autonomy: new Set(["conservative", "broad", "full"]),
   commit: new Set(["on", "off"]),
   push: new Set(["on", "off"]),
@@ -276,8 +279,8 @@ function validateModels(value: any, errors: any) {
   if (earlierAssignment(value)) return;
   for (const [host, entry] of Object.entries(value)) {
     const at = `settings.models.${host}`;
-    if (!RUN_HOSTS.includes(host)) {
-      addError(errors, at, `is not a supported host; the hosts are ${RUN_HOSTS.join(", ")}`);
+    if (!runHost(host)) {
+      addError(errors, at, `is not a supported host; the hosts are ${HOST_NAMES}`);
       continue;
     }
     if (!isRecord(entry)) {
@@ -329,6 +332,10 @@ function validateSettings(value: any, errors: any, warnings: any) {
     }
     if (key === "models") {
       validateModels(setting, errors);
+      continue;
+    }
+    if (key === "host") {
+      if (!runHost(setting)) addError(errors, "settings.host", `must be one of ${HOST_NAMES}`);
       continue;
     }
     if (typeof setting !== "string" || !SETTING_VALUES[key].has(setting)) {

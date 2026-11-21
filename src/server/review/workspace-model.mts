@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { readInitiativeRecordRunTotals } from "../session/run-totals.mjs";
+import { storeLocation } from "../session/launch-records.mjs";
+import { pendingRequests } from "../session/permission-requests.mjs";
 import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workflow/initiative.mjs";
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
@@ -836,8 +838,25 @@ function gateOrder(left: any, right: any) {
   return newestFirst(left.askedAt, right.askedAt);
 }
 
-export function loadAttention(projectRoot: string) {
-  return remember(`attention:${projectRoot}`, () => computeAttention(projectRoot));
+/**
+ * Attention: the shared part, kept for the cache window, with permissions, the permission requests that wait in this machine's running
+ * launched sessions of the checkout's record store, read again at each request from their private launch folders and never from a
+ * shared record; gateCount counts them beside the waiting questions.
+ */
+export async function loadAttention(projectRoot: string) {
+  const [attention, permissions] = await Promise.all([remember(`attention:${projectRoot}`, () => computeAttention(projectRoot)), launchPermissions(projectRoot)]);
+  return { ...attention, permissions, gateCount: attention.gateCount + permissions.length };
+}
+
+// Each waiting permission request with its initiative's title, oldest first; none when the launches cannot be read.
+async function launchPermissions(projectRoot: string) {
+  const store = await storeLocation(await realpath(projectRoot)).catch(() => null);
+  if (store === null) return [];
+  const requests = await pendingRequests({ store }).catch(() => []);
+  if (!requests.length) return [];
+  const roadmap = await loadRoadmapView(projectRoot).catch(() => ({ items: [] }));
+  const titles = new Map<string, string>(roadmap.items.map((item: any) => [item.id, item.title]));
+  return requests.map((request) => ({ ...request, initiative: { id: request.initiative, title: titles.get(request.initiative) ?? request.initiative } }));
 }
 
 /**
