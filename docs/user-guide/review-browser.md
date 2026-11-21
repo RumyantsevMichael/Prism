@@ -155,6 +155,7 @@ Questions recorded by an earlier Prism version show only their question.
 A design or correctness review needs Approve or Request changes, and Request changes also needs a note that says what should change.
 Approving the correctness review of a finished initiative lets the agent ship it, which in a project with a record store also accepts the Proposed ADRs that its slice designs link, as [Ship an initiative](workflow.md#ship-an-initiative) describes.
 The approval of a requirement or ADR takes the same answers, and its card names the file, its scope, its recorded status, and the whole status that approving records, wrapped onto further lines when it is long.
+When the agent names the initiative the approval serves, and the slice when there is one, the card's **Asked for** row links to them, and shows an id that the roadmap does not list yet, as requirements that start a new initiative do before their roadmap entry exists, as text marked not on the roadmap yet.
 Approving writes that status into the file's `Status:` line, and for `Approved` the day you answer into its `Approved:` line, as [Statuses change only at gates](shared-records.md#statuses-change-only-at-gates) describes.
 A decision takes one of its options, a note in your own words, or both.
 To answer in your own words after choosing an option, choose that option again, or press **Clear choice** beside **Your answer**.

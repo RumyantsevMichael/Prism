@@ -844,6 +844,27 @@ a.inspect-tile:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* The initiative and slice an approval serves wrap as text, so a long title or an unbroken id reads whole at every width. */
+.approval-work {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--prism-space-1) var(--prism-space-2);
+  min-width: 0;
+  max-width: 100%;
+  padding-block: var(--prism-space-1);
+  line-height: var(--prism-line-height);
+}
+
+.approval-work-part {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.approval-work-separator {
+  color: var(--prism-color-ink-muted);
+}
+
 /* The status that approving writes holds up to 200 characters, so it is wrapping text, never a one-line label that cuts it off. */
 .approval-status {
   display: flex;

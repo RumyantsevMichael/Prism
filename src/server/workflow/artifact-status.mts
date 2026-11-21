@@ -89,16 +89,20 @@ export function shippedAcceptance(value: any) {
 
 const boundedText = (value: any, max: any) => typeof value === "string" && value.length <= max;
 const optionalText = (value: any, max: any) => value === undefined || value === null || boundedText(value, max);
+const WORK_ITEM_ID = /^[A-Za-z0-9_-]{1,200}$/;
+const optionalWorkItemId = (value: any) => value === undefined || (typeof value === "string" && WORK_ITEM_ID.test(value));
 const optionalPerson = (value: any) => value === undefined || value === null || (isRecord(value) && boundedText(value.name, 200) && optionalText(value.host, 255));
 
 /**
- * Whether a stored gate is one that ask_approval could have recorded: a string id, an askable status, a sha256 version, a question of 1 to 8000 characters, and a context of at most 8000 or none,
+ * Whether a stored gate is one that ask_approval could have recorded: a string id, an askable status, a sha256 version, a question of 1 to 8000 characters, a context of at most 8000 or none,
+ * and the ids of the initiative and slice it serves or none, a slice only with an initiative,
  * with its times and closing reason as text, and, once answered, a known choice with a note of at most 4000 characters and the person who answered as { name, host }.
  * A gate that a damaged file or another writer placed in a synced record otherwise could decide what an approval writes, or what Attention shows.
  */
 function wellFormedGate(kind: string, gate: any) {
   if (typeof gate.id !== "string" || !gate.id || gate.id.length > 200 || !askableStatus(kind, gate.status, gate.shipped) || !VERSION.test(gate.version ?? "")) return false;
   if (!boundedText(gate.question, GATE_TEXT_MAX) || !gate.question || !optionalText(gate.context, GATE_TEXT_MAX)) return false;
+  if (!optionalWorkItemId(gate.initiative) || !optionalWorkItemId(gate.slice) || (gate.slice !== undefined && gate.initiative === undefined && gate.shipped === undefined)) return false;
   if (!optionalText(gate.askedAt, 64) || !optionalText(gate.closedAt, 64) || !optionalText(gate.closed, 64) || !optionalText(gate.supersededBy, 200)) return false;
   if (gate.answer === undefined) return true;
   const answer = gate.answer;
@@ -173,7 +177,7 @@ export function statusMismatch(kind: string, file: string, text: string, record:
  * Record a pending approval gate on a requirement or ADR at its current version: { record, gate }.
  * A new question replaces the artifact's earlier pending ones, which close as superseded, so one artifact waits on one approval at a time.
  */
-export function askApproval(kind: string, file: string, record: any, { status, question, context, version, shipped, now = new Date() }: { status: any; question: any; context: any; version: any; shipped?: any; now?: any }) {
+export function askApproval(kind: string, file: string, record: any, { status, question, context, version, shipped, initiative, slice, now = new Date() }: { status: any; question: any; context: any; version: any; shipped?: any; initiative?: any; slice?: any; now?: any }) {
   if (!hasStatus(kind)) throw notAStatusArtifact(file);
   const wanted = typeof status === "string" ? status.trim() : shipped ? SHIP_STATUS : "Approved";
   if (!wanted || wanted.length > STATUS_MAX || /[\r\n]/.test(wanted)) throw fail("validation_failed", `The status of an approval gate is one line of 1 to ${STATUS_MAX} characters, such as Approved.`);
@@ -195,6 +199,9 @@ export function askApproval(kind: string, file: string, record: any, { status, q
     question: typeof question === "string" && question.trim() ? question.trim() : `Approve ${file} as ${wanted}?`,
     context: typeof context === "string" && context.trim() ? context.trim() : null,
     askedAt: at,
+    // The work item the gate serves, so Attention can link the card to it; an acceptance after a ship serves its shipped initiative.
+    ...(typeof initiative === "string" ? { initiative } : {}),
+    ...(typeof slice === "string" ? { slice } : {}),
     ...(shipped ? { shipped: { initiative: shipped.initiative, verifiedBy: shipped.verifiedBy } } : {})
   };
   const superseded = record.pending.map((earlier: any) => ({ ...earlier, closedAt: at, closed: "superseded", supersededBy: gate.id }));
@@ -394,6 +401,12 @@ export function mergeStatusRecord({ path: file, base, local, upstream }: { path:
     history: keep([...history].sort(([leftKey, left], [rightKey, right]) => byText(String(left.at ?? ""), String(right.at ?? "")) || byText(leftKey, rightKey)).map(([, entry]) => entry), HISTORY_KEPT)
   };
   return { contents: serializeRecord(record) };
+}
+
+/** The work item an approval gate serves as { initiative, slice }: the initiative it names, else the shipped initiative an acceptance names, and the slice or null; null when it names none. */
+export function servedWorkItem(gate: any) {
+  const initiative = gate.initiative ?? gate.shipped?.initiative ?? null;
+  return initiative === null ? null : { initiative, slice: gate.slice ?? null };
 }
 
 /** The gates of a record as a gate wait reads them: pending ones without an answer and answered ones with it; a superseded gate is gone. */

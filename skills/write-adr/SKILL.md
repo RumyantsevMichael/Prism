@@ -71,7 +71,7 @@ Created: <YYYY-MM-DD>
 Invariants use `MUST`/`MUST NOT` for absolute rules and `SHOULD` for justified exceptions.
 Architecture rules do not use code names, paths, or task identifiers.
 Without a store, orchestration alone accepts implemented ADRs after the slice passes verification and marks replaced ADRs Superseded.
-With a store, the ship of an initiative accepts each Proposed ADR that its `slice.md` files link, after the person confirms the ship at a [correctness gate](../workflow/SKILL.md#common-terms), and a replaced ADR becomes Superseded only through an [approval gate](../workflow/SKILL.md#common-terms) that `update_artifact` `ask_approval` asks with that status.
+With a store, the ship of an initiative accepts each Proposed ADR that its `slice.md` files link, after the person confirms the ship at a [correctness gate](../workflow/SKILL.md#common-terms), and a replaced ADR becomes Superseded only through an [approval gate](../workflow/SKILL.md#common-terms) that `update_artifact` `ask_approval` asks with that status and, when an initiative's work replaced it, that `initiative` and `slice`.
 Accepted and Superseded ADRs remain preserved.
 
 ## 3. Explain and check

@@ -54,6 +54,7 @@ A file that moved in that way with an earlier Prism takes its accepted version o
 After that, only your answer at a gate changes it.
 An agent's edit of a `Status:` line is kept, but Prism still reads the file with its recorded status and tells the agent which gate changes it.
 To approve a requirement, or an amendment of an Approved one, the agent asks for your approval with the `ask_approval` operation of `update_artifact`, and the question appears on [Attention](review-browser.md#attention).
+The agent also names the initiative the approval serves, and the slice when there is one, so the question's card links to that work.
 Approving writes the status, `Approved` unless the agent asked for another such as `Withdrawn`, into the file's `Status:` line, sets its `Approved:` line to the day you answered, and records your checkout's Git `user.name` and your machine's host name as the approver.
 Request changes with a note when the file needs another revision, and the agent revises it and asks again.
 An ADR becomes `Accepted` when its initiative ships, and an approval can still give it another status, such as `Superseded`.
