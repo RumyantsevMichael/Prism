@@ -10,7 +10,7 @@ export class PrismToast extends Base {
   declare timer: any;
   static tag = "prism-toast";
   static catalog = {
-    purpose: "The page's one polite live region: it shows a short message on frosted glass at the bottom of the window for five seconds, replacing any shown message.",
+    purpose: "The page's one polite live region: it shows a short message on frosted glass at the bottom of the window for five seconds, replacing any shown message, above every open dialog.",
     options: [
       { name: "show(message, { tone })", values: ["method"], default: "", description: "Shows a message in a tone (neutral, info, success, warning, or danger), replacing any shown one." },
       { name: "hide()", values: ["method"], default: "", description: "Hides the shown message at once." }
@@ -36,6 +36,7 @@ export class PrismToast extends Base {
     this.replaceChildren(...parts);
     setAttribute(this, "tone", shownTone);
     this.toggleAttribute("shown", true);
+    this.raise();
     this.timer = setTimeout(() => this.hide(), TOAST_DURATION);
   }
 
@@ -43,5 +44,15 @@ export class PrismToast extends Base {
     clearTimeout(this.timer);
     this.replaceChildren();
     this.toggleAttribute("shown", false);
+    if (this.matches?.(":popover-open")) this.hidePopover();
+    this.removeAttribute("popover");
+  }
+
+  // A shown message enters the top layer above every open dialog, so a message about a change made in a modal dialog is not left under its backdrop.
+  raise() {
+    if (typeof this.showPopover !== "function") return;
+    setAttribute(this, "popover", "manual");
+    if (this.matches(":popover-open")) this.hidePopover();
+    this.showPopover();
   }
 }

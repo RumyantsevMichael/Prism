@@ -470,12 +470,32 @@ See [Share Prism state across worktrees and machines](shared-records.md) for set
 
 `prism:setup` writes `.prism/workflow.md` by asking you one topic at a time, with what it found in the project filled in and a recommended answer, so you mostly confirm.
 It covers whether the project is new or existing, the stack and test command, a shared store with this repository's name and the workspace name, components, the tracker and commit conventions, how questions reach you, and project constraints.
+How questions reach you, the review browser, whether it opens at session start, and whether a new conversation offers Prism are your [personal settings](#personal-settings), so setup saves them for you on this machine and writes no `## Interaction` section into `.prism/workflow.md`.
 In Claude Code the questions use the structured question prompt; elsewhere they are numbered options in the message.
 
 Setup stays the owner of `.prism/workflow.md` after the first run.
 Run it again, or the agent runs it for you, when you add a test, lint, or BDD tool, when a project with no tests gets its first test runner, when you bring in another repository, or when Prism reports a setting or record from an earlier version.
 During an orchestrated run, the orchestrator runs setup between slices in a child agent and asks you its questions on Attention.
 Setup never adds a component declaration, store, or repository name that you did not approve.
+
+## Personal settings
+
+Four settings belong to you rather than to a project, and apply to every project and to both Claude Code and Codex on this machine:
+
+| Setting | Values | Default |
+| --- | --- | --- |
+| `interactionStyle` | `structured` asks with the host's question prompt, and `plain-text` with numbered options in the message | `structured` |
+| `reviewBrowser` | `auto`, `internal`, or `external`, as [Review browser](review-browser.md) explains | `auto` |
+| `reviewBrowserOnStart` | `on` opens the review browser when a session starts, and `off` does not | `on` |
+| `sessionOffer` | `ask` offers Prism at the start of a new conversation, and `off` does not | `ask` |
+
+Prism keeps them in its application folder, beside the machine's checkout list, as [Share Prism state across worktrees and machines](shared-records.md) describes, and never in a project, a repository's configuration, or a record store, so a change reaches no one else.
+Ask the agent to change one, or answer setup's Interaction question, and it saves your answer with Prism's `update_personal_settings` tool; agents read them with `get_personal_settings`.
+
+A project set up by an earlier Prism may still record these values under `## Interaction` in `.prism/workflow.md`, as `- Interaction style:`, `- Review browser:`, `- Review browser on start:`, and `- Session offer:` lines.
+While you have no value of your own for a setting, Prism uses the project's line, and the first session or tool call for that project adopts it as your own, so from then on it applies to every project and a later change to that line no longer does.
+A value of your own always wins over a project's line.
+The environment variables `PRISM_SESSION_OFFER=off` and `PRISM_REVIEW_BROWSER_ON_START=off` still turn the offer and the review browser at start off for every process that has them, whatever your settings say.
 
 ## Offer at the start of a conversation
 
@@ -485,7 +505,7 @@ In a project without `.prism/workflow.md`, it offers `prism:setup` instead.
 It does not ask about a question on the code, a change that no requirement or ADR covers, such as a color or a typo, or a request that already names a Prism skill.
 When questions already wait on you in an initiative, it offers to resume that initiative.
 A resumed conversation and a child agent get no offer.
-Set `- Session offer: off` under `## Interaction` in `.prism/workflow.md`, or the environment variable `PRISM_SESSION_OFFER=off`, to turn the offer off.
+Set your [personal setting](#personal-settings) `sessionOffer` to `off`, or the environment variable `PRISM_SESSION_OFFER=off`, to turn the offer off.
 In Codex the offer needs Prism's hooks to be trusted through `/hooks`, like gate answers and run totals.
 
 ## Migrate an older setup

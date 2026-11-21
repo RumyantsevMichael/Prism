@@ -317,6 +317,7 @@ const SPECIMENS: Record<string, any> = {
   "prism-segmented": {
     default: `<prism-segmented label="View"><span value="board">Board</span><span value="list">List</span><span value="graph">Graph</span></prism-segmented>`,
     chosen: `<prism-segmented label="View" value="list"><span value="board">Board</span><span value="list">List</span><span value="graph">Graph</span></prism-segmented>`,
+    disabled: `<prism-segmented label="View" value="list" disabled><span value="board">Board</span><span value="list">List</span><span value="graph">Graph</span></prism-segmented>`,
     wrap: `<div class="catalog-narrow"><prism-segmented label="Show" value="all" wrap><span value="all">All 12</span><span value="needs-you">Needs you 2</span><span value="here">Launched from Prism 4</span><span value="other">Started outside Prism 6</span><span value="expired">Expired ${UNBROKEN}</span></prism-segmented></div>`,
     "long-text": `<div class="catalog-narrow"><prism-segmented label="${LONG}" value="a"><span value="a">${LONG}</span><span value="b">${LONG}</span></prism-segmented></div>`,
     "unbroken-name": `<div class="catalog-narrow"><prism-segmented label="Unbroken" value="u"><span value="u">${UNBROKEN}</span><span value="v">List</span></prism-segmented></div>`

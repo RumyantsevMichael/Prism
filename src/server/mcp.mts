@@ -34,6 +34,7 @@ import { appendDecision, readDecisionHistory, setDecisionRecording } from "./wor
 import { listArtifacts } from "./review/review-server.mjs";
 import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { opensAtStart } from "./review/open-at-start.mjs";
+import { PERSONAL_SETTINGS, PersonalSettingsError, readPersonalSettings, updatePersonalSettings } from "./workflow/personal-settings.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
 import { checkpointPause, effectiveSettings, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs";
@@ -390,6 +391,10 @@ function stateErrorData(error: any) {
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };
   }
+  // A refused personal setting names the first setting it refuses, or null when the change names none.
+  if (error instanceof PersonalSettingsError) {
+    return { code: error.code, ...(error.setting === undefined ? {} : { setting: error.setting }) };
+  }
   if (error instanceof ChangeMapError) {
     return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
   }
@@ -515,6 +520,35 @@ const tools = [
     name: "update_design_view",
     description: "Replace a designed slice's design view, which the review browser shows at the design gate: one example per acceptance test, each a single line under the number of the slice.md Contract clause it checks, restating only what the test asserts. Prism checks that each cited test name occurs in its test file and each clause number exists, lists clauses without examples as gaps, and marks the view stale when the contract or a test file changes. It also checks the declared views of the folders that accept_design checks, by the same rules, and returns views ({ path, kind, elements, relations }) and viewProblems, each problem that accept_design would refuse.",
     inputSchema: UPDATE_DESIGN_VIEW_SCHEMA,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "get_personal_settings",
+    description: "Read the person's own settings, which Prism keeps on this machine for every project and host: interactionStyle (structured or plain-text), reviewBrowser (auto, internal, or external), reviewBrowserOnStart (on or off), and sessionOffer (ask or off). Each value is the person's own when they have one, else the value the project named by projectRoot records under ## Interaction in its .prism/workflow.md, else the default. A read with projectRoot adopts each value that project records for a setting the person has no value for as the person's own, once, and lists those names in adopted; a read without projectRoot adopts nothing and uses no project's value. It answers settings, sources (chosen, adopted, repository, or default for each setting), adopted, and problem, which is null or a settings_unreadable or settings_unsupported problem when the person's settings cannot be read, while the repository's values and the defaults apply.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the project whose recorded values apply and are adopted. Omit it to read only the person's values and the defaults." }
+      },
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "update_personal_settings",
+    description: "Change the person's own settings on this machine, which apply to every project and host and reach no one else. settings names one or more settings with their new values, and every other setting keeps its value. It refuses a name that is not a setting, a value the setting does not offer, or an empty object with invalid_setting and data.setting naming the first refused name, or null for an empty object, and changes nothing while the person's settings cannot be read, with settings_unreadable or settings_unsupported. It answers as get_personal_settings does without projectRoot.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        settings: {
+          type: "object",
+          description: "The settings to change and their new values.",
+          properties: Object.fromEntries(PERSONAL_SETTINGS.map((setting) => [setting.name, { type: "string", enum: [...setting.values] }]))
+        }
+      },
+      required: ["settings"],
+      additionalProperties: false
+    },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   ...CONSERVATION_TOOLS,
@@ -1588,6 +1622,18 @@ async function requireCallClaims(name: string, argumentsValue: any) {
   await requireClaimedWork({ projectRoot, initiative: argumentsValue.initiative, tool: name, work: [{ slug: argumentsValue.slice, own: true }] });
 }
 
+// The personal settings tools name their project only by projectRoot, never by the host's project, so a read without one adopts nothing.
+async function callPersonalSettingsTool(name: string, argumentsValue: any) {
+  try {
+    assertExactToolArguments(argumentsValue, name === "get_personal_settings" ? ["projectRoot"] : ["settings"], name === "get_personal_settings" ? [] : ["settings"], `${name} arguments`);
+  } catch (error) { error.code = "validation_failed"; throw error; }
+  if (name === "update_personal_settings") return updatePersonalSettings(argumentsValue.settings);
+  if (!Object.hasOwn(argumentsValue, "projectRoot")) return readPersonalSettings();
+  if (typeof argumentsValue.projectRoot !== "string" || !path.isAbsolute(argumentsValue.projectRoot)) throw projectRootRefusal("The projectRoot argument must be an absolute path.");
+  const projectRoot = await realpath(argumentsValue.projectRoot).catch(() => { throw projectRootRefusal("The projectRoot argument must name an existing folder."); });
+  return readPersonalSettings({ projectRoot });
+}
+
 async function callTool(name: string, argumentsValue: any = {}, metadata: any, requestId: any) {
   await requireCallClaims(name, argumentsValue);
   if (name === "wait_for_user_gate") {
@@ -1639,6 +1685,10 @@ async function callTool(name: string, argumentsValue: any = {}, metadata: any, r
   }
   if (repositoryTools.has(name)) {
     return callRepositoryTool(name, argumentsValue);
+  }
+  if (name === "get_personal_settings" || name === "update_personal_settings") {
+    const value = await callPersonalSettingsTool(name, argumentsValue);
+    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   const review = await server(argumentsValue, metadata);
   if (name === "get_review_url") {

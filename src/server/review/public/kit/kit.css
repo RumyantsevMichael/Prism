@@ -428,7 +428,7 @@ prism-segmented[wrap] > .prism-segment {
   white-space: nowrap;
 }
 
-.prism-segment:hover {
+.prism-segment:hover:not(:disabled) {
   color: var(--prism-color-ink);
 }
 
@@ -437,6 +437,12 @@ prism-segmented[wrap] > .prism-segment {
   background: var(--prism-color-surface);
   color: var(--prism-color-ink);
   box-shadow: var(--prism-shadow-lift);
+}
+
+/* A disabled choice keeps showing its chosen segment but offers none: its segments take the muted ink and no hover. */
+.prism-segment:disabled {
+  color: var(--prism-color-ink-muted);
+  cursor: default;
 }
 
 /* A theme preview draws a small window in the theme it names, from that theme's own tokens; a system preview shows light and dark side by side. */
@@ -2267,6 +2273,21 @@ prism-toast:not([shown]) {
 prism-toast[shown] {
   padding: var(--prism-space-4) var(--prism-space-5);
   animation: prism-rise var(--prism-duration-normal) var(--prism-easing-enter);
+}
+
+/* A shown message stands in the top layer, above an open modal dialog, at the same place.
+   It holds no control, so a pointer passes through it to whatever it covers, such as a link preview's buttons. */
+prism-toast[popover] {
+  pointer-events: none;
+  inset: auto;
+  bottom: var(--prism-space-6);
+  left: 50%;
+  margin: 0;
+  overflow: visible;
+}
+
+prism-toast[popover]:not(:popover-open) {
+  display: none;
 }
 
 prism-toast[tone="info"] .prism-toast-icon { color: var(--prism-color-info); }

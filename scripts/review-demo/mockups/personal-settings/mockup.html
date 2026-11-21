@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-theme-choice="light" data-density="compact">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personal settings mockup</title>
+<!--
+  The Personal section of the review app's Settings dialog, composed from the real kit elements and the real shell stylesheet.
+  Serve the repository root over HTTP and open this file, for example:
+    npx http-server -p 8080 .   then   http://localhost:8080/scripts/review-demo/mockups/personal-settings/mockup.html
+  Add ?theme=dark to preview the dark theme.
+  The frames below only place the dialog's content side by side; every control inside them is a prism-* element of the kit.
+-->
+<link rel="stylesheet" href="../../../../src/server/review/public/kit/tokens.css">
+<link rel="stylesheet" href="../../../../src/server/review/public/kit/kit.css">
+<link rel="stylesheet" href="../../../../src/server/review/public/styles/shell.css">
+<style>
+/* Mockup page only: it frames each scene and reads tokens alone. */
+html { background: var(--prism-color-bg); color: var(--prism-color-ink); }
+body { margin: 0; font-family: var(--prism-font-ui); font-size: var(--prism-font-size-md); line-height: var(--prism-line-height); }
+.mock-frames { display: grid; gap: var(--prism-space-8); padding: var(--prism-space-6); max-width: 960px; margin: 0 auto; }
+.mock-caption { margin: 0 0 var(--prism-space-4); font-size: var(--prism-font-size-sm); font-weight: var(--prism-font-weight-medium); color: var(--prism-color-ink-muted); letter-spacing: var(--prism-tracking-caps); text-transform: uppercase; }
+.mock-note { margin: 0 0 var(--prism-space-4); font-size: var(--prism-font-size-sm); color: var(--prism-color-ink-muted); }
+.mock-window { padding: var(--prism-space-6); border: var(--prism-stroke) solid var(--prism-color-line); border-radius: var(--prism-radius-overlay); background: var(--prism-color-surface); box-shadow: var(--prism-shadow-dialog); }
+.mock-window > h2 { margin: 0 0 var(--prism-space-6); font-size: var(--prism-font-size-lg); font-weight: var(--prism-font-weight-semibold); }
+.settings-section prism-banner { margin-bottom: var(--prism-space-4); }
+.settings-row prism-badge { margin-top: var(--prism-space-2); }
+</style>
+</head>
+<body>
+<main class="mock-frames">
+
+  <section data-scene="personal" aria-labelledby="scene-personal">
+    <p class="mock-caption" id="scene-personal">Scene 1 · Settings, Personal</p>
+    <p class="mock-note">The Settings dialog opened on its new Personal section. The review browser value came from the repository's committed configuration the first time Prism read it, and the others are Prism's defaults. Choosing a value saves it at once.</p>
+    <div class="mock-window" role="dialog" aria-label="Settings">
+      <h2>Settings</h2>
+      <div class="settings">
+        <prism-tree class="settings-sections" label="Settings sections">
+          <prism-tree-item value="appearance" label="Appearance"><prism-icon slot="start" name="contrast" size="sm"></prism-icon></prism-tree-item>
+          <prism-tree-item value="layout" label="Layout"><prism-icon slot="start" name="panel-left" size="sm"></prism-icon></prism-tree-item>
+          <prism-tree-item value="personal" label="Personal" selected><prism-icon slot="start" name="agent" size="sm"></prism-icon></prism-tree-item>
+          <prism-tree-item value="store" label="Record store"><prism-icon slot="start" name="store" size="sm"></prism-icon></prism-tree-item>
+          <prism-tree-item value="about" label="About Prism"><prism-icon slot="start" name="info" size="sm"></prism-icon></prism-tree-item>
+        </prism-tree>
+        <div class="settings-body">
+          <section class="settings-section" data-section="personal" aria-labelledby="personal-heading-1">
+            <h3 id="personal-heading-1">Personal settings</h3>
+            <prism-banner tone="info">These settings stay on this machine and apply to every project and every host you run Prism in. A change here reaches no one else.</prism-banner>
+            <div class="settings-row">
+              <div><strong>Questions</strong><span class="settings-hint">How an agent asks you to choose: the host's question tool, or numbered options in its message.</span><prism-badge variant="status" tone="neutral">Default</prism-badge></div>
+              <prism-segmented label="Questions" value="structured" data-setting="interactionStyle">
+                <span value="structured">Question tool</span>
+                <span value="plain-text">Numbered options</span>
+              </prism-segmented>
+            </div>
+            <div class="settings-row">
+              <div><strong>Review browser</strong><span class="settings-hint">Auto opens reviews in the host's internal browser on the desktop and in your system browser from a terminal.</span><prism-badge variant="status" tone="info">Adopted from a repository's configuration</prism-badge></div>
+              <prism-segmented label="Review browser" value="external" data-setting="reviewBrowser">
+                <span value="auto">Auto</span>
+                <span value="internal">Internal</span>
+                <span value="external">External</span>
+              </prism-segmented>
+            </div>
+            <div class="settings-row">
+              <div><strong>Open at session start</strong><span class="settings-hint">Opens the review browser when a session starts on a computer with a screen.</span><prism-badge variant="status" tone="neutral">Default</prism-badge></div>
+              <prism-segmented label="Open at session start" value="on" data-setting="reviewBrowserOnStart">
+                <span value="on">On</span>
+                <span value="off">Off</span>
+              </prism-segmented>
+            </div>
+            <div class="settings-row">
+              <div><strong>Offer Prism</strong><span class="settings-hint">A new conversation offers to run work through Prism when it changes what your requirements describe.</span><prism-badge variant="status" tone="neutral">Default</prism-badge></div>
+              <prism-segmented label="Offer Prism" value="ask" data-setting="sessionOffer">
+                <span value="ask">Ask</span>
+                <span value="off">Off</span>
+              </prism-segmented>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section data-scene="saved" aria-labelledby="scene-saved">
+    <p class="mock-caption" id="scene-saved">Scene 2 · After a change</p>
+    <p class="mock-note">The person chose Numbered options. The row now says Your choice, and the toast at the bottom of the window says the change stayed on this machine. Choose any value in scene 1 or 2 to see the toast again.</p>
+    <div class="mock-window" role="dialog" aria-label="Settings after a change">
+      <h2>Settings</h2>
+      <div class="settings">
+        <prism-tree class="settings-sections" label="Settings sections">
+          <prism-tree-item value="appearance" label="Appearance"><prism-icon slot="start" name="contrast" size="sm"></prism-icon></prism-tree-item>
+          <prism-tree-item value="layout" label="Layout"><prism-icon slot="start" name="panel-left" size="sm"></prism-icon></prism-tree-item>
+          <prism-tree-item value="personal" label="Personal" selected><prism-icon slot="start" name="agent" size="sm"></prism-icon></prism-tree-item>
+          <prism-tree-item value="store" label="Record store"><prism-icon slot="start" name="store" size="sm"></prism-icon></prism-tree-item>
+          <prism-tree-item value="about" label="About Prism"><prism-icon slot="start" name="info" size="sm"></prism-icon></prism-tree-item>
+        </prism-tree>
+        <div class="settings-body">
+          <section class="settings-section" data-section="personal" aria-labelledby="personal-heading-2">
+            <h3 id="personal-heading-2">Personal settings</h3>
+            <prism-banner tone="info">These settings stay on this machine and apply to every project and every host you run Prism in. A change here reaches no one else.</prism-banner>
+            <div class="settings-row">
+              <div><strong>Questions</strong><span class="settings-hint">How an agent asks you to choose: the host's question tool, or numbered options in its message.</span><prism-badge variant="status" tone="accent">Your choice</prism-badge></div>
+              <prism-segmented label="Questions" value="plain-text" data-setting="interactionStyle">
+                <span value="structured">Question tool</span>
+                <span value="plain-text">Numbered options</span>
+              </prism-segmented>
+            </div>
+            <div class="settings-row">
+              <div><strong>Review browser</strong><span class="settings-hint">Auto opens reviews in the host's internal browser on the desktop and in your system browser from a terminal.</span><prism-badge variant="status" tone="info">Adopted from a repository's configuration</prism-badge></div>
+              <prism-segmented label="Review browser" value="external" data-setting="reviewBrowser">
+                <span value="auto">Auto</span>
+                <span value="internal">Internal</span>
+                <span value="external">External</span>
+              </prism-segmented>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section data-scene="unreadable" aria-labelledby="scene-unreadable">
+    <p class="mock-caption" id="scene-unreadable">Scene 3 · A settings file Prism cannot read</p>
+    <p class="mock-note">The file holds broken JSON or a newer Prism's format. The section shows the values Prism uses instead, and a change is refused with a danger toast until the file is fixed or removed, so nothing the person wrote is overwritten.</p>
+    <div class="mock-window" role="dialog" aria-label="Settings with an unreadable file">
+      <h2>Settings</h2>
+      <div class="settings">
+        <prism-tree class="settings-sections" label="Settings sections">
+          <prism-tree-item value="appearance" label="Appearance"><prism-icon slot="start" name="contrast" size="sm"></prism-icon></prism-tree-item>
+          <prism-tree-item value="layout" label="Layout"><prism-icon slot="start" name="panel-left" size="sm"></prism-icon></prism-tree-item>
+          <prism-tree-item value="personal" label="Personal" selected><prism-icon slot="start" name="agent" size="sm"></prism-icon></prism-tree-item>
+          <prism-tree-item value="store" label="Record store"><prism-icon slot="start" name="store" size="sm"></prism-icon></prism-tree-item>
+          <prism-tree-item value="about" label="About Prism"><prism-icon slot="start" name="info" size="sm"></prism-icon></prism-tree-item>
+        </prism-tree>
+        <div class="settings-body">
+          <section class="settings-section" data-section="personal" aria-labelledby="personal-heading-3">
+            <h3 id="personal-heading-3">Personal settings</h3>
+            <prism-banner tone="warning" heading="Prism cannot read your personal settings">It uses the repository's values and its defaults, and saves no change until you fix or remove personal-settings.json in Prism's application folder.</prism-banner>
+            <div class="settings-row">
+              <div><strong>Questions</strong><span class="settings-hint">How an agent asks you to choose: the host's question tool, or numbered options in its message.</span><prism-badge variant="status" tone="neutral">Default</prism-badge></div>
+              <prism-segmented label="Questions" value="structured" data-setting="interactionStyle" data-refuse>
+                <span value="structured">Question tool</span>
+                <span value="plain-text">Numbered options</span>
+              </prism-segmented>
+            </div>
+            <div class="settings-row">
+              <div><strong>Review browser</strong><span class="settings-hint">Auto opens reviews in the host's internal browser on the desktop and in your system browser from a terminal.</span><prism-badge variant="status" tone="neutral">From this repository's configuration</prism-badge></div>
+              <prism-segmented label="Review browser" value="external" data-setting="reviewBrowser" data-refuse>
+                <span value="auto">Auto</span>
+                <span value="internal">Internal</span>
+                <span value="external">External</span>
+              </prism-segmented>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+<prism-toast id="toast"></prism-toast>
+<script type="module">
+import "../../../../src/server/review/public/kit/kit.js";
+
+// The kit applies this browser's stored appearance when it loads, so the scene's theme is set again once the kit is defined.
+const theme = new URLSearchParams(location.search).get("theme") === "dark" ? "dark" : "light";
+const applyTheme = () => Object.assign(document.documentElement.dataset, { theme, themeChoice: theme });
+applyTheme();
+customElements.whenDefined("prism-segmented").then(applyTheme);
+const toast = document.getElementById("toast");
+for (const choice of document.querySelectorAll("prism-segmented[data-setting]")) {
+  choice.addEventListener("change", () => {
+    if (choice.hasAttribute("data-refuse")) toast.show("Prism could not save this change: it cannot read your personal settings.", { tone: "danger" });
+    else toast.show("Saved on this machine. This change reaches no one else.", { tone: "success" });
+  });
+}
+customElements.whenDefined("prism-toast").then(() => toast.show("Saved on this machine. This change reaches no one else.", { tone: "success" }));
+</script>
+</body>
+</html>

@@ -7,9 +7,14 @@ import test from "node:test";
 import { offerPrism } from "../../dist/hooks/offer-prism.mjs";
 import { updateCoordinationState } from "../../dist/server/workflow/state.mjs";
 
+// Each project gets an application folder of its own, so a value its configuration records is never adopted into the person's real one.
+const appFolders = new Map();
+
 async function folder(context, config = null) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-offer-")));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  const app = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-offer-app-")));
+  appFolders.set(root, app);
+  context.after(() => Promise.all([rm(root, { recursive: true, force: true }), rm(app, { recursive: true, force: true })]));
   if (config !== null) {
     await mkdir(path.join(root, ".prism"), { recursive: true });
     await writeFile(path.join(root, ".prism/workflow.md"), config);
@@ -17,7 +22,7 @@ async function folder(context, config = null) {
   return root;
 }
 
-const start = (cwd, extra = {}, environment = {}) => offerPrism({ input: Readable.from([JSON.stringify({ hook_event_name: "SessionStart", source: "startup", session_id: "s1", cwd, ...extra })]), environment });
+const start = (cwd, extra = {}, environment = {}) => offerPrism({ input: Readable.from([JSON.stringify({ hook_event_name: "SessionStart", source: "startup", session_id: "s1", cwd, ...extra })]), environment: { PRISM_REVIEW_APP_DIR: appFolders.get(cwd), ...environment } });
 const CONFIG = "## Paths\n- Plans: docs/plans/\n\n## Interaction\n- Interaction style: structured\n";
 
 test("a new conversation in a configured project learns to offer orchestration for work that changes documented intent", async (context) => {

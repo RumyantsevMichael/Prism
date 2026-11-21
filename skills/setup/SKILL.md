@@ -21,7 +21,7 @@ Onboarding covers every topic in the interview, while migration and amendment co
 
 1. Read applicable project instructions, package manifests, the existing `.prism/workflow.md` or `.claude/workflow-config.md`, and common documentation paths, without reading application source.
 2. Ask one topic per round, with each discovered value filled in and a recommended answer, so that the person mostly confirms.
-3. Use the host's structured question tool when `Interaction style` is `structured` and the tool is available, and numbered options in the message otherwise, following the [workflow gate rules](../workflow/SKILL.md#supporting-procedures).
+3. Use the host's structured question tool when `get_personal_settings` answers `interactionStyle` `structured` and the tool is available, and numbered options in the message otherwise, following the [workflow gate rules](../workflow/SKILL.md#supporting-procedures).
 4. When you run as a child agent that cannot ask the person, return `BLOCKED` with each open topic as a [blocker](../workflow/SKILL.md#common-terms), and continue from the answers that the next run receives.
 
 | Topic | What to settle |
@@ -32,7 +32,7 @@ Onboarding covers every topic in the interview, while migration and amendment co
 | Workspace | Whether records live in a store shared with other checkouts or repositories; with a store, its `Store` location, this repository's `Repository` name, `Store sync`, and a workspace name, and that the first Prism call moves the checkout's tracked requirements, ADRs, plans, glossary, and roadmap view into the store as [store artifacts](../workflow/SKILL.md#common-terms). |
 | Components | The packages the person declares as [components](../workflow/SKILL.md#common-terms), and for several repositories, the other repositories' components they depend on. |
 | Tracker and commits | The tracker, its labels, commit scopes, and conventions; for GitHub, whether the repository has a GitHub remote and `gh` is available. |
-| Interaction | `Interaction style`, `Review browser`, and `Session offer`. |
+| Interaction | The person's [personal settings](../workflow/SKILL.md#common-terms) `interactionStyle`, `reviewBrowser`, `reviewBrowserOnStart`, and `sessionOffer`. |
 | Constraints | Project prohibitions and sign-off requirements. |
 | Repository intelligence | `CodeNib command`: an absolute executable path when CodeNib is outside the Prism MCP process `PATH`, otherwise `n/a`. |
 
@@ -40,11 +40,13 @@ Onboarding covers every topic in the interview, while migration and amendment co
   - When `components.proposal` is present, show the person this [component proposal](../workflow/SKILL.md#common-terms): its `markdown` block, its `skipped` manifests, and, when present, its `problem`, the refusal the block meets until it changes.
   - When the person approves it, use its block, with the changes the person asks for, as the `## Components` section after `## Stack`.
   - When there is no proposal, declare as components only the packages the person agrees to, as in the components example.
+- When the topic is Interaction, recommend the values that `get_personal_settings` answers, and record the person's answers with `update_personal_settings`.
 - When the topic is Workspace and the person sets a workspace name, record it with `update_roadmap` and a `set_workspace_name` operation, and keep a name the store already has unless the person changes it, because every repository on the store shares it.
 
-`Interaction style` defaults to `structured`, and `plain-text` presents the same choices as numbered options in the message body.
-`Review browser` defaults to `auto`, selecting the internal browser on desktop and the system browser in CLI sessions; `internal` and `external` select those browsers explicitly.
-`Session offer` defaults to `ask`, so a new conversation offers Prism for work that changes documented intent, and `off` stops the offer.
+`interactionStyle` defaults to `structured`, and `plain-text` presents the same choices as numbered options in the message body.
+`reviewBrowser` defaults to `auto`, selecting the internal browser on desktop and the system browser in CLI sessions; `internal` and `external` select those browsers explicitly.
+`reviewBrowserOnStart` defaults to `on`, opening the review browser when a session starts, and `off` leaves it closed.
+`sessionOffer` defaults to `ask`, so a new conversation offers Prism for work that changes documented intent, and `off` stops the offer.
 A missing BDD harness uses `none`, making feature files specification-only.
 
 - Don't
@@ -94,11 +96,6 @@ A missing BDD harness uses `none`, making feature files specification-only.
 ## Commits
 - Scopes: <vocabulary or free-form>
 - Notes: <extra conventions>
-
-## Interaction
-- Interaction style: structured
-- Review browser: auto
-- Session offer: ask
 
 ## Constraints
 - <Project prohibitions and sign-off requirements.>

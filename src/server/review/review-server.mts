@@ -31,6 +31,7 @@ import { readRunOptions, runOptionsQuery } from "../session/run-options.mjs";
 import { listAgents } from "./agents.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
+import { PersonalSettingsError, readPersonalSettings, updatePersonalSettings } from "../workflow/personal-settings.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
@@ -851,6 +852,36 @@ export async function exchangeWriteGrant(request: any, response: any, writeSessi
   sendJson(response, 200, { token });
 }
 
+// A change to the person's own settings comes from the review page as JSON, as a change of the preferences does, and is checked as the agents' tool checks it.
+// writable says whether the request holds the page's write session, which a change needs as every other change of the review app does.
+async function changePersonalSettings(request: any, response: any, writable: boolean) {
+  if (!fromPage(request)) {
+    sendJson(response, 403, { code: "origin_refused", message: "Personal settings must come from the review page as JSON." });
+    return;
+  }
+  if (!writable) {
+    sendJson(response, 403, { code: "write_forbidden", message: READ_ONLY_NOTICE });
+    return;
+  }
+  let change;
+  try {
+    change = parseStoreJson(await readBody(request));
+  } catch {
+    change = undefined;
+  }
+  if (change === null || typeof change !== "object" || Array.isArray(change)) {
+    sendJson(response, 400, { code: "invalid_setting", message: "The change must be a JSON object that names one or more personal settings and their values.", setting: null });
+    return;
+  }
+  try {
+    sendJson(response, 200, await updatePersonalSettings(change));
+  } catch (error) {
+    if (!(error instanceof PersonalSettingsError)) throw error;
+    if (error.code === "invalid_setting") sendJson(response, 400, { code: error.code, message: error.message, setting: error.setting ?? null });
+    else sendJson(response, 409, { code: error.code, message: error.message });
+  }
+}
+
 /**
  * Answer a route of the review page itself, its scripts, styles, kit, and the person's preferences, which every page of a server or app shares,
  * and resolve to whether the route was one of them.
@@ -1616,6 +1647,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/agents" && request.method === "GET") {
       // Every agent once: this computer's launched sessions and the workspace's claims that none of them holds; reading needs no write session.
       sendJson(response, 200, await listAgents({ projectRoot, env: process.env }));
+    } else if (route === "/api/personal-settings" && request.method === "GET") {
+      // The person's own settings for this project, adopting each value the project still records; reading needs no write session.
+      sendJson(response, 200, await readPersonalSettings({ projectRoot }));
+    } else if (route === "/api/personal-settings" && request.method === "PUT") {
+      await changePersonalSettings(request, response, writableRequest(request));
     } else if ((route === "/api/agents/archive" || route === "/api/agents/unarchive") && request.method === "POST") {
       await archiveRoute(request, response, route === "/api/agents/archive");
     } else if (route === "/api/actions/targets" && request.method === "GET") {

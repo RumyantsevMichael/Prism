@@ -18,8 +18,8 @@ Start a review from a Prism checkout when no agent session is active:
 
 The browser opens on Attention, or on the artifact you name, and later visits restore the tabs you left open.
 
-`Review browser: auto` in `.prism/workflow.md` uses the internal browser in desktop sessions and the system browser in CLI sessions.
-Set `internal` or `external` to override this choice.
+Your [personal setting](workflow.md#personal-settings) `reviewBrowser` chooses the browser, and its default `auto` uses the internal browser in desktop sessions and the system browser in CLI sessions.
+Set it to `internal` or `external` to override this choice.
 The agent opens the internal browser on a review URL that carries no grant, so that tab can only read, as [Which tabs can make changes](#which-tabs-can-make-changes) explains.
 Answer the agent in the conversation instead, or ask it to present the review, which opens the system browser, or run `prism review` in the project.
 When the selected browser is unavailable, Prism presents the URL and source artifacts.
@@ -33,6 +33,12 @@ The **Settings** button, the gear at the start of the status bar, or Ctrl+, (Cmd
 **Appearance** offers the themes System, Light, and Dark and the densities Compact and Comfortable.
 A choice applies at once, and System follows the operating system again.
 **Layout** shows or hides the sidebar on windows wider than 1100 pixels and returns the sidebar to its default width.
+**Personal** shows your [personal settings](workflow.md#personal-settings), which stay on this machine and apply to every project and every host you run Prism in: **Questions** (Question tool or Numbered options), **Review browser** (Auto, Internal, or External), **Open at session start** (On or Off), and **Offer Prism** (Ask or Off).
+Each row shows the value Prism uses and where it comes from: **Your choice**, **Adopted from a repository's configuration**, **From this repository's configuration**, or **Default**.
+A choice saves at once on this machine, reaches no one else, and the row then says **Your choice**; agents see it the next time they read your settings.
+Settings reads your settings again each time it opens, so it shows a change an agent made meanwhile.
+Changing a personal setting needs a tab that [can make changes](#which-tabs-can-make-changes): a tab that can only read shows each value with its choices disabled under the read-only notice.
+When Prism cannot read `personal-settings.json` in its application folder, the section warns that it uses the repository's values and its defaults, and it refuses every change until you fix or remove the file, so nothing in it is overwritten.
 **Record store** says where the project's records live and opens the store's details.
 **Prism's own runs** chooses, once for this computer, the host and model of the runs that Prism starts on its own, such as a run that moves records to a new format.
 Its **Host** select offers **Any available host** and every host Prism supports, a host this computer lacks shown as unavailable with its reason, and its **Model** picker offers the models, efforts, and provider that the chosen host reports, as the models of an initiative's **Settings** do, or a model name typed as written.
@@ -738,8 +744,8 @@ A new session opens the review browser on its project when no review tab of any 
 Codex does not name the project when a session starts, so a Codex session opens the review browser at its first Prism tool call.
 Starting several sessions at once opens at most one window.
 Cloud, CI, print-mode, and display-less sessions open nothing.
-Add `- Review browser on start: off` under `## Interaction` in `.prism/workflow.md` to turn this off for a project, or set `PRISM_REVIEW_BROWSER_ON_START=off` to turn it off for every project you work on.
-`Review browser: internal` also turns it off, because only the agent can open the internal browser, and a tab there can only read.
+Set your [personal setting](workflow.md#personal-settings) `reviewBrowserOnStart` to `off` to turn this off for every project, or set `PRISM_REVIEW_BROWSER_ON_START=off` to turn it off for every process that has the variable, whatever your settings say.
+A `reviewBrowser` of `internal` also turns it off, because only the agent can open the internal browser, and a tab there can only read.
 It keeps its state in `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere.
 A session serves its project from its own review server when the shared app cannot start, and `PRISM_REVIEW_APP=off` makes every session do so.
 When a session falls back on its own, its page shows a banner with the reason, and the agent's review links say that the link belongs to that session, because another session may show the same project at a different link.

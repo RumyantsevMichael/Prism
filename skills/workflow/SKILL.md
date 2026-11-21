@@ -6,7 +6,7 @@ sdm: "0.3"
 
 # Prism workflow
 
-- Read `.prism/workflow.md` when present for project paths, the test command, and settings.
+- Read `.prism/workflow.md` when present for project paths, the test command, and settings, and the person's [personal settings](#common-terms) with `get_personal_settings`.
 - Use project procedures before Prism fallbacks, and make small changes directly when project conventions supply enough guidance.
 
 ## Choose the activity
@@ -54,6 +54,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Initiative lifecycle | `envisioned`, `planned`, and `in-progress` derived by `get_roadmap` from the initiative record and coordination state, plus recorded `shipped` and `superseded` decisions; a shipped initiative's state is shipped history from then on. |
 | Initiative record | The Prism record of slice titles, outcomes, topology, requirement assignments, dependencies, status, and accepted designs, read through `get_initiative` and changed through `update_initiative`; `initiative.md` is its generated view. |
 | Coordination state | The initiative's Prism record of settings, among them the run's `host`, the supported host that its launched sessions and their child agents run on, and `models`, a provider and each kind's model and effort kept for every host, active work, pending user gate records, next actions, and the action history, read through `get_coordination_state` and changed through `update_coordination_state`, except the action history and the settings marks that only review app actions write. |
+| Personal setting | A choice that belongs to the person on this machine and applies to every project and host they run Prism in: `interactionStyle`, `reviewBrowser`, `reviewBrowserOnStart`, and `sessionOffer`, read with `get_personal_settings` and changed with `update_personal_settings`; a value a project still records is adopted once as the person's own when they have none. |
 | Person change notice | `personChanges` on a Prism result that names an initiative, shown once per session and only to the initiative's coordinator, the agent whose claim or slice start last succeeded in the session, or its main agent until one has: the person's changes from the review app that the session has not seen, each with its author; a coordinator's gate wait returns them with status `changed`, and an agent's settings write keeps each setting the person set and lists it under `keptSettings`. |
 | Slice | One observable outcome across required layers that one fresh implementation session delivers, planned by a contract. |
 | Contract scope | The root slice, a part that a split design created, or a done slice with reported defects, that one design gives one contract. |

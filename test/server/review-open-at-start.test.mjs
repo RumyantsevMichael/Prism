@@ -16,27 +16,34 @@ async function project(context, interaction) {
   return root;
 }
 
-const desktop = { env: {}, platform: "darwin" };
+// Each call gets an application folder of its own, so a value a project records is never adopted into the person's real one or carried to the next call.
+async function app(context) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "prism-open-at-start-app-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  return directory;
+}
+
+const on = async (context, platform, env = {}) => ({ env: { PRISM_REVIEW_APP_DIR: await app(context), ...env }, platform });
 
 test("a desktop session opens the review browser at start by default", async (context) => {
-  assert.equal(await opensAtStart(await project(context), desktop), true);
-  assert.equal(await opensAtStart(await project(context, "- Review browser: auto"), desktop), true);
-  assert.equal(await opensAtStart(await project(context, "- Review browser: external\n- Review browser on start: open"), desktop), true);
+  assert.equal(await opensAtStart(await project(context), await on(context, "darwin")), true);
+  assert.equal(await opensAtStart(await project(context, "- Review browser: auto"), await on(context, "darwin")), true);
+  assert.equal(await opensAtStart(await project(context, "- Review browser: external\n- Review browser on start: open"), await on(context, "darwin")), true);
 });
 
 test("a project or user that turned it off, or chose the internal browser, opens nothing at start", async (context) => {
-  assert.equal(await opensAtStart(await project(context, "- Review browser on start: off"), desktop), false);
-  assert.equal(await opensAtStart(await project(context, "- Review browser: internal"), desktop), false);
-  assert.equal(await opensAtStart(await project(context), { env: { PRISM_REVIEW_BROWSER_ON_START: "off" }, platform: "darwin" }), false);
+  assert.equal(await opensAtStart(await project(context, "- Review browser on start: off"), await on(context, "darwin")), false);
+  assert.equal(await opensAtStart(await project(context, "- Review browser: internal"), await on(context, "darwin")), false);
+  assert.equal(await opensAtStart(await project(context), await on(context, "darwin", { PRISM_REVIEW_BROWSER_ON_START: "off" })), false);
 });
 
 test("sessions where nobody can see a window open nothing at start", async (context) => {
   const root = await project(context);
-  assert.equal(await opensAtStart(root, { env: { CLAUDE_CODE_REMOTE: "true" }, platform: "darwin" }), false);
-  assert.equal(await opensAtStart(root, { env: { CI: "true" }, platform: "win32" }), false);
-  assert.equal(await opensAtStart(root, { env: { CLAUDE_CODE_ENTRYPOINT: "sdk-cli" }, platform: "darwin" }), false);
-  assert.equal(await opensAtStart(root, { env: {}, platform: "linux" }), false);
-  assert.equal(await opensAtStart(root, { env: { DISPLAY: ":0" }, platform: "linux" }), true);
+  assert.equal(await opensAtStart(root, await on(context, "darwin", { CLAUDE_CODE_REMOTE: "true" })), false);
+  assert.equal(await opensAtStart(root, await on(context, "win32", { CI: "true" })), false);
+  assert.equal(await opensAtStart(root, await on(context, "darwin", { CLAUDE_CODE_ENTRYPOINT: "sdk-cli" })), false);
+  assert.equal(await opensAtStart(root, await on(context, "linux")), false);
+  assert.equal(await opensAtStart(root, await on(context, "linux", { DISPLAY: ":0" })), true);
 });
 
 test("only a readable older release counts as older", () => {

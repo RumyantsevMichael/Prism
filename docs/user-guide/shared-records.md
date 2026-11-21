@@ -375,6 +375,11 @@ A server lists its checkout once its name is first accepted: at start when the h
 A refused or unnamed checkout is not listed, and a listed folder that no longer names the same store and repository leaves the list when another checkout of that repository is listed.
 The list never leaves the machine, and no checkout path is written to the store.
 
+The same folder holds `personal-settings.json`, the person's own settings for every project and host on the machine: the interaction style, the review browser, whether it opens at session start, and whether a new conversation is offered Prism.
+Agents read and change them only through the `get_personal_settings` and `update_personal_settings` tools, and Prism never writes them into a project, a repository's configuration, or a store.
+A setting the person has no value for uses the value a project records under `## Interaction` in its `.prism/workflow.md`, and the first read for that project adopts the recorded value as the person's own, marked with the checkout it came from, so a later change to that line no longer applies.
+Prism writes the file readable only by its owner, and leaves a file it cannot parse, or one with a `schemaVersion` it does not know, as it is, reporting `settings_unreadable` or `settings_unsupported`, using the repository's values and the defaults, and refusing changes until the file is fixed or removed.
+
 With store sync on, the operation that registers a new name waits for one sync before it continues, so two machines that register one name at the same time end with one registration.
 Until that sync settles, the registration is pending, and any other check that it would decide, by any checkout that shares the store folder, whatever its own store sync setting, is refused with `repository_unconfirmed` without waiting, so no operation records anything under a registration that may still be withdrawn.
 The registration pushed first stays, and the other machine's checkout is then accepted or refused against it, as if it had been in the store all along.
