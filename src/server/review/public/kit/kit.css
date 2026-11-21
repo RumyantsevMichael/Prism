@@ -428,7 +428,7 @@ prism-segmented[wrap] > .prism-segment {
   white-space: nowrap;
 }
 
-.prism-segment:hover {
+.prism-segment:hover:not(:disabled) {
   color: var(--prism-color-ink);
 }
 
@@ -437,6 +437,12 @@ prism-segmented[wrap] > .prism-segment {
   background: var(--prism-color-surface);
   color: var(--prism-color-ink);
   box-shadow: var(--prism-shadow-lift);
+}
+
+/* A disabled choice keeps showing its chosen segment but offers none: its segments take the muted ink and no hover. */
+.prism-segment:disabled {
+  color: var(--prism-color-ink-muted);
+  cursor: default;
 }
 
 /* A theme preview draws a small window in the theme it names, from that theme's own tokens; a system preview shows light and dark side by side. */
