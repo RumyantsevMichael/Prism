@@ -1239,7 +1239,8 @@ test("a session tightens its own state directory that others can read, and repor
 });
 
 // Another user could have placed entries in a folder they can write, so tightening it would trust what they left there.
-test("a session does not trust a state directory that others can write", { skip: !POSIX }, async (context) => {
+// A folder that others can only read is tightened instead, by the test above.
+test("a session does not trust a state directory that others can read", { skip: !POSIX }, async (context) => {
   const directory = await appDirectory(context);
   await mkdir(directory, { recursive: true });
   await chmod(directory, 0o777);
