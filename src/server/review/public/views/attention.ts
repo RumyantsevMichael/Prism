@@ -234,7 +234,19 @@ function answerForm(item: any, draft: any) {
 
 // An approval gate names the requirement or ADR in full, with its scope and the status an approval records, since the answer applies to exactly that file.
 // Both statuses are plain text that wraps, so the whole status that approving writes reads at every width; a status of up to 200 characters fits no one-line label.
-function approvalSubject(item: any) {
+// The work item an approval serves links to its initiative and slice once the roadmap or the initiative's record knows them, as wrapping text so a long title reads whole.
+// Requirements are often approved before their roadmap entry exists, so an id that names nothing yet stays plain text that says so.
+function servedWork(item: any, ctx: any) {
+  const work = item.workItem;
+  if (!work?.initiative) return "";
+  const { initiative, slice } = work;
+  const unknown = (id: string, why: string) => `<span class="approval-work-part"><code class="approval-path" data-code-subject>${escapeHtml(id)}</code> <span class="muted">${why}</span></span>`;
+  const parts = [initiative.known ? `<span class="approval-work-part">${artifactLink(`initiative:${initiative.id}`, ctx, initiative.title)}</span>` : unknown(initiative.id, "not on the roadmap yet")];
+  if (slice) parts.push(initiative.known && slice.known ? `<span class="approval-work-part">${artifactLink(`slice:${initiative.id}/${slice.slug}`, ctx, slice.title)}</span>` : unknown(slice.slug, "no slice yet"));
+  return `<span class="approval-work">${parts.join('<span class="approval-work-separator" aria-hidden="true">›</span>')}</span>`;
+}
+
+function approvalSubject(item: any, ctx: any) {
   const scope = item.artifact.scope?.label ?? "workspace";
   const status = (text: string, modifier: any) => `<span class="approval-status-value ${modifier}">${escapeHtml(text)}</span>`;
   const change = item.recorded && item.recorded !== item.status
@@ -243,6 +255,7 @@ function approvalSubject(item: any) {
   return `${keyValues([
       ["File", `<code class="approval-path" data-code-subject>${escapeHtml(item.artifact.path)}</code>`],
       ["Scope", chip(escapeHtml(scope))],
+      ["Asked for", servedWork(item, ctx)],
       ["Approving records", change]
     ])}
     ${item.ambiguous ? `<p class="notice">Another pending approval holds this question's id, so an answer cannot tell which file it approves and is refused. The agent asks again for the file it means.</p>` : ""}
@@ -262,7 +275,7 @@ export function gateDetail(item: any, ctx: any, draft: any) {
     </header>
     <div class="gate-body">
       <div class="gate-main">
-        ${approvalSubject(item)}
+        ${approvalSubject(item, ctx)}
         ${gateContext(item, ctx)}
       </div>
       ${answerForm(item, draft)}

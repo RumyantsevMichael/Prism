@@ -2065,6 +2065,24 @@ prism-picker [hidden] {
   display: none;
 }
 
+/* Where the shown host's options came from: the program, its version, and its path, which may be long and breaks anywhere. */
+.prism-run-choices-source,
+.prism-run-choice-source {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.prism-run-choices-source {
+  grid-column: 1 / -1;
+}
+
+.prism-run-choices-source[hidden],
+.prism-run-choice-source[hidden] {
+  display: none;
+}
+
 /* Below a run choice's models: the host's note, a typed name, and the effort of the chosen model. */
 .prism-run-choice-effort-head {
   margin-top: var(--prism-space-2);
@@ -2307,6 +2325,10 @@ prism-claim {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.prism-claim-session {
+  flex: none;
 }
 
 .prism-claim-name {
@@ -3721,8 +3743,15 @@ prism-canvas {
   background-attachment: local;
 }
 
-/* A canvas the page pans by dragging takes the pointer as a canvas does: a grab cursor, and no text selection. */
+/* A canvas that pans by dragging takes the pointer as a canvas does: no text selection, and a grab cursor while there is something to pan. */
 prism-canvas[pannable] {
-  cursor: grab;
   user-select: none;
+}
+
+prism-canvas[pannable][overflowing] {
+  cursor: grab;
+}
+
+prism-canvas[pannable][panning] {
+  cursor: grabbing;
 }

@@ -110,7 +110,7 @@ A new tab opens right after the selected tab.
 Close a tab with its close button or a middle click, and when you close the last tab the page says that nothing is open.
 Tabs that an agent presents carry the agent mark before their title and stay open until you close them, and a presentation of several artifacts opens a tab for each of them and shows the first.
 An agent can present tabs as a named group, whose head shows the agent before the group's name: the avatar of the claim that agent held when it presented the group, whose hover text names the holder, the harness and model, the activity, and the time left, or else an agent avatar named by its harness and model.
-Tabs, buttons, menus, and other controls do not select their text when you click, double-click, or drag on them, while documents, code, figures, messages, and fields stay selectable.
+Tabs, buttons, menus, and other controls do not select their text when you click, double-click, or drag on them, while documents, code, figures, messages, and fields stay selectable, except a graph or diagram, which you drag to pan.
 The open tabs belong to the session, so every browser window of the session shows the same tabs, and a reload or a later visit restores them.
 When tabs do not fit, the strip scrolls sideways and keeps the selected tab in view, and a long title ends with an ellipsis whose full text shows on hover or focus.
 With the focus on a tab, the arrow keys, Home, and End move between tabs, Enter opens one, and Tab reaches that tab's close button.
@@ -132,6 +132,9 @@ A waiting session offers **Answer**, which opens Attention with the question it 
 Below that, **Launched from Prism** counts the launched sessions that are not archived, **Started outside Prism** the live claims, and **Expired claims** the claims that expired less than a day ago, also at 0, and each opens the Agents page showing only those; **Open Agents** opens the whole page.
 The menu lists no claim, so every claim shows on the Agents page.
 Wherever the browser shows a claim, on a slice, an initiative, the roadmap, the sidebar, or the Agents page, it names the harness the agent runs in and the model of the session's main agent as `<harness> · <model>`, such as `Codex · gpt-5.5`, when the claim records them, and `Agent` and no model otherwise.
+When a claim records a session that you can open from a link, such as a Claude Code on the web session, an inline claim, a claim's strip, and its row on the Agents page end with a **Session** link that opens that session in a new tab.
+Only the person whose session it is can open it, so a teammate may see a link that does not open for them.
+An avatar claim shows no link, and a claim whose host has no session to open, such as a local Claude Code or Codex session, shows none either.
 The sidebar shows a claimed slice's holder at the end of its row.
 Claims are read-only in the browser.
 
@@ -158,6 +161,7 @@ Questions recorded by an earlier Prism version show only their question.
 A design or correctness review needs Approve or Request changes, and Request changes also needs a note that says what should change.
 Approving the correctness review of a finished initiative lets the agent ship it, which in a project with a record store also accepts the Proposed ADRs that its slice designs link, as [Ship an initiative](workflow.md#ship-an-initiative) describes.
 The approval of a requirement or ADR takes the same answers, and its card names the file, its scope, its recorded status, and the whole status that approving records, wrapped onto further lines when it is long.
+When the agent names the initiative the approval serves, and the slice when there is one, the card's **Asked for** row links to them, and shows an id that the roadmap does not list yet, as requirements that start a new initiative do before their roadmap entry exists, as text marked not on the roadmap yet.
 Approving writes that status into the file's `Status:` line, and for `Approved` the day you answer into its `Approved:` line, as [Statuses change only at gates](shared-records.md#statuses-change-only-at-gates) describes.
 A decision takes one of its options, a note in your own words, or both.
 To answer in your own words after choosing an option, choose that option again, or press **Clear choice** beside **Your answer**.
@@ -257,8 +261,11 @@ Each picker shows the chosen model and effort, such as **Fable 5.2 · High effor
 While the review app asks the host for its options, each picker reads **Reading <host>’s models…**; a host that does not answer shows its reason, such as `Claude Code did not report its run options: it gave no answer within 20 seconds.`, and its pickers still offer the host's default and a model name you type.
 A model picker opens a list you can filter, with **Host default**, the models the host reports with their descriptions, and **Other model…** last, and below the list the effort levels of the chosen model, which change when you choose another model.
 A host or provider that reports no models says so, such as `Codex reported no models.`, and offers only the host's default and **Other model…**.
+The **Models** section, and each model picker below its effort levels, names the program its list came from, with the version that program reported and its path, such as `Listed by Claude Code 2.1.330 at /opt/homebrew/bin/claude.`, so a list of only older models points at an older installation that comes first on the review app's `PATH`.
+A host that reports no version says so, such as `Listed by Codex at /usr/local/bin/codex, which did not report its version.`, and a host that did not answer reads `Prism asked Claude Code at /opt/homebrew/bin/claude.`
 **Other model…** shows a **Model name** field: Enter takes a name of letters, digits, and `. _ - : / @ [ ] +` that starts with a letter or digit, and the picker then says `Prism cannot check a model you typed; Claude Code receives it as written.`
 A choice the host does not offer, such as a saved model this computer's host no longer lists or an effort the newly chosen model does not take, shows as **Not offered** with its reason until you choose a value the host offers.
+A saved choice the review app cannot check, because the host did not report its options or Codex could not list its models, shows as **Not checked** with the host's own reason, such as `Not checked: Claude Code did not report its run options: Not logged in.`, and **Apply** refuses it with that reason, so you can retry once the host answers instead of replacing a choice it may still offer.
 An earlier model name that Prism kept shows as not offered in the same way, and **Apply** sends it back as it was, so the change is refused until you choose another model for that agent.
 In the dialog, the options you pick wait for **Apply**, which counts them, such as **Apply 2 changes**, and applies them one by one; it stops at a change that is refused or that you do not confirm, and closes once all of them applied.
 **Cancel**, Esc, or **Close** closes the dialog and drops the changes you have not applied.
@@ -455,6 +462,10 @@ Under its title a tag line names the slice's phase with its gate or status, such
 The tabs are Design, Views, Verification, Review, Files, and Change map.
 The Views tab counts the views, the Review tab the open findings, and the Files tab the slice folder's files.
 The Change map tab is last and marked Deprecated, because the Files tab and the verified result replace it; it stays until existing slices no longer need it.
+The Verification tab shows the latest verification run, and each frozen test, each failing test, and the run's log open in the side panel.
+A frozen test shows the content the design froze: the work tree's file, the copy Prism keeps for a slice that has not started, or, with a note, the changed file when no frozen copy is left.
+A failing test opens its frozen test at the line that names it when exactly one frozen test names it, and otherwise stays plain text, so it never opens a test that only shares its name.
+Open the log opens the run's output at its end: the whole log, or its last 2 MB when it is larger, on the machine that ran the command, and elsewhere the last 4,000 characters that the run record keeps, with a note naming the machine and where the full log is.
 The Review tab holds the slice's review ledger, which the review record's own page shows too.
 Its summary line names the current wave and whether it is open or accepted, counts the unresolved findings, those that block shipping until verified, the deferred ones, and open conflicts, and shows each reviewer with the result of their lane.
 The wave's run totals end the line, and choosing them shows the full table.
@@ -526,6 +537,7 @@ Take current intent from Approved requirements, Accepted ADRs, the glossary, and
 ## Documents and diagrams
 
 Prism stores diagrams as PlantUML `.puml` source files, and the browser renders them without creating image files.
+A graph or diagram larger than its card pans when you drag it with a mouse or pen, and with a finger on a touch screen, while a click on a link or a graph's item still opens it; its text is not selected by the drag, and Show source and Copy give the diagram's text.
 Markdown links open the linked file or heading in the review.
 A link to a missing file or a target outside the project is marked as missing, and an external link opens in a new browser tab.
 A store artifact's links resolve by its place in the store; see [Every scope in one view](#every-scope-in-one-view).

@@ -104,7 +104,7 @@ if (host === "codex") {
     if (message.method === "initialize") {
       if (catalog.hang) return;
       if (catalog.fail) { refuse(message.id, catalog.fail); return; }
-      respond(message.id, { userAgent: "codex-stub/0" });
+      respond(message.id, { userAgent: catalog.userAgent ?? "prism-options/0.147.0 (Linux 6.8; x86_64) unknown (prism-options; 1)" });
       return;
     }
     if (message.method === "initialized") return;

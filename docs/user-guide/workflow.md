@@ -134,7 +134,8 @@ Prism recommends accepting with deferred low findings whenever it offers that op
 Otherwise it recommends returning the slice to design when the latest wave raised at least as many findings above low severity as the wave before it, and continuing the review when it raised fewer.
 When you accept with deferred low findings, the agent files one follow-up per finding in the tracker that `## Tracker` in `.prism/workflow.md` names, or adds it to the roadmap's open questions when no tracker is named.
 A deferred finding has status `DEFERRED`, keeps the decision and its follow-up reference, counts as resolved, and no longer changes; `get_review` lists the deferred findings, and the slice page shows them apart from the unresolved ones.
-The slice page in the review browser shows the latest run with its command, exit code, and output tail, and a failed run also names the failing tests that Prism found anywhere in the output.
+The slice page in the review browser shows the latest run with its command and exit code, and a failed run also names the failing tests that Prism found anywhere in the output.
+Each run writes its whole output to a log in Prism's plugin data on the machine that ran it, and the run record keeps the last 4,000 characters of the output and names where that log is, with the home folder written as `~`.
 Verification runs need a git work tree, and `PRISM_VERIFY_TIMEOUT_MINUTES` changes the 30-minute default timeout.
 
 Each run record names the slice's files by their Git blob hashes and never holds their bytes.

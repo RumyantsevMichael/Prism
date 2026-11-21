@@ -100,9 +100,16 @@ export function createPageBar({ root, onBack, onForward, onOpen, onPlace = () =>
     return action;
   }
 
+  // A page that draws again clears its actions and then gives new ones, so the action that had focus, such as the button that opened a dialog
+  // and took focus back when it closed, passes it to the action in its place, unless focus moved elsewhere meanwhile.
+  let focusAfterClear = -1;
   function setActions(nodes: any) {
+    let focused = [...actions.children].findIndex((action) => action.contains(document.activeElement));
+    if (focused < 0 && focusAfterClear >= 0 && (!document.activeElement || document.activeElement === document.body)) focused = focusAfterClear;
+    focusAfterClear = nodes.length === 0 ? focused : -1;
     actions.replaceChildren(...nodes.map(asIcon));
     actions.hidden = nodes.length === 0;
+    if (focused >= 0 && nodes.length) (actions.children[focused] as any)?.focus?.({ preventScroll: true });
   }
 
   setActions([]);

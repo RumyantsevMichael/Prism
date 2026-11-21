@@ -342,6 +342,13 @@ function execute(command: string, cwd: string, { signal, timeoutMs, onProgress, 
   });
 }
 
+/** A local path under the home folder written from ~, as a shared record names it, and any other path as it is. */
+export function homeRelative(file: string) {
+  const home = os.homedir();
+  const relative = path.relative(home, file);
+  return home && relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? `~/${relative.split(path.sep).join("/")}` : file;
+}
+
 // The full output stays in local plugin data, outside the project, so a caller reads it only when the brief result is not enough.
 async function logPathFor(dataDirectory: any, root: string, initiative: string, slice: string, id: string) {
   try {
@@ -458,6 +465,8 @@ async function verificationRun({ root, initiative, slice, target, key, design, s
   // A run that stops at its frozen tests tested no content, so it records no files.
   if (treeId(entry.tree)) Object.assign(entry, await runFiles(root, design, entry.tree));
   entry.checkout = await checkoutOf(root, config, entry.tree).catch(() => null);
+  // The record names where the full log is, with the home folder written as ~, so a review app on that machine can show it and another can say where it is.
+  if (log) entry.log = homeRelative(log);
   const { output = entry.outputTail, ...recorded } = entry;
   const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, recorded);
   return { id, path: stored.path, ...recorded, ...(log ? { log } : {}), output };

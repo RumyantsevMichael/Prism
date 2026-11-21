@@ -56,9 +56,12 @@ function readDurations(root = ROOT) {
   }
 }
 
+// Every test process first takes the real Claude Code and Codex off PATH, so no test can start a real session.
+const NO_HOST_PATH = pathToFileURL(path.join(ROOT, "test/server/fixtures/no-host-path.mjs")).href;
+
 function runTests(files, options, env = process.env) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, ["--test", ...options, ...files.map((file) => path.join(TEST_DIRECTORY, file))], { cwd: ROOT, stdio: "inherit", env });
+    const child = spawn(process.execPath, ["--test", "--import", NO_HOST_PATH, ...options, ...files.map((file) => path.join(TEST_DIRECTORY, file))], { cwd: ROOT, stdio: "inherit", env });
     child.on("exit", (code, signal) => resolve(signal ? 1 : code ?? 1));
   });
 }

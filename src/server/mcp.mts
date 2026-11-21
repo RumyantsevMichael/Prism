@@ -1004,7 +1004,7 @@ function progress(progressToken: any, value: any, message: any) {
 // as latestAnswer is one way that checkout receives it. Failing to remember never fails the call, whose store change already happened.
 async function noteApprovalDelivery(name: string, projectRoot: string, value: any) {
   try {
-    if (name === "update_artifact") await recordAskedGates(projectRoot, (value.artifacts ?? []).map((entry: any) => entry.gate).filter((gate: any) => typeof gate === "string"));
+    if (name === "update_artifact") await recordAskedGates(projectRoot, (value.artifacts ?? []).map((entry: any) => entry.gate).filter((gate: any) => typeof gate === "string"), { session: claimHolder() });
     else if (typeof value.latestAnswer?.gate === "string") await forgetAskedGates(projectRoot, [value.latestAnswer.gate]);
   } catch {
   }
