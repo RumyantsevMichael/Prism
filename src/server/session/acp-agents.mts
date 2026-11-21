@@ -180,12 +180,16 @@ function installedAgent(folder: string, id: string): AcpAgent | null {
   if (OWN_INTEGRATION_IDS.has(id)) return { ...broken("", label), reason: OWN_INTEGRATION_REASON };
   const { launch, rule } = checkedLaunch({ ...record, autoMode: record.autoMode ?? null, resumeCommand: record.resumeCommand ?? null });
   const installedAt = typeof record.installedAt === "string" && !Number.isNaN(Date.parse(record.installedAt)) ? record.installedAt : new Date(0).toISOString();
+  // The registry entry that the record keeps stands in for each detail the record does not state itself, so the details stay
+  // listed while the registry cannot be read.
+  const entry = isRecord(record.entry) ? record.entry : {};
+  const authors = Array.isArray(record.authors) ? record.authors : Array.isArray(entry.authors) ? entry.authors : [];
   const install: AcpInstall = {
     version,
-    authors: Array.isArray(record.authors) ? record.authors.filter((item: unknown) => shortText(item, 200)) : [],
-    license: optionalText(record.license, 200),
-    source: optionalText(record.source, MAX_TEXT),
-    description: optionalText(record.description, MAX_TEXT),
+    authors: authors.filter((item: unknown) => shortText(item, 200)),
+    license: optionalText(record.license, 200) ?? optionalText(entry.license, 200),
+    source: optionalText(record.source, MAX_TEXT) ?? optionalText(entry.repository, MAX_TEXT) ?? optionalText(entry.website, MAX_TEXT),
+    description: optionalText(record.description, MAX_TEXT) ?? optionalText(entry.description, MAX_TEXT),
     distribution: optionalText(record.distribution, 20),
     installedAt,
     folder: versionFolder

@@ -325,6 +325,26 @@ An agent whose command is not found shows its reason, such as `Gemini CLI was no
 
 `GET api/coding-agents` lists every installed and declared agent with its origin, its installed version, and whether it can be launched, with the reason when it cannot, such as the rule its entry breaks, and an unreadable declaration file is listed once with its reason.
 
+### Agents from the registry
+
+`GET api/coding-agents` also lists the agents of the public ACP registry at `https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`, or of the index that `PRISM_ACP_REGISTRY_URL` names.
+That URL must use `https`, or `http` to `127.0.0.1` or `localhost`, and any other URL is not read.
+Prism keeps a read of the index for 10 minutes, so an agent that the registry adds or updates can take that long to show.
+
+Prism lists only the registry agents that this computer can run: those with a build for this operating system and processor, such as `linux-x86_64`, `linux-x86_64-musl` on a musl Linux, `darwin-aarch64`, or `windows-x86_64`, and those with an `npx` or `uvx` package, which every computer takes.
+The registry's `claude-acp` and `codex-acp` are never listed, because Prism runs Claude Code and Codex through its own integrations.
+Each agent shows its name, version, authors, license, source (its repository, else its website, else its download), and description, and whether it is installed, with an update when the registry lists another version of the installed one.
+
+Prism installs only what it can check and lock, so an agent cannot be installed, and says why, when:
+
+- its build for this computer lists no SHA-256 checksum, so its download cannot be checked;
+- its build's archive is not a `.tar.gz`, `.tgz`, or `.zip` file;
+- its `npx` package does not name an exact version, such as `@google/gemini-cli@0.70.0`;
+- its `uvx` package does not pin one with `==`, such as `fast-agent-acp==0.10.1`;
+- `npm`, for an `npx` package, or `uv`, for a `uvx` package, is not on `PATH`.
+
+While the registry cannot be read, the list says why, keeps every installed and declared agent with the details its install recorded, and offers no install or update until the registry answers again.
+
 ## Launched sessions
 
 A launched session is a headless Claude Code, Codex, or [ACP agent](#acp-agents) session that runs Prism's orchestrate skill for one initiative on this computer, started from the review page.

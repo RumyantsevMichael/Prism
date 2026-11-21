@@ -1564,7 +1564,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         sendJson(response, error.status, { code: error.code, message: error.message, ...(error.field ? { field: error.field } : {}) });
       }
     } else if (route === "/api/coding-agents" && request.method === "GET") {
-      // The installed and declared ACP agents with their launch availability, read again on every request; reading needs no write session.
+      // The registry state, the registry agents for this computer with their install and update marks, and the installed and declared
+      // ACP agents with their launch availability, which stay listed while the registry is down; reading needs no write session.
       sendJson(response, 200, await listCodingAgents({ env: process.env }));
     } else if (route === "/api/agents" && request.method === "GET") {
       // Every agent once: this computer's launched sessions and the workspace's claims that none of them holds; reading needs no write session.
