@@ -800,7 +800,13 @@ const ACTION_STATUS: Record<string, any> = {
   unknown_request: 404,
   approval_unavailable: 409,
   approval_too_long: 409,
-  launch_failed: 500
+  launch_failed: 500,
+  // The refusals of an install, update, or removal of a registry agent.
+  install_mismatch: 409,
+  install_running: 409,
+  install_refused: 409,
+  install_failed: 500,
+  agent_running: 409
 };
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
@@ -1599,7 +1605,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
           const target = parseTarget(result.applied.target);
           // An approval or a comment belongs to no initiative, so its event names its artifact, as Attention's recent changes list it.
           const event = { ...result.applied, initiative: target?.initiative ?? (target?.kind === "launch" ? result.launch?.initiative ?? null : null), ...(result.artifact ? { artifact: result.artifact } : {}) };
-          if (onAction) await Promise.resolve(onAction(event, { shared: !["index", "machine"].includes(target?.kind), comment: result.comment ?? null })).catch(() => {});
+          if (onAction) await Promise.resolve(onAction(event, { shared: !["index", "machine", "agent"].includes(target?.kind), comment: result.comment ?? null })).catch(() => {});
           else notify("action", event);
         }
       } catch (error) {

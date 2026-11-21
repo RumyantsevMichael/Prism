@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import os from "node:os";
 import { realpath } from "node:fs/promises";
 import { listComponents } from "./components.mjs";
@@ -14,10 +16,11 @@ import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPerson
 import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
-import { confirmLaunch } from "../session/launch-confirmation.mjs";
+import { confirmInstall, confirmLaunch, installText } from "../session/launch-confirmation.mjs";
+import { installAgent, removeAgent, updateAgent } from "../session/agent-installs.mjs";
 import { answerRequest, launchRequests } from "../session/permission-requests.mjs";
 import { HOSTS } from "../session/launch-hosts.mjs";
-import { isAcpHost } from "../session/acp-agents.mjs";
+import { ACP_ID_PATTERN, agentsFolder, isAcpHost, OWN_INTEGRATION_IDS, OWN_INTEGRATION_REASON, readInstalls } from "../session/acp-agents.mjs";
 import { LAUNCH_ID_PATTERN, launchFolder, readLaunchRecord } from "../session/launch-records.mjs";
 import { AUTOMATIC, AUTOMATIC_LABEL, PrismRunsError, readPrismRunsChoice, writePrismRunsChoice } from "../session/prism-runs.mjs";
 import { choiceReasons, nameRuleBreach, NAME_RULE_MESSAGES, readRunOptions, RUN_KINDS, validProvider } from "../session/run-options.mjs";
@@ -90,6 +93,8 @@ export function parseTarget(reference: any): any {
   if (match && LAUNCH_ID_PATTERN.test(match[1])) return { kind: "launch", reference, launch: match[1] };
   match = /^index:([^/]+)\/([^/]+)$/.exec(reference);
   if (match && REPOSITORY_NAME.test(match[1]) && REPOSITORY_NAME.test(match[2])) return { kind: "index", reference, identity: `${match[1]}/${match[2]}` };
+  match = /^agent:(.+)$/.exec(reference);
+  if (match && ACP_ID_PATTERN.test(match[1])) return { kind: "agent", reference, agent: match[1] };
   // A machine target is a choice that belongs to this computer, kept in the review app folder rather than in any record.
   if (MACHINE_TARGETS.includes(reference)) return { kind: "machine", reference, machine: reference.slice("machine:".length) };
   return null;
@@ -183,6 +188,11 @@ async function readTarget(projectRoot: string, parsed: any, indexer: any, state 
     const folder = launchFolder(env, parsed.launch);
     const permissions = await launchRequests(folder, await readLaunchRecord(folder)).catch(() => []);
     return { ...parsed, view, initiative: view.initiative, running: status === "running", resumeReason, shipped, permissions };
+  }
+  if (parsed.kind === "agent") {
+    // A registry agent of this computer: its install as the review app folder holds it, read without the registry, so a removal reads none.
+    const installed = readInstalls(env).find((item) => item.id === parsed.agent) ?? null;
+    return { ...parsed, installed, present: existsSync(path.join(agentsFolder(env), parsed.agent)) };
   }
   if (parsed.kind === "machine") {
     // The choice is checked against what this computer's hosts report, read in the page's checkout.
@@ -716,6 +726,61 @@ const LAUNCH_PERMISSION = {
   }
 };
 
+// ---- Coding agents ----
+
+// Installing, updating, and removing a registry agent on this computer: each one changes only the review app folder's agents/ folder and
+// no shared record, an install and an update ask the person in a native dialog every time before any download, and one runs at a time.
+const agentBase = {
+  ...launchBase,
+  group: "Coding agents",
+  kinds: ["agent"],
+  target: (context: any) => context.reference,
+  after: () => null
+};
+const ownIntegration = (context: any) => (OWN_INTEGRATION_IDS.has(context.agent) ? OWN_INTEGRATION_REASON : null);
+const confirmAgentInstall = (env: NodeJS.ProcessEnv) => (details: any) => confirmInstall({ text: installText(details), env });
+
+const AGENT_INSTALL = {
+  ...agentBase,
+  id: "agents.install",
+  label: "Install",
+  effect: "Installs the version that the agent registry lists now into Prism's own folder on this computer, after you confirm it outside the browser; no install script runs.",
+  unavailable: (context: any) => {
+    if (ownIntegration(context)) return ownIntegration(context);
+    if (!context.installed) return null;
+    const version = context.installed?.install?.version;
+    return `${context.installed?.label ?? context.agent}${version ? ` ${version}` : ""} is installed; update or remove it instead.`;
+  },
+  async launch({ context, env }: { context: any; env: NodeJS.ProcessEnv }) {
+    const installed = await installAgent({ id: context.agent, env, confirm: confirmAgentInstall(env) });
+    return { launch: null, after: { agent: installed.id, version: installed.version }, initiative: null, started: null, record: false };
+  }
+};
+
+const AGENT_UPDATE = {
+  ...agentBase,
+  id: "agents.update",
+  label: "Update",
+  effect: "Installs the registry's newer version after you confirm it outside the browser and makes it the one new sessions run; the earlier version stays in use until then, and is removed once no session runs on it.",
+  unavailable: (context: any) => ownIntegration(context) ?? (context.present ? null : `${context.agent} is not installed.`),
+  async launch({ context, env }: { context: any; env: NodeJS.ProcessEnv }) {
+    const updated = await updateAgent({ id: context.agent, env, confirm: confirmAgentInstall(env) });
+    return { launch: null, after: { agent: updated.id, version: updated.version, from: updated.from }, initiative: null, started: null, record: false };
+  }
+};
+
+const AGENT_REMOVE = {
+  ...agentBase,
+  id: "agents.remove",
+  label: "Remove",
+  effect: "Removes every installed version of the agent from this computer while no launched session runs on it; it is offered as a host no longer.",
+  unavailable: (context: any) => (context.present ? null : `${context.agent} is not installed.`),
+  async launch({ context, env }: { context: any; env: NodeJS.ProcessEnv }) {
+    const removed = await removeAgent({ id: context.agent, env });
+    return { launch: null, after: { agent: removed.id, removed: true }, initiative: null, started: null, record: false };
+  }
+};
+
 // ---- This computer ----
 
 // The host and model of Prism's own runs, such as the runs that move records to a new format: one choice per computer, kept in the
@@ -767,7 +832,7 @@ const MACHINE_PRISM_RUNS = {
 };
 
 /** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, MACHINE_PRISM_RUNS];
+const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, AGENT_INSTALL, AGENT_UPDATE, AGENT_REMOVE, MACHINE_PRISM_RUNS];
 
 /** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
 export const actionEffect = (id: string) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;

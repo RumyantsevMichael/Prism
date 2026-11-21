@@ -3,6 +3,7 @@ import { access, constants, link, readFile, rm, stat, writeFile } from "node:fs/
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { hostDefinition } from "./launch-hosts.mjs";
+import { shownForm } from "./permission-requests.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { LaunchError, launchesDirectory, prepareLaunchesDirectory } from "./launch-records.mjs";
 
@@ -29,6 +30,7 @@ const STDERR_MAX = 500;
 // The buttons of a dialog: a launch's, and an approval's of a launched session's permission request; the cancelling one is the default.
 const LAUNCH_BUTTONS = Object.freeze({ ok: "Launch", cancel: "Cancel" });
 const APPROVAL_BUTTONS = Object.freeze({ ok: "Allow", cancel: "Refuse" });
+const INSTALL_BUTTONS = Object.freeze({ ok: "Install", cancel: "Cancel" });
 const zenityArgs = (buttons: { ok: string; cancel: string }) => ["--question", "--default-cancel", "--title=Prism", `--ok-label=${buttons.ok}`, `--cancel-label=${buttons.cancel}`, "--timeout=120"];
 const osascriptDialog = (buttons: { ok: string; cancel: string }) => `display dialog (item 1 of argv) with title "Prism" buttons {"${buttons.cancel}", "${buttons.ok}"} default button "${buttons.cancel}" cancel button "${buttons.cancel}" with icon caution giving up after 120`;
 const POWERSHELL_COMMAND = "$r = (New-Object -ComObject WScript.Shell).Popup($env:PRISM_LAUNCH_CONFIRM_TEXT, 120, 'Prism', 4 + 48 + 256); if ($r -eq 6) { exit 10 } elseif ($r -eq 7) { exit 11 } elseif ($r -eq -1) { exit 12 } else { exit 13 }";
@@ -60,6 +62,30 @@ export function confirmationText({ label, initiative, checkout }: { label: strin
 /** The text of an approval's dialog: the initiative, the host, the action, and the reason that the host named. */
 export function approvalText({ initiative, host, action, reason }: { initiative: string; host: string; action: string; reason: string }) {
   return `Allow ${host} to do this once, in its session for the initiative ${initiative}?\n\nAction: ${action}\nReason: ${reason || "none given"}\n\nPrism allows only this one request; anything else the session asks is asked again.`;
+}
+
+// Registry text reaches the install dialog as one line each, so no entry of the registry can add a line or hide a character.
+const oneLine = (value: string) => shownForm(value);
+
+/**
+ * The text of an install's or update's dialog: the agent, its authors, its exact version, its license, its source, the download or
+ * package, and that it runs with the person's permissions; from, when given, is the installed version that an update replaces.
+ */
+export function installText({ name, id, version, from = null, authors, license, source, download }: { name: string; id: string; version: string; from?: string | null; authors: string[]; license: string | null; source: string | null; download: string }) {
+  const heading = from === null
+    ? `Install the coding agent ${oneLine(name)} (${oneLine(id)}) version ${oneLine(version)} from the ACP registry?`
+    : `Update the coding agent ${oneLine(name)} (${oneLine(id)}) from version ${oneLine(from)} to version ${oneLine(version)} from the ACP registry?`;
+  return [
+    heading,
+    "",
+    `Authors: ${authors.length ? authors.map(oneLine).join(", ") : "not named"}`,
+    `Version: ${oneLine(version)}`,
+    `License: ${license === null ? "not named" : oneLine(license)}`,
+    `Source: ${source === null ? "not named" : oneLine(source)}`,
+    `Download: ${oneLine(download)}`,
+    "",
+    "Prism checks the download against the registry and runs no install script. It runs with your permissions on this computer."
+  ].join("\n");
 }
 
 function unavailable(missing: any, { verbatim = false }: any = {}) {
@@ -403,6 +429,32 @@ export async function confirmApproval({ text, env = process.env, platform = proc
     if (answer === "confirmed") return { asked: true };
     if (answer === "declined") throw new LaunchError("confirmation_declined", "You refused the request in the confirmation, so it still waits.");
     throw new LaunchError("confirmation_timeout", "Nobody answered the confirmation within 2 minutes, so the request still waits.");
+  } finally {
+    await release();
+  }
+}
+
+/**
+ * Confirms one install or update of a registry agent outside the page, every time: no launch window and no cool-down apply, and the
+ * dialog's default cancels. Resolves once the person confirmed, or rejects with a LaunchError whose code names why not,
+ * confirmation_declined when the person cancelled.
+ */
+export async function confirmInstall({ text, env = process.env, platform = process.platform }: { text: string; env?: NodeJS.ProcessEnv; platform?: any }) {
+  await prepareLaunchesDirectory(env);
+  const pending = () => new LaunchError("confirmation_pending", "Another confirmation is waiting for your answer.");
+  if (await dialogOpen(env)) throw pending();
+  const dialog = await nativeDialog({ text, env, platform, buttons: INSTALL_BUTTONS });
+  if (dialog instanceof LaunchError) throw dialog;
+  const release = await takePendingSlot(env, Date.now());
+  if (!release) throw pending();
+  try {
+    const outcome = await runDialog(dialog);
+    if (outcome.spawnError && !dialog.readsStartFailure) throw unavailable(`${path.basename(dialog.command)} could not be started`);
+    const answer = dialog.read(outcome);
+    if (answer instanceof LaunchError) throw answer;
+    if (answer === "confirmed") return { asked: true };
+    if (answer === "declined") throw new LaunchError("confirmation_declined", "You cancelled the install in the confirmation, so nothing was installed.");
+    throw new LaunchError("confirmation_timeout", "Nobody answered the confirmation within 2 minutes, so nothing was installed.");
   } finally {
     await release();
   }
