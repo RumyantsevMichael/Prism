@@ -537,8 +537,8 @@ async function readReviewed(projectRoot: string, file: any) {
 async function reviewedStoreArtifact(projectRoot: string, file: string, options: any) {
   const stored = await reviewStoreArtifact(projectRoot, file, options);
   if (stored === null) throw Object.assign(new Error(`${file} is not in the record store.`), { code: "ENOENT" });
-  const { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } = stored;
-  return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, artifact: { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } };
+  const { scope, version, accepted, changed, acceptedFrom, comments, totalComments, nextCommentOffset } = stored;
+  return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, artifact: { scope, version, accepted, changed, acceptedFrom, comments, totalComments, nextCommentOffset } };
 }
 
 export async function loadArtifact(projectRoot: string, artifactPath: string, { commentOffset = 1 }: any = {}) {
@@ -779,6 +779,11 @@ const ACTION_STATUS: Record<string, any> = {
   author_unknown: 409,
   comment_limit: 409,
   already_answered: 409,
+  // A format migration run's answer and rerun are refused by the run's state.
+  run_not_asking: 409,
+  run_not_failed: 409,
+  migration_run_conforming: 409,
+  migration_run_closed: 409,
   invalid_input: 400,
   // The refusals of a launch, a stop, and a resume, and of the confirmation outside the page that comes before a start.
   confirmation_pending: 409,
@@ -1268,9 +1273,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const content = read.bytes.toString("utf8");
     // Only a Markdown artifact's text is rendered with links, as the page renders it.
     const links = location.toLowerCase().endsWith(".md") ? resolveLinks({ content, location, ...await linkContext(read.scope), has: (candidate: any) => held.has(candidate) }) : [];
-    const { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } = read;
+    const { scope, version, accepted, changed, acceptedFrom, comments, totalComments, nextCommentOffset } = read;
     const below = location.slice(scopePrefix(scope).length);
-    const artifact = { scope, version, accepted, changed, comments, totalComments, nextCommentOffset, target: `artifact:${scope.label}:${below}` };
+    const artifact = { scope, version, accepted, changed, acceptedFrom, comments, totalComments, nextCommentOffset, target: `artifact:${scope.label}:${below}` };
     const answer: any = { ref, path: ref, location, scope, content, modifiedAt: read.modifiedAt, artifact, links, unresolvedLinks: links.filter((link) => link.resolved === false).length };
     if (path.posix.extname(location).toLowerCase() === ".json") Object.assign(answer, { diagrams: [] }, await loadJsonArtifact(projectRoot, location, content));
     else answer.diagrams = await storeDiagrams(location, content, links, held);
@@ -1605,7 +1610,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       send(response, 200, JSON.stringify(await entityContext(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
     } else if (route === "/api/entity") {
       const ref = url.searchParams.get("ref");
-      if (["initiative", "slice"].includes(parseEntityRef(ref)?.kind) && !(await entityExists(projectRoot, ref))) {
+      if (["initiative", "slice", "migration-run"].includes(parseEntityRef(ref)?.kind) && !(await entityExists(projectRoot, ref))) {
         send(response, 404, "The item no longer exists in this project.");
         return;
       }

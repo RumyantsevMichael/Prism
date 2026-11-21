@@ -1,7 +1,8 @@
 // The agents list: every launched session of this computer and every claim of the workspace that no launched session holds, one entry each,
 // grouped by what needs the person, with the counts the top bar and the Agents page show. No entry names a claim holder or a host session id.
 import { listLaunches } from "../session/launched-sessions.mjs";
-import { loadHeldClaims, loadRoadmapView } from "./workspace-model.mjs";
+import { readRun } from "../workflow/migration-runs.mjs";
+import { loadHeldClaims, loadRoadmapView, migrationRunTitle } from "./workspace-model.mjs";
 
 const GROUPS = ["needs-you", "launched", "other", "expired"];
 const time = (value: any) => Date.parse(value ?? "") || 0;
@@ -23,7 +24,8 @@ function launchEntry(launch: any, title: string, claim: any) {
     state: launch.state,
     reason: launch.reason ?? null,
     expiresAt: null,
-    launch: { id: launch.id, launchedAt: launch.launchedAt, runningMs: launch.runningMs, runs: launch.runs, endedAt: launch.endedAt, exit: launch.exit, resumeCommand: launch.resumeCommand, waitingGate: launch.waitingGate },
+    // A format migration run's session names its run, whose page its name opens in place of an initiative's.
+    launch: { id: launch.id, launchedAt: launch.launchedAt, runningMs: launch.runningMs, runs: launch.runs, endedAt: launch.endedAt, exit: launch.exit, resumeCommand: launch.resumeCommand, waitingGate: launch.waitingGate, ...(launch.migrationRun ? { migrationRun: launch.migrationRun } : {}) },
     action: launchAction(launch.state)
   };
 }
@@ -71,8 +73,9 @@ export async function listAgents({ projectRoot, env = process.env, now = Date.no
   const agents: any[] = [];
   for (const launch of launches) {
     const live = claims.find((claim: any) => holds(launch, claim) && !lapsed(claim)) ?? null;
-    // A format migration run belongs to no initiative and is named by its run.
-    const title = launch.migrationRun ? `Format migration ${launch.migrationRun}` : titles.get(launch.initiative) ?? launch.initiative;
+    // A format migration run belongs to no initiative and is named by its run's type.
+    const run = launch.migrationRun ? await readRun(projectRoot, launch.migrationRun).catch(() => null) : null;
+    const title = launch.migrationRun ? (run ? migrationRunTitle(run) : "Format migration") : titles.get(launch.initiative) ?? launch.initiative;
     agents.push(launchEntry(launch, title, live));
   }
   for (const claim of claims) {

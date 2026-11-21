@@ -637,7 +637,7 @@ export async function proposeMigration(input: any) {
       diff: unifiedDiff(source.text, content, { from: `a/${source.path}`, to: `b/${target.path}` }),
       targetDiff: existing ? unifiedDiff(existing.text, content, { from: `a/${target.path}`, to: `b/${target.path}` }) : null,
       leftovers: given.leftovers, unknowns: checked.unknowns, conflicts, points: shownPoints, status: "proposed", proposedAt: new Date().toISOString(),
-      content, versions: { source: source.version, target: target.version }, sourceStore: source.store, targetStore: target.store
+      content, sourceText: source.text, versions: { source: source.version, target: target.version }, sourceStore: source.store, targetStore: target.store
     };
     migration.digest = proposedDigest(migration);
     const migrations = earlier ? run.migrations.map((item: any) => item === earlier ? migration : item) : [...run.migrations, migration];
@@ -650,6 +650,92 @@ const storeKindOfPath = (config: any, file: any) => artifactAddress(artifactKind
 
 // What a proposal's checks passed: its type, artifacts, content, conflicts, leftovers, points, and the versions it was proposed from, so an apply refuses a record changed after them.
 const proposedDigest = (migration: any) => versionOf(Buffer.from(JSON.stringify([migration.type, migration.source, migration.target, migration.separateSource, migration.content, migration.conflicts, migration.leftovers, migration.points.map(pointDetail), migration.versions]), "utf8"));
+
+// ---- The run's page ----
+
+/** The entries of an artifact's text by identity, as [{ id, from, to, end, text }]: a requirement section by number, a glossary term by id, or a feature Rule by title. */
+export const entriesFor = (type: any, text: any) => entriesOf(type, text);
+
+// The options of an asked entry or conflict point, in the order the page offers them.
+export const POINT_CHOICES: any = Object.freeze({ entry: ["same", "target", "source"], conflict: ["target", "source"] });
+
+/**
+ * The option that an asked entry or conflict point's recommendation names, which the person's answer starts as: the recommendation itself when it is an option,
+ * and otherwise the option whose word comes first in it, such as same in "They mean the same", or target when it names none.
+ */
+export function recommendedChoice(kind: any, recommendation: any) {
+  const options = POINT_CHOICES[kind];
+  if (!options) return null;
+  const text = String(recommendation ?? "").trim().toLowerCase();
+  if (options.includes(text)) return text;
+  let best: any = null;
+  for (const option of options) {
+    const at = text.search(new RegExp(`\\b${option}\\b`));
+    if (at >= 0 && (best === null || at < best.at)) best = { option, at };
+  }
+  return best?.option ?? "target";
+}
+
+// What a line that the format added to the migrated file is, in words.
+function addedLine(line: any) {
+  const trimmed = line.trim();
+  if (/^#{1,6}\s/.test(trimmed)) return "A section of the format";
+  if (/^<a id="[^"]*"><\/a>$/.test(trimmed)) return "An anchor of an entry";
+  if (trimmed === UNKNOWN || /^[A-Z][A-Za-z ]*:\s*unknown$/.test(trimmed)) return "A value the source never gave";
+  if (/^[A-Z][A-Za-z ]*:\s/.test(trimmed)) return "A field of the format";
+  return "A line of the format";
+}
+
+/**
+ * A migration's statement map for the run's page: each statement of its source, word for word in source order with its line, and where it landed,
+ * as { statements: [{ text, line, landed }], added: [{ line, text, what }] }, or null for a proposal recorded without its source.
+ * landed is { kind: "section", heading } with heading null before the first section, { kind: "leftover", home, point }, or { kind: "entry" | "conflict", entry, point },
+ * where point names the point that placed the statement, if any, and added lists each line of the migrated file that holds no source statement and that the source does not hold.
+ * answers, the run's answers by point id, place the statements that a person's answer placed, as the applied file does.
+ */
+export function statementMap(migration: any, { answers = {} }: any = {}) {
+  const { type, sourceText } = migration;
+  if (typeof sourceText !== "string" || typeof migration.content !== "string") return null;
+  const written = withAnsweredValues(migration.content, migration.points ?? [], answers ?? {});
+  const sections = sectionsOf(written);
+  const contentStatements = statementsOf(type, written).map((statement) => ({ ...statement, normalized: normalizeStatement(statement.text) }));
+  const points = migration.points ?? [];
+  const pointOf = (kind: any, accept: any) => points.find((point: any) => point.kind === kind && accept(point))?.id ?? null;
+  const headingAt = (line: any) => {
+    const heading = sections[line]?.h2 ?? null;
+    return heading === null ? null : heading.replace(/\s*\{#[^}]*\}\s*$/, "");
+  };
+  const sourceEntries = entriesOf(type, sourceText);
+  const statements = sourceStatements(type, sourceText);
+  const sourceValues = statements.map((statement) => normalizeStatement(statement.text)).filter(Boolean);
+  const mapped = statements.map((statement) => {
+    const value = normalizeStatement(statement.text);
+    const at = { text: statement.text, line: statement.line };
+    const exact = contentStatements.find((item) => item.normalized === value);
+    if (exact) return { ...at, landed: { kind: "section", heading: headingAt(exact.line), point: null } };
+    const leftover = (migration.leftovers ?? []).find((item: any) => normalizeStatement(item.statement).includes(value));
+    if (leftover) {
+      const point = pointOf("leftover", (item: any) => normalizeStatement(item.statement) === normalizeStatement(leftover.statement));
+      return { ...at, landed: { kind: "leftover", home: leftover.home, point } };
+    }
+    const entry = sourceEntries.find((item) => statement.line - 1 >= item.from && statement.line - 1 < item.to);
+    const entryPoint = entry ? pointOf("entry", (item: any) => item.entry === entry.id) : null;
+    if (entryPoint) return { ...at, landed: { kind: "entry", entry: entry!.id, point: entryPoint } };
+    const conflict = (migration.conflicts ?? []).find((item: any) => normalizeStatement(item.source).includes(value));
+    if (conflict) return { ...at, landed: { kind: "conflict", entry: conflict.entry, point: pointOf("conflict", (item: any) => item.entry === conflict.entry) } };
+    const within = contentStatements.find((item) => item.normalized.includes(value));
+    return { ...at, landed: { kind: "section", heading: within ? headingAt(within.line) : null, point: null, found: Boolean(within) } };
+  });
+  const sourceLines = new Set(sourceText.split(/\r?\n/).map((line: any) => line.trim()).filter(Boolean));
+  const added = written.split(/\r?\n/).flatMap((line: any, index: any) => {
+    const trimmed = line.trim();
+    if (!trimmed || sourceLines.has(trimmed)) return [];
+    const normalized = normalizeStatement(trimmed);
+    if (sourceValues.some((value) => normalized.includes(value))) return [];
+    return [{ line: index + 1, text: line, what: addedLine(line) }];
+  });
+  return { statements: mapped, added };
+}
 
 // ---- Applying ----
 

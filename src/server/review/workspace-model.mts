@@ -19,6 +19,8 @@ import { readPublishedUnits } from "../repository-intelligence/index-status.mjs"
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { checkArtifacts } from "../workflow/artifact-check.mjs";
 import { ARTIFACT_FORMATS } from "../workflow/artifact-formats.mjs";
+import { entriesFor, recommendedChoice, statementMap } from "../workflow/format-migrations.mjs";
+import { RUN_ID, allRuns, followedRun, followingRun, readRun, shownRun } from "../workflow/migration-runs.mjs";
 import { recordChanges } from "./record-changes.mjs";
 import { relativeLinkTargets } from "./artifact-links.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
@@ -871,13 +873,121 @@ function gateOrder(left: any, right: any) {
  * since the check of each artifact is kept until its content changes, so a changed file shows its new findings at once.
  */
 export async function loadAttention(projectRoot: string) {
-  const [attention, formats] = await Promise.all([remember(`attention:${projectRoot}`, () => computeAttention(projectRoot)), loadFormats(projectRoot)]);
-  const items = formats.filter((entry: any) => entry.count > 0).map((entry: any) => ({ type: "format-findings", artifactType: entry.type, label: entry.label, count: entry.count, earlier: entry.earlier }));
-  return { ...attention, needsYou: [...attention.needsYou, ...items], formats };
+  const [attention, formats, runs] = await Promise.all([remember(`attention:${projectRoot}`, () => computeAttention(projectRoot)), loadFormats(projectRoot), runItems(projectRoot)]);
+  const items = formats.filter((entry: any) => entry.count > 0).map((entry: any) => ({ type: "format-findings", artifactType: entry.type, label: entry.label, count: entry.count, earlier: entry.earlier, artifacts: entry.artifacts }));
+  // A run's question waits on the person as a gate does, so it counts among the questions that the rail and a background tab's notification count.
+  const questions = runs.needsYou.filter((item: any) => item.type === "migration-question").length;
+  return { ...attention, needsYou: [...runs.needsYou, ...attention.needsYou, ...items], watch: [...attention.watch, ...runs.watch], formats, gateCount: attention.gateCount + questions };
+}
+
+/**
+ * The format migration runs that Attention lists, read at each request since a run moves on its own: each run that asks its question and each failed run
+ * that no later run follows need the person, and each run that waits for a host is a problem to watch. A project whose runs cannot be read lists none.
+ */
+async function runItems(projectRoot: string) {
+  const runs = await allRuns(projectRoot).catch((): any[] => []);
+  const needsYou: any[] = [];
+  const watch: any[] = [];
+  for (const run of [...runs].reverse()) {
+    const base = { run: run.id, artifactType: run.set.type, label: FORMAT_LABELS[run.set.type] ?? run.set.type, scope: run.set.scope ?? null, files: run.set.artifacts.length };
+    if (run.status === "asking") {
+      const points = (run.question?.points ?? []).filter((point: any) => isRecord(point));
+      const byFile = new Map();
+      for (const point of points) {
+        const key = JSON.stringify([point.artifact?.path, point.artifact?.scope?.label ?? null]);
+        const entry = byFile.get(key) ?? { path: point.artifact?.path ?? null, scope: point.artifact?.scope ?? null, points: 0, kinds: [] };
+        entry.points += 1;
+        if (!entry.kinds.includes(point.kind)) entry.kinds.push(point.kind);
+        byFile.set(key, entry);
+      }
+      needsYou.push({ type: "migration-question", ...base, points: points.length, asking: [...byFile.values()], askedAt: run.question?.askedAt ?? null });
+    } else if (run.status === "failed" && !followedRun(runs, run)) {
+      needsYou.push({ type: "migration-failed", ...base, reason: run.failure?.reason ?? null, at: run.failure?.at ?? run.endedAt ?? null, artifacts: run.set.artifacts.map(({ path: file, scope }: any) => ({ path: file, scope: scope ?? null })) });
+    } else if (run.status === "waiting-for-host") {
+      watch.push({ type: "migration-waiting", ...base, reason: typeof run.reason === "string" ? run.reason : null, at: run.startedAt ?? null });
+    }
+  }
+  return { needsYou, watch };
 }
 
 // The format labels as Attention names each format.
 const FORMAT_LABELS: Readonly<Record<string, string>> = Object.freeze({ requirements: "Requirements", adr: "Decisions", glossary: "Glossary", feature: "Feature files" });
+const isRecord = (value: any) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+// ---- Format migration runs ----
+
+// The Attention page that lists a run in its state, which the run's trail passes through.
+const RUN_ATTENTION_PAGES: Readonly<Record<string, string>> = Object.freeze({ asking: "questions", failed: "failed", "waiting-for-host": "problems" });
+
+/** A run's name as its page, its tab, its Attention item, and its launched session read it: Format migration with the type's label. */
+export const migrationRunTitle = (record: any) => `Format migration · ${FORMAT_LABELS[record.set.type] ?? record.set.type}`;
+
+async function migrationRunContext(projectRoot: string, ref: string, id: string) {
+  const record = await readRun(projectRoot, id).catch(() => null);
+  const page = record ? RUN_ATTENTION_PAGES[record.status] : null;
+  const trail = [placeCrumb("attention", "attention"), ...(page ? [{ ref: `attention:${page}`, label: PLACE_PAGE_LABELS.attention[page] }] : []), { ref, label: record ? migrationRunTitle(record) : "Format migration" }];
+  return { trail, scope: { kind: "global" }, place: "attention" };
+}
+
+// A point as the run's page shows it: its kind and detail, its place in the question counted across the run, Prism's recommendation, the option it recommends, and how it was settled or answered.
+function runPoint(point: any, { number, answers, conflicts, sourceEntries, contentEntries }: any) {
+  const { id, kind, settled, asked, ...detail } = point;
+  const recommendation = asked?.recommendation ?? null;
+  const extra: any = {};
+  if (kind === "entry") {
+    extra.sourceText = sourceEntries.find((entry: any) => entry.id === point.entry)?.text ?? null;
+    extra.targetText = contentEntries.find((entry: any) => entry.id === point.entry)?.text ?? null;
+  }
+  if (kind === "conflict") {
+    const conflict = conflicts.find((entry: any) => entry.entry === point.entry);
+    extra.sourceText = conflict?.source ?? null;
+    extra.targetText = conflict?.target ?? null;
+  }
+  return {
+    id, kind, ...detail, ...extra, number: number ?? null,
+    settled: settled ? { reason: settled.reason } : null,
+    asked: asked ? { recommendation, recommended: recommendedChoice(kind, recommendation) } : null,
+    answer: answers?.[id] ?? null
+  };
+}
+
+/**
+ * A format migration run as its page shows it: its status, cause, and times, each artifact of its set with its current findings, and for each migration
+ * its source and target, its summary, its statement map, and its points numbered across the run, with each answer and whether a later run follows a failed one.
+ * An id that names no run is refused as a missing item.
+ */
+async function loadMigrationRunView(projectRoot: string, id: string) {
+  const record = await readRun(projectRoot, id);
+  if (!record) throw Object.assign(new Error("The format migration run no longer exists in this project."), { code: "ENOENT" });
+  const shown = await shownRun(projectRoot, record);
+  const answers = record.answers ?? null;
+  const asked = record.migrations.flatMap((migration: any) => (migration.points ?? []).filter((point: any) => point.asked));
+  const numbers = new Map(asked.map((point: any, index: number) => [point.id, index + 1]));
+  const migrations = record.migrations.map((migration: any) => {
+    const sourceEntries = typeof migration.sourceText === "string" ? entriesFor(migration.type, migration.sourceText) : [];
+    const contentEntries = typeof migration.content === "string" ? entriesFor(migration.type, migration.content) : [];
+    return {
+      id: migration.id, type: migration.type, source: migration.source, target: migration.target, separateSource: migration.separateSource, summary: migration.summary,
+      status: headerStatus(migration.content), proposedAt: migration.proposedAt ?? null,
+      map: statementMap(migration, { answers: answers ?? {} }),
+      points: (migration.points ?? []).map((point: any) => runPoint(point, { number: numbers.get(point.id), answers, conflicts: migration.conflicts ?? [], sourceEntries, contentEntries }))
+    };
+  });
+  const runs = record.status === "failed" ? await allRuns(projectRoot).catch((): any[] => []) : [];
+  const answered = answers ? Object.values<any>(answers).find((answer) => answer?.by) ?? null : null;
+  return {
+    id: record.id, title: migrationRunTitle(record), type: record.set.type, typeLabel: FORMAT_LABELS[record.set.type] ?? record.set.type, scope: record.set.scope ?? null, formatVersion: record.set.formatVersion ?? null,
+    cause: record.cause, status: record.status, startedAt: record.startedAt ?? null, endedAt: record.endedAt ?? null, reason: typeof record.reason === "string" ? record.reason : null,
+    failure: record.failure ?? null, launch: record.launch ?? null, rerunOf: record.rerunOf ?? null, by: record.by ?? null,
+    followedBy: record.status === "failed" ? followingRun(runs, record)?.id ?? null : null,
+    artifacts: shown.set.artifacts.map(({ path: file, scope, version, findings }: any) => ({ path: file, scope: scope ?? null, version, findings })),
+    askedAt: record.question?.askedAt ?? null, points: asked.length, answeredBy: answered ? { ...answered.by, at: answered.at ?? null } : null,
+    migrations
+  };
+}
+
+// The Status: line of a migrated file, or null.
+const headerStatus = (text: any) => typeof text === "string" ? /^Status:\s*(\S.*?)\s*$/m.exec(text.split(/\n## /)[0] ?? "")?.[1] ?? null : null;
 
 /**
  * Attention's format entries, one per format: every artifact that breaks it, and how many of them conform to an earlier format;
@@ -901,7 +1011,7 @@ async function loadFormats(projectRoot: string) {
       reference: format.reference,
       count: broken.length,
       earlier: broken.filter((artifact: any) => artifact.earlierFormat !== null).length,
-      artifacts: broken.map((artifact: any) => ({ path: artifact.path, scope: artifact.scope, findings: artifact.findings, earlierFormat: artifact.earlierFormat }))
+      artifacts: broken.map((artifact: any) => ({ path: artifact.path, scope: artifact.scope, findings: artifact.findings, earlierFormat: artifact.earlierFormat, migration: artifact.migration ?? null }))
     };
   });
 }
@@ -1074,7 +1184,8 @@ const ATTENTION_KIND_OF: Readonly<Record<string, any>> = Object.freeze({
   gate: "questions", "pending-note": "questions",
   findings: "findings", "failed-verification": "failed", blocked: "blocked", "ready-to-ship": "ready",
   "record-problem": "problems", "roadmap-problem": "problems", "roadmap-missing": "problems", unlisted: "problems", "open-question": "problems", config: "problems",
-  "format-findings": "formats"
+  "format-findings": "formats",
+  "migration-question": "questions", "migration-failed": "failed", "migration-waiting": "problems"
 });
 // Attention's work entries listed before the row that shows the rest.
 const ATTENTION_WORK_SHOWN = 3;
@@ -1594,6 +1705,7 @@ export async function entityContext(projectRoot: string, ref: any) {
   // The Agents page belongs to no place of the rail, so its trail is its own name, whichever group its address shows.
   if (parsed?.kind === "agents") return { trail: [{ ref, label: SECTION_LABELS.agents }], scope: { kind: "global" }, place: null };
   if (parsed?.kind === "initiative" || parsed?.kind === "slice") return initiativeContext(projectRoot, parsed.id, { slug: parsed.kind === "slice" ? parsed.slug : null });
+  if (parsed?.kind === "migration-run") return migrationRunContext(projectRoot, ref, parsed.id);
   if (typeof ref !== "string" || !ref) throw new Error("A tab reference is required.");
   const prefixed = /^(attention|knowledge):(.+)$/.exec(ref);
   if (prefixed) {
@@ -1668,6 +1780,9 @@ export function parseEntityRef(ref: any): any {
   if (match) return { kind: "initiative", id: match[1] };
   match = /^slice:([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "slice", id: match[1], slug: match[2] };
+  // A format migration run's page, which Attention, the Agents page, and a migrated document's note open.
+  match = /^migration-run:(.+)$/.exec(ref ?? "");
+  if (match && RUN_ID.test(match[1])) return { kind: "migration-run", id: match[1] };
   return null;
 }
 
@@ -1675,6 +1790,7 @@ export async function entityExists(projectRoot: string, ref: any) {
   const parsed = parseEntityRef(ref);
   if (!parsed) return false;
   if (SECTION_REFS.includes(parsed.kind) || parsed.kind === "knowledge") return true;
+  if (parsed.kind === "migration-run") return (await readRun(projectRoot, parsed.id).catch(() => null)) !== null;
   if (parsed.kind === "initiative") {
     const roadmap = await loadRoadmapView(projectRoot);
     if (roadmap.items.some((item: any) => item.id === parsed.id) || roadmap.unlisted.includes(parsed.id)) return true;
@@ -1697,6 +1813,7 @@ async function initiativeCode(projectRoot: string, view: any) {
 export async function loadEntity(projectRoot: string, ref: any, options: any = {}) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
+  if (parsed.kind === "migration-run") return { ref, kind: "migration-run", data: await loadMigrationRunView(projectRoot, parsed.id) };
   if (parsed.kind === "attention") return { ref, kind: "attention", data: parsed.page ? await attentionPage(projectRoot, parsed.page) : await loadAttentionView(projectRoot) };
   if (parsed.kind === "roadmap") return { ref, kind: "roadmap", data: await loadRoadmapView(projectRoot) };
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };

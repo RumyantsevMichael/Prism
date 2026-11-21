@@ -1245,12 +1245,15 @@ export async function reviewStoreArtifact(projectRoot: string, file: string, { c
     if (!held.length) return null;
     const [{ scope, target, record }] = held;
     const modifiedAt = (await lstat(target).catch(() => null))?.mtimeMs ?? null;
-    const { acceptedVersion } = await withMovedAcceptance(seen, scope, address, normalized, await statusRecordOf(seen, scope, address), contentOf(normalized, record));
+    const status = await withMovedAcceptance(seen, scope, address, normalized, await statusRecordOf(seen, scope, address), contentOf(normalized, record));
+    const { acceptedVersion } = status;
     const acceptedText = acceptedVersion === null ? null : await acceptedBytes(seen, normalized, acceptedVersion).then((bytes) => artifactText(bytes), () => null);
     return {
       path: normalized, scope, bytes: contentOf(normalized, record), version: record.version, modifiedAt,
       accepted: acceptedVersion === null ? null : { version: acceptedVersion, content: acceptedText },
       changed: acceptedVersion !== record.version,
+      // The format migration run that recorded the accepted version, so the page says that Prism migrated the file.
+      acceptedFrom: statusFields(address.kind, status, record.version).acceptedFrom ?? null,
       ...(await listComments(seen, scope, address, commentOffset))
     };
   });
@@ -1301,12 +1304,14 @@ export async function reviewStoreArtifactAt(projectRoot: string, location: any, 
     const { scope, address, target, record } = held;
     const file = checkoutPath(seen.kinds, address);
     const modifiedAt = (await lstat(target).catch(() => null))?.mtimeMs ?? null;
-    const { acceptedVersion } = await withMovedAcceptance(seen, scope, address, file ?? location, await statusRecordOf(seen, scope, address), contentOf(file ?? location, record));
+    const status = await withMovedAcceptance(seen, scope, address, file ?? location, await statusRecordOf(seen, scope, address), contentOf(file ?? location, record));
+    const { acceptedVersion } = status;
     const acceptedText = acceptedVersion === null ? null : await acceptedBytes(seen, file ?? location, acceptedVersion).then((bytes) => artifactText(bytes), () => null);
     return {
       location, path: file, scope, kind: address.kind, bytes: contentOf(file ?? location, record), version: record.version, modifiedAt,
       accepted: acceptedVersion === null ? null : { version: acceptedVersion, content: acceptedText },
       changed: acceptedVersion !== record.version,
+      acceptedFrom: statusFields(address.kind, status, record.version).acceptedFrom ?? null,
       ...(await listComments(seen, scope, address, commentOffset))
     };
   });

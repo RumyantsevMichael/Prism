@@ -357,6 +357,36 @@ export async function rerunMigration(projectRoot: any, id: any, by: any = null, 
   return { run: await storeRefusing(() => shownRun(root, record)) };
 }
 
+/**
+ * Whether a later run follows a run: a rerun of it, or a later run of the same type that holds any artifact of its set,
+ * so a failed run that a later run follows no longer waits on the person.
+ */
+export const followedRun = (runs: any, record: any) => followingRun(runs, record) !== null;
+
+/** The earliest later run that follows a run, as followedRun counts one, or null. */
+export function followingRun(runs: any, record: any) {
+  return runs.find((run: any) => run.id !== record.id && (run.rerunOf === record.id || (run.set.type === record.set.type && String(run.startedAt) > String(record.startedAt)
+    && run.set.artifacts.some((artifact: any) => record.set.artifacts.some((held: any) => sameArtifact(artifact, held)))))) ?? null;
+}
+
+/**
+ * Record the person's one answer to a run's question: answers maps each asked point's id to { choice, value, by, at }.
+ * Refused with migration_run_unknown, already_answered for a run that holds answers, and run_not_asking for a run that does not ask;
+ * askedAt, when given, is the question the page answered, so an answer to a question asked again is refused as run_not_asking. Returns the record.
+ */
+export async function answerMigrationRun(projectRoot: any, id: any, answers: any, { askedAt = undefined }: any = {}) {
+  const root = await realpath(projectRoot);
+  await storedRun(root, id);
+  return storeRefusing(() => withRunLock(root, id, async () => {
+    const current = await storedRun(root, id);
+    if (current.answers !== null && current.answers !== undefined) throw fail("already_answered", `The format migration run ${id} already has its answers.`, { run: id });
+    if (current.status !== "asking" || (askedAt !== undefined && current.question?.askedAt !== askedAt)) throw fail("run_not_asking", `The format migration run ${id} is ${current.status}, so it asks nothing to answer.`, { run: id, status: current.status });
+    const next = { ...current, answers };
+    await writeRun(root, next);
+    return next;
+  }));
+}
+
 const starting = new Map();
 // The launches that this process has under way, by project root, so a call on a run on this machine follows the start of its session.
 const launching = new Map();
@@ -559,12 +589,12 @@ export function migrationStates(runs: any, checked: any) {
 
 // A migration as a reader gets it, without the content and versions that only applying it needs.
 export function shownMigration(migration: any) {
-  const { content, versions, sourceStore, targetStore, digest, ...rest } = migration;
+  const { content, sourceText, versions, sourceStore, targetStore, digest, ...rest } = migration;
   return rest;
 }
 
 /** A run as get_migration_run returns it, with each set artifact's current findings, or null where the artifact is gone. */
-async function shownRun(root: any, record: any) {
+export async function shownRun(root: any, record: any) {
   const { checkArtifacts } = await import("./artifact-check.mjs");
   const artifacts = [];
   for (const artifact of record.set.artifacts) {
