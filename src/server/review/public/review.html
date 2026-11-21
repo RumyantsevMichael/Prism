@@ -122,6 +122,7 @@
         <prism-tree-item value="layout" label="Layout"><prism-icon slot="start" name="panel-left" size="sm"></prism-icon></prism-tree-item>
         <prism-tree-item value="personal" label="Personal"><prism-icon slot="start" name="agent" size="sm"></prism-icon></prism-tree-item>
         <prism-tree-item value="store" label="Record store"><prism-icon slot="start" name="store" size="sm"></prism-icon></prism-tree-item>
+        <prism-tree-item value="prism-runs" label="Prism's own runs"><prism-icon slot="start" name="agent" size="sm"></prism-icon></prism-tree-item>
         <prism-tree-item value="about" label="About Prism"><prism-icon slot="start" name="info" size="sm"></prism-icon></prism-tree-item>
       </prism-tree>
       <div class="settings-body">
@@ -200,6 +201,10 @@
             <div><strong id="settings-store-name">Records</strong><span class="settings-hint" id="settings-store-state">Where Prism keeps this workspace's records and whether they are synced.</span></div>
             <prism-button id="settings-store-open" size="sm">Open the store's details</prism-button>
           </div>
+        </section>
+        <section class="settings-section" data-section="prism-runs" aria-labelledby="settings-prism-runs" hidden>
+          <h3 id="settings-prism-runs">Prism's own runs</h3>
+          <div id="settings-prism-runs-actions"></div>
         </section>
         <section class="settings-section" data-section="about" aria-labelledby="settings-about" hidden>
           <h3 id="settings-about">About Prism</h3>

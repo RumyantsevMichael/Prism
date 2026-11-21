@@ -1295,7 +1295,7 @@ a.inspect-tile:focus-visible {
   flex: none;
 }
 
-/* The latest launched run sits above the launch actions, its reason wrapping under its state. */
+/* The latest launched run leads the run configuration, its reason wrapping under its state. */
 .initiative-latest-run {
   display: grid;
   gap: var(--prism-space-2);
@@ -1334,6 +1334,15 @@ a.inspect-tile:focus-visible {
 .initiative-settings-lead {
   margin: 0 0 var(--prism-space-4);
   color: var(--prism-color-ink-muted);
+}
+
+/* A launch held by a choice or a host, or refused, says why above the settings. */
+.initiative-launch-note {
+  margin: 0 0 var(--prism-space-4);
+}
+
+.initiative-launch-note[hidden] {
+  display: none;
 }
 
 .slice-columns {
@@ -1677,15 +1686,19 @@ a.inspect-tile:focus-visible {
   display: none;
 }
 
+/* Show takes the start of the line and Archive all ended its end, and the button wraps under Show when the line is too narrow for both. */
 .agents-toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3);
   min-width: 0;
 }
 
-/* The agent and what it works on take the room; the state, the time, and the one action keep a share each, so every row's cells line up. */
+/* The agent and what it works on take the room; the state, the time, and the actions keep a share each, so every row's cells line up and two buttons fit. */
 .agents-table {
-  --prism-lib-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) minmax(0, 1.8fr) minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 0.5fr);
+  --prism-lib-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) minmax(0, 1.8fr) minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 0.9fr);
 }
 
 .agents-time {
@@ -1694,7 +1707,9 @@ a.inspect-tile:focus-visible {
 
 .agents-action {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: var(--prism-space-1);
 }
 
 .agents-details {

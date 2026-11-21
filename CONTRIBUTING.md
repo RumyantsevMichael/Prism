@@ -18,7 +18,7 @@ A change to Markdown changes agent behavior at task time.
 skills/
   <name>/SKILL.md    # one directory per skill; the directory name is the skill name
 src/                 # editable server, native helper, and hook sources
-  server/            # mcp.mjs, cli.mjs, review-app.mjs, plugin-root.mjs, and one directory per domain
+  server/            # the mcp, cli, review-app, and plugin-root modules, and one directory per domain
     workflow/        # coordination state, artifact storage, decision history
     review/          # review server, review ledger, browser assets in public/
     conservation/    # change map and conservation analysis
@@ -172,13 +172,13 @@ To change a shade, change it in both themes when both need it, and keep the cont
 The fonts, Geist and Geist Mono under the SIL Open Font License, ship in `kit/fonts/` and load from the review app, never from another host.
 The review app stores the user's theme and density in `review-preferences.json` in the review app folder, so the choice survives a restart on another port.
 
-The kit's elements live in `src/server/review/public/kit/elements/`, one `prism-<name>.js` per element, and `kit/kit.js` lists them in `KIT_ELEMENTS` and defines them.
+The kit's elements live in `src/server/review/public/kit/elements/`, one `prism-<name>.ts` per element, and `kit/kit.ts` lists them in `KIT_ELEMENTS` and defines them.
 An element that renders in shadow DOM names its stylesheets in a static `styles` list, such as `prism-button.css` beside it, and the kit fetches each one once and adopts it in every shadow root.
 An element that renders in light DOM is styled in `kit/kit.css`.
 The review page loads `kit/tokens.css`, `kit/kit.css`, and then one stylesheet per area under `styles/`: `shell.css` for the shell and its panels, `actions.css` for action lists such as Initiative settings, `workflow-views.css` for the workflow screens, and `record-views.css` for records, documents, and diagrams.
 A screen's own rules go in its area stylesheet, read only tokens, and lay out kit elements rather than restyle them.
 Each element class also carries a static `tag` and a static `catalog` of its purpose, options, states, and keys.
-The component catalog at `<review URL>/kit/catalog` shows one entry per element from that `catalog`, with a live specimen per state from `SPECIMENS` in `kit/catalog.js`, plus long text and an unbroken name.
+The component catalog at `<review URL>/kit/catalog` shows one entry per element from that `catalog`, with a live specimen per state from `SPECIMENS` in `kit/catalog.ts`, plus long text and an unbroken name.
 To add an element, add its file, list it in `KIT_ELEMENTS`, and add its specimens to `SPECIMENS`.
 The **About Prism** section of the review page's **Settings**, which the gear at the start of the status bar opens, links to the catalog.
 
@@ -189,7 +189,7 @@ node scripts/review-kit/kit-guard.mjs
 ```
 
 It checks every stylesheet, script, and page under `src/server/review/public/` and prints `<file>:<line>: <rule> <value>` for each finding.
-The `raw-value` rule names a color, size, layer, or time literal outside `kit/tokens.css` and `kit/plantuml-defaults.js`.
+The `raw-value` rule names a color, size, layer, or time literal outside `kit/tokens.css` and `kit/plantuml-defaults.ts`.
 The `control-style` rule names a stylesheet selector outside `kit/` that styles a native control, a control role, a `prism-` element, or a class named like a control.
 The `native-control` rule names a native control, a control role, or a `title` attribute written in a script or page outside `kit/`, also when a script sets the role or the title from code.
 Every screen is on the kit, so the guard finds nothing, and `test/server/review-kit-everywhere.test.mjs` fails on any new finding.
@@ -237,7 +237,7 @@ A change to a screen that the UI kit mockup shows is done only when the rendered
 node scripts/review-demo/mockup-compare.mjs --out /tmp/mockup-compare
 ```
 
-It puts the demo app into the state of each mockup scene (Attention with a gate and Settings open, a slice with its diagram beside it, the command palette, the navigation drawer, and, beside the approved pictures of their mockups in `scripts/review-demo/mockups/agent-activity/`, the roadmap with the agents menu open, the closed phone top bar, and the Agents page) and writes one picture per scene, width, theme, and density, the mockup on the left and the app on the right, with an `index.html` that shows them in pairs.
+It puts the demo app into the state of each mockup scene (Attention with a gate and Settings open, a slice with its diagram beside it, the command palette, the navigation drawer, and, beside the approved pictures of their mockups, the closed phone top bar from `scripts/review-demo/mockups/agent-activity/` and, from the archive pictures in `scripts/review-demo/mockups/agent-session-archive/`, the roadmap with the agents menu open, the Agents page, and the Agents page showing Archived with one session's details open) and writes one picture per scene, width, theme, and density, the mockup on the left and the app on the right, with an `index.html` that shows them in pairs.
 `--scenes`, `--widths`, `--themes`, and `--densities` narrow the run.
 Read every pair: the layout check finds broken layouts, but only this comparison shows a screen that works and still looks nothing like the design.
 Differences that come from the demo's data, or from mockup content that is deliberately out of scope, are expected; name them in the pull request.
@@ -261,11 +261,14 @@ To validate `plugin.json` in isolation, copy the plugin into a scratch directory
 
 ## Native semantic runtime
 
-The new native subsystem uses strict TypeScript in `.mts` files.
-Older server modules remain JavaScript, and newer modules such as the conservation store also use `.mts`.
+Server, hook, and native runtime modules use strict TypeScript in `.mts` files, which the build compiles to `.mjs` files of the same name under `dist/`.
+Review app browser modules use strict TypeScript in `.ts` files, which the build compiles to `.js` files of the same name, with no syntax lowered.
+Every module under `src/` is TypeScript, apart from installed packages and the stubs that stand in for them, and `test/server/typescript-sources.test.mjs` fails on a new JavaScript source.
+The build checks that every TypeScript module type-checks before it writes anything, with the settings in `tsconfig.native.json`.
+Tests and scripts import the built module under `dist/`, never a source under `src/`, because a TypeScript source has no runnable file there, and the same test fails on an import from `src/`.
 Shared source unit, index, and worker message types live in `src/server/repository-intelligence/repository-unit-types.mts`.
 Edit runtime sources under `src/`, then regenerate the complete runtime tree under `dist/`.
-The build compiles TypeScript and copies handwritten JavaScript, browser assets, and runtime registries.
+The build compiles TypeScript and copies the remaining JavaScript, browser assets, and runtime registries.
 `dist/` is ignored, so commit only the sources.
 CI builds `dist/` in every job that runs the plugin, and each release package ships the generated JavaScript, so users do not need a TypeScript compiler.
 

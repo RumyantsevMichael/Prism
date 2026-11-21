@@ -33,7 +33,7 @@ test("no server module parses JSON except through the bounded reader", async () 
     for (const entry of await readdir(folder, { withFileTypes: true })) {
       const target = path.join(folder, entry.name);
       if (entry.isDirectory()) { if (entry.name !== "public") await walk(target); continue; }
-      if (!/\.m?[jt]s$/.test(entry.name) || target.endsWith(path.join("workflow", "store-json.mjs"))) continue;
+      if (!/\.m?[jt]s$/.test(entry.name) || target.endsWith(path.join("workflow", "store-json.mts"))) continue;
       const lines = (await readFile(target, "utf8")).split("\n");
       lines.forEach((line, index) => { if (/JSON\.parse\b/.test(line)) found.push(`${path.relative(ROOT, target)}:${index + 1}`); });
     }

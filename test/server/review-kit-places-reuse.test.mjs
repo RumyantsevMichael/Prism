@@ -29,7 +29,7 @@ test("no screen outside the kit writes or styles a kit element's inner parts", a
 });
 
 test("the screens' sidebar headings, notes, flags, rows, tables, and page lines are kit pieces with catalog specimens", async () => {
-  const catalog = await readFile(path.join(PUBLIC, "kit/catalog.js"), "utf8");
+  const catalog = await readFile(path.join(PUBLIC, "kit/catalog.ts"), "utf8");
   const kit = await readFile(path.join(PUBLIC, "kit/kit.css"), "utf8");
   for (const name of ["prism-group-heading", "prism-group-count", "prism-foot-note", "prism-tree-flag", "is-muted", "prism-rows", "<prism-row ", "<prism-page-sub", "prism-page-subs", "<prism-lib-table", "prism-lib-group", "prism-lib-nothing", "current-only"]) {
     assert.ok(catalog.includes(name), `the catalog shows ${name}`);

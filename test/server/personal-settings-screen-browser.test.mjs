@@ -89,7 +89,8 @@ test("clauses 19, 20: Settings lists Personal after Layout, and its section says
   const { page } = await fixture(context, { lines: ["Review browser: external"] });
   await openPersonal(page);
   const sections = (await dialog(page).getByRole("treeitem").allInnerTexts()).map((name) => name.trim());
-  assert.deepEqual(sections, ["Appearance", "Layout", "Personal", "Record store", "About Prism"]);
+  // Other sections may join the list; Personal follows Layout and comes before the record store.
+  assert.deepEqual(sections.filter((name) => ["Appearance", "Layout", "Personal", "Record store", "About Prism"].includes(name)), ["Appearance", "Layout", "Personal", "Record store", "About Prism"]);
   assert.equal(await personal(page).getByRole("heading", { level: 3 }).innerText(), "Personal settings");
   assert.match((await personal(page).getByRole("status").first().innerText()).replace(/\s+/g, " "), new RegExp(NOTE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   for (const [name, options] of GROUPS) {

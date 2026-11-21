@@ -68,15 +68,15 @@ test("§20 the Agents page has its title and lead, the old Launched sessions add
     await waitForView(page);
     assert.equal(await page.getByRole("heading", { name: "Agents", level: 1 }).count(), 1, `${ref} shows the Agents page`);
     assert.match(await text(page.locator("#artifact")), new RegExp(SUBTITLE.replace(/[.]/g, "\\.")));
-    assert.equal(await page.getByRole("heading", { name: "Launched sessions" }).count(), 0);
-    assert.match(await text(page.getByRole("navigation", { name: "Breadcrumb" }).first()), /Agents/);
+    assert.equal(await page.getByRole("heading", { name: "Launched sessions", exact: true }).count(), 0);
+    assert.match(await text(page.getByRole("navigation", { name: "Breadcrumb", exact: true }).first()), /Agents/);
     assert.match(await text(page.locator("#artifact")), /No agent works on this workspace, and nothing was launched on this computer\./, "an empty page says so");
     await page.context().close();
   }
   const page = await openPage(browser, reviewUrl(s.base, "attention"), { viewport: { width: 1440, height: 900 } });
   await waitForView(page);
   await page.keyboard.press("Control+k");
-  const palette = page.getByRole("dialog", { name: "Command palette" });
+  const palette = page.getByRole("dialog", { name: "Command palette", exact: true });
   await palette.waitFor();
   await page.keyboard.type("Agents");
   await settled(() => palette.getByRole("option", { name: /^Agents/ }).count(), (count) => count > 0);
@@ -89,24 +89,24 @@ test("§20 the Agents page has its title and lead, the old Launched sessions add
 test("§21 §22 the table groups the agents in order, and Show narrows it to one group, also from its address", { skip: skipHere, timeout: 120000 }, async (t) => {
   const s = await busy(t);
   const page = await s.open();
-  const show = page.getByRole("radiogroup", { name: "Show" });
+  const show = page.getByRole("radiogroup", { name: "Show", exact: true });
   await settled(() => show.getByRole("radio").allInnerTexts().then((items) => items.map((item) => item.replace(/\s+/g, " ").trim())), (items) => items[0] === "All 6");
-  assert.deepEqual((await show.getByRole("radio").allInnerTexts()).map((item) => item.replace(/\s+/g, " ").trim()), ["All 6", "Needs you 2", "This computer 3", "Other sessions 2", "Expired 1"]);
+  assert.deepEqual((await show.getByRole("radio").allInnerTexts()).map((item) => item.replace(/\s+/g, " ").trim()), ["All 6", "Needs you 2", "Launched from Prism 3", "Started outside Prism 2", "Expired 1", "Archived 0"]);
   assert.deepEqual(await page.locator("prism-lib-table .prism-lib-row.is-head").first().evaluate((head) => [...head.children].map((cell) => cell.textContent.trim()).filter(Boolean)), ["Agent", "Host · model", "Working on", "State", "Time"]);
-  assert.deepEqual(await groups(page), ["Needs you 2", "Launched on this computer 1", "Other sessions 2", "Claims that expired 1"]);
+  assert.deepEqual(await groups(page), ["Needs you 2", "Launched from Prism 1", "Started outside Prism 2", "Claims that expired 1"]);
   const order = await page.locator("[data-agent]").evaluateAll((items) => items.filter((item) => item.getClientRects().length).map((item) => item.dataset.agent));
   assert.deepEqual(order, [`launch:${s.failed}`, `launch:${s.waiting}`, `launch:${s.running}`, `claim:${INITIATIVE}/audit`, `claim:${INITIATIVE}/download`, `claim:${INITIATIVE}/naming`]);
-  await show.getByRole("radio", { name: /^Other sessions/ }).click();
-  await settled(() => groups(page), ["Other sessions 2"]);
-  assert.deepEqual(await groups(page), ["Other sessions 2"]);
-  await show.getByRole("radio", { name: /^This computer/ }).click();
-  await settled(() => groups(page), ["Needs you 2", "Launched on this computer 1"]);
-  assert.deepEqual(await groups(page), ["Needs you 2", "Launched on this computer 1"], "This computer shows every launched session");
-  for (const [ref, expected, chosen] of [["agents:needs-you", ["Needs you 2"], /^Needs you/], ["agents:this-computer", ["Needs you 2", "Launched on this computer 1"], /^This computer/], ["agents:other", ["Other sessions 2"], /^Other sessions/], ["agents:expired", ["Claims that expired 1"], /^Expired/]]) {
+  await show.getByRole("radio", { name: /^Started outside Prism/ }).click();
+  await settled(() => groups(page), ["Started outside Prism 2"]);
+  assert.deepEqual(await groups(page), ["Started outside Prism 2"]);
+  await show.getByRole("radio", { name: /^Launched from Prism/ }).click();
+  await settled(() => groups(page), ["Needs you 2", "Launched from Prism 1"]);
+  assert.deepEqual(await groups(page), ["Needs you 2", "Launched from Prism 1"], "Launched from Prism shows every launched session");
+  for (const [ref, expected, chosen] of [["agents:needs-you", ["Needs you 2"], /^Needs you/], ["agents:this-computer", ["Needs you 2", "Launched from Prism 1"], /^Launched from Prism/], ["agents:other", ["Started outside Prism 2"], /^Started outside Prism/], ["agents:expired", ["Claims that expired 1"], /^Expired/]]) {
     const narrowed = await s.open(ref);
     await settled(() => groups(narrowed), expected);
     assert.deepEqual(await groups(narrowed), expected, ref);
-    assert.equal(await narrowed.getByRole("radiogroup", { name: "Show" }).getByRole("radio", { name: chosen }).getAttribute("aria-checked"), "true");
+    assert.equal(await narrowed.getByRole("radiogroup", { name: "Show", exact: true }).getByRole("radio", { name: chosen }).getAttribute("aria-checked"), "true");
     await narrowed.context().close();
   }
   assert.deepEqual(page.errors, []);
@@ -120,12 +120,12 @@ test("§23 each row shows the agent, its harness and model, what it works on, it
   assert.match(waiting[0], /^Export reports/);
   assert.deepEqual(waiting.slice(1, 4), ["Claude Code · claude-sonnet-5-5", "design · Retention policy", "Waiting for you"]);
   assert.deepEqual(await row(page, `launch:${s.waiting}`).getByRole("button").allInnerTexts(), ["Answer"]);
-  assert.equal(await row(page, `launch:${s.waiting}`).getByRole("link", { name: "Export reports" }).getAttribute("data-artifact"), `initiative:${INITIATIVE}`);
+  assert.equal(await row(page, `launch:${s.waiting}`).getByRole("link", { name: "Export reports", exact: true }).getAttribute("data-artifact"), `initiative:${INITIATIVE}`);
   const failed = await cells(page, `launch:${s.failed}`);
   assert.equal(failed[1], "Claude Code · claude-opus-5-5");
   assert.match(failed[2], /^Ended .*ago: Claude Code reported an error/);
   assert.equal(failed[3], "Failed");
-  assert.deepEqual(await row(page, `launch:${s.failed}`).getByRole("button").allInnerTexts(), ["Open"]);
+  assert.deepEqual(await row(page, `launch:${s.failed}`).getByRole("button").allInnerTexts(), ["Open", "Archive"]);
   const running = await cells(page, `launch:${s.running}`);
   assert.match(running[0], /^Search/);
   assert.deepEqual([running[1], running[3]], ["Codex · gpt-5.5-codex", "Running"]);
@@ -135,7 +135,7 @@ test("§23 each row shows the agent, its harness and model, what it works on, it
   assert.deepEqual(dana.slice(0, 4), ["Dana on studio-mac", "Codex · gpt-5.5", "design · Signed download link", "Working"]);
   assert.match(dana[4], /^\d+ min left$/);
   assert.equal(await row(page, `claim:${INITIATIVE}/download`).getByRole("button").count(), 0, "a claim offers no action");
-  assert.equal(await row(page, `claim:${INITIATIVE}/download`).getByRole("link", { name: "Dana on studio-mac" }).getAttribute("data-artifact"), `slice:${INITIATIVE}/download`);
+  assert.equal(await row(page, `claim:${INITIATIVE}/download`).getByRole("link", { name: "Dana on studio-mac", exact: true }).getAttribute("data-artifact"), `slice:${INITIATIVE}/download`);
   const bare = await cells(page, `claim:${INITIATIVE}/audit`);
   assert.equal(bare[1], "Agent", "a claim that records no harness or model says Agent and nothing more");
   const expired = await cells(page, `claim:${INITIATIVE}/naming`);
@@ -152,13 +152,13 @@ test("§24 §25 a launched session keeps its start, running time, exit status, t
   await failedRow.waitFor();
   assert.match(await text(failedRow), /Started /, "each launch names when it started");
   assert.equal(await failedRow.locator("[data-agent-details]").isVisible().catch(() => false), false, "the details stay folded until opened");
-  await failedRow.getByRole("button", { name: "Open" }).click();
+  await failedRow.getByRole("button", { name: "Open", exact: true }).click();
   const details = failedRow.locator("[data-agent-details]");
   await details.waitFor({ state: "visible" });
   const shown = await text(details);
   assert.match(shown, new RegExp(`claude --resume ${s.runs("claude")[0].argv[3]}`), "the terminal command that continues it");
   assert.match(shown, new RegExp(s.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the folder to run it in");
-  assert.equal(await details.getByRole("button", { name: "Copy" }).count(), 1);
+  assert.equal(await details.getByRole("button", { name: "Copy", exact: true }).count(), 1);
   // The session's own actions load after its details unfold, so wait for Resume before counting it.
   await details.getByRole("button", { name: /^Resume/ }).first().waitFor({ state: "attached" });
   assert.equal(await details.getByRole("button", { name: /^Resume/ }).count(), 1, "the resume action of the launched session");
@@ -167,13 +167,13 @@ test("§24 §25 a launched session keeps its start, running time, exit status, t
   const clock = runningRow.locator("[data-running-time]");
   const before = await clock.innerText();
   assert.notEqual(await settled(() => clock.innerText(), (now) => now !== before), before, "the running time counts while it runs");
-  await runningRow.getByRole("button", { name: "Stop" }).click();
+  await runningRow.getByRole("button", { name: "Stop", exact: true }).click();
   const confirm = page.getByRole("button", { name: /^Stop/ }).last();
   if (await page.getByRole("dialog").count()) await confirm.click();
   await settled(() => text(runningRow), (now) => /Stopped/.test(now), { timeout: 20000 });
   assert.match(await text(runningRow), /Stopped/);
   await settled(() => runningRow.locator("[data-agent-details]").count(), (count) => count > 0);
-  await runningRow.getByRole("button", { name: "Open" }).click();
+  await runningRow.getByRole("button", { name: "Open", exact: true }).click();
   await runningRow.locator("[data-agent-details]").waitFor({ state: "visible" });
   assert.match(await text(runningRow.locator("[data-agent-details]")), /codex resume /);
   assert.match(await text(runningRow), /Exit code|Ended by signal|Stopped/);
@@ -186,16 +186,16 @@ test("§26 §20 a tab that can only read says so, offers no stop, still opens th
   await row(page, `launch:${s.running}`).waitFor();
   await settled(() => page.getByText("This tab can only read.", { exact: false }).count(), (count) => count > 0);
   assert.ok(await page.getByText("This tab can only read.", { exact: false }).count() > 0);
-  const stop = row(page, `launch:${s.running}`).getByRole("button", { name: "Stop" });
+  const stop = row(page, `launch:${s.running}`).getByRole("button", { name: "Stop", exact: true });
   assert.ok((await stop.count()) === 0 || (await stop.isDisabled()), "Stop is not offered in a read-only tab");
-  await row(page, `launch:${s.waiting}`).getByRole("button", { name: "Answer" }).click();
+  await row(page, `launch:${s.waiting}`).getByRole("button", { name: "Answer", exact: true }).click();
   await settled(() => shownRef(page), "attention");
   assert.equal(await shownRef(page), "attention");
   await page.locator(`.gate-answer[data-gate="${s.gate}"][data-initiative="${INITIATIVE}"]`).waitFor({ state: "visible" });
   // The initiative page's launch state leads a tab that cannot make changes to the Agents page.
   const initiative = await s.open(`initiative:${INITIATIVE}`);
-  const link = initiative.getByRole("link", { name: "Open in Agents" });
+  const link = initiative.getByRole("link", { name: "Open in Agents", exact: true });
   await link.waitFor();
   assert.equal(await link.getAttribute("data-artifact"), "agents");
-  assert.equal(await initiative.getByRole("link", { name: "Open in Launched sessions" }).count(), 0);
+  assert.equal(await initiative.getByRole("link", { name: "Open in Launched sessions", exact: true }).count(), 0);
 });

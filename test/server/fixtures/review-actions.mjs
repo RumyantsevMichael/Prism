@@ -28,7 +28,9 @@ export async function actionProject(context, { gates = true, components = false 
   const { updateRoadmap } = await import("../../../dist/server/workflow/roadmap.mjs");
   const { updateCoordinationState } = await import("../../../dist/server/workflow/state.mjs");
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-actions-")));
-  defer(context, () => rm(root, { recursive: true, force: true }));
+  // A request the page sent may still be writing into the project when the test ends, as a launch records its history entry after
+  // the host has started, so the removal retries a folder that gained an entry while it was being emptied.
+  defer(context, () => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await mkdir(path.join(root, "docs/plans", INITIATIVE), { recursive: true });
   const declared = components ? "\n## Workspace\n- Repository: reports-app\n\n## Components\n- api: packages/api\n" : "";

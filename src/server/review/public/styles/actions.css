@@ -20,6 +20,22 @@
   border-top: 0;
 }
 
+/* A section heads the rows that follow it, such as How the run works in the run configuration, with a rule below it; the row after it draws none. */
+.action-section {
+  margin: var(--prism-space-6) 0 0;
+  padding-bottom: var(--prism-space-2);
+  border-bottom: var(--prism-stroke) solid var(--prism-color-line);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-semibold);
+  letter-spacing: var(--prism-tracking-heading);
+  overflow-wrap: anywhere;
+}
+
+.action-section + .action-row {
+  border-top: 0;
+}
+
 .action-row:last-child {
   padding-bottom: var(--prism-space-1);
 }
@@ -77,6 +93,11 @@
   justify-items: start;
   gap: var(--prism-space-2);
   min-width: 0;
+}
+
+/* A choice drawn as one select, such as the host, and a run action's pickers take the whole width of the control. */
+.action-choice.is-wide {
+  justify-items: stretch;
 }
 
 /* A group whose options do not fit one line wraps onto the next. */

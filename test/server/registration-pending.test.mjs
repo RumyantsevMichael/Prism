@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { cloneOf, repository } from "./fixtures/repository-checkouts.mjs";
-import { cancelRecordSyncs } from "../../src/server/workflow/record-store-sync.mjs";
-import { forgetMigrations, recordStoreOf } from "../../src/server/workflow/record-store.mjs";
-import { checkRepositoryName } from "../../src/server/workflow/repository-names.mjs";
+import { cancelRecordSyncs } from "../../dist/server/workflow/record-store-sync.mjs";
+import { forgetMigrations, recordStoreOf } from "../../dist/server/workflow/record-store.mjs";
+import { checkRepositoryName } from "../../dist/server/workflow/repository-names.mjs";
 
 // A registration that a synced check has written but not yet confirmed is pending to every check that sees the store folder, whatever its own sync setting.
 const environment = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-registration-pending-env-")));
