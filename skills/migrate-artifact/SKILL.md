@@ -14,12 +14,12 @@ It is not the move of a checkout's files into the store.
 ## 1. Prepare
 
 1. Call `get_migration_run` with the run id for its set, status, earlier proposals, question, answers, the project's configured paths, and each source's Git history.
-2. Read the target format's reference beside this skill: the [requirement format](../write-requirements/references/requirement-format.md), the [ADR format](../write-adr/references/adr-format.md), the [glossary format](../workflow/references/glossary-format.md), or the [feature format](../write-feature/references/feature-format.md).
+2. Take the target format's reference from `format.reference` of `get_migration_run`, the exact text of the format that Prism checks each proposal against: the [requirement format](../write-requirements/references/requirement-format.md), the [ADR format](../write-adr/references/adr-format.md), the [glossary format](../workflow/references/glossary-format.md), or the [feature format](../write-feature/references/feature-format.md).
 3. For each artifact of the set, read it and any existing target through `get_artifact` with its scope, and take its current findings from the run.
 4. Take dates that a source does not state from its Git history in the run.
 
 - Don't
-  - Read a file of the project yourself, or run a shell or version control command: this session works outside the project, and the run's tools serve everything it reads.
+  - Read a file or run a shell or version control command: this session has no built-in tool and reads no file, neither the skill's references nor the project's, since the run's tools serve everything it reads.
 
 ## 2. Write each artifact's content
 

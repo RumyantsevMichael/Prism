@@ -169,15 +169,16 @@ export async function startMigrationLaunch({ projectRoot, migrationRun, host, co
   if (!choice) throw refuse("invalid_choice", INVALID_CHOICE);
   if (typeof migrationRun !== "string" || !/^run-[0-9a-f]{16}$/.test(migrationRun)) throw refuse("unknown_migration_run", `No format migration run ${String(migrationRun)} exists.`);
   const checkout = await realpath(projectRoot);
-  return launchSession({ checkout, subject: { initiative: null, migrationRun }, host, coordinator: choice, access: access === "full" ? "full" : "read-only", readRoots: await migrationReadRoots(checkout, host, env), env });
+  return launchSession({ checkout, subject: { initiative: null, migrationRun }, host, coordinator: choice, access: access === "full" ? "full" : "read-only", readRoots: host === "codex" ? await migrationReadRoots(checkout, host, env) : [], env });
 }
 
-// The folder this Prism runs from, which holds its skills and their references.
+// The folder this Prism runs from, which holds its skills.
 const PRISM_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
 /**
- * The folders besides its working folder where a format migration run's session may read: this Prism's own folder and the host's plugin cache,
- * where the host keeps the skills it runs and their references, each by its real path when it exists and is not the checkout, inside it, or holding it.
+ * The folders besides its working folder where a format migration run's Codex thread may read: this Prism's own folder and the host's plugin cache,
+ * where the host keeps the skills it runs, each by its real path when it exists and is not the checkout, inside it, or holding it.
+ * A run's Claude Code session adds no folder, since it has no built-in tool and takes the format reference from get_migration_run.
  */
 export async function migrationReadRoots(checkout: string, host: string, env: NodeJS.ProcessEnv = process.env) {
   const home = os.homedir();

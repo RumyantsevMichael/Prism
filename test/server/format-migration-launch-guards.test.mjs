@@ -26,15 +26,15 @@ const launchRecord = async (hosts, id) => JSON.parse(await readFile(path.join(ho
 const PRISM_ROOT = await realpath(fileURLToPath(new URL("../..", import.meta.url)));
 const RUN_TOOLS = ["get_migration_run", "get_artifact", "propose_migration", "finish_migration_run", "fail_migration_run"];
 
-test("a run's Claude Code session works in its own folder with only the reading tools and the run's Prism tools, reads only in its folders, and denies the rest", { skip: posixOnly }, async (context) => {
+test("a run's Claude Code session works in its own folder with no built-in tool and only the run's Prism tools, adds no folder, and denies the checkout", { skip: posixOnly }, async (context) => {
   const { root, call, hosts } = await runCheckout(context, BROKEN);
   const run = await runFor(call, PATHS.requirements);
   await running(call, run);
   const [started] = await waitFor(() => hosts.runs("claude").length ? hosts.runs("claude") : null, { what: "the Claude Code stub" });
   const after = (flag) => started.argv[started.argv.indexOf(flag) + 1];
   assert.equal(after("--permission-mode"), "dontAsk");
-  assert.equal(after("--tools"), "Read,Grep,Glob");
-  // No bare Read, Grep, or Glob is allowed, so a read outside the working folder and the added folders asks, and nothing asks.
+  assert.equal(after("--tools"), "");
+  // Only the run's Prism tools are allowed, and the session has no built-in tool to read a file with.
   assert.equal(after("--allowedTools"), RUN_TOOLS.map((tool) => `mcp__prism-run__${tool}`).join(","));
   // The session loads Prism's scoped server alone: no MCP server of the person's own configuration, no other plugin's, and no claude.ai connector.
   assert.ok(started.argv.includes("--strict-mcp-config"));
@@ -47,9 +47,8 @@ test("a run's Claude Code session works in its own folder with only the reading 
   // Deny rules win over every allow rule and added folder, also those of the person's own settings, so no setting reads the checkout again.
   const real = await realpath(root);
   assert.equal(after("--disallowedTools"), `Read(/${real}),Read(/${real}/**)`);
-  const added = started.argv.slice(started.argv.indexOf("--add-dir") + 1, started.argv.indexOf("--permission-mode"));
-  assert.ok(added.includes(PRISM_ROOT), "Prism's own folder, which holds the format references, is readable");
-  assert.ok(added.every((folder) => path.isAbsolute(folder) && folder !== os.homedir()), `only fixed folders are added: ${added}`);
+  // The session has no built-in tool and takes the format reference from get_migration_run, so it adds no folder.
+  assert.equal(started.argv.includes("--add-dir"), false);
   const checkout = await realpath(root);
   const launch = await launchRecord(hosts, (await readRun(call, run)).launch.id);
   assert.equal(started.cwd, launch.workdir, "the session works in its launch's own folder");

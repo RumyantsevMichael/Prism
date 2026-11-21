@@ -37,7 +37,7 @@ test("a run launches Codex with the model chosen for Prism's runs, though Claude
   assert.deepEqual(turn.params.input, [{ type: "text", text: `$prism:migrate-artifact ${run}` }]);
 });
 
-test("a run launches Claude Code with --model of the choice and only its read-only tools", { skip: posixOnly }, async (context) => {
+test("a run launches Claude Code with --model of the choice and no built-in tool", { skip: posixOnly }, async (context) => {
   const { call, hosts } = await runCheckout(context, BROKEN, { hosts: ["claude", "codex"] });
   await choose(hosts, { host: "claude-code", model: "opus" });
   const run = await runFor(call, PATHS.requirements);
@@ -45,7 +45,7 @@ test("a run launches Claude Code with --model of the choice and only its read-on
   const [started] = await waitFor(() => hosts.runs("claude").length ? hosts.runs("claude") : null, { what: "the Claude Code stub to start" });
   assert.deepEqual(started.argv.slice(started.argv.indexOf("--model"), started.argv.indexOf("--model") + 2), ["--model", "opus"]);
   assert.equal(started.argv[started.argv.indexOf("--permission-mode") + 1], "dontAsk");
-  assert.equal(started.argv[started.argv.indexOf("--tools") + 1], "Read,Grep,Glob");
+  assert.equal(started.argv[started.argv.indexOf("--tools") + 1], "");
 });
 
 test("a chosen host that is not found leaves the run on the first available host with its default model, and the run says why", { skip: posixOnly }, async (context) => {

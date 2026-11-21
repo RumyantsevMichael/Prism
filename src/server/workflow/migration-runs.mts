@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
 import { listFormatMigrationRecords, locateRecord, readRecord, removeRecord, withRecordLock, writeRecord } from "./record-store.mjs";
@@ -620,9 +620,22 @@ export async function shownRun(root: any, record: any) {
     artifacts.push({ ...artifact, findings });
   }
   return {
-    id: record.id, set: { ...record.set, artifacts }, cause: record.cause, status: record.status, startedAt: record.startedAt, endedAt: record.endedAt ?? null, launch: record.launch ?? null,
+    id: record.id, set: { ...record.set, artifacts }, format: await runFormat(record.set.type), cause: record.cause, status: record.status, startedAt: record.startedAt, endedAt: record.endedAt ?? null, launch: record.launch ?? null,
     migrations: record.migrations.map(shownMigration), question: record.question ?? null, answers: record.answers ?? null, result: record.result ?? null, failure: record.failure ?? null
   };
+}
+
+/**
+ * The current format of a run's set type with its reference, { type, version, reference: { path, content } }: the plugin-relative path of the reference
+ * and its exact text in the Prism that serves the call, so a run's session reads the format Prism checks its proposals against and no file.
+ */
+async function runFormat(type: string) {
+  const { ARTIFACT_FORMATS } = await import("./artifact-formats.mjs");
+  const { PLUGIN_ROOT } = await import("../plugin-root.mjs");
+  const format: any = ARTIFACT_FORMATS.find((entry: any) => entry.type === type);
+  if (!format) throw new Error(`No format of the type ${type}.`);
+  const content = await readFile(path.join(PLUGIN_ROOT, ...format.reference.split("/")), "utf8");
+  return { type: format.type, version: format.version, reference: { path: format.reference, content } };
 }
 
 /** The scope input that names a scope object, as get_artifact and check_artifacts take it. */

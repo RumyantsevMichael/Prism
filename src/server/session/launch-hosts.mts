@@ -86,10 +86,11 @@ export function migrationServerDefinition({ run, project, launch, env = process.
 }
 const CLAUDE_READ_ONLY_TOOLS = MIGRATION_RUN_TOOLS.map((tool) => `mcp__${MIGRATION_SERVER}__${tool}`).join(",");
 const CLAUDE_NO_CONNECTORS = JSON.stringify({ disableClaudeAiConnectors: true });
-const claudeReadOnly = (readRoots: string[], denied: string[], mcpConfig: string) => ["--input-format", "stream-json", "--output-format", "stream-json", "--tools", "Read,Grep,Glob", "--allowedTools", CLAUDE_READ_ONLY_TOOLS,
+// A read-only Claude Code session has no built-in tool and adds no folder: it reads only through the run's Prism tools, which also serve the format reference.
+const claudeReadOnly = (denied: string[], mcpConfig: string) => ["--input-format", "stream-json", "--output-format", "stream-json", "--tools", "", "--allowedTools", CLAUDE_READ_ONLY_TOOLS,
   ...(denied.length ? ["--disallowedTools", denied.flatMap(deniedReads).join(",")] : []),
   "--mcp-config", mcpConfig, "--strict-mcp-config", "--settings", CLAUDE_NO_CONNECTORS,
-  ...(readRoots.length ? ["--add-dir", ...readRoots] : []), "--permission-mode", "dontAsk", "--permission-prompts", "none"];
+  "--permission-mode", "dontAsk", "--permission-prompts", "none"];
 /**
  * The deny rules that keep a folder and everything below it unread by Claude Code's file tools, whose Read rules also cover Grep and Glob:
  * a deny rule wins over every allow rule and added folder, also over those of the person's own Claude Code settings, so no setting reads the checkout.
@@ -255,13 +256,13 @@ function coordinatorOf(coordinator: unknown): CoordinatorChoice {
 /**
  * The arguments of a run: Claude Code's launch or resume form with its session id, followed by --model and --effort of the
  * coordinator's choice, each left out for the host default, or Codex's app server, which takes the choice in its requests.
- * A read-only run, a format migration run's, takes only the reading tools and the run's own Prism tools, and reads in readRoots too.
+ * A read-only run, a format migration run's, takes no built-in tool, only the run's own Prism tools, and adds no folder; readRoots are a Codex run's readable folders.
  */
-export function hostArguments({ host, hostSessionId, resume, coordinator = null, access = "full", readRoots = [], deniedRoots = [], mcpConfig = null }: { host: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string; readRoots?: string[]; deniedRoots?: string[]; mcpConfig?: string | null }) {
+export function hostArguments({ host, hostSessionId, resume, coordinator = null, access = "full", deniedRoots = [], mcpConfig = null }: { host: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string; readRoots?: string[]; deniedRoots?: string[]; mcpConfig?: string | null }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
     const { model, effort } = coordinatorOf(coordinator);
-    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...(readOnly(access) ? claudeReadOnly(rootsOf(readRoots), deniedOf(deniedRoots), requiredConfig(mcpConfig)) : CLAUDE_FLAGS), ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
+    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...(readOnly(access) ? claudeReadOnly(deniedOf(deniedRoots), requiredConfig(mcpConfig)) : CLAUDE_FLAGS), ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
   }
   if (host === "codex") return ["app-server"];
   throw new Error(`Unknown host ${host}.`);
