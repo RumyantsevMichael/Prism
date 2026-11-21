@@ -73,6 +73,14 @@ function popoverFor(caption: any, body: any, { heading }: { heading: string }) {
   return `<prism-button id="${trigger}">${caption}</prism-button><prism-popover for="${trigger}" heading="${heading}">${body}</prism-popover>`;
 }
 
+// A button that shows a hover card beside itself, as a link's preview shows while the pointer rests on the link.
+function hoverCardFor(caption: any, body: any, { wide = false }: { wide?: boolean } = {}) {
+  const card = id("catalog-hover-card");
+  return `<prism-button data-shows-card="${card}">${caption}</prism-button><prism-hover-card id="${card}"${wide ? " wide" : ""} hidden>${body}</prism-hover-card>`;
+}
+
+const hoverCardActions = `<prism-button slot="actions" variant="ghost" size="sm">Show in side panel</prism-button>`;
+
 // A picker of models with an effort below its list, as a run's model choice uses it.
 const PICKER_MODELS = `<prism-list-item value="">Host default<span slot="detail">The model the host uses when none is chosen</span></prism-list-item><prism-list-item value="large">Large model<span slot="detail">Best for everyday, complex tasks</span></prism-list-item><prism-list-item value="small">Small model<span slot="detail">Fastest for quick answers</span></prism-list-item><prism-list-item value="old" disabled>Old model<span slot="detail">No longer offered</span></prism-list-item>`;
 const pickerEffort = `<div slot="extra" role="group" aria-label="Effort"><prism-button size="sm" pressed="false">Low</prism-button> <prism-button size="sm" pressed="true">High</prism-button></div>`;
@@ -449,6 +457,14 @@ const SPECIMENS: Record<string, any> = {
     "long-text": popoverFor(LONG, `<p>${LONG} ${LONG}</p>`, { heading: LONG }),
     "unbroken-name": popoverFor(UNBROKEN, `<p>${UNBROKEN}</p>`, { heading: UNBROKEN })
   },
+  "prism-hover-card": {
+    short: hoverCardFor("Show a short card", `<p class="eyebrow">Initiative</p><h3>Shared record store</h3><p>Let every checkout and machine of a workspace share one record store.</p>`),
+    "long-content": hoverCardFor("Show a long section", `${hoverCardActions}<prism-doc class="document-content"><h2>4. Move existing records into the store once</h2>${repeat(24, (index: number) => `<p>Paragraph ${index + 1} of a linked section that is taller than the room beside its link, so the card's body scrolls while its head stays.</p>`)}</prism-doc>`),
+    wide: hoverCardFor("Show a wide card", `<p class="eyebrow">Document</p><h3>Totals</h3><p>A short document that still takes the card's full width.</p>`, { wide: true }),
+    "with-actions": hoverCardFor("Show a card with actions", `${hoverCardActions}<p class="eyebrow">Document</p><h3>Record store git sync</h3><p>Sync the record store through Git.</p>`),
+    "long-text": hoverCardFor(LONG, `${hoverCardActions}<h3>${LONG}</h3><p>${LONG} ${LONG}</p>`),
+    "unbroken-name": hoverCardFor(UNBROKEN, `<h3>${UNBROKEN}</h3><p>${UNBROKEN}</p>`)
+  },
   "prism-picker": {
     default: pickerOf(),
     open: pickerOf({ caption: "Click to open: the effort below the list keeps it open after a choice", extra: pickerEffort }),
@@ -815,11 +831,16 @@ scope!.innerHTML = [designValues(), ...KIT_ELEMENTS.map(entryMarkup)].join("");
 paintSwatches(scope);
 await loadPreferences();
 apply();
-// Specimen buttons open their dialog or show a toast message.
+// Specimen buttons open their dialog, show a toast message, or show or hide a hover card beside themselves; a click elsewhere hides an open hover card.
 scope!.addEventListener("click", (event) => {
-  const button = (event!.target as any).closest?.("prism-button[data-opens], prism-button[data-toast]");
+  const button = (event!.target as any).closest?.("prism-button[data-opens], prism-button[data-toast], prism-button[data-shows-card]");
+  for (const card of document.querySelectorAll("prism-hover-card:not([hidden])")) if (!card.contains(event!.target as any) && card.id !== button?.dataset.showsCard) (card as any).hidden = true;
   if (!button) return;
-  if (button.dataset.opens) (document.getElementById(button.dataset.opens) as any)?.show();
+  if (button.dataset.showsCard) {
+    const card = document.getElementById(button.dataset.showsCard) as any;
+    if (card.hidden) card.showAt(button);
+    else card.hidden = true;
+  } else if (button.dataset.opens) (document.getElementById(button.dataset.opens) as any)?.show();
   else (document.querySelector("prism-toast") as any)?.show(button.dataset.toast, { tone: button.dataset.tone });
 });
 scope!.setAttribute("aria-busy", "false");

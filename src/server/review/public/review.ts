@@ -3241,9 +3241,12 @@ async function initialize() {
     }
   });
   const showInPanel = (ref: any, anchor: any) => sidePanel.showFile(ref, anchor);
+  // A preview reads a link's target the way opening it does, by the store ref a checkout path names, so the two never disagree about which artifact it is.
+  const previewArtifact = (ref: any) => fetchJson(`./api/artifact?${artifactQuery(localTab(ref))}`);
   linkPreview = createLinkPreview({
     root: workspace,
     fetchJson,
+    fetchArtifact: previewArtifact,
     renderMarkdown: (path: any, content: any, links: any) => renderText(path, content, markdownOptions(path, links)),
     kindLabel: (kind: any) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,
@@ -3255,6 +3258,7 @@ async function initialize() {
   panelPreview = createLinkPreview({
     root: sidePanel.body,
     fetchJson,
+    fetchArtifact: previewArtifact,
     renderMarkdown: (path: any, content: any, links: any) => renderText(path, content, markdownOptions(path, links)),
     kindLabel: (kind: any) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,
