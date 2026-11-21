@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { installAgent } from "../../dist/server/session/agent-installs.mjs";
-import { INITIATIVE, TARGET, acpFixture, apply, setSettings } from "./fixtures/acp-agents.mjs";
+import { installAgent, sweepUnusedVersions } from "../../dist/server/session/agent-installs.mjs";
+import { INITIATIVE, TARGET, acpFixture, apply, get, setSettings } from "./fixtures/acp-agents.mjs";
 import { binaryAgent, platformKey, registryFixture } from "./fixtures/acp-registry.mjs";
 import { settled } from "./fixtures/wait.mjs";
 
@@ -40,6 +40,72 @@ test("an update back to a version whose folder a running session uses is refused
   assert.ok(existsSync(path.join(agents(s), "opencode", "1.0.0", "agent")), "the folder of the version a running session uses stays");
   assert.equal(current(s, "opencode"), "1.1.0");
   await apply(s.base, { action: "launch.stop", target: `launch:${launched.json.launch.id}`, input: {}, revision: null }, s.headers);
+});
+
+const launch = (s) => apply(s.base, { action: "launch.run", target: TARGET(INITIATIVE), input: {}, revision: null }, s.headers);
+const stop = (s, id) => apply(s.base, { action: "launch.stop", target: `launch:${id}`, input: {}, revision: null }, s.headers);
+const stateOf = async (s, id) => (await get(s.base, "api/launches")).json.launches.find((item) => item.id === id)?.state;
+
+test("a session on the new version neither keeps the earlier version's folder nor blocks an update back to it", { skip: posixOnly }, async (t) => {
+  const s = await acpFixture(t, { dialog: { code: 0 } });
+  const registry = await registryFixture(t, s);
+  const first = await binaryAgent(s, registry, { id: "opencode", version: "1.0.0" });
+  registry.setAgents([first]);
+  assert.equal((await act(s, "agents.install", "opencode")).status, 200);
+  await s.setPlan({ opencode: { hold: true } });
+  await setSettings(s.root, INITIATIVE, { host: "acp-opencode" });
+  const older = await launch(s);
+  assert.equal(older.status, 200, older.text);
+  await settled(() => s.requests("session/prompt").length, 1);
+  registry.setAgents([await binaryAgent(s, registry, { id: "opencode", version: "1.1.0" })]);
+  assert.equal((await act(s, "agents.update", "opencode")).status, 200);
+  assert.ok(existsSync(path.join(agents(s), "opencode", "1.0.0", "agent")), "the version the running session uses stays");
+  await stop(s, older.json.launch.id);
+  await settled(() => stateOf(s, older.json.launch.id), "stopped");
+  const newer = await launch(s);
+  assert.equal(newer.status, 200, newer.text);
+  await settled(() => s.requests("session/prompt").length, 2);
+  await settled(() => existsSync(path.join(agents(s), "opencode", "1.0.0")), false);
+  assert.equal(existsSync(path.join(agents(s), "opencode", "1.0.0")), false, "no session runs on 1.0.0 any more");
+  registry.setAgents([first]);
+  const back = await act(s, "agents.update", "opencode");
+  assert.equal(back.status, 200, back.text);
+  assert.equal(current(s, "opencode"), "1.0.0");
+  assert.ok(existsSync(path.join(agents(s), "opencode", "1.1.0", "agent")), "the version the running session uses stays");
+  await stop(s, newer.json.launch.id);
+  await settled(() => stateOf(s, newer.json.launch.id), "stopped");
+});
+
+test("an earlier version is removed after its session ends although the process that updated the agent ended first", { skip: posixOnly }, async (t) => {
+  const s = await acpFixture(t, { dialog: { code: 0 } });
+  const registry = await registryFixture(t, s);
+  registry.setAgents([await binaryAgent(s, registry, { id: "opencode", version: "1.0.0" })]);
+  assert.equal((await act(s, "agents.install", "opencode")).status, 200);
+  await s.setPlan({ opencode: { hold: true } });
+  await setSettings(s.root, INITIATIVE, { host: "acp-opencode" });
+  const launched = await launch(s);
+  assert.equal(launched.status, 200, launched.text);
+  await settled(() => s.requests("session/prompt").length, 1);
+  registry.setAgents([await binaryAgent(s, registry, { id: "opencode", version: "1.1.0" })]);
+  const module = new URL("../../dist/server/session/agent-installs.mjs", import.meta.url).href;
+  const updater = spawn(process.execPath, ["--input-type=module", "-e", `const { updateAgent } = await import(${JSON.stringify(module)}); await updateAgent({ id: "opencode", confirm: async () => {} });`], { env: { ...process.env, ...s.env }, stdio: ["ignore", "ignore", "inherit"] });
+  assert.equal(await new Promise((done) => updater.on("close", done)), 0);
+  assert.equal(current(s, "opencode"), "1.1.0");
+  assert.ok(existsSync(path.join(agents(s), "opencode", "1.0.0", "agent")), "the version the running session uses stays");
+  await stop(s, launched.json.launch.id);
+  await settled(() => stateOf(s, launched.json.launch.id), "stopped");
+  await settled(() => existsSync(path.join(agents(s), "opencode", "1.0.0")), false);
+  assert.equal(existsSync(path.join(agents(s), "opencode", "1.0.0")), false);
+});
+
+test("a sweep by any process removes the earlier versions that no session runs on, and keeps the current one", async (t) => {
+  const { app, env } = await appFolder(t);
+  const folder = path.join(app, "agents", "opencode");
+  for (const version of ["1.0.0", "1.1.0", "2.0.0"]) await mkdir(path.join(folder, version), { recursive: true });
+  await writeFile(path.join(folder, "current.json"), JSON.stringify({ version: "2.0.0" }));
+  await sweepUnusedVersions(env);
+  assert.deepEqual(readdirSync(folder).sort(), ["2.0.0", "current.json"]);
+  assert.deepEqual(readdirSync(path.join(app, "agents")).sort(), ["opencode"], "no lock or staging folder is left");
 });
 
 async function appFolder(t) {
