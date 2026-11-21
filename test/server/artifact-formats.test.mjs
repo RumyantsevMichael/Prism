@@ -11,7 +11,7 @@ import { ADR, CONFORMING, FEATURE, PATHS, REFERENCES, REQUIREMENT, TYPES, checke
 
 const OWN_TYPES = ["requirements", "adr", "feature"];
 const RULES = {
-  requirements: ["requirements.dates", "requirements.disposition", "requirements.fields", "requirements.header", "requirements.links", "requirements.numbering", "requirements.pattern", "requirements.reported", "requirements.sections", "requirements.status", "requirements.text", "requirements.title", "requirements.unknown"],
+  requirements: ["requirements.dates", "requirements.disposition", "requirements.fields", "requirements.header", "requirements.links", "requirements.numbering", "requirements.pattern", "requirements.reported", "requirements.sections", "requirements.shall", "requirements.status", "requirements.text", "requirements.title", "requirements.unknown"],
   adr: ["adr.dates", "adr.header", "adr.reported", "adr.requirements", "adr.sections", "adr.status", "adr.text", "adr.title", "adr.unknown"],
   feature: ["feature.examples", "feature.header", "feature.reported", "feature.requirement", "feature.rules", "feature.steps", "feature.text", "feature.unknown"]
 };

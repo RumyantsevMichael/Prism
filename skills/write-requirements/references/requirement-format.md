@@ -1,6 +1,6 @@
 # Requirement format
 
-Format version: 1
+Format version: 2
 Example path: `docs/requirements/resumable-uploads.md`
 
 A requirement file states the obligations of one product capability as numbered EARS requirements.
@@ -20,6 +20,7 @@ Any required field value or required section body may be the single word `unknow
 - `requirements.pattern`: The pattern is `Ubiquitous`, `State-driven`, `Event-driven`, `Optional feature`, `Unwanted behavior`, or `Complex`.
 - `requirements.disposition`: The disposition is `Active`, `Withdrawn` optionally followed by a date and a reason, or `Superseded by <link>`.
 - `requirements.links`: Related is `n/a` or comma-separated Markdown links whose targets are relative `.md` paths with an optional `#<anchor>`, or `#<anchor>` alone, optionally followed by one period.
+- `requirements.shall`: Each `Requirement:` value holds at most one sentence with the word `shall`, so each numbered section states one requirement.
 - `requirements.unknown`: A required value or section body is `unknown` only while the status is `Draft`, where a project with a record store reads the recorded status.
 - `requirements.reported`: No agent has reported, through `report_format_finding`, a break of this format on this version of the file that the other rules do not see.
 

@@ -20,7 +20,7 @@ test("clauses 1, 2, 3, 6, 7, 8: a check starts one run for a new set, which get_
   assert.match(run, /^run-[0-9a-f]{16}$/);
   const record = await readRun(call, run);
   assert.equal(record.id, run);
-  assert.deepEqual([record.set.type, record.set.scope, record.set.formatVersion], ["requirements", null, 1]);
+  assert.deepEqual([record.set.type, record.set.scope, record.set.formatVersion], ["requirements", null, 2]);
   assert.deepEqual(record.set.artifacts.map((artifact) => [artifact.path, artifact.scope]), [[PATHS.requirements, null]]);
   assert.match(record.set.artifacts[0].version, /^sha256:[0-9a-f]{64}$/);
   assert.ok(record.set.artifacts[0].findings.some((finding) => finding.rule === "requirements.numbering"), "the set carries each artifact's findings");

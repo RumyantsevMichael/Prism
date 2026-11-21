@@ -1,6 +1,8 @@
 // The formats of Prism's normative artifacts: requirement files, ADRs, the glossary, and feature files.
 // Each format's reference under skills/ states the same version, rule ids, and defaults, and holds an example that these checks accept.
 
+import { splitStatements } from "./statements.mjs";
+
 const MAX_TEXT_BYTES = 1024 * 1024;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const UNKNOWN = "unknown";
@@ -119,7 +121,7 @@ const linkTargets = (value: any) => [...value.matchAll(new RegExp(LINK.source, "
 
 const REQUIREMENT_SECTIONS = ["Problem", "Goals", "Non-goals", "Design questions"];
 const REQUIREMENT_FIELDS = ["Pattern", "Disposition", "Requirement", "Rationale", "Related"];
-const PATTERNS = ["Ubiquitous", "State-driven", "Event-driven", "Optional feature", "Unwanted behavior", "Complex"];
+export const PATTERNS = ["Ubiquitous", "State-driven", "Event-driven", "Optional feature", "Unwanted behavior", "Complex"];
 
 const requirementStatus = (value: any) => ["Draft", "Approved", "Withdrawn"].includes(value) || /^Superseded by .*\[[^\]]*\]\([^)\s]+\)/.test(value);
 const disposition = (value: any) => value === "Active" || /^Withdrawn(?: \d{4}-\d{2}-\d{2})?(?::\s*\S.*)?$/.test(value) || /^Superseded by .*\[[^\]]*\]\([^)\s]+\)/.test(value);
@@ -138,7 +140,10 @@ export function requirementOutline(text: any) {
   return { status, sections: numbered };
 }
 
-function inspectRequirements(text: any) {
+// Version 2 of the requirement format adds requirements.shall: each Requirement: value holds at most one sentence that says shall.
+const inspectRequirements = (oneShall: any) => (text: any) => inspectRequirementFile(text, oneShall);
+
+function inspectRequirementFile(text: any, oneShall: any) {
   const type = "requirements";
   const findings: any[] = [], unknowns = [];
   const items = linesOf(text);
@@ -191,7 +196,7 @@ function inspectRequirements(text: any) {
     if (!anchor || anchor[1] !== number) findings.push(finding(`${type}.numbering`, section.line, `Section ${number} must directly follow <a id="${number}"></a>.`));
     if (seen.has(number)) findings.push(finding(`${type}.numbering`, section.line, `Section number ${number} repeats.`));
     seen.add(number);
-    inspectRequirementSection(section, number, findings, unknowns);
+    inspectRequirementSection(section, number, findings, unknowns, oneShall);
   }
   for (const item of items) {
     if (item.fenced) continue;
@@ -209,7 +214,10 @@ const relatedLinks = (value: any) => {
   return LINK_LIST.test(links) && linkTargets(links).every((target) => isLinkTo(target, { anchor: "optional" }));
 };
 
-function inspectRequirementSection(section: any, number: any, findings: any, unknowns: any) {
+// The requirements one Requirement: value states: its sentences, as a format migration splits statements, that say shall in any case.
+export const requirementsIn = (value: any) => splitStatements(value).filter((statement: any) => /\bshall\b/i.test(statement.text));
+
+function inspectRequirementSection(section: any, number: any, findings: any, unknowns: any, oneShall: any) {
   const type = "requirements";
   const labels = [...REQUIREMENT_FIELDS, "Supersedes"];
   const fields = [];
@@ -231,6 +239,9 @@ function inspectRequirementSection(section: any, number: any, findings: any, unk
     if (field.label === "Supersedes") continue;
     if (field.value === UNKNOWN) { unknowns.push({ line: field.line, field: field.label }); continue; }
     if (field.value === "") findings.push(finding(`${type}.fields`, field.line, `Section ${number} has an empty ${field.label}:.`));
+    else if (oneShall && field.label === "Requirement" && requirementsIn(field.value).length > 1) {
+      findings.push(finding(`${type}.shall`, field.line, `Section ${number} states ${requirementsIn(field.value).length} requirements in one Requirement line; give each its own numbered section.`));
+    }
     else if (field.label === "Pattern" && !PATTERNS.includes(field.value)) findings.push(finding(`${type}.pattern`, field.line, `Pattern must be one of ${PATTERNS.join(", ")}, not "${field.value}".`));
     else if (field.label === "Disposition" && !disposition(field.value)) findings.push(finding(`${type}.disposition`, field.line, `Disposition must be Active, Withdrawn with an optional date and reason, or Superseded by <link>, not "${field.value}".`));
     else if (field.label === "Related" && field.value !== "n/a" && !relatedLinks(field.value)) {
@@ -500,12 +511,15 @@ function format(type: any, version: any, reference: any, rules: any, defaults: a
   return Object.freeze({ type, version, reference, rules: Object.freeze([...rules, `${type}.unknown`, `${type}.reported`]), defaults: Object.freeze(defaults), corresponding: Object.freeze(corresponding), inspect: run, check: (input: any) => run(input, {}).findings });
 }
 
+const REQUIREMENT_RULES = ["requirements.text", "requirements.title", "requirements.header", "requirements.status", "requirements.dates", "requirements.sections", "requirements.numbering", "requirements.fields", "requirements.pattern", "requirements.disposition", "requirements.links"];
+const requirementFormat = (version: any) => format("requirements", version, "skills/write-requirements/references/requirement-format.md",
+  version >= 2 ? [...REQUIREMENT_RULES, "requirements.shall"] : REQUIREMENT_RULES,
+  { Status: "Draft", Approved: "n/a", "Design questions": "n/a", Disposition: "Active", Related: "n/a" },
+  { Problem: ["Context", "Background", "Motivation"], Goals: ["Objectives"], "Non-goals": ["Out of scope"], "Design questions": ["Open questions", "Questions"] }, inspectRequirements(version >= 2));
+
 /** Prism's own formats, in the order every result lists them, each the newest version of its type. */
 export const ARTIFACT_FORMATS = Object.freeze([
-  format("requirements", 1, "skills/write-requirements/references/requirement-format.md",
-    ["requirements.text", "requirements.title", "requirements.header", "requirements.status", "requirements.dates", "requirements.sections", "requirements.numbering", "requirements.fields", "requirements.pattern", "requirements.disposition", "requirements.links"],
-    { Status: "Draft", Approved: "n/a", "Design questions": "n/a", Disposition: "Active", Related: "n/a" },
-    { Problem: ["Context", "Background", "Motivation"], Goals: ["Objectives"], "Non-goals": ["Out of scope"], "Design questions": ["Open questions", "Questions"] }, inspectRequirements),
+  requirementFormat(2),
   format("adr", 1, "skills/write-adr/references/adr-format.md",
     ["adr.text", "adr.title", "adr.header", "adr.status", "adr.dates", "adr.sections", "adr.requirements"],
     { Status: "Proposed", Requirements: "n/a", "Decision Log": "n/a" },
@@ -520,6 +534,9 @@ export const ARTIFACT_FORMATS = Object.freeze([
 
 export const ARTIFACT_TYPES = Object.freeze(ARTIFACT_FORMATS.map((entry) => entry.type));
 
+/** Every version of Prism's own formats, the earlier ones a file may still conform to before the newest. */
+export const FORMAT_VERSIONS = Object.freeze([requirementFormat(1), ...ARTIFACT_FORMATS]);
+
 /** The formats of one type, oldest first, from the given list. */
 const formatsOf = (type: any, formats: any) => formats.filter((entry: any) => entry.type === type).sort((a: any, b: any) => a.version - b.version);
 
@@ -527,7 +544,7 @@ const formatsOf = (type: any, formats: any) => formats.filter((entry: any) => en
  * Checks an artifact against the newest format of its type and, when it breaks that one, finds the newest earlier version it conforms to.
  * Returns { conforms, findings, unknowns, earlierFormat, version }.
  */
-export function inspectArtifact(type: any, input: any, { formats = ARTIFACT_FORMATS, context }: any = {}) {
+export function inspectArtifact(type: any, input: any, { formats = FORMAT_VERSIONS, context }: any = {}) {
   const versions = formatsOf(type, formats);
   if (!versions.length) throw new Error(`No format of the type ${type}.`);
   const current = versions.at(-1);
@@ -539,7 +556,7 @@ export function inspectArtifact(type: any, input: any, { formats = ARTIFACT_FORM
 }
 
 /** Checks an artifact's text against its format: { conforms, findings, earlierFormat }. */
-export function checkArtifactText(type: any, text: any, { formats = ARTIFACT_FORMATS }: any = {}) {
+export function checkArtifactText(type: any, text: any, { formats = FORMAT_VERSIONS }: any = {}) {
   const { conforms, findings, earlierFormat } = inspectArtifact(type, text, { formats });
   return { conforms, findings, earlierFormat };
 }

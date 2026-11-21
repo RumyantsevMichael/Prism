@@ -4,7 +4,7 @@ import { lstat, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { renameWhenFree, writeAtomically } from "./artifact-store.mjs";
-import { ARTIFACT_FORMATS, ARTIFACT_TYPES, corresponds, inspectArtifact } from "./artifact-formats.mjs";
+import { ARTIFACT_FORMATS, ARTIFACT_TYPES, PATTERNS, corresponds, inspectArtifact } from "./artifact-formats.mjs";
 import { artifactLocations, artifactTypeOf } from "./artifact-check.mjs";
 import { artifactAddress } from "./artifact-paths.mjs";
 import { newStatus } from "./artifact-status.mjs";
@@ -269,7 +269,7 @@ function sourceStatements(type: any, text: any) {
   });
 }
 
-// Whether a content statement needs no source: the format's structure, a default, unknown, a link, a glossary source, or a date that the source or its Git history gives.
+// Whether a content statement needs no source: the format's structure, a default, unknown, a link, a glossary source, a requirement pattern, or a date that the source or its Git history gives.
 // A Status value needs no source when it is the type's new status or the status a source or target records or states; a date when the source's Git history gives it or a source or target states it in the same field.
 function needsNoSource(type: any, statement: any, { dates, known }: any) {
   const value = normalizeStatement(statement.text);
@@ -280,6 +280,8 @@ function needsNoSource(type: any, statement: any, { dates, known }: any) {
   if (statement.field === "Status") return value === newStatus(STORE_KINDS[type]) || known.some((artifact: any) => artifact.status === value || headerValue(artifact.text, "Status") === value);
   if (statement.field && DATE_FIELDS.has(statement.field)) return DATE.test(value) && (dates.has(value) || known.some((artifact: any) => headerValue(artifact.text, statement.field) === value));
   if (statement.field && DECISION_FIELDS.has(statement.field)) return false;
+  // A requirement split into a new numbered section takes the Pattern of its own sentence, one of the format's patterns.
+  if (type === "requirements" && statement.field === "Pattern" && PATTERNS.includes(value)) return true;
   if (statement.field && LINK_LIST.test(raw)) return true;
   if (type === "glossary" && statement.field === "Source" && /^(?:migration(?:\s+migration-[0-9a-f]+)?|\[[^\]]*\]\([^)\s]+\))(\s*,\s*(?:migration(?:\s+migration-[0-9a-f]+)?|\[[^\]]*\]\([^)\s]+\)))*$/.test(raw)) return true;
   return false;
@@ -422,6 +424,17 @@ function misplacedStatements(type: any, sourceText: any, content: any, statement
   const contentStatements = statementsOf(type, content).map((statement) => ({ ...statement, normalized: normalizeStatement(statement.text) }));
   const headings = contentSections.slice(1).map((entry: any, index: any) => ({ ...entry, number: index + 1 })).filter((entry: any) => /^\s{0,3}#{2,3}\s/.test(entry.line));
   const misplaced = [];
+  // A requirement split out of a numbered section lands in a new numbered section, one whose number the source does not use, under that section's title.
+  const numbered = (heading: any) => {
+    const match = heading === null ? null : /^(\d+)\.\s+(\S.*?)\s*$/.exec(heading);
+    return match ? { number: match[1], title: match[2].replace(/\s+/g, " ").toLowerCase() } : null;
+  };
+  const sourceNumbers = new Set(sourceSections.slice(1).map((entry: any) => numbered(entry.h2)?.number).filter(Boolean));
+  const splitInto = (from: any, to: any) => {
+    if (type !== "requirements") return false;
+    const [left, right] = [numbered(from), numbered(to)];
+    return left !== null && right !== null && !sourceNumbers.has(right.number) && left.title === right.title;
+  };
   for (const statement of statements) {
     const value = normalizeStatement(statement.text);
     let places = contentStatements.filter((item) => item.normalized === value).map((item) => contentSections[item.line]?.h2 ?? null);
@@ -431,7 +444,7 @@ function misplacedStatements(type: any, sourceText: any, content: any, statement
     const held = sourceSections[statement.line] ?? { h2: null, h3: null, line: "" };
     const from = [held.h2, held.h3, ...(type === "glossary" ? [leadingName(held.line)] : [])].filter((entry, index) => index === 0 || entry);
     const wanted = named.get(value);
-    const fits = (to: any) => wanted !== undefined ? to !== null && normalizeStatement(to).toLowerCase() === normalizeStatement(wanted).toLowerCase() : from.some((section) => corresponds(type, section, to));
+    const fits = (to: any) => wanted !== undefined ? to !== null && normalizeStatement(to).toLowerCase() === normalizeStatement(wanted).toLowerCase() : from.some((section) => corresponds(type, section, to)) || splitInto(held.h2, to);
     if (places.some(fits)) continue;
     misplaced.push({ text: statement.text, line: statement.line, from: held.h2, to: places[0] });
   }
