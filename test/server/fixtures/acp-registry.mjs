@@ -3,18 +3,45 @@
 // The review server reads this registry through PRISM_ACP_REGISTRY_URL, so no test reaches the public registry.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmodSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { crc32, deflateRawSync } from "node:zlib";
 
-/** This computer's registry platform key, such as linux-x86_64 or darwin-aarch64. */
+/** This computer's registry platform key, such as linux-x86_64, linux-x86_64-musl, or darwin-aarch64. */
 export function platformKey() {
   const system = { darwin: "darwin", linux: "linux", win32: "windows" }[process.platform];
   const arch = { x64: "x86_64", arm64: "aarch64" }[process.arch];
-  return `${system}-${arch}`;
+  const musl = system === "linux" && !process.report?.getReport?.()?.header?.glibcVersionRuntime;
+  return `${system}-${arch}${musl ? "-musl" : ""}`;
+}
+
+// The package programs whose presence decides whether an npx or uvx agent can be installed, and the hosts Prism runs itself.
+const WITHHELD = new Set(["npm", "npx", "uv", "uvx", "claude", "codex"]);
+
+/**
+ * Gives the fixture a PATH of its stub folder and one folder of links to every other program of its PATH, without npm, npx, uv,
+ * uvx, claude, and codex, so that what this computer has installed decides nothing; packageTools adds stub npm and uv to the stub folder.
+ */
+async function withoutPackageTools(fixture) {
+  const folder = path.join(path.dirname(fixture.log), "system-tools");
+  await mkdir(folder, { recursive: true });
+  const linked = new Set();
+  for (const source of (fixture.env.PATH ?? "").split(path.delimiter).filter((entry) => entry && entry !== fixture.bin)) {
+    let names = [];
+    try { names = readdirSync(source); } catch { continue; }
+    for (const name of names) {
+      if (linked.has(name) || WITHHELD.has(name)) continue;
+      const target = path.join(source, name);
+      try { if (!statSync(target).isFile()) continue; } catch { continue; }
+      linked.add(name);
+      await symlink(target, path.join(folder, name));
+    }
+  }
+  fixture.env.PATH = [fixture.bin, folder].join(path.delimiter);
+  process.env.PATH = fixture.env.PATH;
 }
 export const OTHER_PLATFORM = platformKey().startsWith("linux") ? "windows-x86_64" : "linux-x86_64";
 
@@ -69,12 +96,14 @@ export function zip(files) {
 export const agentProgram = (fixture) => ({ text: `#!/bin/sh\nexec ${JSON.stringify(fixture.agent)} "$@"\n`, mode: 0o755 });
 
 /**
- * Starts the registry server for a fixture of fixtures/acp-agents.mjs and points the review server at it.
+ * Starts the registry server for a fixture of fixtures/acp-agents.mjs, points the review server at it, and gives the fixture the PATH
+ * of withoutPackageTools.
  * setAgents(list) replaces the index's agents; addArchive(name, files, { kind }) serves an archive and answers its url and sha256;
  * requests() lists the paths that were fetched; down(status) makes every request answer that status, or close the connection for 0;
  * hold() keeps every archive response waiting until release().
  */
 export async function registryFixture(context, fixture) {
+  await withoutPackageTools(fixture);
   const archives = new Map();
   const fetched = [];
   let index = { version: "1.0.0", agents: [], extensions: [] };
