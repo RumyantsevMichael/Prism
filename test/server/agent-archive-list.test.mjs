@@ -16,7 +16,7 @@ test.after(() => rm(privateData, { recursive: true, force: true }));
 
 const FIELDS = ["id", "kind", "group", "name", "harness", "model", "session", "initiative", "slice", "activity", "state", "reason", "expiresAt", "launch", "action"];
 const LAUNCH_FIELDS = ["id", "launchedAt", "runningMs", "runs", "endedAt", "exit", "resumeCommand", "waitingGate"];
-const VIEW_FIELDS = ["answerWaits", "checkout", "endedAt", "exit", "holder", "host", "hostLabel", "id", "initiative", "launchedAt", "model", "reason", "resumeCommand", "runningMs", "runs", "state", "waitingGate"];
+const VIEW_FIELDS = ["answerWaits", "checkout", "endedAt", "exit", "holder", "host", "hostLabel", "id", "initiative", "launchedAt", "model", "questionGate", "reason", "resumeCommand", "runningMs", "runs", "state", "waitingGate"];
 
 test("§8 a session that runs again leaves the archive, its mark is removed, and it stays unarchived once it ends again", async (t) => {
   const s = await archiveProject(t);

@@ -571,11 +571,20 @@ A launched session's state is one of these:
 | Running | The host is working. |
 | Waiting for you | A question or a permission request of the session waits for your answer. |
 | Blocked | The host refused an action that the session needed, with a reason such as `Claude Code refused Bash: <the host's reason>`. |
-| Finished | The last run ended by itself. |
+| Ended without a result | The last run ended normally, but it left no question, no pause, and no ship, so Prism asks you what it must do next. |
+| Finished | The last run ended by itself with a result: an open question of the initiative, a pause that the run recorded, or a ship of the initiative. |
 | Failed | The host reported an error, its process ended with an exit code other than 0 or by a signal, or Prism stopped supervising it, each with its reason. |
 | Stopped | You stopped the last run. |
 
 A session whose supervisor ended without recording the run's end shows `Prism stopped supervising this session; its host process may still run.`.
+
+When a run on any host ends normally without a result, Prism adds one question to the initiative on Attention.
+The question is `The launched <host> run of <initiative> ended without a result. What should it do next?`, such as `The launched Gemini CLI run of reports ended without a result. What should it do next?`.
+Its context shows the run's last message, or says `The run left no message.`.
+Prism replaces the host session id in the last message with `<host session id>` and keeps at most 6000 characters of it.
+When the same session ends without a result again, the new question replaces the earlier unanswered one.
+This question never makes the session wait for you.
+When Prism cannot record the question, the session still shows as ended without a result, with the reason `Prism could not record a question for this run: <message>`.
 
 ### Archive a session
 

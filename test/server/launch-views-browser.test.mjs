@@ -94,7 +94,7 @@ test("clause 59: a declined dialog keeps the item on Attention and says the appr
 
 test("clause 60: the Agents page shows an ACP run's tokens, context, and cost, and what the agent did not report", { skip: skipHere, timeout: 120000 }, async (t) => {
   const s = await setup(t, { usage: { inputTokens: 10, outputTokens: 2, totalTokens: 1200 }, usageUpdate: { used: 500, size: 1000, cost: { amount: 0.25, currency: "USD" } } });
-  await settled(async () => (await launches(s)).find((entry) => entry.id === s.id), (entry) => entry?.state === "finished");
+  await settled(async () => (await launches(s)).find((entry) => entry.id === s.id), (entry) => entry?.state === "ended-without-result");
   const page = await s.open("agents");
   const row = page.locator(`[data-agent="launch:${s.id}"]`);
   await row.waitFor();
@@ -107,7 +107,7 @@ test("clause 60: the Agents page shows an ACP run's tokens, context, and cost, a
 
 test("clause 60: usage an agent does not report reads Not reported by <label>", { skip: skipHere, timeout: 120000 }, async (t) => {
   const s = await setup(t, { usage: null, usageUpdate: null });
-  await settled(async () => (await launches(s)).find((entry) => entry.id === s.id), (entry) => entry?.state === "finished");
+  await settled(async () => (await launches(s)).find((entry) => entry.id === s.id), (entry) => entry?.state === "ended-without-result");
   const page = await s.open("agents");
   const row = page.locator(`[data-agent="launch:${s.id}"]`);
   await row.waitFor();

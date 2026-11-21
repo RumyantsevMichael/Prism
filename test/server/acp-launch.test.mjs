@@ -163,7 +163,7 @@ test("clause 25: an agent without resume falls back to session/load, and one wit
 test("clause 26: a file system request from the agent is refused, and the run still ends", { skip: posixOnly }, async (t) => {
   const s = await gemini(t, { plan: { askFs: true } });
   const result = await ended(s, await launch(s));
-  assert.equal(result.state, "finished");
+  assert.equal(result.state, "ended-without-result");
   const answer = launchedLog(s).find((entry) => entry.kind === "input" && entry.message.id === 4000 && !entry.message.method);
   assert.deepEqual(answer.message.error, { code: -32601, message: "Prism answers no host requests." });
   assert.deepEqual(sent(s, "initialize")[0].params.clientCapabilities, {});

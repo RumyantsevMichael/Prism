@@ -82,7 +82,7 @@ test("a Claude Code launch sends the orchestrate prompt as a stream-json message
   assert.equal(run.env.PRISM_LAUNCH, launch.id);
   assert.equal(run.env.PRISM_STUB_MARKER, "kept");
   for (const name of STRIPPED) assert.equal(run.env[name], null, `${name} must not reach the launched host`);
-  const finished = await settledIn(fixture, launch.id, ["finished"]);
+  const finished = await settledIn(fixture, launch.id, ["ended-without-result"]);
   assert.deepEqual(fixture.inputs(run.pid), [prompt(INITIATIVE)], "the prompt is the only message, and no interrupt was sent");
   assert.deepEqual(fixture.closed(run.pid), { results: 1, interrupted: false }, "the input closed once the turn ended");
   assert.deepEqual(finished.resumeCommand, { command: `claude --resume ${run.argv[3]}`, cwd: fixture.root });
@@ -95,7 +95,7 @@ test("a Codex launch runs app-server, starts a thread with the automatic review 
   const fixture = await launchFixture(t, { plans: { codex: [{ hold: 200 }] } });
   const { startLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "codex", env: fixture.env });
-  const finished = await settledIn(fixture, launch.id, ["finished"]);
+  const finished = await settledIn(fixture, launch.id, ["ended-without-result"]);
   const [run] = fixture.runs("codex");
   assert.deepEqual(run.argv, ["app-server"]);
   const messages = fixture.inputs(run.pid);
@@ -196,7 +196,7 @@ test("a Claude Code run keeps its input open while a background task it reported
   await pause(900, "the input must stay open, and a change that must not happen leaves nothing to wait for");
   assert.equal(fixture.closed(run.pid), null, "the input stays open while the background task runs");
   assert.equal((await viewOf(fixture, launch.id)).state, "running");
-  const finished = await settledIn(fixture, launch.id, ["finished"]);
+  const finished = await settledIn(fixture, launch.id, ["ended-without-result"]);
   assert.deepEqual(fixture.closed(run.pid), { results: 2, interrupted: false });
   assert.deepEqual(finished.exit, { code: 0, signal: null });
 });
@@ -205,7 +205,7 @@ test("a Codex approval that nobody answers before the turn ends is declined, so 
   const fixture = await launchFixture(t, { plans: { codex: [{ hold: 400, askApproval: true }] } });
   const { startLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "codex", env: fixture.env });
-  await settledIn(fixture, launch.id, ["finished"]);
+  await settledIn(fixture, launch.id, ["ended-without-result"]);
   const [run] = fixture.runs("codex");
   const answers = fixture.inputs(run.pid).filter((message) => message.id === "approval-1");
   assert.deepEqual(answers, [{ jsonrpc: "2.0", id: "approval-1", result: { decision: "decline" } }]);
@@ -239,7 +239,7 @@ process.stdout.write(launch.id); process.exit(0);`;
   assert.match(id, LAUNCH_ID);
   const running = await viewOf(fixture, id);
   assert.equal(running.state, "running");
-  const finished = await settledIn(fixture, id, ["finished"]);
+  const finished = await settledIn(fixture, id, ["ended-without-result"]);
   assert.deepEqual(finished.exit, { code: 0, signal: null });
 });
 
@@ -247,21 +247,21 @@ test("a resume runs the same host session again with the resume form of the same
   const fixture = await launchFixture(t, { plans: { claude: [{ hold: 300 }, { hold: 300 }], codex: [{ hold: 100 }, { hold: 100 }] } });
   const { resumeLaunch, startLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "claude-code", env: fixture.env });
-  const first = await settledIn(fixture, launch.id, ["finished"]);
+  const first = await settledIn(fixture, launch.id, ["ended-without-result"]);
   const resumed = await resumeLaunch({ id: launch.id, env: fixture.env, cause: "person" });
   assert.equal(resumed.state, "running");
   assert.equal(resumed.runs, 2);
   assert.equal(resumed.launchedAt, first.launchedAt);
-  const again = await settledIn(fixture, launch.id, ["finished"]);
+  const again = await settledIn(fixture, launch.id, ["ended-without-result"]);
   assert.ok(again.runningMs >= first.runningMs + 250);
   const [original, second] = fixture.runs("claude");
   assert.deepEqual(second.argv, claudeArgs("--resume", original.argv[3]));
   assert.deepEqual(fixture.inputs(second.pid), [prompt(INITIATIVE)]);
   assert.equal(second.env.PRISM_LAUNCH, launch.id);
   const codex = await startLaunch({ projectRoot: fixture.root, initiative: "search", host: "codex", env: fixture.env });
-  await settledIn(fixture, codex.launch.id, ["finished"]);
+  await settledIn(fixture, codex.launch.id, ["ended-without-result"]);
   await resumeLaunch({ id: codex.launch.id, env: fixture.env, cause: "person" });
-  await settledIn(fixture, codex.launch.id, ["finished"]);
+  await settledIn(fixture, codex.launch.id, ["ended-without-result"]);
   const resumedCodex = fixture.runs("codex")[1];
   assert.deepEqual(resumedCodex.argv, ["app-server"]);
   const messages = fixture.inputs(resumedCodex.pid);
@@ -289,7 +289,7 @@ test("the host session id stays in the private launch folder and never in the pr
   const fixture = await launchFixture(t, { plans: { claude: [{ hold: 100 }] } });
   const { startLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "claude-code", env: fixture.env });
-  await settledIn(fixture, launch.id, ["finished"]);
+  await settledIn(fixture, launch.id, ["ended-without-result"]);
   const sessionId = fixture.runs("claude")[0].argv[3];
   const folder = path.join(fixture.app, "launches", launch.id);
   assert.equal((await stat(folder)).mode & 0o077, 0, "the launch folder is private to the user");
@@ -306,7 +306,7 @@ test("only launches whose checkout shares the page's record store are listed, an
   const fixture = await launchFixture(t, { plans: { claude: [{ hold: 50 }] } });
   const { listLaunches, startLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "claude-code", env: fixture.env });
-  await settledIn(fixture, launch.id, ["finished"]);
+  await settledIn(fixture, launch.id, ["ended-without-result"]);
   const { root: other } = await actionProject(t, { gates: false });
   assert.deepEqual((await listLaunches({ projectRoot: other, env: fixture.env })).launches, []);
   assert.equal((await listLaunches({ projectRoot: fixture.root, env: fixture.env, now: Date.now() + 13 * 86400000 })).launches.length, 1);
