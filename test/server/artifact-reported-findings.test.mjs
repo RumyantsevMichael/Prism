@@ -46,7 +46,7 @@ test("clause 4: each reference lists its unknown and reported rules", async () =
 
 const DECLARED = {
   requirements: ["- `## Problem`: `## Context`, `## Background`, `## Motivation`", "- `## Goals`: `## Objectives`", "- `## Non-goals`: `## Out of scope`", "- `## Design questions`: `## Open questions`, `## Questions`"],
-  adr: ["- `## Requirements`: `## Drivers`, `## Decision drivers`", "- `## Problem`: `## Context`, `## Background`", "- `## Decision`: `## Outcome`", "- `## Rationale`: `## Reasons`, `## Justification`", "- `## Alternatives`: `## Options considered`, `## Considered options`", "- `## Consequences`: `## Implications`", "- `## Decision Log`: `## History`, `## Status history`"],
+  adr: ["- `## Requirements`: `## Drivers`, `## Decision drivers`", "- `## Problem`: `## Context`, `## Background`, `## Problem Statement`, `## Goals`, `## Non-Goals`", "- `## Decision`: `## Outcome`", "- `## Rationale`: `## Reasons`, `## Justification`", "- `## Alternatives`: `## Options considered`, `## Considered options`", "- `## Consequences`: `## Implications`", "- `## Decision Log`: `## History`, `## Status history`, `## Decision Log — <date> <title>`"],
   glossary: ["- `## <term>`: `### <term>`, `<term>` as a table row's first cell, `<term>` as a list item's leading name"],
   feature: ["- n/a"]
 };

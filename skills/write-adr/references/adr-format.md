@@ -30,12 +30,12 @@ Any required field value or required section body may be the single word `unknow
 A format migration may move a statement from a source section to the target section that the line names, besides a section of the same heading.
 
 - `## Requirements`: `## Drivers`, `## Decision drivers`
-- `## Problem`: `## Context`, `## Background`
+- `## Problem`: `## Context`, `## Background`, `## Problem Statement`, `## Goals`, `## Non-Goals`
 - `## Decision`: `## Outcome`
 - `## Rationale`: `## Reasons`, `## Justification`
 - `## Alternatives`: `## Options considered`, `## Considered options`
 - `## Consequences`: `## Implications`
-- `## Decision Log`: `## History`, `## Status history`
+- `## Decision Log`: `## History`, `## Status history`, `## Decision Log — <date> <title>`
 
 ## Example
 

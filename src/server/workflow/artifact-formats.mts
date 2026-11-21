@@ -509,7 +509,7 @@ export const ARTIFACT_FORMATS = Object.freeze([
   format("adr", 1, "skills/write-adr/references/adr-format.md",
     ["adr.text", "adr.title", "adr.header", "adr.status", "adr.dates", "adr.sections", "adr.requirements"],
     { Status: "Proposed", Requirements: "n/a", "Decision Log": "n/a" },
-    { Requirements: ["Drivers", "Decision drivers"], Problem: ["Context", "Background"], Decision: ["Outcome"], Rationale: ["Reasons", "Justification"], Alternatives: ["Options considered", "Considered options"], Consequences: ["Implications"], "Decision Log": ["History", "Status history"] }, inspectAdr),
+    { Requirements: ["Drivers", "Decision drivers"], Problem: ["Context", "Background", "Problem Statement", "Goals", "Non-Goals"], Decision: ["Outcome"], Rationale: ["Reasons", "Justification"], Alternatives: ["Options considered", "Considered options"], Consequences: ["Implications"], "Decision Log": ["History", "Status history", "Decision Log — <date> <title>"] }, inspectAdr),
   format("glossary", 1, "skills/workflow/references/glossary-format.md",
     ["glossary.text", "glossary.title", "glossary.purpose", "glossary.identity", "glossary.definition", "glossary.fields", "glossary.source", "glossary.source-decided", "glossary.source-withdrawn"],
     { Title: "Glossary" }, {}, inspectGlossary),
@@ -546,6 +546,17 @@ export function checkArtifactText(type: any, text: any, { formats = ARTIFACT_FOR
 
 // A heading as corresponds compares it: case and runs of whitespace folded.
 const folded = (heading: any) => heading.trim().replace(/\s+/g, " ").toLowerCase();
+// A declared heading with a <date> placeholder, such as a dated Decision Log entry of the earlier ADR template:
+// its words, a space, one of -, –, or —, a space, a date YYYY-MM-DD, and optionally a title.
+const escaped = (text: any) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const datedHeading = (declared: any) => {
+  const match = /^(.+?) — <date>(?: <title>)?$/.exec(declared);
+  return match ? new RegExp(`^${escaped(folded(match[1]))} [-–—] \\d{4}-\\d{2}-\\d{2}(?: .*)?$`) : null;
+};
+const declares = (declared: any, from: any) => {
+  const dated = datedHeading(declared);
+  return dated ? dated.test(folded(from)) : folded(declared) === folded(from);
+};
 const sectionNumber = (heading: any) => /^(\d+)(?:\.(?:\s+\S.*)?)?$/.exec(heading.trim())?.[1] ?? null;
 
 /**
@@ -565,5 +576,5 @@ export function corresponds(type: any, from: any, to: any) {
     if (left !== null || right !== null) return left !== null && left === right;
   }
   const target = Object.keys(entry.corresponding).find((heading) => folded(heading) === folded(to));
-  return target !== undefined && entry.corresponding[target].some((heading: any) => folded(heading) === folded(from));
+  return target !== undefined && entry.corresponding[target].some((heading: any) => declares(heading, from));
 }
