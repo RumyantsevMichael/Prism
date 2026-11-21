@@ -263,15 +263,22 @@ const isPlainObject = (value: unknown): value is Record<string, any> => value !=
 
 const isSet = (value: unknown) => value !== undefined && value !== null;
 export const CODEX_UNDESCRIBED_CHANGE = "A file change that Codex did not describe";
+export const CODEX_UNNAMED_COMMAND = "A command that Codex did not name";
+export const CLAUDE_UNNAMED_TOOL = "A tool that Claude Code did not name";
+export const CLAUDE_UNNAMED_TOOL_REASON = "Claude Code did not say which tool this runs, so Prism can only refuse it.";
 export const codexUnavailable = {
   undescribed: "Codex did not say which files this change writes, so Prism can only refuse it.",
+  unnamed: "Codex did not say which command this runs, so Prism can only refuse it.",
   grantRoot: (root: string) => `Codex asks to allow writes under ${shownForm(root)} for the rest of the session, so Prism can only refuse it.`,
   permissions: "Codex asks for these permissions for the rest of its turn, so Prism can only refuse it."
 };
 
-// The action of a Codex command request: the command, then the folder, environment, kind, and network host that its accept covers.
+// The action of a Codex command request: the command, then the folder, environment, kind, and network host that its accept covers;
+// named is false when the request has no command that holds more than spaces.
 function codexCommandAction(params: Record<string, any>) {
-  const command = (Array.isArray(params.command) ? params.command.filter((part: unknown) => typeof part === "string").join(" ") : text(params.command)).trim() || "a command";
+  const given = Array.isArray(params.command) ? params.command.filter((part: unknown) => typeof part === "string").join(" ") : text(params.command);
+  const named = given.trim() !== "";
+  const command = named ? given : CODEX_UNNAMED_COMMAND;
   const network = isPlainObject(params.networkApprovalContext) ? { host: params.networkApprovalContext.host, protocol: params.networkApprovalContext.protocol } : params.networkApprovalContext;
   const context = {
     ...(isSet(params.cwd) ? { cwd: params.cwd } : {}),
@@ -279,14 +286,14 @@ function codexCommandAction(params: Record<string, any>) {
     ...(isSet(params.kind) && params.kind !== "command" ? { kind: params.kind } : {}),
     ...(isSet(network) ? { networkApprovalContext: network } : {})
   };
-  return Object.keys(context).length ? `${command} ${JSON.stringify(context)}` : command;
+  return { named, action: Object.keys(context).length ? `${command} ${JSON.stringify(context)}` : command };
 }
 
 /**
  * A Codex approval request as Prism asks the person: { ask, answer }, or null for any other request. `changes` is the changes list of
  * the latest item/started or item/fileChange/patchUpdated notification that named a file change request's item, or undefined when
- * none did. An approval answers accept for a command or a described file change without grantRoot; a file change with grantRoot or no
- * seen item, and a permissions request, can only be refused. A refusal answers decline, or for a permissions request no permission.
+ * none did. An approval answers accept for a named command or a described file change without grantRoot; a command without a
+ * command, a file change with grantRoot or no seen change, and a permissions request, can only be refused. A refusal answers decline, or for a permissions request no permission.
  */
 export function codexApproval(method: string, params: unknown, changes?: unknown) {
   if (!CODEX_APPROVALS.has(method)) return null;
@@ -301,13 +308,15 @@ export function codexApproval(method: string, params: unknown, changes?: unknown
     };
   }
   if (method === "item/fileChange/requestApproval") {
-    if (!Array.isArray(changes)) return { ask: { action: CODEX_UNDESCRIBED_CHANGE, reason, canAllow: false, unavailable: codexUnavailable.undescribed }, answer: decided };
+    if (!Array.isArray(changes) || changes.length === 0) return { ask: { action: CODEX_UNDESCRIBED_CHANGE, reason, canAllow: false, unavailable: codexUnavailable.undescribed }, answer: decided };
     const grantRoot = isSet(values.grantRoot) ? values.grantRoot : undefined;
     const action = `File change ${JSON.stringify({ changes, ...(grantRoot === undefined ? {} : { grantRoot }) })}`;
     if (grantRoot === undefined) return { ask: { action, reason, canAllow: true }, answer: decided };
     return { ask: { action, reason, canAllow: false, unavailable: codexUnavailable.grantRoot(typeof grantRoot === "string" ? grantRoot : JSON.stringify(grantRoot)) }, answer: decided };
   }
-  return { ask: { action: codexCommandAction(values), reason, canAllow: true }, answer: decided };
+  const command = codexCommandAction(values);
+  if (!command.named) return { ask: { action: command.action, reason, canAllow: false, unavailable: codexUnavailable.unnamed }, answer: decided };
+  return { ask: { action: command.action, reason, canAllow: true }, answer: decided };
 }
 
 /** The stream-json line that Claude Code's own Stop button sends: an interrupt control request with a request id that Prism chooses. */
@@ -453,6 +462,12 @@ export interface HostConversationOptions {
 
 export interface PermissionBroker { ask(ask: PermissionAsk, respond: (decision: PermissionDecision) => void): () => void }
 
+/**
+ * A request that waits for the person: respond answers the host once, and dismiss removes the request without answering it, for a
+ * request that the host reports settled by itself.
+ */
+export interface WaitingAsk { respond: (decision: PermissionDecision) => void; dismiss: () => void }
+
 /** The message with which the host's permission request is answered for a decision; approve answers only a single-use allow. */
 export type PermissionAnswer = (decision: PermissionDecision) => unknown;
 export const REFUSED_ON_ATTENTION = "The person refused this on Attention.";
@@ -480,7 +495,7 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
   // Each permission request waits until the person answers it, and one that still waits when the run's input closes, or when the
   // person stops the run, is refused first. A request is answered once; an approval of one that offers no single-use allow is refused.
   const asks = new Set<(decision: PermissionDecision) => void>();
-  const ask = ({ action, reason, canAllow, unavailable }: PermissionAsk, answer: PermissionAnswer) => {
+  const ask = ({ action, reason, canAllow, unavailable }: PermissionAsk, answer: PermissionAnswer): WaitingAsk | null => {
     if (!inputOpen) return null;
     let withdraw = () => {};
     let done = false;
@@ -491,6 +506,13 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
       withdraw();
       write(answer(decision === "approve" && canAllow ? "approve" : "refuse"));
     };
+    // The host settled the request itself, so it is removed and answered nothing, and a dialog that confirms later allows nothing.
+    const dismiss = () => {
+      if (done) return;
+      done = true;
+      asks.delete(respond);
+      withdraw();
+    };
     asks.add(respond);
     if (!permissions) {
       respond("refuse");
@@ -498,7 +520,7 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     }
     // The whole text goes to the broker, which keeps its shown form and marks one too long to confirm in full.
     withdraw = permissions.ask({ action: detached(redact(action)), reason: detached(redact(reason)), canAllow, ...(unavailable ? { unavailable: detached(redact(unavailable)) } : {}) }, respond);
-    return respond;
+    return { respond, dismiss };
   };
   const refuseAsks = () => {
     for (const respond of [...asks]) respond("refuse");
@@ -541,6 +563,8 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     let untrackedTasks = 0;
     const taskKey = digestKey;
     let interruptId: string | null = null;
+    // Each can_use_tool request that waits, by its request id, so that a control_cancel_request withdraws it.
+    const waitingTools = new Map<string, WaitingAsk>();
     return {
       start: () => write(claudePrompt(initiative)),
       interrupt() {
@@ -551,14 +575,26 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
       event(event: any) {
         if (event.type === "control_request" && event.request?.subtype === "can_use_tool" && typeof event.request_id === "string") {
           const request = event.request;
-          const tool = text(request.tool_name) || "a tool";
+          const named = text(request.tool_name).trim() !== "";
+          const tool = named ? text(request.tool_name) : CLAUDE_UNNAMED_TOOL;
           const input = request.input !== null && typeof request.input === "object" && !Array.isArray(request.input) ? request.input : null;
           const requestId = event.request_id;
-          // The action is the tool and the input that an approval allows, as compact JSON.
-          ask({ action: `${tool} ${JSON.stringify(request.input ?? null)}`, reason: text(request.decision_reason), canAllow: input !== null }, (decision) => ({
-            type: "control_response",
-            response: { subtype: "success", request_id: requestId, response: decision === "approve" ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: REFUSED_ON_ATTENTION } }
-          }));
+          // The action is the tool and the input that an approval allows, as compact JSON; a request that names no tool can only be refused.
+          const waiting = ask({ action: `${tool} ${JSON.stringify(request.input ?? null)}`, reason: text(request.decision_reason), canAllow: named && input !== null, ...(named ? {} : { unavailable: CLAUDE_UNNAMED_TOOL_REASON }) }, (decision) => {
+            waitingTools.delete(requestId);
+            return {
+              type: "control_response",
+              response: { subtype: "success", request_id: requestId, response: decision === "approve" ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: REFUSED_ON_ATTENTION } }
+            };
+          });
+          if (waiting) waitingTools.set(requestId, waiting);
+          return;
+        }
+        if (event.type === "control_cancel_request" && typeof event.request_id === "string") {
+          // Claude Code settled the request itself, so it is withdrawn and answered nothing.
+          const waiting = waitingTools.get(event.request_id);
+          waitingTools.delete(event.request_id);
+          waiting?.dismiss();
           return;
         }
         if (event.type === "control_response") {
@@ -614,12 +650,16 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     // The changes list of each file change item that Codex described, by item digest, at most KEPT_FILE_CHANGES of them, and the
     // refusal of each file change request that waits, by its item's digest.
     const fileChanges = new Map<string, unknown[]>();
-    const waitingChanges = new Map<string, (decision: PermissionDecision) => void>();
+    const waitingChanges = new Map<string, WaitingAsk>();
+    // Each approval request that waits, by its JSON-RPC id, so that serverRequest/resolved withdraws it.
+    const waitingApprovals = new Map<string, WaitingAsk>();
+    const requestKey = (id: unknown) => `${typeof id}:${String(id)}`;
+    // A notification that lists no change list describes no change, so a request for its item can only be refused.
     const described = (itemId: unknown, changes: unknown) => {
-      if (typeof itemId !== "string" || !itemId || !Array.isArray(changes)) return;
+      if (typeof itemId !== "string" || !itemId) return;
       const key = digestKey(itemId);
       fileChanges.delete(key);
-      fileChanges.set(key, changes);
+      fileChanges.set(key, Array.isArray(changes) ? changes : []);
       if (fileChanges.size > KEPT_FILE_CHANGES) fileChanges.delete(fileChanges.keys().next().value!);
     };
     let nextId = 1;
@@ -694,14 +734,27 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
           const approval = codexApproval(message.method, message.params, itemId === null ? undefined : fileChanges.get(digestKey(itemId)));
           if (approval) {
             const { id } = message;
-            let respond: ((decision: PermissionDecision) => void) | null = null;
+            let waiting: WaitingAsk | null = null;
             let answered = false;
-            respond = ask(approval.ask, (decision) => {
+            const forget = () => {
+              if (waiting === null) return;
+              if (itemId !== null && waitingChanges.get(digestKey(itemId)) === waiting) waitingChanges.delete(digestKey(itemId));
+              if (waitingApprovals.get(requestKey(id)) === waiting) waitingApprovals.delete(requestKey(id));
+            };
+            waiting = ask(approval.ask, (decision) => {
               answered = true;
-              if (itemId !== null && respond !== null && waitingChanges.get(digestKey(itemId)) === respond) waitingChanges.delete(digestKey(itemId));
+              forget();
               return { jsonrpc: "2.0", id, result: approval.answer(decision) };
             });
-            if (itemId !== null && respond !== null && !answered) waitingChanges.set(digestKey(itemId), respond);
+            if (waiting !== null && !answered) {
+              if (itemId !== null) waitingChanges.set(digestKey(itemId), waiting);
+              waitingApprovals.set(requestKey(id), waiting);
+              const { dismiss } = waiting;
+              waiting.dismiss = () => {
+                forget();
+                dismiss();
+              };
+            }
             return;
           }
           write({ jsonrpc: "2.0", id: message.id, error: { ...HOST_REQUEST_REFUSAL } });
@@ -732,7 +785,12 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
         if (message.method === "item/fileChange/patchUpdated") {
           described(params.itemId, params.changes);
           // A changed patch changes what an allow of its waiting request would cover, so that request is declined and withdrawn.
-          if (typeof params.itemId === "string" && params.itemId) waitingChanges.get(digestKey(params.itemId))?.("refuse");
+          if (typeof params.itemId === "string" && params.itemId) waitingChanges.get(digestKey(params.itemId))?.respond("refuse");
+          return;
+        }
+        if (message.method === "serverRequest/resolved" && (typeof params.requestId === "string" || typeof params.requestId === "number")) {
+          // Codex settled the request itself, so it is withdrawn and answered nothing.
+          waitingApprovals.get(requestKey(params.requestId))?.dismiss();
           return;
         }
         if (message.method === "item/completed" && params.item?.status === "declined") {

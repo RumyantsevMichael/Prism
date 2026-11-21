@@ -365,7 +365,7 @@ export interface AcpConversationOptions {
   named: (model: unknown) => void;
   onSessionId: (id: string) => void;
   /** Keeps a permission request waiting for the person and answers it once with the message for the decision. */
-  ask: (ask: PermissionAsk, answer: (decision: PermissionDecision) => unknown) => void;
+  ask: (ask: PermissionAsk, answer: (decision: PermissionDecision) => unknown) => { dismiss: () => void } | null;
 }
 
 /** What the earlier tool_call and tool_call_update session updates said of one tool call: the latest title, kind, and rawInput each set. */
@@ -388,8 +388,14 @@ export function acpPermission(label: string, params: unknown, known: KnownToolCa
   const allow = once("allow_once");
   const reject = once("reject_once");
   const kind = text(call.kind).trim() || "other";
+  const titled = text(call.title).trim() !== "";
+  const reason = `${label} asks before it runs a tool of kind ${kind}.`;
+  // A tool call with neither title nor raw input names nothing that an allow would cover, so it can only be refused.
+  const ask: PermissionAsk = !titled && !isSet(call.rawInput)
+    ? { action: `A tool of kind ${kind} that ${label} did not describe`, reason, canAllow: false, unavailable: `${label} did not say what this tool call does, so Prism can only refuse it.` }
+    : { action: `${titled ? text(call.title) : `a tool of kind ${kind}`}${isSet(call.rawInput) ? ` ${JSON.stringify(call.rawInput)}` : ""}`, reason, canAllow: allow !== undefined };
   return {
-    ask: { action: `${text(call.title).trim() ? text(call.title) : `a tool of kind ${kind}`}${isSet(call.rawInput) ? ` ${JSON.stringify(call.rawInput)}` : ""}`, reason: `${label} asks before it runs a tool of kind ${kind}.`, canAllow: allow !== undefined },
+    ask,
     answer: (decision: PermissionDecision) => {
       const optionId = decision === "approve" ? allow : reject;
       return { outcome: optionId === undefined ? { outcome: "cancelled" } : { outcome: "selected", optionId } };
@@ -408,6 +414,9 @@ export function acpConversation(options: AcpConversationOptions) {
   const { label, initiative, checkout, hostSessionId, resume, coordinator, env, launch, facts, write, close, cut } = options;
   const pending = new Map<number, string>();
   const toolCalls = new Map<string, KnownToolCall>();
+  // Each permission request that waits, by its JSON-RPC id, so that $/cancel_request withdraws it.
+  const waitingPermissions = new Map<string, { dismiss: () => void }>();
+  const permissionKey = (id: unknown) => `${typeof id}:${String(id)}`;
   let nextId = 1;
   let sessionId: string | null = null;
   let configOptions: unknown[] = [];
@@ -574,7 +583,14 @@ export function acpConversation(options: AcpConversationOptions) {
           const { id } = message;
           const callId = message.params?.toolCall?.toolCallId;
           const permission = acpPermission(label, message.params, typeof callId === "string" ? toolCalls.get(callId) : undefined);
-          options.ask(permission.ask, (decision) => ({ jsonrpc: "2.0", id, result: permission.answer(decision) }));
+          const key = permissionKey(id);
+          let answered = false;
+          const waiting = options.ask(permission.ask, (decision) => {
+            answered = true;
+            waitingPermissions.delete(key);
+            return { jsonrpc: "2.0", id, result: permission.answer(decision) };
+          });
+          if (waiting && !answered) waitingPermissions.set(key, waiting);
           return;
         }
         write({ jsonrpc: "2.0", id: message.id, error: { ...HOST_REQUEST_REFUSAL } });
@@ -596,6 +612,16 @@ export function acpConversation(options: AcpConversationOptions) {
           return;
         }
         answered(method, message.result);
+        return;
+      }
+      if (message.method === "$/cancel_request") {
+        // The agent settled its permission request itself, so it is withdrawn and answered nothing.
+        const requestId = message.params?.requestId;
+        if (typeof requestId !== "string" && typeof requestId !== "number") return;
+        const key = permissionKey(requestId);
+        const waiting = waitingPermissions.get(key);
+        waitingPermissions.delete(key);
+        waiting?.dismiss();
         return;
       }
       if (message.method !== "session/update") return;
