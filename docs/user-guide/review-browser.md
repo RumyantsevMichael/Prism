@@ -189,7 +189,7 @@ See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-
 
 Every change that the review page makes is an action: answering a question, changing an initiative setting, commenting on a file in the record store, rebuilding an index, or launching, stopping, or resuming a launched session.
 The page sends each action with the version of the record it showed you, so when an agent or another tab changed that record in the meantime, Prism refuses your action and changes nothing.
-Apart from a rebuild, which starts Prism's own indexer, and the launched-session actions of [Launched sessions](#launched-sessions) on [the Agents page](#the-agents-page), an action changes only Prism's records, and it never runs a command, changes a project file, or writes to Git.
+Apart from a rebuild, which starts Prism's own indexer, the launched-session actions of [Launched sessions](#launched-sessions) on [the Agents page](#the-agents-page), and the agent installs of [Install, update, or remove an agent](#install-update-or-remove-an-agent), which run `npm` or `uv` in Prism's own folder, an action changes only Prism's records, and it never runs a command, changes a project file, or writes to Git.
 Answering the approval of a requirement or ADR also needs a tab that can make changes, and Prism records nothing when the file changed since the approval was asked.
 When more than one pending approval holds the same id, as a copied status record or a scope move that stopped halfway can leave, Prism lists each one, names every file and scope that holds the id, and refuses an answer to any of them, so the agent asks again for the file it means.
 A comment needs a tab that can make changes and a Git `user.name` in the checkout, and Prism stores nothing when the file changed since the page showed it; the page then shows the current file and keeps your comment unsent.
@@ -344,6 +344,34 @@ Prism installs only what it can check and lock, so an agent cannot be installed,
 - `npm`, for an `npx` package, or `uv`, for a `uvx` package, is not on `PATH`.
 
 While the registry cannot be read, the list says why, keeps every installed and declared agent with the details its install recorded, and offers no install or update until the registry answers again.
+
+### Install, update, or remove an agent
+
+The actions `agents.install`, `agents.update`, and `agents.remove` on the target `agent:<id>` install, update, and remove a registry agent on this computer.
+Install and update read the registry again when you apply them, so they install the version the registry lists at that moment, not the one a page showed earlier.
+Before anything is downloaded, Prism asks you every time in a dialog of your operating system, outside the browser.
+The dialog names the agent, its authors, its exact version, its license, its source, and the download or package, and says that it runs with your permissions on this computer.
+Its default answer cancels, and a cancelled dialog installs nothing and refuses the action with `confirmation_declined`.
+
+Prism runs no install, build, or lifecycle script of an agent or its dependencies, and runs no code of a download before you confirm:
+
+| Kind | Before the dialog | After the dialog |
+| --- | --- | --- |
+| Build for this computer | Nothing | Downloads the archive, checks its SHA-256 against the registry's, and only then unpacks it with Prism's own code, refusing any entry with an absolute path, a `..` part, or a link that leads outside the version folder |
+| `npx` package | Resolves a lockfile with `npm install --package-lock-only --ignore-scripts` | Installs from that lockfile with `npm ci --ignore-scripts` and checks that the installed version is the registry's |
+| `uvx` package | Resolves hashed requirements with `uv pip compile --generate-hashes --no-build` | Creates a virtual environment and installs them with `uv pip sync --no-build --require-hashes`, so a requirement that needs a build fails |
+
+A download whose checksum or package version differs from the registry's installs nothing, leaves no file of it behind, and is refused with `install_mismatch`, naming the expected and the found value.
+An agent that needs its install scripts to work fails when it starts, with its own error.
+
+Each install lives in the review app folder's `agents/<id>/<version>/` beside its `install.json`, which records the registry entry, the command, arguments, and environment, and the install time.
+`agents/<id>/current.json` names the version that new sessions run.
+The downloads and the `npm` and `uv` caches live in `agents/.staging/`, which each install removes when it ends, and nothing outside `agents/` changes, neither your own `npm` or `uv` configuration nor any sign-in.
+
+An update makes the new version current only once it installed, so a failed update keeps the earlier version in use.
+The earlier version's folder is removed once no launched session runs on the agent.
+A removal deletes every folder of the agent, reads nothing from the registry, and is refused with `agent_running` while a launched session runs on it; afterwards the agent is no host.
+One install, update, or removal runs at a time on a computer, and another one meanwhile is refused with `install_running`.
 
 ## Launched sessions
 
