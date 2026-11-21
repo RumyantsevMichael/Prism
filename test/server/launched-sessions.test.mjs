@@ -314,5 +314,5 @@ test("only launches whose checkout shares the page's record store are listed, an
 
 test("the foreign session variables of the fixture are the ones the contract strips", () => {
   assert.deepEqual(STRIPPED, Object.keys(FOREIGN_SESSION));
-  assert.deepEqual(STRIPPED, ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PROJECT_DIR", "CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CODEX_THREAD_ID"]);
+  assert.deepEqual(STRIPPED, ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_REMOTE_SESSION_ID", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PROJECT_DIR", "CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CODEX_THREAD_ID"]);
 });

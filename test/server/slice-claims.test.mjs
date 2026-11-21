@@ -17,6 +17,8 @@ Object.assign(process.env, {
 delete process.env.CLAUDE_PLUGIN_DATA;
 // The process plays servers without a host session, whose holder is random, unless a test names one.
 delete process.env.CLAUDE_CODE_SESSION_ID;
+// Nor does it run in a host session a person opens from a link, so its claims record no session unless a test names one.
+delete process.env.CLAUDE_CODE_REMOTE_SESSION_ID;
 const { cancelRecordSyncs, configureRecordSync, readSyncStatus, syncRecordStore, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
 const { forgetMigrations } = await import("../../dist/server/workflow/record-store.mjs");
 const CLAIM_FILE = (slug) => `initiatives/reports/claims/${slug}.json`;

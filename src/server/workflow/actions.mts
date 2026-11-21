@@ -304,6 +304,9 @@ function runOptionsReader(projectRoot: any, env: any) {
 }
 
 const optionOf = (report: any, id: any) => report.options.find((item: any) => item.id === id) ?? null;
+// The reason a report refuses its model or effort choice: one the host does not offer, or one it could not check, which carries
+// the host's own reason, such as a failed read, so a host problem never reads as a missing model.
+const refusedChoice = (report: any) => ["model", "effort"].map((id) => optionOf(report, id)?.chosen).find((chosen: any) => chosen?.state === "not-offered" || chosen?.state === "unchecked")?.reason ?? null;
 const RUN_CHOICE_HINTS = {
   coordinator: "Only coordinates: it plans the order of work, starts the agents below and asks you at gates. It writes no code.",
   designImplementation: "Writes each slice's design, tests and code.",
@@ -324,7 +327,8 @@ function modelsFields(context: any) {
 // One host's provider and run choices, checked in field order against what the host reports, so the first failing field answers:
 // the host, the provider, then each choice as listed in choices, { name, purpose, choice }. Only what the host reports, or a model
 // name typed as such, is taken, and refuse(name, message) builds each refusal. The host is read only for a value it must offer, so
-// host defaults and a typed model without an effort start no host process.
+// host defaults and a typed model without an effort start no host process. A read that failed refuses the field that needed it
+// with the read's own reason, as Launch does, rather than as a choice the host does not offer.
 async function checkHostChoices(context: any, { host, provider, choices }: any, refuse: any) {
   const { label } = hostDefinition(host)!;
   const missing = hostOptions(context, () => "").find((item) => item.value === host)?.reason;
@@ -333,6 +337,7 @@ async function checkHostChoices(context: any, { host, provider, choices }: any, 
     if (!validProvider(provider)) throw refuse("provider", NAME_RULE_MESSAGES.provider);
     const base = await context.readOptions({ host, purpose: "coordinator" });
     if (base.state === "unavailable") throw refuse("host", base.reason);
+    if (base.state === "failed") throw refuse("provider", base.reason);
     if (!optionOf(base, "provider")?.values.some((item: any) => item.value === provider)) throw refuse("provider", choiceReasons.provider(label, provider));
   }
   for (const { name, purpose, choice } of choices) {
@@ -344,10 +349,9 @@ async function checkHostChoices(context: any, { host, provider, choices }: any, 
     if (choice.effort === null && (choice.model === null || choice.typed)) continue;
     const report = await context.readOptions({ host, purpose, provider, model: choice.model, effort: choice.effort, typed: choice.typed });
     if (report.state === "unavailable") throw refuse("host", report.reason);
-    for (const id of ["model", "effort"]) {
-      const chosen = optionOf(report, id)?.chosen;
-      if (chosen?.state === "not-offered") throw refuse(name, chosen.reason);
-    }
+    if (report.state === "failed") throw refuse(name, report.reason);
+    const refused = refusedChoice(report);
+    if (refused) throw refuse(name, refused);
   }
 }
 
@@ -585,10 +589,8 @@ async function checkedLaunchChoices(context: any, host: any) {
     if (choice.earlier !== undefined) throw notOffered(kindLabel, earlierReason(label, choice.earlier));
     if (choice.effort === null && (choice.model === null || choice.typed)) continue;
     const read = await report(kindLabel, { purpose, provider, model: choice.model, effort: choice.effort, typed: choice.typed });
-    for (const id of ["model", "effort"]) {
-      const chosen = optionOf(read, id)?.chosen;
-      if (chosen?.state === "not-offered") throw notOffered(kindLabel, chosen.reason);
-    }
+    const refused = refusedChoice(read);
+    if (refused) throw notOffered(kindLabel, refused);
   }
   const { model, effort, typed } = entry.coordinator;
   return { provider, model, effort, typed };

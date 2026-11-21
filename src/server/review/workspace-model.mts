@@ -20,6 +20,7 @@ import { parseStoreJson } from "../workflow/store-json.mjs";
 import { recordChanges } from "./record-changes.mjs";
 import { relativeLinkTargets } from "./artifact-links.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
+import { keptSession, sessionFields } from "../session/session-links.mjs";
 
 // A workspace read through its store's clone alone has no checkout and so no configuration of its own: its defaults are no setting to warn about.
 async function readWorkflowConfig(projectRoot: string) {
@@ -350,7 +351,7 @@ async function withExpiredClaims(projectRoot: string, id: string, read: any) {
     const { claim }: any = parseClaim(slice, bytes);
     if (!claim || isLive(claim as any, now) || !Object.hasOwn(slices, slice) || slices[slice].claim) continue;
     copy ??= { ...slices };
-    copy[slice] = { ...slices[slice], expiredClaim: { holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
+    copy[slice] = { ...slices[slice], expiredClaim: { holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), ...sessionFields(claim), activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
   }
   return copy ? { ...read, loaded: { ...read.loaded, record: { ...read.loaded.record, slices: copy } } } : read;
 }
@@ -361,7 +362,7 @@ function sliceClaims(slices: any, { holders = false }: any = {}) {
   for (const [slug, slice] of Object.entries<any>(slices ?? {})) {
     const claim = slice?.claim ?? slice?.expiredClaim;
     if (!claim || typeof claim.label !== "string") continue;
-    claims.push({ slug, sliceTitle: slice.title ?? slug, ...(holders ? { holder: typeof claim.holder === "string" ? claim.holder : null } : {}), label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
+    claims.push({ slug, sliceTitle: slice.title ?? slug, ...(holders ? { holder: typeof claim.holder === "string" ? claim.holder : null } : {}), label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, ...keptSession(claim), activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
   }
   return claims;
 }
@@ -391,7 +392,7 @@ async function claimedSlices(projectRoot: string, id: string) {
 function holdingClaim(slices: any, slug: string) {
   for (let owner = slug; owner !== null && owner !== undefined && slices && Object.hasOwn(slices, owner); owner = slices[owner].parent ?? null) {
     const claim = slices[owner].claim;
-    if (claim && typeof claim.label === "string" && (owner === slug || claim.activity === "design")) return { label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null };
+    if (claim && typeof claim.label === "string" && (owner === slug || claim.activity === "design")) return { label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, ...keptSession(claim), activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null };
   }
   return null;
 }

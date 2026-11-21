@@ -1471,7 +1471,7 @@ function diagramCard(diagram: any, { compact = false }: any = {}) {
       <prism-button variant="ghost" size="sm" data-action="source" aria-expanded="false">Show source</prism-button>
       <prism-button variant="ghost" size="sm" data-action="copy" tip="Copy PlantUML source">Copy</prism-button>
     </div>
-    <prism-canvas class="diagram-output"><prism-spinner label="Rendering diagram"></prism-spinner></prism-canvas>
+    <prism-canvas class="diagram-output" pannable><prism-spinner label="Rendering diagram"></prism-spinner></prism-canvas>
     <div class="diagram-source" hidden><prism-code language="plantuml"><pre><code>${highlight(diagram.source, "plantuml")}</code></pre></prism-code></div>`;
   return section;
 }
