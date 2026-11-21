@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { INITIATIVE, TARGET, acpFixture, actionOf, apply, get, installRecord, listing, setSettings } from "./fixtures/acp-agents.mjs";
 import { agentProgram, binaryAgent, packageTools, platformKey, registryFixture } from "./fixtures/acp-registry.mjs";
+import { escapingLinkArchive, serveBytes, uvTool } from "./fixtures/agent-install-tools.mjs";
 import { settled } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/acp-agents.md §5, §6, §7, §8, §10, §11, and §18.
@@ -16,6 +17,9 @@ const act = (s, action, id) => apply(s.base, { action, target: `agent:${id}`, in
 const current = (s, id) => JSON.parse(readFileSync(path.join(agentsFolder(s), id, "current.json"), "utf8")).version;
 const tree = (folder) => (existsSync(folder) ? readdirSync(folder, { recursive: true }).map(String).sort() : []);
 const hostValues = async (s) => actionOf(await listing(s.base, TARGET(INITIATIVE), s.headers), "initiative.host").fields[0].options.map((item) => item.value);
+
+// A uvx registry entry of fast-agent at a version.
+const fastAgent = (version) => ({ id: "fast-agent", name: "fast-agent", version, authors: ["F"], license: "Apache-2.0", repository: "https://example.invalid/fast", description: "Fast.", distribution: { uvx: { package: `fast-agent-acp==${version}`, args: ["-x"] } } });
 
 async function setup(t, { dialog = { code: 0 } } = {}) {
   const s = await acpFixture(t, { dialog });
@@ -109,8 +113,8 @@ test("clause 53: an npx install whose package version differs from the registry'
 
 test("clauses 51, 52: a uvx install compiles its locked requirements before the dialog and syncs them without builds", { skip: posixOnly }, async (t) => {
   const { s, registry } = await setup(t);
-  const ran = await packageTools(s);
-  registry.setAgents([{ id: "fast-agent", name: "fast-agent", version: "0.10.1", authors: ["F"], license: "Apache-2.0", repository: "https://example.invalid/fast", description: "Fast.", distribution: { uvx: { package: "fast-agent-acp==0.10.1", args: ["-x"] } } }]);
+  const ran = await uvTool(s);
+  registry.setAgents([fastAgent("0.10.1")]);
   await s.setDialog({ code: 1 });
   await act(s, "agents.install", "fast-agent");
   const before = ran().filter((entry) => entry.tool === "uv");
@@ -121,6 +125,73 @@ test("clauses 51, 52: a uvx install compiles its locked requirements before the 
   const sync = ran().filter((entry) => entry.tool === "uv" && entry.argv.includes("sync"));
   assert.equal(sync.length, 1);
   assert.ok(sync[0].argv.includes("--no-build"));
+  const record = JSON.parse(readFileSync(path.join(agentsFolder(s), "fast-agent", "0.10.1", "install.json"), "utf8"));
+  assert.equal(record.command, path.join(agentsFolder(s), "fast-agent", "0.10.1", "venv", "bin", "fast-agent-acp"), "the agent runs the program that its package laid out in the virtual environment");
+  assert.ok(existsSync(record.command));
+});
+
+
+test("clauses 51, 53: a uvx install whose locked requirements do not pin the registry's package and version installs nothing", { skip: posixOnly }, async (t) => {
+  const { s, registry } = await setup(t);
+  await uvTool(s, { lock: "fast-agent-acp==0.9.0" });
+  registry.setAgents([fastAgent("0.10.1")]);
+  const refused = await act(s, "agents.install", "fast-agent");
+  assert.equal(refused.json.code, "install_mismatch", refused.text);
+  assert.ok(refused.json.message.includes("0.10.1") && refused.json.message.includes("0.9.0"), refused.json.message);
+  assert.equal(existsSync(path.join(agentsFolder(s), "fast-agent", "current.json")), false);
+  assert.ok(!(await hostValues(s)).includes("acp-fast-agent"));
+});
+
+test("clauses 51, 55: a uvx update whose virtual environment holds no program for its package keeps the earlier version current", { skip: posixOnly }, async (t) => {
+  const { s, registry } = await setup(t);
+  await uvTool(s);
+  registry.setAgents([fastAgent("0.10.1")]);
+  assert.equal((await act(s, "agents.install", "fast-agent")).status, 200);
+  await uvTool(s, { programs: false });
+  registry.setAgents([fastAgent("0.10.2")]);
+  const refused = await act(s, "agents.update", "fast-agent");
+  assert.equal(refused.json.code, "install_failed", refused.text);
+  assert.match(refused.json.message, /fast-agent-acp/);
+  assert.equal(current(s, "fast-agent"), "0.10.1");
+  assert.ok(existsSync(path.join(agentsFolder(s), "fast-agent", "0.10.1", "venv", "bin", "fast-agent-acp")), "the earlier version stays in place");
+  assert.ok((await hostValues(s)).includes("acp-fast-agent"), "the agent is still offered as a host");
+});
+
+test("clauses 48, 54: every uv run of an install forbids uv to download a Python of its own", { skip: posixOnly }, async (t) => {
+  const { s, registry } = await setup(t);
+  const ran = await uvTool(s);
+  registry.setAgents([fastAgent("0.10.1")]);
+  assert.equal((await act(s, "agents.install", "fast-agent")).status, 200);
+  const runs = ran();
+  assert.ok(runs.length >= 3, "compile, venv, and sync ran");
+  assert.deepEqual(runs.map((entry) => [entry.argv.slice(0, 2).join(" "), entry.env.UV_PYTHON_DOWNLOADS]), runs.map((entry) => [entry.argv.slice(0, 2).join(" "), "never"]));
+});
+
+test("clauses 49, 54: an archive link that leads outside the version folder only when followed refuses the install and writes nothing outside", { skip: posixOnly }, async (t) => {
+  const { s, registry } = await setup(t);
+  const escaped = path.join(path.dirname(s.app), `escaped-${process.pid}.json`);
+  const archive = await serveBytes(t, "evil-1.0.0.tar.gz", await escapingLinkArchive(agentProgram(s).text, escaped));
+  registry.setAgents([{ id: "evil", name: "Evil", version: "1.0.0", authors: ["E"], license: "MIT", repository: "https://example.invalid/evil", description: "x", distribution: { binary: { [platformKey()]: { archive: archive.url, cmd: "./agent", sha256: archive.sha256 } } } }]);
+  const refused = await act(s, "agents.install", "evil");
+  assert.ok(refused.status >= 400, refused.text);
+  assert.equal(existsSync(escaped), false, "no file is written where the link leads");
+  assert.equal(existsSync(path.join(agentsFolder(s), "evil", "current.json")), false);
+  assert.equal(existsSync(path.join(agentsFolder(s), "evil", "1.0.0")), false, "nothing of the refused install is kept");
+});
+
+test("clauses 3, 55: an update whose registry environment breaks a declaration rule is refused and keeps the earlier version current and offered", { skip: posixOnly }, async (t) => {
+  const { s, registry } = await setup(t);
+  registry.setAgents([await binaryAgent(s, registry, { id: "opencode", version: "1.0.0" })]);
+  assert.equal((await act(s, "agents.install", "opencode")).status, 200);
+  const next = await binaryAgent(s, registry, { id: "opencode", version: "1.1.0" });
+  const build = next.distribution.binary[platformKey()];
+  registry.setAgents([{ ...next, distribution: { binary: { [platformKey()]: { ...build, env: { "BAD-NAME": "x" } } } } }]);
+  const refused = await act(s, "agents.update", "opencode");
+  assert.ok(refused.status >= 400, refused.text);
+  assert.equal(current(s, "opencode"), "1.0.0");
+  assert.ok(existsSync(path.join(agentsFolder(s), "opencode", "1.0.0", "agent")), "the earlier version stays in place");
+  const option = actionOf(await listing(s.base, TARGET(INITIATIVE), s.headers), "initiative.host").fields[0].options.find((item) => item.value === "acp-opencode");
+  assert.deepEqual([option?.value, option?.reason ?? null], ["acp-opencode", null], "the agent is still offered as a usable host");
 });
 
 test("clauses 47, 55: an update installs the newer version before it becomes current, and a failed update keeps the earlier one", { skip: posixOnly }, async (t) => {
