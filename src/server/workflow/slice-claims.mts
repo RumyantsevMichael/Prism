@@ -4,19 +4,21 @@ import { runGit } from "./record-store-sync.mjs";
 import { hostLabel } from "../review/workspace-identity.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { isAgentModel } from "../session/agent-models.mjs";
+import { environmentSessionLink, isSessionLink, type SessionLink } from "../session/session-links.mjs";
 
 // A claim names the host session, or without one the Prism server process, that works on a slice, so no two agents in any checkout or machine that shares the records start one slice.
 // Each claim is a record of its own beside the initiative record, covers the slice's descendants, and lapses unless its holder renews it.
 // Lease checks use this machine's clock.
 export const CLAIM_ACTIVITIES: readonly string[] = Object.freeze(["design", "implementation"]);
 
-export type Claim = { schemaVersion: 1; slug: string; holder: string; label: string; host?: string; model?: string; activity: string; claimedAt: string; renewedAt: string; expiresAt: string; nonce: string };
+export type Claim = { schemaVersion: 1; slug: string; holder: string; label: string; host?: string; model?: string; session?: SessionLink; activity: string; claimedAt: string; renewedAt: string; expiresAt: string; nonce: string };
 type HeldClaim = { root: string; initiative: string; slug: string; holder: string; nonce: string; main: boolean; pending?: string };
-type Settings = { leaseMs?: number; renewMs?: number; holder?: string; label?: string | null; host?: string | null };
+type Settings = { leaseMs?: number; renewMs?: number; holder?: string; label?: string | null; host?: string | null; session?: SessionLink | null };
 // host is optional: the name of the harness the holder runs in, such as Claude Code or Codex, shown to people and never used to decide anything.
 // model is optional too: the model of the session's main agent, recorded only for a claim that a call positively attributed to that agent took.
 // Prism reads it before any release writes it, because releases up to 0.20 refuse a claim with a field they do not know; later releases leave such a field out instead.
-const CLAIM_FIELDS = ["schemaVersion", "slug", "holder", "label", "host", "model", "activity", "claimedAt", "renewedAt", "expiresAt", "nonce"];
+// session is optional as well: the host session a person can open from a link, such as a Claude Code on the web session, recorded only for a claim the server's own host session holds.
+const CLAIM_FIELDS = ["schemaVersion", "slug", "holder", "label", "host", "model", "session", "activity", "claimedAt", "renewedAt", "expiresAt", "nonce"];
 const HOST_LIMIT = 64;
 // PRISM_CLAIM_RENEW_MS, a whole number of milliseconds from 10 to 600000, sets the renewal interval for tests.
 const renewFromEnv = (value: string | undefined) => /^\d+$/.test(String(value ?? "").trim()) && Number(value) >= 10 && Number(value) <= 600000 ? Number(value) : null;
@@ -32,7 +34,7 @@ const digestHolder = (value: unknown) => {
   const id = typeof value === "string" ? value.trim() : "";
   return id ? `session-${createHash("sha256").update(id).digest("hex").slice(0, 16)}` : null;
 };
-const identity: { holder: string; label: string | null; host: string | null } = { holder: sessionHolder() ?? randomBytes(8).toString("hex"), label: null, host: null };
+const identity: { holder: string; label: string | null; host: string | null; session: SessionLink | null } = { holder: sessionHolder() ?? randomBytes(8).toString("hex"), label: null, host: null, session: environmentSessionLink() };
 
 /** The holder for one host session identifier, such as Codex's root session id, or null without one. */
 export const holderOf = (sessionId: string) => digestHolder(sessionId);
@@ -85,11 +87,18 @@ export function configureClaims(settings: Settings = {}) {
   if (typeof settings.holder === "string") identity.holder = settings.holder;
   if (settings.label !== undefined) identity.label = settings.label;
   if (settings.host !== undefined) identity.host = settings.host;
+  if (settings.session !== undefined) identity.session = settings.session;
   if (timer) { clearInterval(timer); timer = null; startTimer(); }
 }
 
 /** The claim holder of the current tool call: the session its metadata names, else the server's host session, else the server process. */
 export const claimHolder = () => callSession.getStore() ?? identity.holder;
+
+/**
+ * The openable session of the current tool call's holder, or null.
+ * The server's environment describes only its own host session, so a call whose metadata names another session, as a Codex call does, gets none.
+ */
+export const claimSession = () => (callSession.getStore() === undefined ? identity.session : null);
 
 /** Who and where, for people: the Git user name of the folder that holds the records, when set, and the host name without its domain. */
 export async function claimLabel(folder: string) {
@@ -128,15 +137,16 @@ export function parseClaim(slug: string, bytes: Buffer | string): { claim: Claim
   for (const key of ["claimedAt", "renewedAt", "expiresAt"]) if (typeof claim[key] !== "string" || !Number.isFinite(Date.parse(claim[key]))) problems.push(`${key} must be a date-time`);
   if (!CLAIM_ACTIVITIES.includes(claim.activity)) problems.push(`activity must be ${CLAIM_ACTIVITIES.join(" or ")}`);
   if (problems.length) return { problem: `${slug}: the claim record is invalid: ${problems.join("; ")}.` };
-  // A malformed model reads as the same claim without one, so it never refuses or hides the claim.
-  return { claim: Object.fromEntries(CLAIM_FIELDS.filter((key) => Object.hasOwn(claim, key) && (key !== "model" || isAgentModel(claim.model))).map((key) => [key, claim[key]])) as Claim };
+  // A malformed model or session reads as the same claim without one, so it never refuses or hides the claim.
+  const kept = (key: string) => Object.hasOwn(claim, key) && (key !== "model" || isAgentModel(claim.model)) && (key !== "session" || isSessionLink(claim.session));
+  return { claim: Object.fromEntries(CLAIM_FIELDS.filter(kept).map((key) => [key, key === "session" ? { kind: claim.session.kind, id: claim.session.id } : claim[key]])) as Claim };
 }
 
 /** A claim taken now with a fresh nonce; a holder that takes its own live claim again for the same activity keeps when it was first claimed. */
-export function newClaim(previous: Claim | null | undefined, { slug, holder, label, host = null, model = null, activity, now }: { slug: string; holder: string; label: string; host?: string | null; model?: string | null; activity: string; now: number }): Claim {
+export function newClaim(previous: Claim | null | undefined, { slug, holder, label, host = null, model = null, session = null, activity, now }: { slug: string; holder: string; label: string; host?: string | null; model?: string | null; session?: SessionLink | null; activity: string; now: number }): Claim {
   const at = new Date(now).toISOString();
   const kept = previous?.holder === holder && previous.activity === activity && isLive(previous, now);
-  return { schemaVersion: 1, slug, holder, label, ...(host ? { host } : {}), ...(isAgentModel(model) ? { model } : {}), activity, claimedAt: kept ? previous.claimedAt : at, renewedAt: at, expiresAt: new Date(now + SETTINGS.leaseMs).toISOString(), nonce: randomBytes(12).toString("hex") };
+  return { schemaVersion: 1, slug, holder, label, ...(host ? { host } : {}), ...(isAgentModel(model) ? { model } : {}), ...(isSessionLink(session) ? { session: { kind: session.kind, id: session.id } } : {}), activity, claimedAt: kept ? previous.claimedAt : at, renewedAt: at, expiresAt: new Date(now + SETTINGS.leaseMs).toISOString(), nonce: randomBytes(12).toString("hex") };
 }
 
 /** A live claim with its lease extended from now. */

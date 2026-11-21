@@ -87,10 +87,13 @@ function toastButton(caption: any, message: any, tone: any) {
   return `<prism-button data-toast="${html(message)}" data-tone="${tone}">${html(caption)}</prism-button>`;
 }
 
+// The address of a Claude Code on the web session, as a claim records it.
+const SESSION_URL = "https://claude.ai/code/session_01ExampleSessionLink";
+
 // A claim whose times are set from now: `left` minutes left, or lapsed that many minutes ago when negative, on a lease of 30 minutes.
-function claimOf({ variant, label = "Claude on build-2", host = "", model = "", activity = "implementation", left = 41 }: { variant: any; label?: string; host?: string; model?: string; activity?: string; left?: number }) {
+function claimOf({ variant, label = "Claude on build-2", host = "", model = "", session = "", activity = "implementation", left = 41 }: { variant: any; label?: string; host?: string; model?: string; session?: string; activity?: string; left?: number }) {
   const at = (minutes: any) => new Date(Date.now() + minutes * 60000).toISOString();
-  return `<prism-claim variant="${variant}" label="${html(label)}"${host ? ` host="${html(host)}"` : ""}${model ? ` model="${html(model)}"` : ""} activity="${activity}" claimed-at="${at(left - 90)}" renewed-at="${at(left - 30)}" expires-at="${at(left)}"></prism-claim>`;
+  return `<prism-claim variant="${variant}" label="${html(label)}"${host ? ` host="${html(host)}"` : ""}${model ? ` model="${html(model)}"` : ""}${session ? ` session-url="${html(session)}" session-label="Claude Code on the web"` : ""} activity="${activity}" claimed-at="${at(left - 90)}" renewed-at="${at(left - 30)}" expires-at="${at(left)}"></prism-claim>`;
 }
 
 // A time `count` minutes from now, as an ISO timestamp, and a prism-time of it in the default format.
@@ -494,6 +497,8 @@ const SPECIMENS: Record<string, any> = {
     expired: claimOf({ variant: "inline", label: "Claude on vm", activity: "design", left: -4 }) + claimOf({ variant: "avatar", label: "Claude on vm", left: -4 }),
     "expired-strip": claimOf({ variant: "strip", label: "Claude on vm", left: -95 }),
     model: claimOf({ variant: "inline", label: "Michael on build-2", host: "Codex", model: "gpt-5.5" }) + claimOf({ variant: "inline", label: "Claude on vm", model: "claude-opus-5-5", activity: "design" }) + claimOf({ variant: "strip", label: "Michael on build-2", host: "Claude Code", model: "claude-opus-5-5" }) + claimOf({ variant: "avatar", label: "Michael on build-2", host: "Codex", model: "gpt-5.5" }),
+    session: claimOf({ variant: "inline", label: "Michael on runner", host: "Claude Code", model: "claude-opus-5-5", session: SESSION_URL }) + claimOf({ variant: "inline", label: "Michael on runner", host: "Claude Code", session: SESSION_URL, activity: "design", left: -6 }) + claimOf({ variant: "avatar", label: "Michael on runner", host: "Claude Code", session: SESSION_URL }),
+    "session-strip": claimOf({ variant: "strip", label: "Michael on runner", host: "Claude Code", model: "claude-opus-5-5", session: SESSION_URL }) + claimOf({ variant: "strip", label: LONG, host: LONG, session: SESSION_URL, left: -95 }),
     "long-text": claimOf({ variant: "inline", label: LONG }) + claimOf({ variant: "strip", label: LONG, left: 3000 }) + claimOf({ variant: "inline", label: "Michael on build-2", host: LONG, model: LONG }) + claimOf({ variant: "strip", label: LONG, host: LONG, model: LONG }),
     "unbroken-name": claimOf({ variant: "inline", label: UNBROKEN }) + claimOf({ variant: "strip", label: UNBROKEN, left: -3000 }) + claimOf({ variant: "strip", label: "Claude on vm", model: UNBROKEN })
   },

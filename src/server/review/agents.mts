@@ -1,5 +1,5 @@
 // The agents list: every launched session of this computer and every claim of the workspace that no launched session holds, one entry each,
-// grouped by what needs the person, with the counts the top bar and the Agents page show. No entry names a claim holder or a host session id.
+// grouped by what needs the person, with the counts the top bar and the Agents page show. No entry names a claim holder or a launched session's host session id; a claim's entry carries the link to its session when the claim records one.
 import { archivedLaunches, listLaunches } from "../session/launched-sessions.mjs";
 import { loadHeldClaims, loadRoadmapView } from "./workspace-model.mjs";
 
@@ -38,6 +38,7 @@ function claimEntry(claim: any, expired: any) {
     name: claim.label,
     harness: claim.host ?? null,
     model: claim.model ?? null,
+    session: claim.session ?? null,
     initiative: { id: claim.initiative, title: claim.initiativeTitle },
     slice: { ref: claim.ref, title: claim.sliceTitle },
     activity: claim.activity,
