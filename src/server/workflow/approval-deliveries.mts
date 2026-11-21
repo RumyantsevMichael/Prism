@@ -38,11 +38,18 @@ async function change(directory: string, edit: any) {
   }));
 }
 
-/** Remember that the checkout at projectRoot asked the approval gates gateIds, so that their answers reach it. */
-export async function recordAskedGates(projectRoot: string, gateIds: any, { directory = gateWaitDirectory(), now = new Date() }: any = {}) {
+/** Remember that the checkout at projectRoot asked the approval gates gateIds, so that their answers reach it, and which session asked them, when it is known. */
+export async function recordAskedGates(projectRoot: string, gateIds: any, { directory = gateWaitDirectory(), now = new Date(), session = null }: any = {}) {
   if (!gateIds.length) return;
   const root = await real(projectRoot);
-  await change(directory, (listed: any) => [...listed.filter((entry: any) => !gateIds.includes(entry.gate)), ...gateIds.map((gate: any) => ({ gate, projectRoot: root, askedAt: now.toISOString() }))]);
+  await change(directory, (listed: any) => [...listed.filter((entry: any) => !gateIds.includes(entry.gate)), ...gateIds.map((gate: any) => ({ gate, projectRoot: root, askedAt: now.toISOString(), ...(typeof session === "string" && session ? { session } : {}) }))]);
+}
+
+/** The ids of the approval gates that the session asked in the checkout at projectRoot and that the checkout has not received the answer of. */
+export async function sessionAskedGates(projectRoot: string, session: any, { directory = gateWaitDirectory() }: any = {}) {
+  if (typeof session !== "string" || !session) return new Set();
+  const root = await real(projectRoot);
+  return new Set((await readEntries(fileOf(directory))).filter((entry: any) => entry.projectRoot === root && entry.session === session).map((entry: any) => entry.gate));
 }
 
 /** The ids of the approval gates that the checkout at projectRoot asked and has not received the answer of. */
