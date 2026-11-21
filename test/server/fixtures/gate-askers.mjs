@@ -34,7 +34,9 @@ const { spawn } = require("node:child_process");
 const path = require("node:path");
 const argv = process.argv.slice(2);
 const read = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return {}; } };
-const log = (entry) => appendFileSync(process.env.PRISM_STUB_ASKER_LOG, JSON.stringify({ pid: process.pid, cwd: process.cwd(), ...entry }) + "\n");
+// Each entry counts the native dialogs shown before it, so a test can tell that the confirmation came before the run or the wake.
+const dialogsShown = () => { try { return readFileSync(process.env.PRISM_STUB_DIALOG_LOG, "utf8").split("\n").filter(Boolean).length; } catch { return 0; } };
+const log = (entry) => appendFileSync(process.env.PRISM_STUB_ASKER_LOG, JSON.stringify({ pid: process.pid, cwd: process.cwd(), dialogsBefore: dialogsShown(), ...entry }) + "\n");
 if (argv[0] === "agents") {
   const plan = read(process.env.PRISM_STUB_AGENTS);
   log({ kind: "agents", argv });
@@ -49,6 +51,7 @@ if (argv.includes("--cloud")) {
   if (plan.stderr) process.stderr.write(plan.stderr + "\n");
   setTimeout(() => process.exit(plan.code ?? 0), plan.hold ?? 0);
 } else {
+  log({ kind: "start", argv });
   const child = spawn(process.execPath, [path.join(__dirname, "claude-session"), ...argv], { stdio: "inherit" });
   child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
   for (const name of ["SIGTERM", "SIGINT"]) process.on(name, () => child.kill(name));
@@ -72,7 +75,7 @@ export async function askerFixture(context, { hosts = ["claude", "codex"], dialo
   const wakeFile = path.join(scratch, "wake-plan.json");
   const codexHome = path.join(scratch, "codex-home");
   await mkdir(codexHome, { recursive: true });
-  Object.assign(fixture.env, { PRISM_STUB_ASKER_LOG: askerLog, PRISM_STUB_AGENTS: agentsFile, PRISM_STUB_WAKE: wakeFile, CODEX_HOME: codexHome });
+  Object.assign(fixture.env, { PRISM_STUB_ASKER_LOG: askerLog, PRISM_STUB_AGENTS: agentsFile, PRISM_STUB_WAKE: wakeFile, PRISM_STUB_DIALOG_LOG: path.join(scratch, "dialogs.jsonl"), CODEX_HOME: codexHome });
   // The review page of these tests runs on a person's own computer, never in a cloud session, unless a test says so.
   for (const name of ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_REMOTE_SESSION_ID", "CLAUDE_CODE_REMOTE", "CODEX_THREAD_ID"]) delete fixture.env[name];
   /** What `claude agents --json` answers: { stdout, stderr, code }. */
@@ -83,6 +86,8 @@ export async function askerFixture(context, { hosts = ["claude", "codex"], dialo
   await setWake({ code: 0 });
   const stubEntries = () => existsSync(askerLog) ? readFileSync(askerLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
   const wakes = () => stubEntries().filter((entry) => entry.kind === "wake");
+  /** Each Claude Code run that the wrapper started, with the number of dialogs shown before it. */
+  const starts = () => stubEntries().filter((entry) => entry.kind === "start");
   const lockFile = (thread) => path.join(codexHome, "thread-writer-locks", `${thread}.lock`);
   const openCodexThread = async (thread = CODEX_SESSION) => { await mkdir(path.dirname(lockFile(thread)), { recursive: true }); await writeFile(lockFile(thread), ""); };
   const closeCodexThread = (thread = CODEX_SESSION) => rm(lockFile(thread), { force: true });
@@ -96,7 +101,7 @@ export async function askerFixture(context, { hosts = ["claude", "codex"], dialo
     review = { ...started, headers };
     return review;
   };
-  return { ...fixture, setAgents, setAgentsOpen: (ids) => setAgents({ stdout: `${JSON.stringify(ids.map((id) => ({ sessionId: id, kind: "interactive", status: "idle" })))}\n` }), setWake, wakes, stubEntries, openCodexThread, closeCodexThread, codexHome, page };
+  return { ...fixture, setAgents, setAgentsOpen: (ids) => setAgents({ stdout: `${JSON.stringify(ids.map((id) => ({ sessionId: id, kind: "interactive", status: "idle" })))}\n` }), setWake, wakes, starts, stubEntries, openCodexThread, closeCodexThread, codexHome, page };
 }
 
 /**

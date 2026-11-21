@@ -110,3 +110,37 @@ test("clauses 18, 26: an answer alone, here or from another machine, starts no s
   assert.deepEqual([s.runs(), s.wakes(), s.dialogs()], [[], [], []]);
   assert.equal((await continueAction(review, elsewhere)).available, true, "the answered gate offers its continuations on the asker's machine");
 });
+
+// The roadmap records a ship or a supersession as a decision on the initiative's entry, written here as Prism writes it.
+async function decide(root, decision) {
+  const { readRecord, writeRecord } = await import("../../dist/server/workflow/record-store.mjs");
+  const roadmap = JSON.parse((await readRecord(root, { kind: "roadmap" })).bytes.toString("utf8"));
+  for (const entry of roadmap.initiatives) if (entry.id === INITIATIVE) entry.decision = decision;
+  await writeRecord(root, { kind: "roadmap" }, `${JSON.stringify(roadmap, null, 2)}\n`);
+}
+
+test("clause 16: a superseded initiative offers no new session", { skip: posixOnly }, async (t) => {
+  const { s, id, review } = await answered(t);
+  await decide(s.root, { kind: "superseded", at: new Date().toISOString(), by: "search", reason: "Search covers it." });
+  const action = await settled(() => continueAction(review, id), (value) => option(value, "new-session")?.reason);
+  assert.equal(option(action, "new-session").reason, "The initiative was superseded, so it is history.");
+  assert.equal(action.recommended, null);
+});
+
+test("clauses 15, 16: a shipped initiative makes Continue unavailable with the shipped reason", { skip: posixOnly }, async (t) => {
+  const { s, id, review } = await answered(t);
+  const at = new Date().toISOString();
+  await decide(s.root, { kind: "shipped", at });
+  const action = await settled(() => continueAction(review, id), (value) => value?.available === false);
+  assert.deepEqual([action.available, action.reason], [false, `The initiative shipped on ${at.slice(0, 10)}, so its state is history.`]);
+  const refused = await pick(review, id, "new-session");
+  assert.equal(refused.status, 409);
+  assert.deepEqual(s.runs(), []);
+});
+
+test("clause 18: the confirmation outside the page comes before the new session starts", { skip: posixOnly }, async (t) => {
+  const { s, id, review } = await answered(t);
+  assert.equal((await pick(review, id, "new-session")).status, 200);
+  const [start] = await settled(() => s.starts(), (list) => list.length === 1);
+  assert.equal(start.dialogsBefore, 1, "the dialog was shown before claude started");
+});

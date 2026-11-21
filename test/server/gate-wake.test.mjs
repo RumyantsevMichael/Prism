@@ -83,3 +83,10 @@ test("clause 25: a declined wake sends nothing", { skip: posixOnly }, async (t) 
   await pause(500, "a declined wake must run no claude, which no event signals");
   assert.deepEqual(s.wakes(), []);
 });
+
+test("clause 25: the confirmation outside the page comes before the wake is sent", { skip: posixOnly }, async (t) => {
+  const { s, id, review } = await answered(t);
+  assert.equal((await wake(review, id)).status, 200);
+  const [entry] = await settled(() => s.wakes(), (list) => list.length === 1);
+  assert.equal(entry.dialogsBefore, 1, "the dialog was shown before claude sent the wake");
+});

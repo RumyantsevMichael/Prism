@@ -101,3 +101,11 @@ test("clause 19: a resume does not apply while a launched session of the initiat
   await settled(() => s.runs("claude"), (runs) => runs.length === 1);
   assert.equal((await resumeOption(review, id)).reason, `A launched session of ${INITIATIVE} is running on this machine.`);
 });
+
+test("clause 25: the confirmation outside the page comes before the resumed session starts", { skip: posixOnly }, async (t) => {
+  const { s, id, review } = await answered(t);
+  assert.equal((await pick(review, id)).status, 200);
+  const [start] = await settled(() => s.starts(), (list) => list.length === 1);
+  assert.equal(start.dialogsBefore, 1, "the dialog was shown before claude resumed the session");
+  assert.ok(start.argv.includes("--resume"));
+});
