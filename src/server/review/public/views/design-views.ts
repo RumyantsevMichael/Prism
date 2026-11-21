@@ -67,7 +67,7 @@ function viewTools(view: any) {
 function viewBody(view: any) {
   if (view.source === null) return `<p class="error">${view.missing ? "The view's file is missing." : "The view is too large to show here; open it on its own page."}</p>`;
   if (view.kind === "api") return `<div class="view-source"><prism-code language="json"><pre><code>${highlight(view.source, "json")}</code></pre></prism-code></div>`;
-  return `<prism-canvas class="diagram-output"><prism-spinner label="Rendering the view"></prism-spinner></prism-canvas><div class="diagram-source" hidden><prism-code language="plantuml"><pre><code>${highlight(view.source, "plantuml")}</code></pre></prism-code></div>`;
+  return `<prism-canvas class="diagram-output" pannable><prism-spinner label="Rendering the view"></prism-spinner></prism-canvas><div class="diagram-source" hidden><prism-code language="plantuml"><pre><code>${highlight(view.source, "plantuml")}</code></pre></prism-code></div>`;
 }
 
 // A diagram that no Views line names, such as one of a design written before designs declared views, answers no stated question and explains no clause.

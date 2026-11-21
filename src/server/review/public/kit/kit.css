@@ -3718,8 +3718,15 @@ prism-canvas {
   background-attachment: local;
 }
 
-/* A canvas the page pans by dragging takes the pointer as a canvas does: a grab cursor, and no text selection. */
+/* A canvas that pans by dragging takes the pointer as a canvas does: no text selection, and a grab cursor while there is something to pan. */
 prism-canvas[pannable] {
-  cursor: grab;
   user-select: none;
+}
+
+prism-canvas[pannable][overflowing] {
+  cursor: grab;
+}
+
+prism-canvas[pannable][panning] {
+  cursor: grabbing;
 }
