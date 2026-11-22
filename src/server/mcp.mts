@@ -51,7 +51,7 @@ import { stopClaimRenewals } from "./workflow/slice-claims.mjs";
 import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
-import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
+import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, peekWithdrawn, waitForUserGates, withdrawnText } from "./workflow/gate-wait.mjs";
 import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
 import { callAgent, callAgentRole, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
@@ -818,7 +818,7 @@ const tools = [
   },
   {
     name: "get_coordination_state",
-    description: "Read an initiative's coordination state record with its revision. Reads never create the record. Its settings.host names the supported host that launches run on, and settings.models keeps, per host, a provider and the coordinator's, designImplementation's, codeReview's, securityReview's, and gateSummary's { model, effort, typed }, each part left out for the host default; an earlier models value reads migrated, host defaults as {} and named models as typed choices of every host, except that a name breaking the model rule is kept alone as { earlier } on that agent kind, which reads as the host default and is never passed to a host. childAgents: { host, kinds } names the calling client's host, or null for a client of no supported host, and for each agent kind, designImplementation, codeReview, securityReview, and gateSummary, the { model, effort } to start that kind of child agent with on that host, null leaving the host default. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
+    description: "Read an initiative's coordination state record with its revision. Reads never create the record. state.closed lists the recently closed gates, each with closedAt and its reason, where a gate the person withdrew in the review browser has the reason The person withdrew this question without an answer. and no answer, so never act on it as answered. Its settings.host names the supported host that launches run on, and settings.models keeps, per host, a provider and the coordinator's, designImplementation's, codeReview's, securityReview's, and gateSummary's { model, effort, typed }, each part left out for the host default; an earlier models value reads migrated, host defaults as {} and named models as typed choices of every host, except that a name breaking the model rule is kept alone as { earlier } on that agent kind, which reads as the host default and is never passed to a host. childAgents: { host, kinds } names the calling client's host, or null for a client of no supported host, and for each agent kind, designImplementation, codeReview, securityReview, and gateSummary, the { model, effort } to start that kind of child agent with on that host, null leaving the host default. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
     inputSchema: {
       type: "object",
       properties: {
@@ -846,7 +846,7 @@ const tools = [
   },
   {
     name: "wait_for_user_gate",
-    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, changed with the person's new history entries when the person changes the initiative in the review app, whether here or through a store sync, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn. For the approval gates that update_artifact ask_approval records on a requirement or ADR, pass artifact, its project-relative path, and scope when two scopes hold it, in place of initiative; an answered approval gate needs no resolve.",
+    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, changed with the person's new history entries when the person changes the initiative in the review app, whether here or through a store sync, resolved when the gate was removed (answered in the conversation or withdrawn), withdrawn with withdrawn [{ id, at, by: { name } }] when the person withdrew a gate in the review browser without an answer, which is never an answer to act on, timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn. For the approval gates that update_artifact ask_approval records on a requirement or ADR, pass artifact, its project-relative path, and scope when two scopes hold it, in place of initiative; an answered approval gate needs no resolve.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1064,7 +1064,8 @@ async function callGateWait(argumentsValue: any, metadata: any, requestId: any) 
       value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
     }
   } else if (unsupported) {
-    value = { status: "unsupported_host", gateIds, client: clientName, reason: unsupported };
+    // A gate the person withdrew is told at once, even where the host cannot wait.
+    value = await peekWithdrawn({ projectRoot, ...source, gateIds }) ?? { status: "unsupported_host", gateIds, client: clientName, reason: unsupported };
   } else {
     const controller = new AbortController();
     if (requestId !== undefined) pendingWaits.set(requestId, controller);
@@ -1098,6 +1099,7 @@ async function callGateWait(argumentsValue: any, metadata: any, requestId: any) 
     changed: () => changedText(value),
     answered: () => [...value.answered.map(answerText), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n"),
     resolved: () => source.artifact ? `Approval gates ${list} of ${source.artifact} closed without an answer: a later ask_approval replaced them, or the artifact was removed or left the scopes this checkout sees.` : `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
+    withdrawn: () => withdrawnText(value),
     timeout: () => `No answer arrived for user gates ${list} before the wait ended.`,
     unknown_gate: () => `No pending user gate has any of the ids ${list}.`,
     deferred: () => `This host cannot wait during a tool call, so Prism waits after this turn ends: end your turn now, and the session continues with the answer when the user answers user gates ${list} in the review browser within ${value.maxWaitMinutes} minutes. If it does not continue, the user's next message delivers any browser answer.`,
@@ -1182,8 +1184,8 @@ async function callStateTool(name: string, argumentsValue: any) {
     throw new Error(`Unknown state tool: ${name}`);
   }
   if (name === "get_coordination_state" || name === "update_coordination_state") resultValue = await withRecordStore(projectRoot, resultValue);
-  // Closed gates are history for the review browser; agents never need them.
-  if (resultValue?.state?.closed) {
+  // Closed gates are history for the review browser, which a read keeps so an agent can tell a question the person withdrew; an update leaves them out.
+  if (name !== "get_coordination_state" && resultValue?.state?.closed) {
     const { closed, ...state } = resultValue.state;
     resultValue = { ...resultValue, state };
   }

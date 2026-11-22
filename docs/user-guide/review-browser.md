@@ -197,6 +197,11 @@ Prism tells whether a Claude Code session is open from `claude agents --json`, r
 Only the machine that asked can tell, because the session's id stays in that machine's review app folder and never reaches the shared records.
 A wait holds its questions for 15 minutes and renews the hold every 5 minutes, so a wait that stopped without ending, such as one whose computer crashed, stops counting as waiting within 15 minutes.
 For a session that is open but not waiting, the card says `Prism cannot reach this session, because no wait holds the question. Send any message in that <harness> session, and it reads the answer.`
+A question that no session will read, because its asking session is not running or Prism cannot tell, has **Withdraw** under that line.
+Withdraw closes the question without an answer and removes it from Attention, records who withdrew it and when, and starts no session.
+It is unavailable while a session waits on the question, while the asking session is open, and once the question has an answer.
+Withdrawing a requirement's or ADR's approval leaves the file's recorded status and accepted version as they were.
+A session that later waits on a withdrawn question learns at once that you withdrew it, and does not act on it as answered.
 Attention also lists blocked slices, open findings, failed verifications, and active work.
 In a window as narrow as a phone, Attention opens on its list, and picking an item shows its card in place of the list, with **All items** to go back.
 A slice that is not done is a failed verification while its latest verification run failed, with the reason in words, such as `The tests failed, 2 tests failed`, until a later run passes or the slice is done.

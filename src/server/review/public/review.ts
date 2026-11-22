@@ -3027,6 +3027,26 @@ function viewContext(path: any, state: any) {
       }
       return result;
     },
+    // Withdrawing a gate is its withdraw action, applied against the revision its listing shows; it takes no input.
+    async withdrawGate({ initiative, approval, id }: { initiative: string; approval: any; id: string }) {
+      if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
+      const target = approval ? `approval:${id}` : `gate:${initiative}/${id}`;
+      const unanswered = () => {
+        throw new Error("The review app did not answer, so the question was not withdrawn. Try again in a moment.");
+      };
+      const listed = await appFetch(`./api/actions?target=${encodeURIComponent(target)}`, { headers: writeHeaders() }).catch(unanswered);
+      const listing = await listed.json().catch(() => ({}));
+      if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The question was not withdrawn."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
+      const action = (listing.actions ?? []).find((item: any) => item.id === "gate.withdraw");
+      if (!action || !action.available) throw Object.assign(new Error(action?.reason ?? "The question was not withdrawn."), { code: "action_unavailable" });
+      const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.withdraw", target, input: {}, revision: action.revision ?? null }) }).catch(unanswered);
+      const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
+      if (!response.ok) {
+        const code = result.code === "unknown_target" ? "unknown_gate" : result.code;
+        throw Object.assign(new Error(result.reason ?? result.message ?? "The question was not withdrawn."), { code });
+      }
+      return result;
+    },
     rerender() {
       lastSnapshot = "";
       void showArtifact(path);

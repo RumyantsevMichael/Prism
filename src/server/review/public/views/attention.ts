@@ -124,6 +124,7 @@ function gateHead(item: any, ctx: any, time: any) {
   return `<div class="gate-chips">${tag}${kindChip(item)}${when(time, "attention-time gate-time")}</div>
     <h3 class="gate-question">${escapeHtml(item.question)}</h3>
     ${gateAsker(item)}
+    ${gateWithdraw(item)}
     ${where ? `<p class="attention-where gate-where">${where}</p>` : ""}`;
 }
 
@@ -134,6 +135,13 @@ const ASKER_STATES: Record<string, { label: string; tone: string }> = {
   "not-running": { label: "Not running", tone: "neutral" },
   unknown: { label: "Prism cannot tell", tone: "warning" }
 };
+
+// An unanswered question whose asker no wait holds and no open session can read can be withdrawn; the server's listing stays the backstop.
+function gateWithdraw(item: any) {
+  if (item.answer || item.unavailable || !item.asker || item.asker.state === "waiting" || item.asker.state === "open") return "";
+  const target = item.kind === "approval" ? " data-approval" : ` data-initiative="${escapeHtml(item.initiative?.id ?? "")}"`;
+  return `<div class="gate-withdraw" data-withdraw="${escapeHtml(item.id)}"${target}><prism-button size="sm" variant="ghost" data-withdraw-submit tip="Closes the question without an answer and removes it from Attention; no session starts."><prism-icon name="close" size="xs"></prism-icon>Withdraw</prism-button><p class="gate-error" role="alert" hidden></p></div>`;
+}
 
 // Who asked the question, where, and whether that session waits, is open, is not running, or is in a state Prism cannot tell, with how to reach an open one.
 function gateAsker(item: any) {
@@ -345,9 +353,9 @@ function answeredDetail(item: any, ctx: any) {
   });
 }
 
-// A closed question shows the browser answer, or the reason the agent gave when it resolved the question without one.
+// A closed question shows the browser answer, the person's withdrawal, or the reason the agent gave when it resolved the question without one.
 function closedDetail(item: any, ctx: any) {
-  const outcome = item.answer ? given(item) : badge("Closed by the agent");
+  const outcome = item.answer ? given(item) : badge(item.reason === "The person withdrew this question without an answer." ? "Withdrawn" : "Closed by the agent");
   return detailSheet({
     className: `is-closed gate-${escapeHtml(item.kind)}`,
     head: `${kindChip(item)}<span class="attention-where">${location(item, ctx)}</span>${when(item.closedAt, "attention-time gate-time")}`,
@@ -457,6 +465,34 @@ function bindAnswers(container: any, ctx: any, gates: any) {
       const [start, end] = draft.selection ?? [note.value.length, note.value.length];
       note.setSelectionRange(start, end);
     }
+  }
+}
+
+// Withdraw closes a question without an answer, through the gate's withdraw action; a refusal shows its reason and re-renders the question as it stands.
+function bindWithdraws(container: any, ctx: any) {
+  for (const row of container.querySelectorAll(".gate-withdraw")) {
+    const button = row.querySelector("[data-withdraw-submit]");
+    const failure = row.querySelector(".gate-error");
+    let sending = false;
+    button.addEventListener("click", async () => {
+      if (sending) return;
+      sending = true;
+      button.toggleAttribute("disabled", true);
+      failure.hidden = true;
+      try {
+        const target = row.hasAttribute("data-approval") ? { approval: true } : { initiative: row.dataset.initiative };
+        await ctx.withdrawGate({ ...target, id: row.dataset.withdraw });
+        ctx.showToast("Question withdrawn. No session starts, and a session that comes back to it learns that it was withdrawn.");
+        ctx.rerender();
+      } catch (error) {
+        const refusal = answerError(error);
+        failure.textContent = refusal.message;
+        failure.hidden = false;
+        sending = false;
+        button.toggleAttribute("disabled", false);
+        if (refusal.rerender) ctx.rerender();
+      }
+    });
   }
 }
 
@@ -925,6 +961,7 @@ export function render(container: any, entity: any, ctx: any) {
   });
   bindLinks(container, ctx);
   bindAnswers(container, ctx, gates);
+  bindWithdraws(container, ctx);
   bindPermissions(container, ctx);
   // A change applied while the page is open names its question from the questions the page shows.
   const questions = new Map([...gates, ...(data.shippedGates ?? []), ...answered, ...earlier].filter((item) => item.initiative?.id).map((item) => [`gate:${item.initiative.id}/${item.id}`, item.question]));

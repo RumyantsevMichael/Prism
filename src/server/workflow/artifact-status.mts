@@ -103,7 +103,7 @@ function wellFormedGate(kind: string, gate: any) {
   if (typeof gate.id !== "string" || !gate.id || gate.id.length > 200 || !askableStatus(kind, gate.status, gate.shipped) || !VERSION.test(gate.version ?? "")) return false;
   if (!boundedText(gate.question, GATE_TEXT_MAX) || !gate.question || !optionalText(gate.context, GATE_TEXT_MAX)) return false;
   if (!optionalWorkItemId(gate.initiative) || !optionalWorkItemId(gate.slice) || (gate.slice !== undefined && gate.initiative === undefined && gate.shipped === undefined)) return false;
-  if (!optionalText(gate.askedAt, 64) || !optionalText(gate.closedAt, 64) || !optionalText(gate.closed, 64) || !optionalText(gate.supersededBy, 200)) return false;
+  if (!optionalText(gate.askedAt, 64) || !optionalText(gate.closedAt, 64) || !optionalText(gate.closed, 64) || !optionalText(gate.supersededBy, 200) || !optionalPerson(gate.by)) return false;
   if (gate.answer === undefined) return true;
   const answer = gate.answer;
   return isRecord(answer) && APPROVAL_CHOICES.includes(answer.choice) && optionalText(answer.note, NOTE_MAX) && optionalText(answer.answeredAt, 64) && optionalText(answer.via, 64)
@@ -314,6 +314,24 @@ export function answerApproval(kind: string, file: string, record: any, { id, ch
   };
 }
 
+/**
+ * A record whose pending approval gate id the person withdrew in the review browser: the gate moves to the closed gates as closed "withdrawn" with closedAt and by,
+ * who withdrew it as { name, host }, and the status, the accepted version, and the approval stay as they were.
+ * entry is the review app's history entry of the gate.withdraw action, which the record's history keeps beside the withdrawal.
+ */
+export function withdrawApproval(record: any, { id, by, entry = null, now = entry?.at ? new Date(entry.at) : new Date() }: { id: string; by: any; entry?: any; now?: any }) {
+  const gate = record.pending.find((item: any) => item.id === id);
+  if (!gate) {
+    const closed = record.closed.find((item: any) => item.id === id);
+    if (closed?.answer) throw fail("gate_answered", "The question already has an answer.");
+    throw fail("unknown_gate", closed ? "The question was closed without an answer, so it no longer applies." : "The question is no longer open; the agent resolved or withdrew it.");
+  }
+  const at = now.toISOString();
+  const closed = keep([...record.closed, { ...gate, closedAt: at, closed: "withdrawn", by }], CLOSED_KEPT);
+  const pending = record.pending.filter((item: any) => item.id !== id);
+  return { record: { ...record, pending, closed, history: keep([...record.history, { event: "withdrawn", gate: gate.id, at, by, ...(entry ? { entry } : {}) }], HISTORY_KEPT) }, gate: closed.at(-1) };
+}
+
 /** A record with acceptedVersion set to version, as its accepted bytes at an approval, a design acceptance, or a ship. */
 export function withAcceptedVersion(record: any, version: any, event: any) {
   return { ...record, acceptedVersion: version, history: keep([...record.history, { ...event, acceptedVersion: version }], HISTORY_KEPT) };
@@ -409,8 +427,12 @@ export function servedWorkItem(gate: any) {
   return initiative === null ? null : { initiative, slice: gate.slice ?? null };
 }
 
-/** The gates of a record as a gate wait reads them: pending ones without an answer and answered ones with it; a superseded gate is gone. */
+/**
+ * The gates of a record as a gate wait reads them: pending ones without an answer, answered ones with it, and withdrawn ones with withdrawn { at, by: { name } };
+ * a superseded gate is gone.
+ */
 export function waitableGates(record: any) {
   const shape = (gate: any) => ({ id: gate.id, kind: "approval", status: gate.status, question: gate.question, context: gate.context ?? null, options: APPROVAL_OPTIONS, askedAt: gate.askedAt, ...(gate.answer ? { answer: gate.answer } : {}) });
-  return [...record.pending.map(shape), ...record.closed.filter((gate: any) => gate.answer).map(shape)];
+  const withdrawn = (gate: any) => ({ ...shape(gate), withdrawn: { at: gate.closedAt ?? null, by: { name: typeof gate.by?.name === "string" ? gate.by.name : null } } });
+  return [...record.pending.map(shape), ...record.closed.filter((gate: any) => gate.answer).map(shape), ...record.closed.filter((gate: any) => gate.closed === "withdrawn" && !gate.answer).map(withdrawn)];
 }

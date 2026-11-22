@@ -60,6 +60,53 @@ export function gateSource({ projectRoot, initiative, artifact, scope }: { proje
   return async () => (await readCoordinationState({ projectRoot, initiative })).state?.pending ?? [];
 }
 
+/** The reason a gate that the person withdrew in the review browser closes with, which marks it as withdrawn rather than resolved. */
+export const WITHDRAWN_REASON = "The person withdrew this question without an answer.";
+
+/** The text of a wait that found gates the person withdrew. */
+export function withdrawnText(value: any) {
+  return value.withdrawn.map((item: any) => `The person withdrew user gate ${item.id} in the review browser without an answer. Do not act on it as answered.`).join("\n");
+}
+
+// The waited gates that the person withdrew, as { id, at, by: { name } }: an artifact wait's source lists them as state.withdrawn, and an
+// initiative's are its closed gates with the withdrawal reason, whose gate.withdraw history entry names who withdrew them.
+function withdrawnOf(initiative: string, gateIds: string[], state: any, history: any[]) {
+  if (Array.isArray(state?.withdrawn)) return state.withdrawn.filter((item: any) => gateIds.includes(item.id));
+  const closed = Array.isArray(state?.closed) ? state.closed : [];
+  const entries = Array.isArray(history) && history.length ? history : Array.isArray(state?.history) ? state.history : [];
+  return gateIds.flatMap((id) => {
+    const gate = closed.findLast((item: any) => isRecord(item) && item.id === id && item.reason === WITHDRAWN_REASON && !item.answer);
+    if (!gate) return [];
+    const entry = entries.findLast((item: any) => isRecord(item) && item.action === "gate.withdraw" && item.target === `gate:${initiative}/${id}`);
+    return [{ id, at: typeof gate.closedAt === "string" ? gate.closedAt : entry?.at ?? null, by: { name: typeof entry?.by?.name === "string" ? entry.by.name : null } }];
+  });
+}
+
+/**
+ * One read of the waited gates that the person withdrew, as a wait that finds them returns it, { status: "withdrawn", gateIds, withdrawn }, or null;
+ * a host that cannot wait still learns at once that a gate was withdrawn. A read that fails answers null.
+ */
+export async function peekWithdrawn({ projectRoot, initiative, artifact, scope, gateIds }: { projectRoot: string; initiative?: any; artifact?: any; scope?: any; gateIds: string[] }) {
+  try {
+    const ids = [...new Set(gateIds)];
+    let state: any;
+    if (typeof artifact === "string" && artifact) {
+      const gates = await gateSource({ projectRoot, artifact, scope })();
+      state = { pending: gates.filter((gate: any) => !gate.withdrawn), withdrawn: gates.filter((gate: any) => gate.withdrawn).map((gate: any) => ({ id: gate.id, ...gate.withdrawn })) };
+    } else {
+      const read = await readCoordinationState({ projectRoot, initiative });
+      if (!read.valid) return null;
+      state = read.state ?? {};
+    }
+    const pending = new Set((state.pending ?? []).filter(isRecord).map((gate: any) => gate.id));
+    const answered = (state.pending ?? []).some((gate: any) => isRecord(gate) && ids.includes(gate.id) && gate.answer);
+    const withdrawn = answered ? [] : withdrawnOf(initiative, ids.filter((id) => !pending.has(id)), state, []);
+    return withdrawn.length ? { status: "withdrawn", gateIds: ids, withdrawn } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The text of a wait that the person's changes ended. */
 export function changedText(value: any) {
   return [personChangesText(value.changes), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n");
@@ -68,8 +115,11 @@ export function changedText(value: any) {
 function outcome(initiative: string, gateIds: any, state: any, history: any, shown: any, held: any, known: any, first: any, watchChanges: any) {
   const pending = state?.pending ?? [];
   const present = gateIds.map((id: string) => pending.find((item: any) => isRecord(item) && item.id === id)).filter(Boolean);
-  if (!present.length) return { result: { status: first ? "unknown_gate" : "resolved" } };
   const answered = present.filter((gate: any) => gate.answer);
+  // A gate the person withdrew ends the wait at once, before resolved and unknown_gate, unless another waited gate has an answer to return.
+  const withdrawn = answered.length ? [] : withdrawnOf(initiative, gateIds.filter((id: string) => !present.some((gate: any) => gate.id === id)), state, history);
+  if (withdrawn.length) return { result: { status: "withdrawn", withdrawn } };
+  if (!present.length) return { result: { status: first ? "unknown_gate" : "resolved" } };
   const waiting = present.filter((gate: any) => !gate.answer).map((gate: any) => gate.id);
   if (answered.length) return { result: { status: "answered", answered, waiting }, answers: answered.map((gate: any) => gate.id) };
   if (!watchChanges) return { result: null };
@@ -134,7 +184,10 @@ async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, 
     return decision;
   };
   const poll = readArtifactGates
-    ? async () => decide({ pending: await readArtifactGates() }, [], new Set()).result
+    ? async () => {
+      const gates = await readArtifactGates();
+      return decide({ pending: gates.filter((gate: any) => !gate.withdrawn), withdrawn: gates.filter((gate: any) => gate.withdrawn).map((gate: any) => ({ id: gate.id, ...gate.withdrawn })) }, [], new Set()).result;
+    }
     : notices
     ? () => gateWaitStep({ projectRoot, initiative, ...session, waitId, gateIds: ids, until: Date.now() + leaseMs }, decide)
     : async () => {

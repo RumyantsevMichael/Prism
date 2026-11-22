@@ -13,8 +13,9 @@ import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { readRoadmap } from "./roadmap.mjs";
 import { shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction, validEarlierName } from "./state.mjs";
-import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget } from "./store-artifacts.mjs";
+import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget, withdrawArtifactApproval } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
+import { WITHDRAWN_REASON } from "./gate-wait.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
 import { confirmInstall, confirmLaunch, installText } from "../session/launch-confirmation.mjs";
 import { installAgent, removeAgent, updateAgent } from "../session/agent-installs.mjs";
@@ -174,7 +175,7 @@ async function readTarget(projectRoot: string, parsed: any, indexer: any, state 
     // An approval gate lives in its artifact's status record in the store, so an answered or replaced one is no target.
     const gates = await pendingApprovals(projectRoot, parsed.gate);
     if (!gates.length) throw unknownTarget(parsed.reference);
-    return { ...parsed, gateRecord: gates[0], ambiguous: gates.length > 1 ? ambiguousApprovalMessage(parsed.gate, gates) : null };
+    return { ...parsed, gateRecord: gates[0], ambiguous: gates.length > 1 ? ambiguousApprovalMessage(parsed.gate, gates) : null, asker: await askerOf(projectRoot, { gate: parsed.gate }, env) };
   }
   if (parsed.kind === "launch") {
     // A launched session is a target while this machine lists it for the page's checkout.
@@ -229,8 +230,19 @@ async function readTarget(projectRoot: string, parsed: any, indexer: any, state 
     const gate = (coordination!.state?.pending ?? []).find((item: any) => isRecord(item) && item.id === parsed.gate);
     if (!gate) throw unknownTarget(parsed.reference);
     context.gateRecord = gate;
+    context.asker = await askerOf(projectRoot, { initiative: parsed.initiative, gate: parsed.gate }, env);
   }
   return context;
+}
+
+// The state of a gate's asker as its card reads it, { state, reason }: waiting while a wait holds it, then open, not-running, or unknown from this machine's kept session.
+async function askerOf(projectRoot: string, key: { initiative?: string; gate: string }, env: NodeJS.ProcessEnv) {
+  const [{ readGateAsker, targetOf }, { askerState, readAskerSessions }] = await Promise.all([import("./gate-askers.mjs"), import("../session/asker-sessions.mjs")]);
+  const read = await readGateAsker(projectRoot, key as any);
+  const kept: Record<string, any> = await readAskerSessions(env).catch(() => ({}));
+  const target = targetOf(key as any);
+  const own = read.known && Object.hasOwn(kept, target) ? kept[target] : null;
+  return askerState(read, own, env).catch(() => ({ state: "unknown", reason: "Prism cannot tell whether this session is open." }));
 }
 
 // ---- Definitions ----
@@ -529,6 +541,43 @@ const APPROVAL_ANSWER = {
   revision: (context: any) => context.ambiguous ? null : context.gateRecord.current,
   unavailable: (context: any) => context.ambiguous ?? (context.gateRecord.changed ? APPROVAL_CHANGED : null),
   unavailableCode: (context: any) => context.ambiguous ? "approval_ambiguous" : "artifact_changed",
+  change: undefined
+};
+
+// The person withdraws a question that no session can read: it closes without an answer, leaves Attention, and starts nothing.
+// It is unavailable while a session could still read an answer, since a wait or an open asker would act on it.
+function withdrawUnavailable(context: any) {
+  if (context.gateRecord.answer) return "The question already has an answer.";
+  if (context.asker?.state === "waiting") return "A session waits on this question, so it reads your answer.";
+  if (context.asker?.state === "open") return "The session that asked is open, so withdraw the question only after that session ends.";
+  return null;
+}
+
+const GATE_WITHDRAW = {
+  id: "gate.withdraw",
+  kinds: ["gate"],
+  label: "Withdraw",
+  group: "Question",
+  effect: "Closes the question without an answer and removes it from Attention; no session starts.",
+  target: (context: any) => context.reference,
+  fields: () => [],
+  value: () => null,
+  context: () => null,
+  recommended: () => null,
+  confirm: () => null,
+  revision: (context: any) => context.coordination.revision,
+  unavailable: withdrawUnavailable,
+  after: () => "withdrawn",
+  change: (context: any) => ({ withdraw: { id: context.gate, reason: WITHDRAWN_REASON } })
+};
+
+const APPROVAL_WITHDRAW = {
+  ...GATE_WITHDRAW,
+  kinds: ["approval"],
+  // An id that several pending gates hold names no one gate to withdraw.
+  revision: (context: any) => context.ambiguous ? null : context.gateRecord.current,
+  unavailable: (context: any) => context.ambiguous ?? withdrawUnavailable(context),
+  unavailableCode: (context: any) => context.ambiguous ? "approval_ambiguous" : "action_unavailable",
   change: undefined
 };
 
@@ -834,7 +883,7 @@ const MACHINE_PRISM_RUNS = {
 };
 
 /** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, AGENT_INSTALL, AGENT_UPDATE, AGENT_REMOVE, MACHINE_PRISM_RUNS];
+const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, GATE_WITHDRAW, APPROVAL_WITHDRAW, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, AGENT_INSTALL, AGENT_UPDATE, AGENT_REMOVE, MACHINE_PRISM_RUNS];
 
 /** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
 export const actionEffect = (id: string) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
@@ -1045,9 +1094,18 @@ export async function applyAction({ projectRoot, target, action, input, revision
     if (read.ambiguous) throw fail("approval_ambiguous", read.ambiguous, { reason: read.ambiguous });
     const checked = await check(definition, read, request);
     applied = await entryOf(checked, read);
+    const gate = read.gateRecord;
+    if (definition.id === "gate.withdraw") {
+      // A withdrawal records who withdrew the gate as Git names them, or none when it names no user, since it records no decision on the file.
+      await withdrawArtifactApproval(projectRoot, { path: gate.artifact.path, scope: gate.artifact.scope, id: gate.id, by: applied.by.name ? { name: applied.by.name, host: os.hostname() } : null, entry: applied }).catch((error) => {
+        if (error?.code === "unknown_gate" || error?.code === "gate_answered") throw unknownTarget(target);
+        if (error?.code === "approval_ambiguous") throw fail("approval_ambiguous", error.message, { reason: error.message });
+        throw storeRefused(error) ? storeRefusal(error) : error;
+      });
+      return { applied, actions: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope } };
+    }
     // An approval records who gave it, so a checkout whose Git names no user is refused rather than recording an anonymous one.
     if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the answer cannot record who approved; set one with git config user.name and answer again.");
-    const gate = read.gateRecord;
     // The store update repeats the gate and version checks under the artifact lock, so a change that lands after the read above is refused, never overwritten.
     await answerArtifactApproval(projectRoot, { path: gate.artifact.path, scope: gate.artifact.scope, id: gate.id, choice: checked!.after.choice, note: checked!.after.note, by: { name: applied.by.name, host: os.hostname() }, entry: applied }).catch((error) => {
       if (error?.code === "unknown_gate" || error?.code === "gate_answered") throw unknownTarget(target);
@@ -1107,6 +1165,8 @@ export async function applyAction({ projectRoot, target, action, input, revision
   if (parsed.kind === "approval") return { applied, actions: [], artifact: { path: read.gateRecord.artifact.path, scope: read.gateRecord.artifact.scope } };
   // A comment leaves its artifact unchanged, so the target lists its action again, and the result names the artifact it commented on.
   if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, ...(read.artifact.path === null ? { location: read.artifact.location } : {}), scope: read.artifact.scope }, comment: stored.id };
+  // A withdrawn gate leaves the pending gates, so its target has no actions left.
+  if (definition.id === "gate.withdraw") return { applied, actions: [] };
   const actions = (await listActions({ projectRoot, target, indexer, env, checkouts })).actions;
   // An answer to a gate that a launched session of this machine asked is recorded for that session, which it may resume.
   if (parsed.kind === "gate") {

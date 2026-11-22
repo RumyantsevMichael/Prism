@@ -88,7 +88,7 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 ## 6. User gates
 
 - Record every question to the user before asking it, through `update_coordination_state` with a `gateOperations` `ask` operation that names the kind, `visual-review` for a design gate, `correctness` to confirm a ship, `decision` for a choice, or `assistance` for an action the user must take, and the slice, question, its context, artifacts, and for a decision its options with consequences and the recommended answer, written as a [blocker](../workflow/SKILL.md#common-terms).
-- After asking, call `wait_for_user_gate` once with the ids just recorded, and when it returns without an answer, end the turn.
+- After asking, call `wait_for_user_gate` once with the ids just recorded, and when it returns without an answer, end the turn; a [withdrawn gate](../workflow/SKILL.md#common-terms) has no answer, so never act on it as answered.
 - Treat an answer recorded in the review browser as the user's answer, never ask an answered gate again, and `resolve` each gate after acting on it or as soon as it no longer applies, such as when its artifacts are gone, with a reason unless the browser recorded the answer, and for a decision answered in conversation with the chosen option's id as `choice`.
 
 ## 7. Finish or pause

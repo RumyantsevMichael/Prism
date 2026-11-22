@@ -607,6 +607,19 @@
   overflow-wrap: anywhere;
 }
 
+/* Withdraw sits under the asker line, with its refusal beside it. */
+.gate-withdraw {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.gate-withdraw .gate-error {
+  margin: 0;
+}
+
 /* The lifecycle keeps its six steps on one row, and takes two rows of three in a narrow sheet. */
 .gate-steps {
   grid-template-columns: repeat(6, minmax(0, 1fr));

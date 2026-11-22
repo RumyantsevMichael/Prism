@@ -124,7 +124,8 @@ test("clause 34: an approval is the gate.answer action of its approval target, u
   assert.equal(listed.body.target, target);
   assert.equal(listed.body.writable, true);
   const [action] = listed.body.actions;
-  assert.deepEqual([listed.body.actions.length, action.id, action.target, action.available, action.reason, action.revision], [1, "gate.answer", target, true, null, created.version], "the revision is the artifact's current version");
+  assert.deepEqual(listed.body.actions.map((item) => item.id), ["gate.answer", "gate.withdraw"], "an approval target lists its answer and its withdrawal");
+  assert.deepEqual([action.id, action.target, action.available, action.reason, action.revision], ["gate.answer", target, true, null, created.version], "the revision is the artifact's current version");
   const [choice, note] = action.fields;
   assert.deepEqual([choice.name, choice.options.map((option) => option.value), choice.required], ["choice", ["approve", "request-changes"], true]);
   assert.deepEqual([note.name, note.requiredWhen], ["note", { field: "choice", values: ["request-changes"] }]);
@@ -209,7 +210,8 @@ test("clause 34: an approval id that the pending gates of two artifacts share na
   const listed = await approvalActions(review, gate);
   assert.equal(listed.status, 200, JSON.stringify(listed.body));
   const [action] = listed.body.actions;
-  assert.deepEqual([listed.body.actions.length, action.id, action.available, action.revision], [1, "gate.answer", false, null], "the listing shows the answer unavailable, with no revision to answer against");
+  assert.deepEqual(listed.body.actions.map((item) => [item.id, item.available, item.revision]), [["gate.answer", false, null], ["gate.withdraw", false, null]], "the listing shows the answer and the withdrawal unavailable, with no revision to act against");
+  assert.equal(action.id, "gate.answer");
   assert.match(action.reason, /alpha\.md/);
   assert.match(action.reason, /billing\.md/);
   for (const revision of [written.version, null, version("any bytes")]) {
