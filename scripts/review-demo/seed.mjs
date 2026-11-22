@@ -4,7 +4,7 @@
 // whose records it keeps in the launches folder of that review app folder, for the Agents page.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ROOT, prepareProject, startTools } from "./project.mjs";
 import { appendRecord } from "../../dist/server/workflow/record-store.mjs";
@@ -183,8 +183,10 @@ try {
 
 // Agents at work for the Agents page: claims of other sessions, live and expired, with the harness and model each records, written as a Prism server
 // writes them, and sessions launched on this computer whose runs have ended, one of them archived, so nothing in the demo runs or can be stopped.
+// One ended without a result on an ACP agent, whose install record names a command that does not exist, so nothing can start it.
 async function seedAgents(waitedGate) {
-  const { createLaunchFolder, prepareLaunchesDirectory, storeLocation, writeArchiveMark, writeGateRecord, writeLaunchRecord } = await import("../../dist/server/session/launch-records.mjs");
+  const { createLaunchFolder, prepareLaunchesDirectory, storeLocation, writeArchiveMark, writeGateRecord, writeLaunchRecord, writeResultMarks } = await import("../../dist/server/session/launch-records.mjs");
+  const { noResultContext, noResultQuestion } = await import("../../dist/server/session/run-result.mjs");
   const env = { ...process.env, PRISM_REVIEW_APP_DIR: agentsFolder };
   const now = Date.now();
   const at = (minutes) => new Date(now + minutes * 60000).toISOString();
@@ -206,11 +208,12 @@ async function seedAgents(waitedGate) {
     startedAt: at(-minutesAgo - ran), heartbeatAt: at(-minutesAgo), outputAt: at(-minutesAgo), model, endedAt: at(-minutesAgo), exit,
     refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: 10000, stopRequestedAt: null, ...rest
   });
-  const launch = async (number, initiative, host, hostSessionId, run, gates = null, archivedAt = null) => {
+  const launch = async (number, initiative, host, hostSessionId, run, gates = null, archivedAt = null, results = null) => {
     const id = `launch-${createHash("sha256").update(`demo-${number}`).digest("hex").slice(0, 16)}`;
     const folder = await createLaunchFolder(env, id);
     await writeLaunchRecord(folder, { id, initiative, host, checkout: realRoot, store, createdAt: run.startedAt, hostSessionId, runs: [run] });
     if (gates) await writeGateRecord(folder, gates);
+    if (results) await writeResultMarks(folder, results);
     if (archivedAt) await writeArchiveMark(folder, { archivedAt, runs: 1 });
   };
   await launch(1, "search-indexing", "codex", "019a2f4e-5b1c-7d20-9e8f-3a4b5c6d7e8f", ended({ minutesAgo: 4, ran: 0.15, model: "gpt-5.5-codex", exit: { code: 1, signal: null }, hostError: "the model is not offered for this account." }));
@@ -221,4 +224,19 @@ async function seedAgents(waitedGate) {
   await launch(4, "activity-reports", "claude-code", "c2e4a6b8-0d1f-4a3c-9e5b-7d9f1b3d5f70", ended({ minutesAgo: 35, ran: 26, model: "claude-opus-5-5" }));
   await launch(5, "retry-hardening", "claude-code", "d3f5b7c9-1e2a-4b4d-8f6c-8e0a2c4e6a81", ended({ minutesAgo: 52, ran: 7.7, model: "claude-sonnet-5-5", exit: { code: null, signal: "SIGTERM" }, stopRequestedAt: at(-52) }));
   await launch(6, "activity-reports", "claude-code", "e4a6c8d0-2f3b-4c5e-9a7d-9f1b3d5f7b92", ended({ minutesAgo: 60 * 49, ran: 54, model: "claude-fable-5-2" }), null, at(-60 * 48));
+
+  // The ACP agent's install record, as a registry install writes it, so the session names the agent by its label.
+  const version = path.join(agentsFolder, "agents", "gemini", "0.9.0");
+  await mkdir(version, { recursive: true });
+  await writeFile(path.join(version, "install.json"), JSON.stringify({ id: "gemini", name: "Gemini CLI", version: "0.9.0", authors: ["Demo Authors"], license: "Apache-2.0", source: "https://example.invalid/gemini", distribution: "binary", command: path.join(version, "missing-agent"), args: ["--acp"], env: {}, installedAt: at(-60 * 24) }));
+  await writeFile(path.join(agentsFolder, "agents", "gemini", "current.json"), JSON.stringify({ version: "0.9.0" }));
+  // The no-result gate is recorded as the launch's supervisor records it, with the run's last message.
+  const current = await call("get_coordination_state", { projectRoot: realRoot, initiative: "retry-hardening" });
+  const message = "Should I raise the attempt timeout to 5 seconds, or keep 2 seconds and add a fourth attempt?";
+  const asked = await call("update_coordination_state", { projectRoot: realRoot, initiative: "retry-hardening", expectedRevision: current.revision, changes: {
+    gateOperations: [{ op: "ask", kind: "assistance", question: noResultQuestion("Gemini CLI", "retry-hardening"), context: noResultContext(message), artifacts: [] }]
+  } });
+  const gate = asked.openedGates?.[0]?.id;
+  const run = { ...ended({ minutesAgo: 4, ran: 39, model: "gemini-3-pro" }), token: createHash("sha256").update("demo-no-result").digest("hex").slice(0, 16), settled: true };
+  await launch(7, "retry-hardening", "acp-gemini", "sess-7f3a9c1e", run, { marks: [{ gate, at: at(-4) }], answers: [] }, null, { pauses: [], checks: [], noResult: [{ run: run.token, gate, failure: null, at: at(-4) }] });
 }

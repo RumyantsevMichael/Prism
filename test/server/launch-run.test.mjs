@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { INITIATIVE, actionOf, apply, listing, runOptionsReview } from "./fixtures/run-options-hosts.mjs";
 import { settled } from "./fixtures/wait.mjs";
+import { LAUNCH_NOTE } from "../../dist/server/session/launch-hosts.mjs";
 
 // Requirements: docs/requirements/launch-run-configuration.md §2, §3, §8, §9, §12, §13, docs/requirements/launched-sessions.md §27, §28,
 // and docs/requirements/initiative-settings.md §11.
@@ -9,7 +10,8 @@ import { settled } from "./fixtures/wait.mjs";
 
 const posixOnly = process.platform === "win32" ? "the stub hosts and dialogs are POSIX scripts" : false;
 const TARGET = `initiative:${INITIATIVE}`;
-const LAUNCH_FLAGS = ["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "host", "--permission-prompt-tool", "stdio"];
+// headless-run-questions §2: the start note follows the fixed flags, before the coordinator's model and effort.
+const LAUNCH_FLAGS = ["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "host", "--permission-prompt-tool", "stdio", "--append-system-prompt", LAUNCH_NOTE];
 
 const state = async (root) => {
   const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");

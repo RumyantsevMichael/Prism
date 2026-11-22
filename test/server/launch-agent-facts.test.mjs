@@ -17,11 +17,11 @@ const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scrip
 test("§8 §9 a Claude Code run keeps the model of its init event, and a resumed run's model replaces it", { skip: posixOnly, timeout: 60000 }, async (t) => {
   const s = await agentsProject(t, { plans: { claude: [{ model: "claude-opus-5-5", hold: 50 }, { model: "claude-sonnet-5-5", hold: 50 }] } });
   const id = await s.start(INITIATIVE, "claude-code");
-  const first = await s.settledLaunch(id, (view) => view.state === "finished");
+  const first = await s.settledLaunch(id, (view) => view.state === "ended-without-result");
   assert.equal(first.model, "claude-opus-5-5");
   const { resumeLaunch } = await import("../../dist/server/session/launched-sessions.mjs");
   await resumeLaunch({ id, env: s.env });
-  const second = await s.settledLaunch(id, (view) => view.runs === 2 && view.state === "finished");
+  const second = await s.settledLaunch(id, (view) => view.runs === 2 && view.state === "ended-without-result");
   assert.equal(second.model, "claude-sonnet-5-5", "the launch names its last run's model");
 });
 
@@ -37,8 +37,8 @@ test("§8 a run whose host names no model, or a malformed one, keeps none", { sk
   const s = await agentsProject(t, { plans: { claude: [{ hold: 50 }], codex: [{ model: `m${"x".repeat(200)}`, hold: 50 }] } });
   const claude = await s.start(INITIATIVE, "claude-code");
   const codex = await s.start("search", "codex");
-  const unnamed = await s.settledLaunch(claude, (view) => view.state === "finished");
-  const malformed = await s.settledLaunch(codex, (view) => view.state === "finished");
+  const unnamed = await s.settledLaunch(claude, (view) => view.state === "ended-without-result");
+  const malformed = await s.settledLaunch(codex, (view) => view.state === "ended-without-result");
   assert.equal(unnamed.model, null);
   assert.equal(malformed.model, null);
 });
@@ -47,8 +47,8 @@ test("§9 a launch names the claim holder of its session and never its host sess
   const s = await agentsProject(t, { plans: { claude: [{ model: "claude-opus-5-5", hold: 50 }], codex: [{ model: "gpt-5.5", hold: 50 }] } });
   const claude = await s.start(INITIATIVE, "claude-code");
   const codex = await s.start("search", "codex");
-  const claudeView = await s.settledLaunch(claude, (view) => view.state === "finished");
-  const codexView = await s.settledLaunch(codex, (view) => view.state === "finished");
+  const claudeView = await s.settledLaunch(claude, (view) => view.state === "ended-without-result");
+  const codexView = await s.settledLaunch(codex, (view) => view.state === "ended-without-result");
   const claudeSession = s.sessionOf("claude-code");
   assert.equal(claudeView.holder, holderOf(claudeSession));
   assert.equal(codexView.holder, holderOf(CODEX_THREAD));

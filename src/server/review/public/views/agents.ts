@@ -16,6 +16,7 @@ const STATES: Readonly<Record<string, any>> = Object.freeze({
   blocked: ["Blocked", "warning"],
   finished: ["Finished", "success"],
   failed: ["Failed", "danger"],
+  "ended-without-result": ["Ended without a result", "info"],
   stopped: ["Stopped", "neutral"],
   working: ["Working", "info"],
   expired: ["Expired", "neutral"]
@@ -33,7 +34,7 @@ export const SHOWS = Object.freeze([
 ]);
 
 // The states in which a launched session ended, so the person can archive it.
-export const ENDED_STATES = Object.freeze(["finished", "failed", "stopped", "blocked"]);
+export const ENDED_STATES = Object.freeze(["finished", "failed", "stopped", "blocked", "ended-without-result"]);
 
 /** Whether the person can archive an entry: a launched session that ended and is not archived. */
 export function archivable(entry: any) {
@@ -47,7 +48,9 @@ export function archivedText(count: number) {
 }
 
 // The group an unarchived session shows in again until the next read says, as the server groups it.
-const groupAfterUnarchive = (entry: any) => (entry.state === "failed" || entry.state === "waiting" ? "needs-you" : "launched");
+const NEEDS_YOU_STATES = ["failed", "ended-without-result", "waiting"];
+const groupAfterUnarchive = (entry: any) => (NEEDS_YOU_STATES.includes(entry.state) ? "needs-you" : "launched");
+const needsRank = (state: any) => (NEEDS_YOU_STATES.includes(state) ? NEEDS_YOU_STATES.indexOf(state) : NEEDS_YOU_STATES.length);
 
 const READ_ONLY_TIP = "This tab can only read.";
 
@@ -129,13 +132,13 @@ export function launchFacts(launch: any, now = Date.now()) {
   return [launch.launchedAt ? `Started ${startText(launch.launchedAt, now)}` : "", exitText(launch.exit), launch.runs > 1 ? `${launch.runs} runs` : ""].filter(Boolean).join(" · ");
 }
 
-// Within needs-you, failed before waiting; launches the latest launched first; live claims the one that lapses first first; expired ones the latest to lapse first.
+// Within needs-you, failed ones first, then those that ended without a result, then waiting ones; launches the latest launched first; live claims the one that lapses first first; expired ones the latest to lapse first.
 const at = (value: any) => Date.parse(value ?? "") || 0;
 function order(left: any, right: any) {
   const groups = GROUPS.map(([group]) => group);
   const group = groups.indexOf(left.group) - groups.indexOf(right.group);
   if (group) return group;
-  if (left.group === "needs-you" && left.state !== right.state) return left.state === "failed" ? -1 : right.state === "failed" ? 1 : 0;
+  if (left.group === "needs-you" && left.state !== right.state) return needsRank(left.state) - needsRank(right.state);
   if (left.kind === "launch") return at(right.launch?.launchedAt) - at(left.launch?.launchedAt) || right.id.localeCompare(left.id);
   if (left.group === "other") return at(left.expiresAt) - at(right.expiresAt) || left.id.localeCompare(right.id);
   return at(right.expiresAt) - at(left.expiresAt) || left.id.localeCompare(right.id);
@@ -181,9 +184,11 @@ function sessionLinkHtml(session: any) {
 
 function actionHtml(entry: any, writable: any) {
   if (entry.kind === "claim") return sessionLinkHtml(entry.session);
-  if (entry.action === "answer") return '<prism-button size="sm" variant="primary" data-agent-action="answer" text="Answer"></prism-button>';
   // A tab that can only read shows each change it cannot send as unavailable, and says why.
   const lock = writable ? "" : ` disabled tip="${READ_ONLY_TIP}"`;
+  // A session that ended without a result is answered or archived from its row.
+  const answer = '<prism-button size="sm" variant="primary" data-agent-action="answer" text="Answer"></prism-button>';
+  if (entry.action === "answer") return archivable(entry) ? `${answer}<prism-button size="sm" variant="ghost" data-agent-action="archive" text="Archive"${lock}></prism-button>` : answer;
   if (entry.action === "stop") return `<prism-button size="sm" variant="ghost" data-agent-action="stop" text="Stop"${lock}></prism-button>`;
   const open = entry.action === "open" ? '<prism-button size="sm" variant="ghost" data-agent-action="open" text="Open"></prism-button>' : "";
   if (entry.kind === "launch" && entry.group === "archived") return `${open}<prism-button size="sm" variant="ghost" data-agent-action="unarchive" text="Unarchive"${lock}></prism-button>`;
@@ -576,7 +581,7 @@ export async function render(container: any, entity: any, ctx: any) {
     const row = rows.get(button.closest("[data-agent]")?.dataset.agent);
     if (!row) return;
     const what = button.dataset.agentAction;
-    if (what === "answer") return openQuestion(ctx, row.entry.launch?.waitingGate ?? null);
+    if (what === "answer") return openQuestion(ctx, row.entry.launch?.waitingGate ?? row.entry.launch?.questionGate ?? null);
     if (what === "open") {
       state.openAgents = isOpen(row) ? state.openAgents.filter((id: string) => id !== row.entry.id) : [...state.openAgents, row.entry.id];
       return paint(row);

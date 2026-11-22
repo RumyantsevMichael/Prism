@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pluginPath } from "../../plugin-root.mjs";
-import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, lineSplitter, MODEL_PATTERN, strippedEnvironment, validHostSessionId } from "../launch-hosts.mjs";
+import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, LAUNCH_NOTE, lineSplitter, MODEL_PATTERN, strippedEnvironment, validHostSessionId } from "../launch-hosts.mjs";
 import { toolsListed } from "../options-read-marker.mjs";
 import type { PermissionAsk, PermissionDecision } from "../permission-requests.mjs";
 
@@ -22,6 +22,8 @@ const DESCRIPTION_MAX = 300;
 const MAX_VALUES = 1000;
 // How many tool calls a run keeps the title, kind, and raw input of, for the permission requests that name them.
 const KEPT_TOOL_CALLS = 64;
+// How much of the reply after the last tool call a run holds before it is redacted and cut to the last message's length.
+const HELD_REPLY_CHARS = 64 * 1024;
 
 /** An agent's error answer, or a failure of the connection, with the JSON-RPC code where the agent gave one. */
 export class AcpError extends Error {
@@ -343,7 +345,7 @@ const finiteTokens = (usage: unknown) => {
   return Object.keys(counts).length ? counts : null;
 };
 
-export interface AcpRunFacts { hostSessionId: string | null; agentSessionId: string | null; settled: boolean; model: string | null; hostError: string | null; failure: string | null; usage: AcpUsage | null; refusals: { tool: string; reason: string }[]; refusalCount: number }
+export interface AcpRunFacts { hostSessionId: string | null; agentSessionId: string | null; settled: boolean; model: string | null; hostError: string | null; failure: string | null; usage: AcpUsage | null; refusals: { tool: string; reason: string }[]; refusalCount: number; lastMessage: string | null; stopReason: string | null }
 
 export interface AcpConversationOptions {
   label: string;
@@ -363,6 +365,8 @@ export interface AcpConversationOptions {
   inputOpen: () => boolean;
   /** Host text with the session id redacted and cut, for a reason or an error. */
   cut: (value: string) => string;
+  /** A reply's text as the run's last message, with the session ids redacted and cut, or null for blank text. */
+  replyText: (value: unknown) => string | null;
   named: (model: unknown) => void;
   onSessionId: (id: string) => void;
   /** Keeps a permission request waiting for the person and answers it once with the message for the decision. */
@@ -431,6 +435,10 @@ export function acpConversation(options: AcpConversationOptions) {
   let stopAsked = false;
   let cancelSent = false;
   const usage = { tokens: null, context: null, cost: null } as AcpUsage;
+  // The reply text that the agent sent during the prompt after its last tool call, and the message id of its last chunk.
+  let reply = "";
+  let replyId: unknown = undefined;
+  let replyStarted = false;
   const request = (method: string, params: unknown) => {
     const id = nextId++;
     pending.set(id, method);
@@ -498,7 +506,7 @@ export function acpConversation(options: AcpConversationOptions) {
     }
     const first = embedded ? { type: "resource", resource: { uri: SKILL_URI, mimeType: "text/markdown", text: skill } } : { type: "text", text: skill };
     prompting = true;
-    request("session/prompt", { sessionId, prompt: [first, { type: "text", text: launchInstruction(initiative) }] });
+    request("session/prompt", { sessionId, prompt: [first, { type: "text", text: launchInstruction(initiative) }, { type: "text", text: LAUNCH_NOTE }] });
   };
   const opened = (method: string, result: any) => {
     const id = method === "session/new" ? result?.sessionId : hostSessionId;
@@ -559,6 +567,8 @@ export function acpConversation(options: AcpConversationOptions) {
       usage.tokens = finiteTokens(result?.usage);
       facts.usage = { ...usage };
       const stopReason = text(result?.stopReason);
+      facts.stopReason = stopReason || null;
+      facts.lastMessage = options.replyText(reply);
       if (FAILING_STOPS.has(stopReason)) facts.failure = cut(acpRunReasons.stopped(label, stopReason));
       close();
     }
@@ -632,7 +642,20 @@ export function acpConversation(options: AcpConversationOptions) {
         if (isObject(update.cost) && Number.isFinite(update.cost.amount) && typeof update.cost.currency === "string" && /^[A-Za-z]{1,8}$/.test(update.cost.currency)) usage.cost = { amount: update.cost.amount, currency: update.cost.currency };
         facts.usage = { ...usage };
       } else if (update.sessionUpdate === "config_option_update" && Array.isArray(update.configOptions)) configOptions = update.configOptions;
-      else if ((update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") && typeof update.toolCallId === "string" && update.toolCallId) {
+      else if (update.sessionUpdate === "agent_message_chunk") {
+        // Only text that the agent sent during the run's prompt counts; a chunk with another message id than the last one starts the reply anew.
+        if (!prompting || promptDone || !isObject(update.content) || update.content.type !== "text" || typeof update.content.text !== "string") return;
+        if (replyStarted && update.messageId !== replyId) reply = "";
+        replyStarted = true;
+        replyId = update.messageId;
+        if (reply.length < HELD_REPLY_CHARS) reply = `${reply}${update.content.text}`.slice(0, HELD_REPLY_CHARS);
+      }
+      if ((update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") && prompting && !promptDone) {
+        // A tool call ends the reply before it, so the last message is only the text after the last tool call.
+        reply = "";
+        replyStarted = false;
+      }
+      if ((update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") && typeof update.toolCallId === "string" && update.toolCallId) {
         // Each field that an update sets replaces the one kept; only the KEPT_TOOL_CALLS most recently updated calls are kept.
         const key = update.toolCallId;
         const kept: KnownToolCall = { ...toolCalls.get(key) };

@@ -917,7 +917,7 @@ const tools = [
             },
             gateOperations: {
               type: "array",
-              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer, giving a reason when the gate has no browser answer and, for a decision gate answered in the conversation, the chosen option's id as choice. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. Asking a correctness gate supersedes each earlier correctness gate of the initiative that the person already answered: it closes with a reason naming the new gate, which the review browser shows with the closed question, while an unanswered one stays pending. The result lists the ids of opened gates, and of superseded gates under supersededGates.",
+              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer, giving a reason when the gate has no browser answer and, for a decision gate answered in the conversation, the chosen option's id as choice. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. Asking a correctness gate supersedes each earlier correctness gate of the initiative that the person already answered: it closes with a reason naming the new gate, which the review browser shows with the closed question, while an unanswered one stays pending. Under full autonomy, decide records a choice the run made by itself about an undoable step: it is checked as an ask of a decision gate, with choice the id of one option and reason why the run chose it, and adds one closed decision gate with that choice and reason while it opens no gate; under any other autonomy it is refused with autonomy_not_full, so ask the person instead. The result lists the ids of opened gates, and of superseded gates under supersededGates.",
               items: {
                 oneOf: [
                   {
@@ -945,6 +945,33 @@ const tools = [
                         description: "Required for decision gates: the answer you recommend, as one of the options when the gate has options, and why.",
                         properties: { option: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, reason: { type: "string", minLength: 1, maxLength: 500 } }
                       }
+                    }
+                  },
+                  {
+                    type: "object",
+                    required: ["op", "question", "context", "options", "recommended", "choice", "reason"],
+                    additionalProperties: false,
+                    description: "A decision the run made by itself under full autonomy, kept as a closed decision gate; refused with autonomy_not_full under any other autonomy.",
+                    properties: {
+                      op: { const: "decide" },
+                      slice: { type: "string", minLength: 1 },
+                      question: { type: "string", minLength: 1, maxLength: 4000, description: "The question the run decided, one or two plain sentences." },
+                      context: { type: "string", minLength: 1, maxLength: 8000, description: "Markdown on what happened, what the choice changes, and how to undo it." },
+                      artifacts: { type: "array", maxItems: 50, items: { type: "string", minLength: 1 } },
+                      options: {
+                        type: "array",
+                        minItems: 1,
+                        maxItems: 8,
+                        items: { type: "object", required: ["id", "label", "consequence"], additionalProperties: false, properties: { id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, label: { type: "string", minLength: 1, maxLength: 200 }, consequence: { type: "string", minLength: 1, maxLength: 300 } } }
+                      },
+                      recommended: {
+                        type: "object",
+                        required: ["reason"],
+                        additionalProperties: false,
+                        properties: { option: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, reason: { type: "string", minLength: 1, maxLength: 500 } }
+                      },
+                      choice: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$", description: "The id of the option the run chose." },
+                      reason: { type: "string", minLength: 1, maxLength: 1000, description: "Why the run chose it, which the review browser shows with the closed decision." }
                     }
                   },
                   {

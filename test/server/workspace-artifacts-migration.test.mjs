@@ -17,6 +17,12 @@ test.after(() => rm(environment, { recursive: true, force: true }));
 // A Windows file system holds no name that is a device name such as aux.md, ends in a period, or holds a line break, another control character, ">", or "|",
 // and holds no two names that differ only in letter case, so a checkout there never holds such files, and these tests leave them out there.
 const WINDOWS = process.platform === "win32";
+// Whether the disk that holds folder treats two names that differ only in letter case as one file.
+const ignoresCase = async (folder) => {
+  const probe = path.join(folder, "case-probe");
+  await writeFile(probe, "");
+  try { return await exists(path.join(folder, "CASE-PROBE")); } finally { await rm(probe, { force: true }); }
+};
 
 const DESCRIPTIVE = {
   "docs/requirements/billing.md": requirementFile("Billing", "Approved", "2026-10-01"),
@@ -226,7 +232,8 @@ test("clause 28: a checkout file whose path collides in letter case with a store
   await writeArtifact(await server(context, place, web), "docs/requirements/Shared.md", "# Shared for the workspace\n");
   const colliding = {
     "docs/requirements/shared.md": "# Shared in api\n",
-    ...(WINDOWS ? {} : { "docs/plans/reports/Notes.md": "# Notes in one case\n", "docs/plans/reports/notes.md": "# Notes in another case\n" })
+    // Two checkout files that differ only in letter case exist only on a disk that keeps letter case apart, which Windows and macOS do not by default.
+    ...(await ignoresCase(place.parent) ? {} : { "docs/plans/reports/Notes.md": "# Notes in one case\n", "docs/plans/reports/notes.md": "# Notes in another case\n" })
   };
   const api = await checkout(place, "api", { files: { "docs/plans/reports/slice.md": "# Reports\n", ...colliding } });
   const prism = await server(context, place, api);

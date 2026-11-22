@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HOST_REQUEST_REFUSAL, KEPT_EARLY_COMPLETIONS, MAX_LINE_BYTES, TOOL_NAME_MAX, TRACKED_TASKS, hostArguments, hostConversation, hostEnvironment } from "../../dist/server/session/launch-hosts.mjs";
+import { HOST_REQUEST_REFUSAL, KEPT_EARLY_COMPLETIONS, LAUNCH_NOTE, MAX_LINE_BYTES, TOOL_NAME_MAX, TRACKED_TASKS, hostArguments, hostConversation, hostEnvironment } from "../../dist/server/session/launch-hosts.mjs";
 
 // The conversations of launched hosts over their standard input and output: which lines count, what Prism writes,
 // when it closes the host's input, and what a run reports.
@@ -29,7 +29,7 @@ function codexThrough(threadId, options = {}) {
 }
 
 test("the host arguments are Claude Code's fixed flags with its session id, and Codex's app server alone", () => {
-  assert.deepEqual(hostArguments({ host: "claude-code", hostSessionId: UUID, resume: false }), ["-p", "--verbose", "--session-id", UUID, "--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "host", "--permission-prompt-tool", "stdio"]);
+  assert.deepEqual(hostArguments({ host: "claude-code", hostSessionId: UUID, resume: false }), ["-p", "--verbose", "--session-id", UUID, "--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "host", "--permission-prompt-tool", "stdio", "--append-system-prompt", LAUNCH_NOTE]);
   assert.equal(hostArguments({ host: "claude-code", hostSessionId: UUID, resume: true })[2], "--resume");
   assert.deepEqual(hostArguments({ host: "codex", hostSessionId: "t-1", resume: true }), ["app-server"]);
   assert.throws(() => hostArguments({ host: "claude-code", hostSessionId: "--dangerously-skip-permissions", resume: true }));
@@ -174,7 +174,7 @@ test("a Codex error answer to one of Prism's requests is a host error and closes
 test("a Codex resume continues the kept thread with the fixed policy", () => {
   const { sent, feed } = talk("codex", { hostSessionId: "t-9", resume: true });
   feed(answer(1, {}), answer(2, { thread: { id: "t-9" } }));
-  assert.deepEqual(sent.find((message) => message.method === "thread/resume").params, { threadId: "t-9", cwd: "/work/demo", approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" });
+  assert.deepEqual(sent.find((message) => message.method === "thread/resume").params, { threadId: "t-9", cwd: "/work/demo", approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write", developerInstructions: LAUNCH_NOTE });
   assert.equal(sent.at(-1).params.threadId, "t-9");
 });
 

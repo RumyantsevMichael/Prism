@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
@@ -15,15 +16,34 @@ export const optionsReadFolder = (env: NodeJS.ProcessEnv = process.env) => path.
 const marking = (env: NodeJS.ProcessEnv) => env.PRISM_OPTIONS_READ === "1" || /^launch-[0-9a-f]{16}$/.test(env.PRISM_LAUNCH ?? "");
 const markerFile = (env: NodeJS.ProcessEnv, pid: number) => path.join(optionsReadFolder(env), `${pid}.json`);
 
-// The parent process ids above this process, nearest first, as far as /proc tells them, and otherwise only the parent.
+// The parent of each process, as ps lists them, on a POSIX system with no /proc, such as macOS; empty where ps is missing or fails.
+function psParents() {
+  const parents = new Map<number, number>();
+  if (process.platform === "win32") return parents;
+  let table: string;
+  try { table = execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000, windowsHide: true }); } catch { return parents; }
+  for (const line of table.split("\n")) {
+    const [pid, parent] = line.trim().split(/\s+/).map(Number);
+    if (Number.isSafeInteger(pid) && Number.isSafeInteger(parent)) parents.set(pid, parent);
+  }
+  return parents;
+}
+
+// The parent process ids above this process, nearest first, as far as /proc or else ps tells them, and otherwise only the parent.
 function ancestors() {
   const found = [process.ppid];
   let pid = process.ppid;
+  let listed: Map<number, number> | null = null;
   for (let depth = 1; depth < MAX_ANCESTORS && pid > 1; depth += 1) {
-    let stat: string;
-    try { stat = readFileSync(`/proc/${pid}/stat`, "utf8"); } catch { break; }
-    const parent = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
-    if (!Number.isSafeInteger(parent) || parent <= 1) break;
+    let parent: number | undefined;
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      parent = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+    } catch {
+      listed ??= psParents();
+      parent = listed.get(pid);
+    }
+    if (parent === undefined || !Number.isSafeInteger(parent) || parent <= 1) break;
     found.push(parent);
     pid = parent;
   }
