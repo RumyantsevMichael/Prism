@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.30.0](https://github.com/RumyantsevMichael/Prism/compare/v0.29.0...v0.30.0) (2026-11-21)
+
+
+### Added
+
+* **claims:** record the session behind a claim and link to it ([#393](https://github.com/RumyantsevMichael/Prism/issues/393)) ([a98048c](https://github.com/RumyantsevMichael/Prism/commit/a98048c2f1f05ba4a8502a44a8c29859f3d55434))
+* **review:** archive ended sessions and rename the Agents groups ([#390](https://github.com/RumyantsevMichael/Prism/issues/390)) ([eef1169](https://github.com/RumyantsevMichael/Prism/commit/eef1169e958d0f3348c419cf72d3ef13bba6e7aa))
+* **review:** link an approval gate to the work item it serves ([#400](https://github.com/RumyantsevMichael/Prism/issues/400)) ([78f2d1b](https://github.com/RumyantsevMichael/Prism/commit/78f2d1b49645c2466ff9cf018f2caa1c473eac37)), closes [#383](https://github.com/RumyantsevMichael/Prism/issues/383)
+* **review:** open frozen tests, failing tests, and run logs in the side panel ([#397](https://github.com/RumyantsevMichael/Prism/issues/397)) ([d8d96c4](https://github.com/RumyantsevMichael/Prism/commit/d8d96c427354329187179bd2f707163e1515938c))
+* **review:** pan zoomed-in diagrams by dragging them ([#396](https://github.com/RumyantsevMichael/Prism/issues/396)) ([8207fa2](https://github.com/RumyantsevMichael/Prism/commit/8207fa2fa3aa158a30285d4757f9563e08953ab0))
+* **review:** say which program and version a model list came from ([#394](https://github.com/RumyantsevMichael/Prism/issues/394)) ([8cd0b21](https://github.com/RumyantsevMichael/Prism/commit/8cd0b213df012d17c422eba350d0639428b1b63e)), closes [#378](https://github.com/RumyantsevMichael/Prism/issues/378) [#387](https://github.com/RumyantsevMichael/Prism/issues/387)
+
+
+### Fixed
+
+* make review and roadmap tool answers predictable and brief ([#389](https://github.com/RumyantsevMichael/Prism/issues/389)) ([05bdc31](https://github.com/RumyantsevMichael/Prism/commit/05bdc31387f7a57082616c961111794b6dc627b8))
+* refuse the host question tool while the session's gate waits ([#392](https://github.com/RumyantsevMichael/Prism/issues/392)) ([63bb8c7](https://github.com/RumyantsevMichael/Prism/commit/63bb8c7c6faa954bd7611897c07d123036e558f4)), closes [#377](https://github.com/RumyantsevMichael/Prism/issues/377)
+* **review:** keep open dialogs through the page's automatic refresh ([#395](https://github.com/RumyantsevMichael/Prism/issues/395)) ([163e5d2](https://github.com/RumyantsevMichael/Prism/commit/163e5d267320a685fafffed7603e33a32e681dfe)), closes [#375](https://github.com/RumyantsevMichael/Prism/issues/375)
+* **review:** say which branches hold a slice's verified files ([#369](https://github.com/RumyantsevMichael/Prism/issues/369)) ([3bf9f17](https://github.com/RumyantsevMichael/Prism/commit/3bf9f179fbf77e1e8d48626a1769acd0603fc28c))
+* **review:** show a design's undeclared diagrams in the Views tab ([#391](https://github.com/RumyantsevMichael/Prism/issues/391)) ([f499166](https://github.com/RumyantsevMichael/Prism/commit/f4991666c8b3c742698f2305a07cb3326d56b810))
+
+## [0.29.0](https://github.com/RumyantsevMichael/Prism/compare/v0.28.0...v0.29.0) (2026-11-20)
+
+
+### Added
+
+* **review:** configure a launched run before it starts ([#365](https://github.com/RumyantsevMichael/Prism/issues/365)) ([4dc9629](https://github.com/RumyantsevMichael/Prism/commit/4dc96294cd8abdc638958f76f4597813f7c19046)), closes [#356](https://github.com/RumyantsevMichael/Prism/issues/356)
+* **review:** show who opened an agent's tab group and stop selecting control text ([#358](https://github.com/RumyantsevMichael/Prism/issues/358)) ([dc30df2](https://github.com/RumyantsevMichael/Prism/commit/dc30df205c33fa0b9cb48f9ae948fb5a079a489a))
+
+
+### Fixed
+
+* **build:** stop tracking a node_modules link in the native runtime ([#366](https://github.com/RumyantsevMichael/Prism/issues/366)) ([5cddfbe](https://github.com/RumyantsevMichael/Prism/commit/5cddfbe3b38eb8ebb301c176e62e568a20adafa8)), closes [#359](https://github.com/RumyantsevMichael/Prism/issues/359)
+* **review:** time the launch window from the dialog's end ([#354](https://github.com/RumyantsevMichael/Prism/issues/354)) ([662f472](https://github.com/RumyantsevMichael/Prism/commit/662f472d4268488eb9c9c44b255df33d4962d141)), closes [#221](https://github.com/RumyantsevMichael/Prism/issues/221)
+* **roadmap:** record legacy shipped initiatives without the ship gate ([#353](https://github.com/RumyantsevMichael/Prism/issues/353)) ([362537b](https://github.com/RumyantsevMichael/Prism/commit/362537badc5cc545ed4305484b05f21ec70c3fa6)), closes [#249](https://github.com/RumyantsevMichael/Prism/issues/249)
+* **roadmap:** report readyToShip false where ship refuses linked ADRs ([#355](https://github.com/RumyantsevMichael/Prism/issues/355)) ([95be320](https://github.com/RumyantsevMichael/Prism/commit/95be320834d3ea9ea886228ce5427bad2b8a1d42))
+* **test:** wait for the Agents page's Resume action before counting it ([#350](https://github.com/RumyantsevMichael/Prism/issues/350)) ([ed97076](https://github.com/RumyantsevMichael/Prism/commit/ed9707616dea692deecc68e3f9171772d9826429))
+
+
+### Changed
+
+* **review:** type the review app's browser modules ([#364](https://github.com/RumyantsevMichael/Prism/issues/364)) ([9b2ad69](https://github.com/RumyantsevMichael/Prism/commit/9b2ad691e971c9230df1476e9a1e03dab2409bb2)), closes [#359](https://github.com/RumyantsevMichael/Prism/issues/359)
+* **server:** type the base and shared workflow modules in TypeScript ([#360](https://github.com/RumyantsevMichael/Prism/issues/360)) ([cadd75f](https://github.com/RumyantsevMichael/Prism/commit/cadd75f144afa2ddaa137f19a64ecbecbf3e4e57)), closes [#359](https://github.com/RumyantsevMichael/Prism/issues/359)
+* **server:** type the review server, entry points, and hooks ([#363](https://github.com/RumyantsevMichael/Prism/issues/363)) ([669b570](https://github.com/RumyantsevMichael/Prism/commit/669b570386e7b334a1215dc65c110d6d4935be98)), closes [#359](https://github.com/RumyantsevMichael/Prism/issues/359)
+* **server:** type the store, session, and repository-intelligence modules ([#362](https://github.com/RumyantsevMichael/Prism/issues/362)) ([6107e7c](https://github.com/RumyantsevMichael/Prism/commit/6107e7c9ed2f13e5e30b4351e974946593b75723)), closes [#359](https://github.com/RumyantsevMichael/Prism/issues/359)
+
 ## [0.28.0](https://github.com/RumyantsevMichael/Prism/compare/v0.27.1...v0.28.0) (2026-11-19)
 
 

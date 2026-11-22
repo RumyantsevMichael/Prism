@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { readInitiativeRecordRunTotals } from "../session/run-totals.mjs";
+import { storeLocation } from "../session/launch-records.mjs";
+import { pendingRequests } from "../session/permission-requests.mjs";
 import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workflow/initiative.mjs";
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
@@ -15,6 +17,7 @@ import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservati
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
 import { declaredView, governingContract, readViews, VIEW_KINDS } from "../workflow/view-declarations.mjs";
 import { appliedArtifactActions, pendingApprovalGates, readStoreArtifactAt, storeArtifactStatuses, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
+import { servedWorkItem } from "../workflow/artifact-status.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { checkArtifacts } from "../workflow/artifact-check.mjs";
@@ -24,6 +27,8 @@ import { RUN_ID, allRuns, followedRun, followingRun, readRun, shownRun } from ".
 import { recordChanges } from "./record-changes.mjs";
 import { relativeLinkTargets } from "./artifact-links.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
+import { keptSession, sessionFields } from "../session/session-links.mjs";
+import { failingTestLinks } from "./verification-view.mjs";
 
 // A workspace read through its store's clone alone has no checkout and so no configuration of its own: its defaults are no setting to warn about.
 async function readWorkflowConfig(projectRoot: string) {
@@ -101,7 +106,7 @@ export async function loadFormatMark(projectRoot: string, file: string, scope: a
 export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "code", "agents"]);
 const SECTION_LABELS: Readonly<Record<string, any>> = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", code: "Code", agents: "Agents" });
 // The Agents page's Show choices that an address can make: agents:<group>.
-export const AGENT_GROUP_PAGES = Object.freeze(["needs-you", "this-computer", "other", "expired"]);
+export const AGENT_GROUP_PAGES = Object.freeze(["needs-you", "this-computer", "other", "expired", "archived"]);
 
 // A record is read where it lives: under .prism, or beside its Markdown until the first write moves it there.
 async function recordFile(root: string, key: any) {
@@ -389,7 +394,7 @@ async function withExpiredClaims(projectRoot: string, id: string, read: any) {
     const { claim }: any = parseClaim(slice, bytes);
     if (!claim || isLive(claim as any, now) || !Object.hasOwn(slices, slice) || slices[slice].claim) continue;
     copy ??= { ...slices };
-    copy[slice] = { ...slices[slice], expiredClaim: { holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
+    copy[slice] = { ...slices[slice], expiredClaim: { holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), ...sessionFields(claim), activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
   }
   return copy ? { ...read, loaded: { ...read.loaded, record: { ...read.loaded.record, slices: copy } } } : read;
 }
@@ -400,7 +405,7 @@ function sliceClaims(slices: any, { holders = false }: any = {}) {
   for (const [slug, slice] of Object.entries<any>(slices ?? {})) {
     const claim = slice?.claim ?? slice?.expiredClaim;
     if (!claim || typeof claim.label !== "string") continue;
-    claims.push({ slug, sliceTitle: slice.title ?? slug, ...(holders ? { holder: typeof claim.holder === "string" ? claim.holder : null } : {}), label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
+    claims.push({ slug, sliceTitle: slice.title ?? slug, ...(holders ? { holder: typeof claim.holder === "string" ? claim.holder : null } : {}), label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, ...keptSession(claim), activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
   }
   return claims;
 }
@@ -430,7 +435,7 @@ async function claimedSlices(projectRoot: string, id: string) {
 function holdingClaim(slices: any, slug: string) {
   for (let owner = slug; owner !== null && owner !== undefined && slices && Object.hasOwn(slices, owner); owner = slices[owner].parent ?? null) {
     const claim = slices[owner].claim;
-    if (claim && typeof claim.label === "string" && (owner === slug || claim.activity === "design")) return { label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null };
+    if (claim && typeof claim.label === "string" && (owner === slug || claim.activity === "design")) return { label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, ...keptSession(claim), activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null };
   }
   return null;
 }
@@ -517,22 +522,33 @@ function coveringClaim(slices: any, slug: string) {
 // A view's source is shown in the page, so a source past this size is left out and the page says the view is too large to show.
 const VIEW_SOURCE_LIMIT = 256 * 1024;
 
+// A diagram's own title, from its first single-line PlantUML title, names a diagram that no Views line asks a question of.
+function diagramTitle(source: string | null) {
+  const title = source?.match(/^[ \t]*title[ \t]+(\S.*?)[ \t]*$/im)?.[1]?.replace(/^"(.*)"$/, "$1").trim();
+  return title || null;
+}
+
 /**
- * The views that a slice folder's slice.md declares, in their declared order, each as { path, file, kind, question, clauses, source, contract },
- * where contract is { path, slice, title } of the governing contract, the slice that holds it, and that slice's title, or null when no slice.md above the folder has a Contract.
+ * The views of a slice folder: first those its slice.md declares, in their declared order, each as { path, file, kind, question, clauses, source, contract, declared: true },
+ * where contract is { path, slice, title, ref } of the governing contract, the slice that holds it, and that slice's title, or null when no slice.md above the folder has a Contract.
  * A declaration of an unknown kind is left out, since the design check refuses it.
+ * Then each PlantUML file directly in the folder that no Views line names, as { path, file, kind: "diagram", title, question: null, clauses: [], source, contract, declared: false },
+ * so that a design written before Views sections existed still shows its diagrams.
  */
 async function folderViews(projectRoot: string, initiative: any, slug: string, plans: any) {
   const artifacts = initiative.slices[slug];
-  if (!artifacts?.narrative) return [];
-  const design = await readText(projectRoot, artifacts.narrative);
-  if (design === null) return [];
-  const declared = readViews(design, artifacts.folder, { plans }).views.filter((view) => VIEW_KINDS.includes(view.kind));
-  if (!declared.length) return [];
+  if (!artifacts) return [];
+  const design = artifacts.narrative ? await readText(projectRoot, artifacts.narrative) : null;
+  const read = readViews(design, artifacts.folder, { plans }).views;
+  const declared = read.filter((view) => VIEW_KINDS.includes(view.kind));
+  const named = new Set(read.map((view) => view.path));
+  const others = (artifacts.files ?? []).filter((file: string) => file.endsWith(".puml") && path.posix.dirname(file) === artifacts.folder && !named.has(file));
+  if (!declared.length && !others.length) return [];
   const governing = await governingContract(projectRoot, artifacts.folder, plans ?? initiative.directory).catch(() => null);
   const owner = governing ? Object.keys(initiative.slices).find((key) => initiative.slices[key].narrative === governing.path) ?? null : null;
   const contract = governing ? { path: governing.path, slice: owner, title: owner ? initiative.record.slices[owner]?.title ?? owner : null, ref: owner ? `slice:${initiative.id}/${owner}` : null } : null;
-  return Promise.all(declared.map(async (view) => {
+  const shown = (source: string | null) => source !== null && source.length <= VIEW_SOURCE_LIMIT ? source : null;
+  const listed = await Promise.all(declared.map(async (view) => {
     const source = await readText(projectRoot, view.path);
     return {
       path: view.path,
@@ -540,16 +556,23 @@ async function folderViews(projectRoot: string, initiative: any, slug: string, p
       kind: view.kind,
       question: view.question,
       clauses: view.clauses,
-      source: source !== null && source.length <= VIEW_SOURCE_LIMIT ? source : null,
+      source: shown(source),
       missing: source === null,
-      contract
+      contract,
+      declared: true
     };
   }));
+  const unasked = await Promise.all(others.map(async (file: string) => {
+    const source = await readText(projectRoot, file);
+    const name = path.posix.basename(file);
+    return { path: file, file: name, kind: "diagram", title: diagramTitle(source) ?? name, question: null, clauses: [], source: shown(source), missing: source === null, contract, declared: false };
+  }));
+  return [...listed, ...unasked];
 }
 
 /**
  * The Views tab of a slice: the views of its own folder, and for a scope whose design planned slices, each planned slice with its title and views;
- * a planned slice that declares no views is listed in without by its title.
+ * a planned slice whose folder has no views and no diagrams is listed in without by its title.
  */
 async function loadSliceViews(projectRoot: string, initiative: any, slug: string) {
   const plans = (await readCheckoutConfig(projectRoot).catch(() => null))?.paths?.plans?.replace(/\/+$/, "") ?? null;
@@ -587,7 +610,9 @@ export async function loadSliceView(projectRoot: string, id: string, slug: strin
   if (!initiative.record || !Object.hasOwn(initiative.record.slices, slug)) throw new Error(`The initiative ${id} has no slice ${slug}.`);
   const slice = initiative.record.slices[slug];
   const derived = initiative.derived;
-  const verification = await latestVerification(projectRoot, id, slug).catch(() => null);
+  const latest = await latestVerification(projectRoot, id, slug).catch(() => null);
+  // A failing name links to the frozen test that names it, where exactly one does.
+  const verification = latest?.failing?.length ? { ...latest, failingLinks: await failingTestLinks(projectRoot, id, slug, latest.failing).catch(() => []) } : latest;
   const { document: changeMapDocument, ...changeMap } = await derivedChangeMapState(projectRoot, id, slug, slice.design, verification) ?? {};
   const totals = await loadInitiativeRunTotals(projectRoot, initiative);
   // A failed read has no slice entries, and its initiative total is every measure unavailable.
@@ -869,15 +894,18 @@ function gateOrder(left: any, right: any) {
 }
 
 /**
- * Attention: the records' items, shared for the cache window, and the format findings, read at each request,
- * since the check of each artifact is kept until its content changes, so a changed file shows its new findings at once.
+ * Attention: the records' items, shared for the cache window; the format findings, read at each request,
+ * since the check of each artifact is kept until its content changes, so a changed file shows its new findings at once; and permissions,
+ * the permission requests that wait in this machine's running launched sessions of the checkout's record store, read again at each
+ * request from their private launch folders and never from a shared record. gateCount counts the waiting questions, each format
+ * migration run's question, and each permission request.
  */
 export async function loadAttention(projectRoot: string) {
-  const [attention, formats, runs] = await Promise.all([remember(`attention:${projectRoot}`, () => computeAttention(projectRoot)), loadFormats(projectRoot), runItems(projectRoot)]);
+  const [attention, formats, runs, permissions] = await Promise.all([remember(`attention:${projectRoot}`, () => computeAttention(projectRoot)), loadFormats(projectRoot), runItems(projectRoot), launchPermissions(projectRoot)]);
   const items = formats.filter((entry: any) => entry.count > 0).map((entry: any) => ({ type: "format-findings", artifactType: entry.type, label: entry.label, count: entry.count, earlier: entry.earlier, artifacts: entry.artifacts }));
   // A run's question waits on the person as a gate does, so it counts among the questions that the rail and a background tab's notification count.
   const questions = runs.needsYou.filter((item: any) => item.type === "migration-question").length;
-  return { ...attention, needsYou: [...runs.needsYou, ...attention.needsYou, ...items], watch: [...attention.watch, ...runs.watch], formats, gateCount: attention.gateCount + questions };
+  return { ...attention, needsYou: [...runs.needsYou, ...attention.needsYou, ...items], watch: [...attention.watch, ...runs.watch], formats, permissions, gateCount: attention.gateCount + questions + permissions.length };
 }
 
 /**
@@ -1020,6 +1048,17 @@ async function loadFormats(projectRoot: string) {
   });
 }
 
+// Each waiting permission request with its initiative's title, oldest first; none when the launches cannot be read.
+async function launchPermissions(projectRoot: string) {
+  const store = await storeLocation(await realpath(projectRoot)).catch(() => null);
+  if (store === null) return [];
+  const requests = await pendingRequests({ store }).catch(() => []);
+  if (!requests.length) return [];
+  const roadmap = await loadRoadmapView(projectRoot).catch(() => ({ items: [] }));
+  const titles = new Map<string, string>(roadmap.items.map((item: any) => [item.id, item.title]));
+  return requests.map((request) => ({ ...request, initiative: { id: request.initiative, title: titles.get(request.initiative) ?? request.initiative } }));
+}
+
 /**
  * Attention as its page shows it, with recentChanges: the shared Attention above, and the applied actions on store artifacts read again at each request,
  * because a store sync changes or removes their files at any time, so a file that a reader now leaves out never lingers in the list for the cache window.
@@ -1148,11 +1187,35 @@ async function approvalGates(projectRoot: string) {
   // An id that another pending gate holds too names no single gate, so the card says why its answer is refused.
   const holders = new Map();
   for (const gate of gates) holders.set(gate.id, (holders.get(gate.id) ?? 0) + 1);
-  return gates.map((gate: any) => ({
+  const workItem = servedWorkItems(projectRoot);
+  return Promise.all(gates.map(async (gate: any) => ({
     type: "gate", id: gate.id, kind: "approval", status: gate.status, recorded: gate.recorded, question: gate.question, context: gate.context ?? null, options: null, recommended: null,
     askedAt: gate.askedAt, answer: null, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope }, changed: gate.changed,
+    workItem: await workItem(servedWorkItem(gate)),
     ...(holders.get(gate.id) > 1 ? { ambiguous: true } : {})
-  }));
+  })));
+}
+
+/**
+ * The work item an approval gate serves as its card names it: { initiative: { id, title, known }, slice: { slug, title, known } or null }, or null when the gate names none.
+ * An initiative is known once the roadmap lists it or its record exists, as requirements approved before their roadmap entry name the id it will take,
+ * and a slice once the initiative's record holds it; the card links only what is known. Each initiative is read once per Attention load.
+ */
+function servedWorkItems(projectRoot: string) {
+  let roadmap: Promise<any> | null = null;
+  const records = new Map<string, Promise<any>>();
+  return async (served: any) => {
+    if (!served) return null;
+    roadmap ??= loadRoadmapView(projectRoot).catch(() => ({ items: [] }));
+    if (!records.has(served.initiative)) records.set(served.initiative, readInitiative(projectRoot, served.initiative).then(({ loaded }: any) => loaded, () => ({ exists: false })));
+    const [view, loaded] = await Promise.all([roadmap, records.get(served.initiative)]);
+    const item = (view.items ?? []).find((entry: any) => entry.id === served.initiative);
+    const slices = loaded.record?.slices ?? {};
+    const initiative = { id: served.initiative, title: item?.title ?? slices[loaded.analysis?.root]?.title ?? served.initiative, known: Boolean(item) || Boolean(loaded.exists) };
+    if (served.slice === null) return { initiative, slice: null };
+    const known = Object.hasOwn(slices, served.slice);
+    return { initiative, slice: { slug: served.slice, title: known ? slices[served.slice].title ?? served.slice : served.slice, known } };
+  };
 }
 
 // The applied actions on the store artifacts the checkout sees, approvals from their status records and comments from their own files, which belong to no initiative's history.

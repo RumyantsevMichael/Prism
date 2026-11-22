@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import os from "node:os";
 import { realpath } from "node:fs/promises";
 import { listComponents } from "./components.mjs";
@@ -16,9 +18,12 @@ import { RUN_ID, allRuns, answerMigrationRun, continueMigrationRun, failContinua
 import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
-import { confirmLaunch } from "../session/launch-confirmation.mjs";
-import { HOSTS, hostDefinition } from "../session/launch-hosts.mjs";
-import { LAUNCH_ID_PATTERN } from "../session/launch-records.mjs";
+import { confirmInstall, confirmLaunch, installText } from "../session/launch-confirmation.mjs";
+import { installAgent, removeAgent, updateAgent } from "../session/agent-installs.mjs";
+import { answerRequest, launchRequests } from "../session/permission-requests.mjs";
+import { HOSTS } from "../session/launch-hosts.mjs";
+import { ACP_ID_PATTERN, agentsFolder, isAcpHost, OWN_INTEGRATION_IDS, OWN_INTEGRATION_REASON, readInstalls } from "../session/acp-agents.mjs";
+import { LAUNCH_ID_PATTERN, launchFolder, readLaunchRecord } from "../session/launch-records.mjs";
 import { AUTOMATIC, AUTOMATIC_LABEL, PrismRunsError, readPrismRunsChoice, writePrismRunsChoice } from "../session/prism-runs.mjs";
 import { choiceReasons, nameRuleBreach, NAME_RULE_MESSAGES, readRunOptions, RUN_KINDS, validProvider } from "../session/run-options.mjs";
 import {
@@ -94,6 +99,8 @@ export function parseTarget(reference: any): any {
   if (match && RUN_ID.test(match[1])) return { kind: "migration-run", reference, run: match[1] };
   match = /^index:([^/]+)\/([^/]+)$/.exec(reference);
   if (match && REPOSITORY_NAME.test(match[1]) && REPOSITORY_NAME.test(match[2])) return { kind: "index", reference, identity: `${match[1]}/${match[2]}` };
+  match = /^agent:(.+)$/.exec(reference);
+  if (match && ACP_ID_PATTERN.test(match[1])) return { kind: "agent", reference, agent: match[1] };
   // A machine target is a choice that belongs to this computer, kept in the review app folder rather than in any record.
   if (MACHINE_TARGETS.includes(reference)) return { kind: "machine", reference, machine: reference.slice("machine:".length) };
   return null;
@@ -193,7 +200,15 @@ async function readTarget(projectRoot: string, parsed: any, indexer: any, state 
     const resumeReason = status === "running" ? "The session is running." : await resumeRefusal({ id: parsed.launch, env });
     // A shipped initiative's state is history, so its sessions cannot resume; they stay stoppable, since orchestrate ships while its host runs.
     const shipped = await shippedDecision(projectRoot, view.initiative).catch(() => null);
-    return { ...parsed, view, initiative: view.initiative, running: status === "running", resumeReason, shipped };
+    // The permission requests that wait in the session's running run on this machine, read from its private launch folder alone.
+    const folder = launchFolder(env, parsed.launch);
+    const permissions = await launchRequests(folder, await readLaunchRecord(folder)).catch(() => []);
+    return { ...parsed, view, initiative: view.initiative, running: status === "running", resumeReason, shipped, permissions };
+  }
+  if (parsed.kind === "agent") {
+    // A registry agent of this computer: its install as the review app folder holds it, read without the registry, so a removal reads none.
+    const installed = readInstalls(env).find((item) => item.id === parsed.agent) ?? null;
+    return { ...parsed, installed, present: existsSync(path.join(agentsFolder(env), parsed.agent)) };
   }
   if (parsed.kind === "machine") {
     // The choice is checked against what this computer's hosts report, read in the page's checkout.
@@ -217,7 +232,14 @@ async function readTarget(projectRoot: string, parsed: any, indexer: any, state 
     context.hosts = await hostAvailability({ env });
     context.readOptions = readOptions ?? runOptionsReader(projectRoot, env);
   }
-  if (parsed.kind === "initiative") context.launchRunning = await initiativeRunning({ projectRoot, initiative: parsed.initiative, env });
+  if (parsed.kind === "initiative") {
+    context.launchRunning = await initiativeRunning({ projectRoot, initiative: parsed.initiative, env });
+    // An ACP host that needs a sign-in or cannot run Prism's workflow makes the launch unavailable with its report's reason.
+    const host = launchHostOf(context);
+    if (isAcpHost(host) && context.hosts.find((item: any) => item.host === host)?.available && !(context.coordination.exists && !context.coordination.valid)) {
+      context.launchReport = await context.readOptions({ host, purpose: "coordinator" });
+    }
+  }
   if (parsed.kind === "slice" && !(record?.slices && Object.hasOwn(record.slices, parsed.slice))) throw unknownTarget(parsed.reference);
   if (parsed.kind === "gate") {
     const gate = (coordination!.state?.pending ?? []).find((item: any) => isRecord(item) && item.id === parsed.gate);
@@ -260,13 +282,18 @@ const autonomyOf = (context: any) => settingsOf(context).autonomy ?? "conservati
 
 // ---- Host and models ----
 
-// Each supported host in order, with the reason this computer lacks it, or null where it is found.
-function hostOptions(context: any, consequence: (label: string) => string) {
-  return HOSTS.map(({ host, label }) => {
-    const availability = context.hosts?.find((item: any) => item.host === host);
-    return { value: host, label, consequence: consequence(label), reason: availability?.available ? null : availability?.reason ?? `${label} was not found.` };
+// Each host in order, Claude Code, Codex, and then the ACP agents that this computer offers, read again for each request, with the
+// reason this computer lacks it, or null where it is found; Prism's own runs list every ACP agent as unavailable.
+const OWN_RUNS_ON_ACP = "Prism's own runs do not run on ACP agents.";
+function hostOptions(context: any, consequence: (label: string) => string, { ownRuns = false } = {}) {
+  const hosts = context.hosts ?? HOSTS.map(({ host, label }) => ({ host, label, available: false, reason: null }));
+  return hosts.map(({ host, label, available, reason }: any) => {
+    const why = ownRuns && isAcpHost(host) ? OWN_RUNS_ON_ACP : available ? null : reason ?? `${label} was not found.`;
+    return { value: host, label, consequence: consequence(label), reason: why };
   });
 }
+
+const hostLabel = (context: any, host: string) => context.hosts?.find((item: any) => item.host === host)?.label ?? host;
 
 const firstFoundHost = (context: any) => context.hosts?.find((item: any) => item.available)?.host ?? null;
 const HOST_DEFAULT_CHOICE = Object.freeze({ model: null, effort: null, typed: false });
@@ -283,9 +310,11 @@ function fullEntry(stored: any): any {
   return { provider: typeof entry.provider === "string" ? entry.provider : null, ...Object.fromEntries(RUN_KINDS.map(({ kind }) => [kind, choiceOf(entry[kind])])) };
 }
 
+// Every listed host has an entry, and an ACP agent's stored entry stays while this computer does not offer that agent.
 const modelsOf = (context: any) => {
   const stored = isRecord(settingsOf(context).models) ? settingsOf(context).models : {};
-  return Object.fromEntries(HOSTS.map(({ host }) => [host, fullEntry(stored[host])]));
+  const hosts = [...new Set([...(context.hosts ?? HOSTS).map(({ host }: any) => host), ...Object.keys(stored).filter(isAcpHost)])];
+  return Object.fromEntries(hosts.map((host) => [host, fullEntry(stored[host])]));
 };
 
 // The stored form leaves out every host default, and every host whose entry is then empty.
@@ -320,6 +349,9 @@ function runOptionsReader(projectRoot: any, env: any) {
 }
 
 const optionOf = (report: any, id: any) => report.options.find((item: any) => item.id === id) ?? null;
+// The reason a report refuses its model or effort choice: one the host does not offer, or one it could not check, which carries
+// the host's own reason, such as a failed read, so a host problem never reads as a missing model.
+const refusedChoice = (report: any) => ["model", "effort"].map((id) => optionOf(report, id)?.chosen).find((chosen: any) => chosen?.state === "not-offered" || chosen?.state === "unchecked")?.reason ?? null;
 const RUN_CHOICE_HINTS = {
   coordinator: "Only coordinates: it plans the order of work, starts the agents below and asks you at gates. It writes no code.",
   designImplementation: "Writes each slice's design, tests and code.",
@@ -340,15 +372,17 @@ function modelsFields(context: any) {
 // One host's provider and run choices, checked in field order against what the host reports, so the first failing field answers:
 // the host, the provider, then each choice as listed in choices, { name, purpose, choice }. Only what the host reports, or a model
 // name typed as such, is taken, and refuse(name, message) builds each refusal. The host is read only for a value it must offer, so
-// host defaults and a typed model without an effort start no host process.
-async function checkHostChoices(context: any, { host, provider, choices }: any, refuse: any) {
-  const { label } = hostDefinition(host)!;
-  const missing = hostOptions(context, () => "").find((item) => item.value === host)?.reason;
+// host defaults and a typed model without an effort start no host process. A read that failed refuses the field that needed it
+// with the read's own reason, as Launch does, rather than as a choice the host does not offer.
+async function checkHostChoices(context: any, { host, provider, choices, ownRuns = false }: any, refuse: any) {
+  const label = hostLabel(context, host);
+  const missing = hostOptions(context, () => "", { ownRuns }).find((item: any) => item.value === host)?.reason;
   if (missing) throw refuse("host", missing);
   if (provider !== null) {
     if (!validProvider(provider)) throw refuse("provider", NAME_RULE_MESSAGES.provider);
     const base = await context.readOptions({ host, purpose: "coordinator" });
-    if (base.state === "unavailable") throw refuse("host", base.reason);
+    if (base.state === "unavailable" || base.state === "sign-in") throw refuse("host", base.reason);
+    if (base.state === "failed") throw refuse("provider", base.reason);
     if (!optionOf(base, "provider")?.values.some((item: any) => item.value === provider)) throw refuse("provider", choiceReasons.provider(label, provider));
   }
   for (const { name, purpose, choice } of choices) {
@@ -359,11 +393,10 @@ async function checkHostChoices(context: any, { host, provider, choices }: any, 
     if (breach) throw refuse(name, breach.message);
     if (choice.effort === null && (choice.model === null || choice.typed)) continue;
     const report = await context.readOptions({ host, purpose, provider, model: choice.model, effort: choice.effort, typed: choice.typed });
-    if (report.state === "unavailable") throw refuse("host", report.reason);
-    for (const id of ["model", "effort"]) {
-      const chosen = optionOf(report, id)?.chosen;
-      if (chosen?.state === "not-offered") throw refuse(name, chosen.reason);
-    }
+    if (report.state === "unavailable" || report.state === "sign-in") throw refuse("host", report.reason);
+    if (report.state === "failed") throw refuse(name, report.reason);
+    const refused = refusedChoice(report);
+    if (refused) throw refuse(name, refused);
   }
 }
 
@@ -389,8 +422,9 @@ const SETTING_DEFINITIONS = [
     value: (context: any) => settingsOf(context).host ?? firstFoundHost(context),
     stored: (context: any) => settingsOf(context).host ?? null,
     after: (values: any, context: any) => {
-      const chosen = hostOptions(context, () => "").find((item) => item.value === values.value);
-      if (chosen?.reason) throw invalid("value", HOSTS.map(({ host }) => host), chosen.reason);
+      const options = hostOptions(context, () => "");
+      const chosen = options.find((item: any) => item.value === values.value);
+      if (chosen?.reason) throw invalid("value", options.map((item: any) => item.value), chosen.reason);
       return values.value;
     }
   }),
@@ -571,7 +605,8 @@ const launchBase = {
 };
 
 const hostList = (labels: any) => (labels.length > 2 ? `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)}` : labels.join(" and "));
-const NO_HOST = `No host that Prism supports was found on this computer. Prism supports ${hostList(HOSTS.map(({ label }) => label))}.`;
+// Named from the live host list, so a declared or installed ACP agent that cannot run is named beside Claude Code and Codex.
+const noHost = (hosts: any) => `No host that Prism supports was found on this computer. Prism supports ${hostList(hosts.map(({ label }: any) => label))}.`;
 const launchHostOf = (context: any) => settingsOf(context).host ?? firstFoundHost(context);
 // A state that exists but reads invalid hides the host and the models chosen for the launch, and its history cannot record one, so
 // the launch is unavailable until the state reads again rather than running another host or other choices than the ones saved.
@@ -583,12 +618,12 @@ const notOffered = (label: any, reason: any) => fail("choice_not_offered", `${la
 // effort, needs none, so a launch whose choices are all host defaults reads no host. A read that failed offers only the host
 // defaults, so the field that needed it is refused with the read's own reason rather than as a choice the host does not offer.
 async function checkedLaunchChoices(context: any, host: any) {
-  const { label } = hostDefinition(host)!;
+  const label = hostLabel(context, host);
   const entry = modelsOf(context)[host];
   const { provider } = entry;
   const report = async (fieldLabel: any, selection: any) => {
     const read = await context.readOptions({ host, ...selection });
-    if (read.state === "unavailable") throw fail("host_unavailable", read.reason);
+    if (read.state === "unavailable" || read.state === "sign-in") throw fail("host_unavailable", read.reason);
     if (read.state === "failed") throw notOffered(fieldLabel, read.reason);
     return read;
   };
@@ -601,10 +636,8 @@ async function checkedLaunchChoices(context: any, host: any) {
     if (choice.earlier !== undefined) throw notOffered(kindLabel, earlierReason(label, choice.earlier));
     if (choice.effort === null && (choice.model === null || choice.typed)) continue;
     const read = await report(kindLabel, { purpose, provider, model: choice.model, effort: choice.effort, typed: choice.typed });
-    for (const id of ["model", "effort"]) {
-      const chosen = optionOf(read, id)?.chosen;
-      if (chosen?.state === "not-offered") throw notOffered(kindLabel, chosen.reason);
-    }
+    const refused = refusedChoice(read);
+    if (refused) throw notOffered(kindLabel, refused);
   }
   const { model, effort, typed } = entry.coordinator;
   return { provider, model, effort, typed };
@@ -619,11 +652,12 @@ const LAUNCH_RUN = {
   target: (context: any) => context.initiativeTarget,
   unavailable: (context: any) => {
     // The missing hosts read no setting, so they answer first, also while the state reads invalid.
-    if (!context.hosts.some((item: any) => item.available)) return NO_HOST;
+    if (!context.hosts.some((item: any) => item.available)) return noHost(context.hosts);
     if (context.coordination.exists && !context.coordination.valid) return UNREADABLE_STATE;
     const host = launchHostOf(context);
     const availability = context.hosts.find((item: any) => item.host === host);
-    if (!availability?.available) return availability?.reason ?? `${hostDefinition(host)?.label ?? host} was not found.`;
+    if (!availability?.available) return availability?.reason ?? `${hostLabel(context, host)} was not found.`;
+    if (isAcpHost(host) && ["failed", "sign-in"].includes(context.launchReport?.state)) return context.launchReport.reason;
     return context.launchRunning ? launchRunningMessage(context.initiative) : null;
   },
   after: () => null,
@@ -777,6 +811,90 @@ const MIGRATION_RUN_RERUN = {
   after: () => ({ rerun: true })
 };
 
+// An answer to one permission request of the session, which this machine's launch folder alone holds, so an answer that reaches the
+// machine any other way applies nothing. An approval asks the run's supervisor to show the native dialog every time, whatever the launch
+// window, and the supervisor answers the host only after the person allowed that request there; a refusal asks nothing.
+const LAUNCH_PERMISSION = {
+  ...launchBase,
+  id: "launch.permission",
+  kinds: ["launch"],
+  label: "Answer the permission request",
+  effect: "Allows or refuses one permission request of the session; you confirm an approval outside the browser every time, and it allows only that one request.",
+  target: (context: any) => context.reference,
+  // A shipped initiative's session may still ask, and its requests stay answerable.
+  ownsShipped: true,
+  // Attention offers it on each request, so the session's own list of actions does not.
+  listed: false,
+  fields: () => [
+    text("request", "Request", 40, { required: true }),
+    choice("decision", "Decision", [option("approve", "Allow", "The host does this once, after you confirm outside the browser."), option("refuse", "Refuse", "The host is told that you refused.")], { required: true })
+  ],
+  unavailable: (context: any) => (context.permissions.length ? null : "The session asks for no permission."),
+  unavailableCode: () => "unknown_request",
+  after: (values: any) => ({ request: values.request, decision: values.decision }),
+  async launch({ projectRoot, context, env, values }: { projectRoot: string; context: any; env: NodeJS.ProcessEnv; values: any }) {
+    // An approval only asks the run's supervisor to show the request's dialog, and answers with that dialog's outcome.
+    const request = await answerRequest({ env, launch: context.launch, request: values.request, decision: values.decision });
+    const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
+    return { launch: null, after: { decision: values.decision, action: request.action }, initiative: context.initiative, started: null, record: !shipped };
+  }
+};
+
+// ---- Coding agents ----
+
+// Installing, updating, and removing a registry agent on this computer: each one changes only the review app folder's agents/ folder and
+// no shared record, an install and an update ask the person in a native dialog every time before any download, and one runs at a time.
+const agentBase = {
+  ...launchBase,
+  group: "Coding agents",
+  kinds: ["agent"],
+  target: (context: any) => context.reference,
+  after: () => null
+};
+const ownIntegration = (context: any) => (OWN_INTEGRATION_IDS.has(context.agent) ? OWN_INTEGRATION_REASON : null);
+const confirmAgentInstall = (env: NodeJS.ProcessEnv) => (details: any) => confirmInstall({ text: installText(details), env });
+
+const AGENT_INSTALL = {
+  ...agentBase,
+  id: "agents.install",
+  label: "Install",
+  effect: "Installs the version that the agent registry lists now into Prism's own folder on this computer, after you confirm it outside the browser; no install script runs.",
+  unavailable: (context: any) => {
+    if (ownIntegration(context)) return ownIntegration(context);
+    if (!context.installed) return null;
+    const version = context.installed?.install?.version;
+    return `${context.installed?.label ?? context.agent}${version ? ` ${version}` : ""} is installed; update or remove it instead.`;
+  },
+  async launch({ context, env }: { context: any; env: NodeJS.ProcessEnv }) {
+    const installed = await installAgent({ id: context.agent, env, confirm: confirmAgentInstall(env) });
+    return { launch: null, after: { agent: installed.id, version: installed.version }, initiative: null, started: null, record: false };
+  }
+};
+
+const AGENT_UPDATE = {
+  ...agentBase,
+  id: "agents.update",
+  label: "Update",
+  effect: "Installs the registry's newer version after you confirm it outside the browser and makes it the one new sessions run; the earlier version stays in use until then, and is removed once no session runs on it.",
+  unavailable: (context: any) => ownIntegration(context) ?? (context.present ? null : `${context.agent} is not installed.`),
+  async launch({ context, env }: { context: any; env: NodeJS.ProcessEnv }) {
+    const updated = await updateAgent({ id: context.agent, env, confirm: confirmAgentInstall(env) });
+    return { launch: null, after: { agent: updated.id, version: updated.version, from: updated.from }, initiative: null, started: null, record: false };
+  }
+};
+
+const AGENT_REMOVE = {
+  ...agentBase,
+  id: "agents.remove",
+  label: "Remove",
+  effect: "Removes every installed version of the agent from this computer while no launched session runs on it; it is offered as a host no longer.",
+  unavailable: (context: any) => (context.present ? null : `${context.agent} is not installed.`),
+  async launch({ context, env }: { context: any; env: NodeJS.ProcessEnv }) {
+    const removed = await removeAgent({ id: context.agent, env });
+    return { launch: null, after: { agent: removed.id, removed: true }, initiative: null, started: null, record: false };
+  }
+};
+
 // ---- This computer ----
 
 // The host and model of Prism's own runs, such as the runs that move records to a new format: one choice per computer, kept in the
@@ -802,7 +920,7 @@ const MACHINE_PRISM_RUNS = {
   fields: (context: any) => [
     choice("host", "Host", [
       { value: AUTOMATIC, label: AUTOMATIC_LABEL, consequence: "Each run starts with Codex and its GPT-6 Luna model where Codex lists it, and otherwise on the first host Prism finds on this computer with a small model.", reason: null },
-      ...hostOptions(context, (label) => `${label} runs Prism's own runs.`)
+      ...hostOptions(context, (label) => `${label} runs Prism's own runs.`, { ownRuns: true })
     ], { required: true, ...(context.prismRuns.state === "unreadable" ? { hint: UNREADABLE_PRISM_RUNS } : {}) }),
     field("provider", "run-option", "Provider", { for: "coordinator", option: "provider", hint: PROVIDER_HINT, fixedWhen: { field: "host", values: [AUTOMATIC] } }),
     field("run", "run-choice", "Model", { for: "coordinator", heading: "Model of Prism's own runs", hint: "The model and effort of each run, from what the host reports.", fixedWhen: { field: "host", values: [AUTOMATIC] } })
@@ -822,13 +940,13 @@ const MACHINE_PRISM_RUNS = {
       if (run.model !== null || run.effort !== null || run.typed) throw refuseChoice("run", AUTOMATIC_ONLY_DEFAULTS);
       return { host, provider: null, run: { ...HOST_DEFAULT_CHOICE } };
     }
-    await checkHostChoices(context, { host, provider, choices: [{ name: "run", purpose: "coordinator", choice: run }] }, refuseChoice);
+    await checkHostChoices(context, { host, provider, choices: [{ name: "run", purpose: "coordinator", choice: run }], ownRuns: true }, refuseChoice);
     return { host, provider, run: { model: run.model, effort: run.effort, typed: run.typed } };
   }
 };
 
 /** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, MIGRATION_RUN_ANSWER, MIGRATION_RUN_RERUN, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, MACHINE_PRISM_RUNS];
+const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, MIGRATION_RUN_ANSWER, MIGRATION_RUN_RERUN, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, AGENT_INSTALL, AGENT_UPDATE, AGENT_REMOVE, MACHINE_PRISM_RUNS];
 
 /** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
 export const actionEffect = (id: string) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
@@ -884,7 +1002,7 @@ export async function listActions({ projectRoot, target, indexer = prismIndexer,
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
   const context = await readTarget(projectRoot, parsed, indexer, undefined, env, checkouts);
-  return { target, actions: definitionsFor(parsed.kind).map((definition) => view(definition, context)) };
+  return { target, actions: definitionsFor(parsed.kind).filter((definition: any) => definition.listed !== false).map((definition) => view(definition, context)) };
 }
 
 // ---- Input ----
@@ -1157,7 +1275,7 @@ async function applyLaunchAction({ projectRoot, definition, context, request, en
   const checked = await check(definition, context, request);
   let outcome;
   try {
-    outcome = await definition.launch({ projectRoot, context, env });
+    outcome = await definition.launch({ projectRoot, context, env, values: checked?.after ?? null });
   } catch (error) {
     throw launchRefusal(error);
   }

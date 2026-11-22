@@ -15,7 +15,7 @@ const CONTROLS = ["prism-button", "prism-icon", "prism-chip", "prism-badge", "pr
 const HOLDS_ITEMS = ["prism-tabs", "prism-menu", "prism-choice"];
 // Clause 28: every tag the kit registers, the first eleven in shadow DOM and the rest in light DOM.
 const SHADOW = ["prism-button", "prism-icon", "prism-chip", "prism-badge", "prism-tab", "prism-menu-item", "prism-tooltip", "prism-stat", "prism-meter", "prism-spinner", "prism-avatar"];
-const LIGHT = ["prism-tabs", "prism-menu", "prism-menu-group", "prism-field", "prism-picker", "prism-option", "prism-choice", "prism-choice-option", "prism-panel", "prism-tree", "prism-tree-item", "prism-listbox", "prism-list-item", "prism-dialog", "prism-popover", "prism-disclosure", "prism-empty-state", "prism-banner", "prism-toast", "prism-claim", "prism-stepper", "prism-step", "prism-breadcrumbs", "prism-doc", "prism-code"];
+const LIGHT = ["prism-tabs", "prism-menu", "prism-menu-group", "prism-field", "prism-picker", "prism-option", "prism-choice", "prism-choice-option", "prism-panel", "prism-tree", "prism-tree-item", "prism-listbox", "prism-list-item", "prism-dialog", "prism-popover", "prism-hover-card", "prism-disclosure", "prism-empty-state", "prism-banner", "prism-toast", "prism-claim", "prism-stepper", "prism-step", "prism-breadcrumbs", "prism-doc", "prism-code"];
 const LONG = "A caption that is far longer than the room any control gives it, so it has to end early";
 const UNBROKEN = "slice-with-a-very-long-name-that-has-no-spaces-anywhere-and-cannot-wrap-at-all";
 

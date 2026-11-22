@@ -199,7 +199,7 @@ test("clauses 66, 67, 68: the sidebar, the agents button, and the Agents page sh
   await popover.waitFor();
   const menuText = (await popover.innerText()).replace(/\s+/g, " ");
   assert.equal(menuText.includes("Claude on build-2"), false, "the menu counts claims and lists none");
-  assert.match(menuText, /Other sessions 1\b[\s\S]*Expired claims 1\b/, "the menu counts the live and the expired claim");
+  assert.match(menuText, /Started outside Prism 1\b[\s\S]*Expired claims 1\b/, "the menu counts the live and the expired claim");
   await popover.getByRole("button", { name: "Open Agents" }).click();
   const claims = page.locator('#artifact [data-agent^="claim:"]');
   await claims.nth(1).waitFor();

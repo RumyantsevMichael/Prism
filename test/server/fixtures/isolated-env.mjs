@@ -1,14 +1,13 @@
+import "./no-host-path.mjs";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { hostlessPath } from "../../../scripts/hostless-path.mjs";
 
 // A server, hook, or command that a test spawns sees none of the host's plugin directories or the user's review settings, so it
 // never joins the user's review app or writes the host's plugin data, and the browser openers on its PATH do nothing.
-// It also never takes the host's cloud session for its own, which would change how it asks for test-command approval.
-// It finds no real Claude Code or Codex on its PATH either, since Prism launches a format migration run's session by itself,
-// and importing the shared helper makes this test process's own PATH hostless too.
-const HOST_ONLY = /^(?:PRISM_REVIEW_\w+|CLAUDE_PLUGIN_\w+|PLUGIN_DATA|PLUGIN_ROOT|CLAUDE_PROJECT_DIR|CLAUDE_CODE_REMOTE)$/;
+// It also never takes the host's cloud session for its own, which would change how it asks for test-command approval,
+// nor the tool timeout that the plugin gives the host's Prism server, which would change whether a gate wait can run.
+const HOST_ONLY = /^(?:PRISM_REVIEW_\w+|CLAUDE_PLUGIN_\w+|PLUGIN_DATA|PLUGIN_ROOT|CLAUDE_PROJECT_DIR|CLAUDE_CODE_REMOTE(?:_SESSION_ID)?|PRISM_TOOL_TIMEOUT_MS)$/;
 let stubs = null;
 
 function browserStubs() {
@@ -23,7 +22,7 @@ function browserStubs() {
 
 export function isolatedEnv(overrides = {}) {
   const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !HOST_ONLY.test(name)));
-  if (process.platform !== "win32") environment.PATH = `${browserStubs()}${path.delimiter}${hostlessPath(environment.PATH ?? "")}`;
+  if (process.platform !== "win32") environment.PATH = `${browserStubs()}${path.delimiter}${environment.PATH ?? ""}`;
   // It writes no Prism log either, so a test run leaves the user's log as it was; a test of the log sets its own level and folder.
   // An ending server hands no store sync to a detached process, which could still write a test's folder while the test removes it; a test of that hand-off turns it on.
   return { ...environment, PRISM_REVIEW_BROWSER_ON_START: "off", PRISM_LOG_LEVEL: "off", PRISM_STORE_HANDOFF: "off", ...overrides };

@@ -6,6 +6,7 @@ import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { manifestPath, project } from "./fixtures/component-indexes.mjs";
+import { settled } from "./fixtures/wait.mjs";
 
 // The index store's bounds on what one build request carries and on when a stopped build may still send it.
 process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-index-store-bounds-data-"));
@@ -75,7 +76,9 @@ test("a build whose embedding store holds more records than one request can carr
   const { directory: location } = await runtime.location(root);
   await mkdir(location, { recursive: true });
   await writeFile(path.join(location, "embeddings.bin"), storeRecords(70000), { mode: 0o600 });
-  const result = await runtime.prepare(await openNativeRepositoryIntelligence(root), undefined, 240000);
+  // One prepare call waits at most ten seconds, which a slow runner can spend on this build, so the test asks again until the build has settled.
+  const source = await openNativeRepositoryIntelligence(root);
+  const result = await settled(() => runtime.prepare(source), (value) => value.status !== "preparing", { timeout: 240000 });
   assert.equal(result.status, "ready", JSON.stringify(result.diagnostics));
   const received = JSON.parse(await readFile(path.join(location, "received.json"), "utf8"));
   assert.equal(received, REUSED_EMBEDDINGS, "the request carries the newest saved embeddings up to its bound");

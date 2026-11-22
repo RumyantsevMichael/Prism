@@ -22,9 +22,9 @@ export function claimOf(slices: any, slug: string, now = Date.now()) {
   return null;
 }
 
-/** The attributes of a prism-claim for a claim, which the element turns into the holder, the activity, and the time left. */
+/** The attributes of a prism-claim for a claim, which the element turns into the holder, the activity, the time left, and a link to the holder's session when the claim has one. */
 export function claimAttributes(claim: any) {
-  return Object.entries<any>({ label: claim.label, host: claim.host, model: claim.model, activity: ACTIVITIES[claim.activity] ?? "implementation", "claimed-at": claim.claimedAt, "renewed-at": claim.renewedAt, "expires-at": claim.expiresAt })
+  return Object.entries<any>({ label: claim.label, host: claim.host, model: claim.model, "session-url": claim.session?.url, "session-label": claim.session?.label, activity: ACTIVITIES[claim.activity] ?? "implementation", "claimed-at": claim.claimedAt, "renewed-at": claim.renewedAt, "expires-at": claim.expiresAt })
     .filter(([, value]) => typeof value === "string" && value)
     .map(([name, value]) => ` ${name}="${escapeHtml(value)}"`).join("");
 }

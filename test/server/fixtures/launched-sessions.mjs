@@ -15,6 +15,7 @@ export { INITIATIVE };
 export const FOREIGN_SESSION = {
   CLAUDECODE: "1",
   CLAUDE_CODE_SESSION_ID: "99999999-9999-4999-8999-999999999999",
+  CLAUDE_CODE_REMOTE_SESSION_ID: "cse_01ForeignWebSession99",
   CLAUDE_CODE_ENTRYPOINT: "cli",
   CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/foreign.sock",
   CLAUDE_CODE_MESSAGING_TOKEN: "foreign-token",
@@ -53,7 +54,7 @@ let plans = {};
 try { plans = JSON.parse(readFileSync(process.env.PRISM_STUB_PLANS, "utf8")); } catch {}
 const list = plans[host] ?? [];
 const plan = list[Math.min(previous.length, list.length - 1)] ?? {};
-const watched = ${JSON.stringify(["PRISM_LAUNCH", "PRISM_MIGRATION_RUN", "PRISM_MIGRATION_PROJECT", "ENABLE_CLAUDEAI_MCP_SERVERS", "PRISM_STUB_MARKER"])}.concat(${JSON.stringify(Object.keys({ CLAUDECODE: 1, CLAUDE_CODE_SESSION_ID: 1, CLAUDE_CODE_ENTRYPOINT: 1, CLAUDE_CODE_MESSAGING_SOCKET: 1, CLAUDE_CODE_MESSAGING_TOKEN: 1, CLAUDE_PROJECT_DIR: 1, CLAUDE_PLUGIN_ROOT: 1, CLAUDE_PLUGIN_DATA: 1, CODEX_THREAD_ID: 1 }))});
+const watched = ${JSON.stringify(["PRISM_LAUNCH", "PRISM_MIGRATION_RUN", "PRISM_MIGRATION_PROJECT", "ENABLE_CLAUDEAI_MCP_SERVERS", "PRISM_STUB_MARKER"])}.concat(${JSON.stringify(Object.keys({ CLAUDECODE: 1, CLAUDE_CODE_SESSION_ID: 1, CLAUDE_CODE_REMOTE_SESSION_ID: 1, CLAUDE_CODE_ENTRYPOINT: 1, CLAUDE_CODE_MESSAGING_SOCKET: 1, CLAUDE_CODE_MESSAGING_TOKEN: 1, CLAUDE_PROJECT_DIR: 1, CLAUDE_PLUGIN_ROOT: 1, CLAUDE_PLUGIN_DATA: 1, CODEX_THREAD_ID: 1 }))});
 const env = Object.fromEntries(watched.map((name) => [name, process.env[name] ?? null]));
 const keep = "setInterval(() => {}, 1000)";
 const children = (plan.children ?? []).map((kind) => {
@@ -181,10 +182,53 @@ process.stdin.on("end", () => {
 process.stdin.on("error", () => {});
 `;
 
+// The dialog programs that launchFixture stubs, one per platform whose confirmation runs on POSIX.
+const DIALOG_STUBS = ["zenity", "osascript"];
+
+// One stub serves both programs; its file name says which one it is. osascript answers in its own form: the button returned and
+// whether it gave up on standard output, and error -128 when the person cancels.
+function dialogStub(log, plan) {
+  return `#!${process.execPath}
+const fs = require("node:fs");
+const program = require("node:path").basename(process.argv[1]);
+const argv = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ program, argv }) + "\\n");
+const code = JSON.parse(fs.readFileSync(${JSON.stringify(plan)}, "utf8")).code ?? 0;
+if (program !== "osascript") process.exit(code);
+const ok = /buttons \\{"[^"]*", "([^"]*)"\\}/.exec(argv.join("\\n"))?.[1] ?? "";
+if (code === 0) process.stdout.write("button returned:" + ok + ", gave up:false\\n");
+else if (code === 1) { process.stderr.write("execution error: User canceled. (-128)\\n"); process.exit(1); }
+else process.stdout.write("button returned:, gave up:true\\n");
+process.exit(0);
+`;
+}
+
+/**
+ * A logged dialog with what it showed, whichever program showed it: { program, argv, text, cancelsByDefault }, text being the
+ * question as the person reads it, zenity's --text with its Pango entities and doubled backslashes read back, or osascript's argument.
+ */
+function shownDialog({ program, argv }) {
+  if (program === "osascript") {
+    const script = argv.join("\n");
+    const cancel = /cancel button "([^"]*)"/.exec(script)?.[1];
+    return { program, argv, text: argv.at(-1), cancelsByDefault: cancel !== undefined && script.includes(`default button "${cancel}"`) };
+  }
+  const raw = argv.find((arg) => arg.startsWith("--text="))?.slice("--text=".length) ?? "";
+  const text = raw.replace(/\\\\/g, "\\").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  return { program, argv, text, cancelsByDefault: argv.includes("--default-cancel") };
+}
+
 async function temporary(context, prefix) {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
-  context.after(() => rm(directory, { recursive: true, force: true }));
+  // A request the test's page sent may still be writing a launch folder when the test ends, so the removal retries a folder that
+  // gained an entry while it was being emptied.
+  context.after(() => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return directory;
+}
+
+async function settledEnd(pids, timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  while (pids.some(alive) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
 // The executables that a launch resolves on PATH; a test PATH keeps no folder that holds one, so no real host can start.
@@ -246,19 +290,19 @@ export async function launchFixture(context, { hosts = ["claude", "codex"], plan
   const plansFile = path.join(scratch, "stub-plans.json");
   const setPlans = (value) => writeFile(plansFile, JSON.stringify(value));
   await setPlans(plans);
-  // A zenity stub answers the native confirmation with dialog.code (0 confirms, 1 declines) and logs each dialog it shows.
+  // Stub dialog programs answer the native confirmation with dialog.code (0 confirms, 1 declines, any other code leaves it unanswered)
+  // and log each dialog they show: zenity, which Linux runs, and osascript, which macOS runs, so no platform reaches a real dialog.
+  // Without a dialog there is no stub, and the test process's PATH holds no real dialog program either.
   const dialogLog = path.join(scratch, "dialogs.jsonl");
   const dialogFile = path.join(scratch, "dialog.json");
   const setDialog = (value) => writeFile(dialogFile, JSON.stringify(value));
   if (dialog) {
     await setDialog(dialog);
-    const file = path.join(bin, "zenity");
-    await writeFile(file, `#!${process.execPath}
-const fs = require("node:fs");
-fs.appendFileSync(${JSON.stringify(dialogLog)}, JSON.stringify({ argv: process.argv.slice(2) }) + "\\n");
-process.exit(JSON.parse(fs.readFileSync(${JSON.stringify(dialogFile)}, "utf8")).code ?? 0);
-`);
-    chmodSync(file, 0o755);
+    for (const name of DIALOG_STUBS) {
+      const file = path.join(bin, name);
+      await writeFile(file, dialogStub(dialogLog, dialogFile));
+      chmodSync(file, 0o755);
+    }
   }
   const base = isolatedEnv();
   const env = { ...base, ...FOREIGN_SESSION, PATH: controlledPath(bin, base.PATH), PRISM_REVIEW_APP_DIR: app, PRISM_STUB_LOG: log, PRISM_STUB_PLANS: plansFile, PRISM_STUB_MARKER: "kept", PRISM_LAUNCH_STOP_GRACE_MS: "1500", ...(dialog ? { DISPLAY: ":0" } : {}) };
@@ -273,7 +317,7 @@ process.exit(JSON.parse(fs.readFileSync(${JSON.stringify(dialogFile)}, "utf8")).
     const entry = entries().find((item) => item.kind === "closed" && item.pid === pid);
     return entry ? { results: entry.results, interrupted: entry.interrupted } : null;
   };
-  const dialogs = () => existsSync(dialogLog) ? readFileSync(dialogLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
+  const dialogs = () => existsSync(dialogLog) ? readFileSync(dialogLog, "utf8").split("\n").filter(Boolean).map((line) => shownDialog(JSON.parse(line))) : [];
   /** Makes this fixture's environment the process environment for the test, as the review server reads it, and restores it after. */
   const useAsProcessEnv = () => {
     const saved = { ...process.env };
@@ -292,6 +336,9 @@ process.exit(JSON.parse(fs.readFileSync(${JSON.stringify(dialogFile)}, "utf8")).
     }
     for (const run of runs()) ended.push(run.pid, ...run.children.map((child) => child.pid));
     for (const pid of ended) if (pid !== process.pid && alive(pid)) try { process.kill(pid, "SIGKILL"); } catch {}
+    // A killed supervisor may still be writing its launch folder for a moment, so the folders are removed only once every
+    // process has ended, or after 5 seconds.
+    return settledEnd(ended.filter((pid) => pid !== process.pid));
   };
   return { root, gateIds, app, bin, log, env, setPlans, runs, inputs, closed, alive, dialogs, setDialog, useAsProcessEnv };
 }

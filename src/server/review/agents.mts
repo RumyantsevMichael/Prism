@@ -1,23 +1,26 @@
 // The agents list: every launched session of this computer and every claim of the workspace that no launched session holds, one entry each,
-// grouped by what needs the person, with the counts the top bar and the Agents page show. No entry names a claim holder or a host session id.
-import { listLaunches } from "../session/launched-sessions.mjs";
+// grouped by what needs the person, with the counts the top bar and the Agents page show. No entry names a claim holder or a launched session's host session id; a claim's entry carries the link to its session when the claim records one.
+import { archivedLaunches, listLaunches } from "../session/launched-sessions.mjs";
 import { readRun } from "../workflow/migration-runs.mjs";
 import { loadHeldClaims, loadRoadmapView, migrationRunTitle } from "./workspace-model.mjs";
 
-const GROUPS = ["needs-you", "launched", "other", "expired"];
+const GROUPS = ["needs-you", "launched", "other", "expired", "archived"];
+// A claim that expired this long ago or more leaves the counts, while the list keeps every expired claim.
+const EXPIRED_COUNTED_MS = 24 * 60 * 60 * 1000;
 const time = (value: any) => Date.parse(value ?? "") || 0;
 
 const launchAction = (state: any) => (state === "waiting" ? "answer" : state === "running" ? "stop" : "open");
-const launchGroup = (state: any) => (state === "failed" || state === "waiting" ? "needs-you" : "launched");
+const launchGroup = (state: any, archived: boolean) => (archived ? "archived" : state === "failed" || state === "waiting" ? "needs-you" : "launched");
 
-function launchEntry(launch: any, title: string, claim: any) {
+function launchEntry(launch: any, title: string, claim: any, archived: boolean) {
   return {
     id: `launch:${launch.id}`,
     kind: "launch",
-    group: launchGroup(launch.state),
+    group: launchGroup(launch.state, archived),
     name: title,
     harness: launch.hostLabel ?? launch.host ?? null,
     model: launch.model ?? null,
+    session: null,
     initiative: { id: launch.initiative, title },
     slice: claim ? { ref: claim.ref, title: claim.sliceTitle } : null,
     activity: claim ? claim.activity : null,
@@ -25,7 +28,7 @@ function launchEntry(launch: any, title: string, claim: any) {
     reason: launch.reason ?? null,
     expiresAt: null,
     // A format migration run's session names its run, whose page its name opens in place of an initiative's.
-    launch: { id: launch.id, launchedAt: launch.launchedAt, runningMs: launch.runningMs, runs: launch.runs, endedAt: launch.endedAt, exit: launch.exit, resumeCommand: launch.resumeCommand, waitingGate: launch.waitingGate, ...(launch.migrationRun ? { migrationRun: launch.migrationRun } : {}) },
+    launch: { id: launch.id, launchedAt: launch.launchedAt, runningMs: launch.runningMs, runs: launch.runs, endedAt: launch.endedAt, exit: launch.exit, resumeCommand: launch.resumeCommand, waitingGate: launch.waitingGate, ...(launch.migrationRun ? { migrationRun: launch.migrationRun } : {}), ...(launch.usage ? { usage: launch.usage } : {}) },
     action: launchAction(launch.state)
   };
 }
@@ -38,6 +41,7 @@ function claimEntry(claim: any, expired: any) {
     name: claim.label,
     harness: claim.host ?? null,
     model: claim.model ?? null,
+    session: claim.session ?? null,
     initiative: { id: claim.initiative, title: claim.initiativeTitle },
     slice: { ref: claim.ref, title: claim.sliceTitle },
     activity: claim.activity,
@@ -70,22 +74,25 @@ export async function listAgents({ projectRoot, env = process.env, now = Date.no
   for (const claim of claims) if (!titles.has(claim.initiative)) titles.set(claim.initiative, claim.initiativeTitle);
   const lapsed = (claim: any) => claim.expired || time(claim.expiresAt) <= now;
   const holds = (launch: any, claim: any) => typeof launch.holder === "string" && claim.holder === launch.holder && claim.initiative === launch.initiative;
+  const archived = await archivedLaunches({ launches, env });
   const agents: any[] = [];
   for (const launch of launches) {
     const live = claims.find((claim: any) => holds(launch, claim) && !lapsed(claim)) ?? null;
     // A format migration run belongs to no initiative and is named by its run's type.
     const run = launch.migrationRun ? await readRun(projectRoot, launch.migrationRun).catch(() => null) : null;
     const title = launch.migrationRun ? (run ? migrationRunTitle(run) : "Format migration") : titles.get(launch.initiative) ?? launch.initiative;
-    agents.push(launchEntry(launch, title, live));
+    agents.push(launchEntry(launch, title, live, archived.has(launch.id)));
   }
   for (const claim of claims) {
     if (launches.some((launch) => holds(launch, claim))) continue;
     agents.push(claimEntry(claim, lapsed(claim)));
   }
   agents.sort(order);
-  const count = (accept: any) => agents.filter(accept).length;
+  // The counts leave archived sessions and claims that expired a day ago or more out.
+  const counted = agents.filter((agent: any) => agent.group !== "archived" && !(agent.group === "expired" && now - time(agent.expiresAt) >= EXPIRED_COUNTED_MS));
+  const count = (accept: any) => counted.filter(accept).length;
   const counts = {
-    all: agents.length,
+    all: counted.length,
     needsYou: count((agent: any) => agent.group === "needs-you"),
     failed: count((agent: any) => agent.kind === "launch" && agent.state === "failed"),
     waiting: count((agent: any) => agent.kind === "launch" && agent.state === "waiting"),

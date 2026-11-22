@@ -9,6 +9,11 @@
   vertical-align: middle;
 }
 
+/* A hidden button takes no room, as a hidden native one does. */
+:host([hidden]) {
+  display: none;
+}
+
 :host([size="sm"]) {
   height: var(--prism-control-height-sm);
 }
@@ -58,6 +63,16 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The icon that the icon attribute draws keeps the distance a leading slotted icon keeps. */
+.lead {
+  margin-inline-end: var(--prism-space-3);
+  vertical-align: middle;
+}
+
+.lead[hidden] {
+  display: none;
 }
 
 ::slotted(prism-icon) {

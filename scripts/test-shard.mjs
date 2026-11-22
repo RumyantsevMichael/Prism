@@ -13,9 +13,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-export const TEST_DIRECTORY = "test/server";
 // Each test process runs with a PATH that holds no real Claude Code or Codex, since Prism launches a session by itself for each format migration run.
-const HOSTLESS = pathToFileURL(path.join(ROOT, "scripts/hostless-path.mjs")).href;
 export const DURATIONS = path.join(TEST_DIRECTORY, "durations.json");
 
 // The table a system records into and balances by: its own table, or the shared one where the system has none.
@@ -58,9 +56,12 @@ function readDurations(root = ROOT) {
   }
 }
 
+// Every test process first takes the real Claude Code and Codex off PATH, so no test can start a real session.
+const NO_HOST_PATH = pathToFileURL(path.join(ROOT, "test/server/fixtures/no-host-path.mjs")).href;
+
 function runTests(files, options, env = process.env) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, ["--import", HOSTLESS, "--test", ...options, ...files.map((file) => path.join(TEST_DIRECTORY, file))], { cwd: ROOT, stdio: "inherit", env });
+    const child = spawn(process.execPath, ["--test", "--import", NO_HOST_PATH, ...options, ...files.map((file) => path.join(TEST_DIRECTORY, file))], { cwd: ROOT, stdio: "inherit", env });
     child.on("exit", (code, signal) => resolve(signal ? 1 : code ?? 1));
   });
 }

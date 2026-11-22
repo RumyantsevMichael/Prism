@@ -2,8 +2,8 @@
 import "../hostless-path.mjs";
 // Compare the demo review app with the approved UI kit mockup, scene by scene, as side-by-side screenshots.
 // Each mockup scene is put into the same state in the app: the same kind of page, the same menu, popover, palette query, or side panel, at the same window size, theme, and density.
-// Usage: node scripts/review-demo/mockup-compare.mjs --out <directory> [--scenes attention,roadmap,topbar,slice,palette,drawer,agents] [--widths 1440,820,390] [--themes light,dark] [--densities compact,comfortable] [--mockup <file>]
-// The roadmap scene compares the agents menu, and the agents scene the Agents page, with the approved pictures of their mockups, which exist at 1440 pixels in both themes
+// Usage: node scripts/review-demo/mockup-compare.mjs --out <directory> [--scenes attention,roadmap,topbar,slice,palette,drawer,agents,archived] [--widths 1440,820,390] [--themes light,dark] [--densities compact,comfortable] [--mockup <file>]
+// The roadmap scene compares the agents menu, the agents scene the Agents page, and the archived scene its Archived choice, with the approved pictures of their mockups, which exist at 1440 pixels in both themes
 // and at 390 pixels in the light theme; the topbar scene compares the closed phone top bar at 390 and 320 pixels (pass --widths 390,320).
 // A run of any of these seeds the demo with agents at work, which the other scenes then show too.
 // The output folder holds one `<scene>-<width>-<theme>-<density>.png` per combination, the mockup on the left and the app on the right, and an index.html that shows them in pairs.
@@ -22,11 +22,12 @@ const HEIGHT = 900;
 const SLICE = "slice:retry-hardening/timeout-retries";
 const DIAGRAM = "docs/plans/retry-hardening/timeout-retries/timeout-retries.puml";
 
-// An approved picture of the agent activity mockups, or null at a width or theme it has no picture of.
-function agentPicture(name) {
-  const file = path.join(ROOT, "scripts/review-demo/mockups/agent-activity", name);
+// An approved picture of the agent activity mockups, or of the later archive mockups, or null at a width or theme it has no picture of.
+function agentPicture(name, folder = "agent-activity") {
+  const file = path.join(ROOT, "scripts/review-demo/mockups", folder, name);
   return existsSync(file) ? file : null;
 }
+const archivePicture = (name) => agentPicture(name, "agent-session-archive");
 
 // Each scene names its frame in the mockup, the page the app opens, and how the app reaches the mockup's state from there.
 const SCENES = {
@@ -34,6 +35,12 @@ const SCENES = {
     caption: "Attention with an open design gate, Settings open",
     ref: "attention",
     async open(page) {
+      // On a phone the app opens on the list, so the design gate is picked, as a person does, to show its card as the mockup does.
+      await page.evaluate(() => {
+        if (document.querySelector(".attention-inbox")?.dataset.pane !== "list") return;
+        const sheet = document.querySelector("[data-detail] .gate-visual-review")?.closest("[data-detail]");
+        [...document.querySelectorAll("prism-inbox-item")].find((item) => item.getAttribute("value") === sheet?.dataset.detail)?.click();
+      });
       // The mockup shows the design gate; the app lists every gate in one column, so the design gate is scrolled into view.
       await page.locator("#artifact .gate-visual-review").first().evaluate((element) => element.scrollIntoView({ block: "start" })).catch(() => {});
       await page.click("#settings-button");
@@ -43,7 +50,7 @@ const SCENES = {
     caption: "Roadmap with the agents menu open",
     ref: "roadmap",
     // The approved agents menu is a set of pictures, at 1440 pixels in both themes and at 390 pixels in the light theme.
-    picture: (width, theme) => agentPicture(`optD-menu-${width}-${theme}.png`),
+    picture: (width, theme) => archivePicture(`archive-menu-${width}-${theme}.png`),
     async open(page) {
       await page.click("#agents-button");
       await page.getByRole("dialog", { name: "Agents" }).waitFor({ timeout: 5000 });
@@ -90,13 +97,26 @@ const SCENES = {
     caption: "The Agents page with every group",
     ref: "agents",
     // The approved mockup of this page is a set of pictures, taken at twice the pixel density, rather than a frame of the kit mockup.
-    picture: (width, theme) => agentPicture(`optD-page-${width}-${theme}.png`),
+    picture: (width, theme) => archivePicture(`archive-page-${width}-${theme}.png`),
     open: (page) => page.locator("#artifact [data-agent]").first().waitFor({ timeout: 10000 })
+  },
+  archived: {
+    caption: "The Agents page showing Archived, one session's details open",
+    ref: "agents",
+    picture: (width, theme) => archivePicture(`archive-archived-${width}-${theme}.png`),
+    async open(page) {
+      await page.locator("#artifact [data-agent]").first().waitFor({ timeout: 10000 });
+      await page.getByRole("radiogroup", { name: "Show", exact: true }).getByRole("radio", { name: /^Archived/ }).click();
+      const row = page.locator('#artifact [data-agent]:not([hidden])').first();
+      await row.waitFor({ timeout: 10000 });
+      await row.getByRole("button", { name: "Open", exact: true }).click();
+      await row.locator("[data-agent-details]").waitFor({ state: "visible", timeout: 5000 });
+    }
   }
 };
 const DENSITIES = ["compact", "comfortable"];
 // The scenes whose pictures show agents at work, so the run seeds the demo with them.
-const AGENT_SCENES = ["roadmap", "topbar", "agents"];
+const AGENT_SCENES = ["roadmap", "topbar", "agents", "archived"];
 
 // The mockup page frames each scene in a captioned window of fixed height.
 // frameWindow opens the mockup in the page's theme and density, shows only the scene's frame, and makes its window fill the browser window, so the mockup's own container queries answer to the window width.

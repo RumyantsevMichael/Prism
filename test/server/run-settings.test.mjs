@@ -246,6 +246,29 @@ test("clause 9: a host this computer lacks takes no models change, and a host wh
   assert.equal(typed.status, 200, "a typed name needs no report");
 });
 
+test("clause 9: a host whose read failed refuses the field that needed it with the read's own reason, never as a choice it does not offer", { skip: posixOnly }, async (t) => {
+  const s = await runOptionsReview(t);
+  await s.setCatalog({ claude: { fail: "Not logged in" }, codex: { fail: "Authentication required" } });
+  const cases = [
+    [models({ coordinator: { model: "fable", effort: null, typed: false } }), "coordinator", "Claude Code did not report its run options: Not logged in."],
+    [models({ codeReview: { model: null, effort: "high", typed: false } }), "codeReview", "Claude Code did not report its run options: Not logged in."],
+    [models({ coordinator: { model: "fable", effort: "max", typed: true } }), "coordinator", "Claude Code did not report its run options: Not logged in."],
+    [models({ host: "codex", coordinator: { model: "gpt-5.5", effort: null, typed: false } }), "coordinator", "Codex did not report its run options: Authentication required."],
+    [models({ host: "codex", provider: "openai" }), "provider", "Codex did not report its run options: Authentication required."]
+  ];
+  for (const [input, field, message] of cases) {
+    const refused = await send(s, "initiative.models", input);
+    assert.equal(refused.status, 400, JSON.stringify(input));
+    assert.deepEqual([refused.json.field, refused.json.message], [field, message], JSON.stringify(input));
+  }
+  // A model list that Codex refuses leaves its models and efforts unchecked, with the refusal as the reason.
+  await s.setCatalog({ codex: { providers: (await import("./fixtures/run-options-hosts.mjs")).CODEX_CATALOG.providers, modelListError: "Authentication required" } });
+  const unlisted = await send(s, "initiative.models", models({ host: "codex", designImplementation: { model: "gpt-5.5", effort: null, typed: false } }));
+  assert.equal(unlisted.status, 400);
+  assert.deepEqual([unlisted.json.field, unlisted.json.message], ["designImplementation", "Codex could not list its models: Authentication required"]);
+  assert.equal((await state(s.root)).state?.settings?.models, undefined, "nothing refused is stored");
+});
+
 test("clause 10: every setting and every value says what it means in plain words", { skip: posixOnly }, async (t) => {
   const s = await runOptionsReview(t);
   const listed = (await actions(s)).filter((action) => action.group === "Initiative settings");
@@ -278,11 +301,11 @@ test("clause 11: update_coordination_state takes the host and the per-host model
   const tools = await listTools(t);
   const update = tools.find((tool) => tool.name === "update_coordination_state");
   const settings = update.inputSchema.properties.changes.properties.settings;
-  assert.deepEqual(settings.properties.host, { type: "string", enum: ["claude-code", "codex"] });
+  assert.deepEqual(settings.properties.host, { type: "string", ...{ anyOf: [{ enum: ["claude-code", "codex"] }, { pattern: "^acp-[a-z0-9][a-z0-9-]{0,39}$" }] } });
   const modelsSchema = settings.properties.models;
   const objectForm = (modelsSchema.oneOf ?? [modelsSchema]).find((entry) => entry.type === "object" && entry.propertyNames);
   assert.ok(objectForm, "models takes an object keyed by host");
-  assert.deepEqual(objectForm.propertyNames, { enum: ["claude-code", "codex"] });
+  assert.deepEqual(objectForm.propertyNames, { anyOf: [{ enum: ["claude-code", "codex"] }, { pattern: "^acp-[a-z0-9][a-z0-9-]{0,39}$" }] });
   const entry = objectForm.additionalProperties;
   assert.deepEqual(Object.keys(entry.properties).sort(), ["codeReview", "coordinator", "designImplementation", "gateSummary", "provider", "securityReview"]);
   assert.equal(entry.additionalProperties, false);

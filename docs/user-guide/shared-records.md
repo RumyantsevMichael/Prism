@@ -55,6 +55,7 @@ A file that moved in that way with an earlier Prism takes its accepted version o
 After that, only your answer at a gate changes it.
 An agent's edit of a `Status:` line is kept, but Prism still reads the file with its recorded status and tells the agent which gate changes it.
 To approve a requirement, or an amendment of an Approved one, the agent asks for your approval with the `ask_approval` operation of `update_artifact`, and the question appears on [Attention](review-browser.md#attention).
+The agent also names the initiative the approval serves, and the slice when there is one, so the question's card links to that work.
 Approving writes the status, `Approved` unless the agent asked for another such as `Withdrawn`, into the file's `Status:` line, sets its `Approved:` line to the day you answered, and records your checkout's Git `user.name` and your machine's host name as the approver.
 An approval that would leave an Approved file breaking its format, such as one that still holds an `unknown` value, is refused with `artifact_nonconforming`, and its question stays open until the agent revises the file.
 Request changes with a note when the file needs another revision, and the agent revises it and asks again.
@@ -379,6 +380,11 @@ A server lists its checkout once its name is first accepted: at start when the h
 A refused or unnamed checkout is not listed, and a listed folder that no longer names the same store and repository leaves the list when another checkout of that repository is listed.
 The list never leaves the machine, and no checkout path is written to the store.
 
+The same folder holds `personal-settings.json`, the person's own settings for every project and host on the machine: the interaction style, the review browser, whether it opens at session start, and whether a new conversation is offered Prism.
+Agents read and change them only through the `get_personal_settings` and `update_personal_settings` tools, and Prism never writes them into a project, a repository's configuration, or a store.
+A setting the person has no value for uses the value a project records under `## Interaction` in its `.prism/workflow.md`, and the first read for that project adopts the recorded value as the person's own, marked with the checkout it came from, so a later change to that line no longer applies.
+Prism writes the file readable only by its owner, and leaves a file it cannot parse, or one with a `schemaVersion` it does not know, as it is, reporting `settings_unreadable` or `settings_unsupported`, using the repository's values and the defaults, and refusing changes until the file is fixed or removed.
+
 With store sync on, the operation that registers a new name waits for one sync before it continues, so two machines that register one name at the same time end with one registration.
 Until that sync settles, the registration is pending, and any other check that it would decide, by any checkout that shares the store folder, whatever its own store sync setting, is refused with `repository_unconfirmed` without waiting, so no operation records anything under a registration that may still be withdrawn.
 The registration pushed first stays, and the other machine's checkout is then accepted or refused against it, as if it had been in the store all along.
@@ -484,6 +490,10 @@ A claim also records the harness its agent runs in, as `host`, by the title the 
 A claim records the model of its agent, as `model`, only when the session's main agent took it and Prism's session-facts hook observed that agent's model, such as `claude-opus-5-5`.
 A sub-agent's claim records no model, and nor does a call that Prism cannot attribute to the main agent, such as a Claude Code call whose tool use Prism's hook did not record or a Codex call whose metadata names no thread.
 Each renewal of a main agent's claim writes the session's model as it is then, so a change of model reaches the claim within one renewal.
+A claim records the session behind it, as `session` with its `kind` and the host's own `id`, only when the host gives a session that a person can open from a link: today that is Claude Code on the web, whose session `cse_<id>` opens at `claude.ai/code/session_<id>`.
+A Claude Code sub-agent's claim records the session of the agent that started it, which is the one a person opens.
+A local Claude Code or Codex session, a Codex call, and a session that Prism launched record no session, and a launched session's claim leads to its launch on the Agents page instead.
+The session's id is kept in the shared store as it is, and its link opens only for the session's owner.
 `get_initiative` lists each live claim under `claims`, with its `host` and `model` when the claim records them.
 The review browser shows each claim's holder, activity, and time left on the slice board, the slice list, and the slice page, and marks the slices inside a scope that a design claim covers.
 A claim that lapsed without a release shows as expired until someone claims or releases the slice.

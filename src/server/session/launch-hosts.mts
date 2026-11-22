@@ -3,7 +3,10 @@ import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
+import { acpHostDefinition, acpHosts, isAcpHost } from "./acp-agents.mjs";
 import { isAgentModel } from "./agent-models.mjs";
+import { acpConversation } from "./host-adapters/acp.mjs";
+import { shownForm, type PermissionAsk, type PermissionDecision } from "./permission-requests.mjs";
 
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
 // Nothing here takes a value from the review page except the initiative identifier or the format migration run's id, checked by the caller, the host, and the
@@ -38,6 +41,7 @@ export const HOSTS = Object.freeze([
 export const STRIPPED_VARIABLES = Object.freeze([
   "CLAUDECODE",
   "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_REMOTE_SESSION_ID",
   "CLAUDE_CODE_ENTRYPOINT",
   "CLAUDE_CODE_MESSAGING_SOCKET",
   "CLAUDE_CODE_MESSAGING_TOKEN",
@@ -47,8 +51,11 @@ export const STRIPPED_VARIABLES = Object.freeze([
   "CODEX_THREAD_ID"
 ]);
 
-const CLAUDE_FLAGS = Object.freeze(["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "none"]);
-// The permission policy of every Codex thread that Prism starts or resumes: the host's automatic review decides, and Prism grants nothing.
+// Claude Code decides what it can in its auto mode and sends Prism each permission prompt that it still asks, as a can_use_tool
+// control request on its standard output.
+const CLAUDE_FLAGS = Object.freeze(["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "host", "--permission-prompt-tool", "stdio"]);
+// The permission policy of every Codex thread that Prism starts or resumes: the host's automatic review decides what it can, and asks
+// Prism only the rest.
 const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" });
 // A launch's access: "full" for an initiative's orchestration, and "read-only" for a format migration run, whose session reads artifact text that others wrote,
 // works in an empty folder of its own outside the checkout, and reads nothing of the checkout: it gets the run's sources, the project's paths, and the sources'
@@ -121,7 +128,7 @@ const codexReadOnlySandbox = (folder: string, readRoots: string[]) => ({ type: "
 const rootsOf = (readRoots: unknown): string[] => (Array.isArray(readRoots) ? readRoots.filter((root) => typeof root === "string" && path.isAbsolute(root)) : []);
 const readOnly = (access: unknown) => access === "read-only";
 const CODEX_CLIENT = Object.freeze({ clientInfo: { name: "prism-launch", version: "1" }, capabilities: { experimentalApi: true } });
-// The answer to every request that a Codex app-server sends Prism, such as an approval or a question.
+// The answer to every request that a host sends Prism other than a permission request, such as a question.
 export const HOST_REQUEST_REFUSAL = Object.freeze({ code: -32601, message: "Prism answers no host requests." });
 export const MAX_LINE_BYTES = 1024 * 1024;
 // What a run keeps of host text: each refusal reason and host error is cut to REFUSAL_REASON_MAX characters, a run records its
@@ -135,6 +142,8 @@ export const RECORDED_REFUSALS = 20;
 const KEPT_TOOL_RESULTS = 100;
 export const TOOL_NAME_MAX = 100;
 export const KEPT_EARLY_COMPLETIONS = 8;
+// How many file change items' changes a Codex run keeps for the approval requests that name them, the oldest going first.
+export const KEPT_FILE_CHANGES = 64;
 export const TRACKED_TASKS = 1000;
 export const HOST_ERROR_FALLBACK = "The turn failed without a message.";
 // A host session id that may reach a command line: letters, digits, `_`, and `-`, never first, so no host reads it as an option and no shell splits it.
@@ -145,14 +154,30 @@ export function validHostSessionId(value: unknown): value is string {
   return typeof value === "string" && HOST_SESSION_ID_PATTERN.test(value);
 }
 
-/** The text with every occurrence of the host session id, in any letter case, replaced by a placeholder; the pattern keeps the id free of regular expression syntax. */
+const REGEX_SYNTAX = /[.*+?^${}()|[\]\\]/g;
+
+/**
+ * The text with every occurrence of the host session id, in any letter case, replaced by a placeholder; any non-empty id counts, also
+ * one that HOST_SESSION_ID_PATTERN refuses, such as an ACP agent's opaque session id, and its characters are matched literally.
+ */
 export function redactSessionId<T>(text: T, hostSessionId: unknown): T {
-  if (typeof text !== "string" || !validHostSessionId(hostSessionId)) return text;
-  return text.replace(new RegExp(hostSessionId, "gi"), SESSION_ID_PLACEHOLDER) as T;
+  if (typeof text !== "string" || typeof hostSessionId !== "string" || !hostSessionId) return text;
+  return text.replace(new RegExp(hostSessionId.replace(REGEX_SYNTAX, "\\$&"), "gi"), SESSION_ID_PLACEHOLDER) as T;
 }
 
-export function hostDefinition(host: string) {
+/** Claude Code's or Codex's definition, or null for any other host. */
+export function builtinHost(host: unknown) {
   return HOSTS.find((definition) => definition.host === host) ?? null;
+}
+
+/** A host's definition: Claude Code, Codex, or an ACP agent offered now, whose declaration or install record is read again on every call. */
+export function hostDefinition(host: string, env: NodeJS.ProcessEnv = process.env): { host: string; label: string; executable: string; acp?: unknown } | null {
+  return builtinHost(host) ?? (isAcpHost(host) ? acpHostDefinition(host, env) : null);
+}
+
+/** Every host in list order: Claude Code, Codex, then the ACP agents offered now in install and then declaration order. */
+export function hostDefinitions(env: NodeJS.ProcessEnv = process.env) {
+  return [...HOSTS, ...acpHosts(env)];
 }
 
 async function executableFile(file: string) {
@@ -188,8 +213,17 @@ async function npmShimScript(file: string) {
 export interface ResolvedHost { host: string; label: string; executable: string | null; available: boolean; command: string | null; prefix: string[]; reason: string | null }
 
 export async function resolveHost(host: string, env = process.env): Promise<ResolvedHost | null> {
-  const definition = hostDefinition(host);
-  if (!definition) return null;
+  const definition = hostDefinition(host, env);
+  return definition ? resolveDefinition(definition, env) : null;
+}
+
+/** How one host definition is run on this machine, as resolveHost answers it. */
+export async function resolveDefinition(definition: { host: string; label: string; executable: string }, env: NodeJS.ProcessEnv): Promise<ResolvedHost> {
+  // An ACP agent's command may be an absolute path, which is run as it is.
+  if (path.isAbsolute(definition.executable)) {
+    if (await executableFile(definition.executable)) return { ...definition, available: true, executable: definition.executable, command: definition.executable, prefix: [], reason: null };
+    return { ...definition, available: false, executable: null, command: null, prefix: [], reason: `${definition.label} was not found: no executable file at ${definition.executable}.` };
+  }
   const missing: ResolvedHost = { ...definition, available: false, executable: null, command: null, prefix: [], reason: `${definition.label} was not found: no ${definition.executable} executable on PATH.` };
   const entries = pathEntries(env);
   if (process.platform !== "win32") {
@@ -212,10 +246,15 @@ export async function resolveHost(host: string, env = process.env): Promise<Reso
   return missing;
 }
 
-/** One entry per host in order: { host, label, available, executable, reason }. */
-export async function hostAvailability({ env = process.env } = {}) {
-  return Promise.all(HOSTS.map(async ({ host }) => {
-    const { label, available, executable, reason } = (await resolveHost(host, env))!;
+/**
+ * One entry per host in order: { host, label, available, executable, reason }; acp false lists only Claude Code and Codex.
+ * The ACP agents are read again on every call.
+ */
+export async function hostAvailability({ env = process.env, acp = true }: { env?: NodeJS.ProcessEnv; acp?: boolean } = {}) {
+  const definitions = acp ? hostDefinitions(env) : [...HOSTS];
+  return Promise.all(definitions.map(async (definition) => {
+    const { host } = definition;
+    const { label, available, executable, reason } = await resolveDefinition(definition, env);
     return { host, label, available, executable, reason };
   }));
 }
@@ -255,16 +294,18 @@ function coordinatorOf(coordinator: unknown): CoordinatorChoice {
 
 /**
  * The arguments of a run: Claude Code's launch or resume form with its session id, followed by --model and --effort of the
- * coordinator's choice, each left out for the host default, or Codex's app server, which takes the choice in its requests.
+ * coordinator's choice, each left out for the host default, Codex's app server, which takes the choice in its requests, or an ACP
+ * agent's arguments from its declaration or install record, which takes the choice in its requests too.
  * A read-only run, a format migration run's, takes no built-in tool, only the run's own Prism tools, and adds no folder; readRoots are a Codex run's readable folders.
  */
-export function hostArguments({ host, hostSessionId, resume, coordinator = null, access = "full", deniedRoots = [], mcpConfig = null }: { host: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string; readRoots?: string[]; deniedRoots?: string[]; mcpConfig?: string | null }) {
+export function hostArguments({ host, hostSessionId, resume, coordinator = null, access = "full", deniedRoots = [], mcpConfig = null, acp = null }: { host: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string; readRoots?: string[]; deniedRoots?: string[]; mcpConfig?: string | null; acp?: { args: readonly string[] } | null }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
     const { model, effort } = coordinatorOf(coordinator);
     return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...(readOnly(access) ? claudeReadOnly(deniedOf(deniedRoots), requiredConfig(mcpConfig)) : CLAUDE_FLAGS), ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
   }
   if (host === "codex") return ["app-server"];
+  if (acp) return [...acp.args];
   throw new Error(`Unknown host ${host}.`);
 }
 
@@ -307,6 +348,67 @@ export function codexTurnRequest({ threadId, initiative = null, migrationRun = n
   return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$${runInvocation({ initiative, migrationRun })}` }], ...(effort === null ? {} : { effort }), ...sandbox } };
 }
 
+const CODEX_APPROVALS: ReadonlySet<string> = new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"]);
+const isPlainObject = (value: unknown): value is Record<string, any> => value !== null && typeof value === "object" && !Array.isArray(value);
+
+const isSet = (value: unknown) => value !== undefined && value !== null;
+export const CODEX_UNDESCRIBED_CHANGE = "A file change that Codex did not describe";
+export const CODEX_UNNAMED_COMMAND = "A command that Codex did not name";
+export const CLAUDE_UNNAMED_TOOL = "A tool that Claude Code did not name";
+export const CLAUDE_UNNAMED_TOOL_REASON = "Claude Code did not say which tool this runs, so Prism can only refuse it.";
+export const codexUnavailable = {
+  undescribed: "Codex did not say which files this change writes, so Prism can only refuse it.",
+  unnamed: "Codex did not say which command this runs, so Prism can only refuse it.",
+  grantRoot: (root: string) => `Codex asks to allow writes under ${shownForm(root)} for the rest of the session, so Prism can only refuse it.`,
+  permissions: "Codex asks for these permissions for the rest of its turn, so Prism can only refuse it."
+};
+
+// The action of a Codex command request: the command, then the folder, environment, kind, and network host that its accept covers;
+// named is false when the request has no command that holds more than spaces.
+function codexCommandAction(params: Record<string, any>) {
+  const given = Array.isArray(params.command) ? params.command.filter((part: unknown) => typeof part === "string").join(" ") : text(params.command);
+  const named = given.trim() !== "";
+  const command = named ? given : CODEX_UNNAMED_COMMAND;
+  const network = isPlainObject(params.networkApprovalContext) ? { host: params.networkApprovalContext.host, protocol: params.networkApprovalContext.protocol } : params.networkApprovalContext;
+  const context = {
+    ...(isSet(params.cwd) ? { cwd: params.cwd } : {}),
+    ...(isSet(params.environmentId) ? { environmentId: params.environmentId } : {}),
+    ...(isSet(params.kind) && params.kind !== "command" ? { kind: params.kind } : {}),
+    ...(isSet(network) ? { networkApprovalContext: network } : {})
+  };
+  return { named, action: Object.keys(context).length ? `${command} ${JSON.stringify(context)}` : command };
+}
+
+/**
+ * A Codex approval request as Prism asks the person: { ask, answer }, or null for any other request. `changes` is the changes list of
+ * the latest item/started or item/fileChange/patchUpdated notification that named a file change request's item, or undefined when
+ * none did. An approval answers accept for a named command or a described file change without grantRoot; a command without a
+ * command, a file change with grantRoot or no seen change, and a permissions request, can only be refused. A refusal answers decline, or for a permissions request no permission.
+ */
+export function codexApproval(method: string, params: unknown, changes?: unknown) {
+  if (!CODEX_APPROVALS.has(method)) return null;
+  const values = isPlainObject(params) ? params : {};
+  const reason = text(values.reason);
+  const decided = (decision: PermissionDecision) => ({ decision: decision === "approve" ? "accept" : "decline" });
+  if (method === "item/permissions/requestApproval") {
+    const asked = isSet(values.permissions) ? JSON.stringify(values.permissions) : "{}";
+    return {
+      ask: { action: `Permissions ${asked}`, reason, canAllow: false, unavailable: codexUnavailable.permissions },
+      answer: (_decision: PermissionDecision) => ({ permissions: {}, scope: "turn" })
+    };
+  }
+  if (method === "item/fileChange/requestApproval") {
+    if (!Array.isArray(changes) || changes.length === 0) return { ask: { action: CODEX_UNDESCRIBED_CHANGE, reason, canAllow: false, unavailable: codexUnavailable.undescribed }, answer: decided };
+    const grantRoot = isSet(values.grantRoot) ? values.grantRoot : undefined;
+    const action = `File change ${JSON.stringify({ changes, ...(grantRoot === undefined ? {} : { grantRoot }) })}`;
+    if (grantRoot === undefined) return { ask: { action, reason, canAllow: true }, answer: decided };
+    return { ask: { action, reason, canAllow: false, unavailable: codexUnavailable.grantRoot(typeof grantRoot === "string" ? grantRoot : JSON.stringify(grantRoot)) }, answer: decided };
+  }
+  const command = codexCommandAction(values);
+  if (!command.named) return { ask: { action: command.action, reason, canAllow: false, unavailable: codexUnavailable.unnamed }, answer: decided };
+  return { ask: { action: command.action, reason, canAllow: true }, answer: decided };
+}
+
 /** The stream-json line that Claude Code's own Stop button sends: an interrupt control request with a request id that Prism chooses. */
 export function claudeInterrupt(requestId: string) {
   return { type: "control_request", request_id: requestId, request: { subtype: "interrupt" } };
@@ -317,10 +419,16 @@ export function codexInterruptRequest({ threadId, turnId }: { threadId: string |
   return { method: "turn/interrupt", params: { threadId, turnId } };
 }
 
-/** The command that continues a host session in a terminal, or null for an id that breaks HOST_SESSION_ID_PATTERN. */
-export function resumeCommandOf(host: string, hostSessionId: unknown) {
+/**
+ * The command that continues a host session in a terminal, or null for an id that breaks HOST_SESSION_ID_PATTERN; an ACP agent's is
+ * its declared resumeCommand with {session} replaced, and null without one or once the agent is no longer offered.
+ */
+export function resumeCommandOf(host: string, hostSessionId: unknown, env: NodeJS.ProcessEnv = process.env) {
   if (!validHostSessionId(hostSessionId)) return null;
-  return host === "claude-code" ? `claude --resume ${hostSessionId}` : `codex resume ${hostSessionId}`;
+  if (host === "claude-code") return `claude --resume ${hostSessionId}`;
+  if (host === "codex") return `codex resume ${hostSessionId}`;
+  const template = isAcpHost(host) ? acpHostDefinition(host, env)?.acp.resumeCommand : null;
+  return template ? template.replaceAll("{session}", hostSessionId) : null;
 }
 
 /** The starter's environment without the host session variables, as a launched run and a read of run options see it. */
@@ -332,12 +440,13 @@ export function strippedEnvironment(env: NodeJS.ProcessEnv) {
 
 /**
  * The environment of a run: the starter's own, without the host session variables, with PRISM_LAUNCH naming the launch,
- * and only for a format migration run's launch with PRISM_MIGRATION_RUN naming the run and PRISM_MIGRATION_PROJECT its checkout.
+ * only for a format migration run's launch with PRISM_MIGRATION_RUN naming the run and PRISM_MIGRATION_PROJECT its checkout,
+ * and for an ACP agent's run with the environment of its declaration or install record.
  */
-export function hostEnvironment(env: NodeJS.ProcessEnv, launchId: string, migrationRun: string | null = null, project: string | null = null) {
+export function hostEnvironment(env: NodeJS.ProcessEnv, launchId: string, migrationRun: string | null = null, project: string | null = null, acp: { env: Readonly<Record<string, string>> } | null = null) {
   // A migration run's Claude Code session also loads no claude.ai connector.
   const scoped = typeof migrationRun === "string" && migrationRun ? { [MIGRATION_SCOPE_VARIABLE]: migrationRun, ENABLE_CLAUDEAI_MCP_SERVERS: "false", ...(typeof project === "string" && project ? { [MIGRATION_PROJECT_VARIABLE]: project } : {}) } : {};
-  return { ...strippedEnvironment(env), PRISM_LAUNCH: launchId, ...scoped };
+  return { ...strippedEnvironment(env), ...(acp ? acp.env : {}), PRISM_LAUNCH: launchId, ...scoped };
 }
 
 /** Splits a byte stream into lines, dropping every line longer than maxBytes, MAX_LINE_BYTES unless given. */
@@ -422,7 +531,9 @@ const digestKey = (id: string) => createHash("sha256").update(Buffer.from(id, "u
  * closes the input once the host has answered it, or at once for a Codex run that has not sent turn/start yet.
  */
 export interface HostRefusal { tool: string; reason: string }
-export interface HostFacts { hostSessionId: string | null; turnId: string | null; model: string | null; refusals: HostRefusal[]; refusalCount: number; hostError: string | null }
+// agentSessionId is the session id an ACP agent named, whatever its characters, kept only to redact it; settled is false while an ACP
+// run has no outcome of its own, so an agent that exits 0 before its prompt answers fails the run.
+export interface HostFacts { hostSessionId: string | null; agentSessionId: string | null; settled: boolean; turnId: string | null; model: string | null; refusals: HostRefusal[]; refusalCount: number; hostError: string | null; failure: string | null; usage: any }
 export interface HostConversationOptions {
   initiative?: string | null;
   migrationRun?: string | null;
@@ -437,10 +548,29 @@ export interface HostConversationOptions {
   closeInput: () => void;
   onSessionId?: (id: string) => void;
   onModel?: (model: string) => void;
+  /** An ACP agent's run: its label and automatic mode, the starter's environment, the launch id, and the agent's process id. */
+  acp?: { label: string; autoMode: string | null; env: NodeJS.ProcessEnv; launch: string; agentPid: () => number | null } | null;
+  /**
+   * Where the host's permission requests wait for the person: ask() keeps one waiting, calls respond once it is answered, and returns
+   * the function that withdraws it. Without it every permission request is refused at once.
+   */
+  permissions?: PermissionBroker | null;
 }
 
-export function hostConversation(host: string, { initiative = null, migrationRun = null, access = "full", readRoots = [], migrationServer = null, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {} }: HostConversationOptions) {
-  const facts: HostFacts = { hostSessionId: null, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null };
+export interface PermissionBroker { ask(ask: PermissionAsk, respond: (decision: PermissionDecision) => void): () => void }
+
+/**
+ * A request that waits for the person: respond answers the host once, and dismiss removes the request without answering it, for a
+ * request that the host reports settled by itself.
+ */
+export interface WaitingAsk { respond: (decision: PermissionDecision) => void; dismiss: () => void }
+
+/** The message with which the host's permission request is answered for a decision; approve answers only a single-use allow. */
+export type PermissionAnswer = (decision: PermissionDecision) => unknown;
+export const REFUSED_ON_ATTENTION = "The person refused this on Attention.";
+
+export function hostConversation(host: string, { initiative = null, migrationRun = null, access = "full", readRoots = [], migrationServer = null, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null, permissions = null }: HostConversationOptions) {
+  const facts: HostFacts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
   const named = (value: unknown) => {
@@ -451,7 +581,7 @@ export function hostConversation(host: string, { initiative = null, migrationRun
     onModel(facts.model);
   };
   let inputOpen = true;
-  const redact = (value: string) => redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId);
+  const redact = (value: string) => redactSessionId(redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId), facts.agentSessionId);
   // The id is replaced before the text is cut, so no cut leaves part of it behind.
   const cut = (value: string) => detached(redact(value).slice(0, REFUSAL_REASON_MAX));
   const hostError = (value: string) => cut(value || HOST_ERROR_FALLBACK);
@@ -459,12 +589,68 @@ export function hostConversation(host: string, { initiative = null, migrationRun
   const write = (message: unknown) => {
     if (inputOpen) send(message);
   };
+  // Each permission request waits until the person answers it, and one that still waits when the run's input closes, or when the
+  // person stops the run, is refused first. A request is answered once; an approval of one that offers no single-use allow is refused.
+  const asks = new Set<(decision: PermissionDecision) => void>();
+  const ask = ({ action, reason, canAllow, unavailable }: PermissionAsk, answer: PermissionAnswer): WaitingAsk | null => {
+    if (!inputOpen) return null;
+    let withdraw = () => {};
+    let done = false;
+    const respond = (decision: PermissionDecision) => {
+      if (done) return;
+      done = true;
+      asks.delete(respond);
+      withdraw();
+      write(answer(decision === "approve" && canAllow ? "approve" : "refuse"));
+    };
+    // The host settled the request itself, so it is removed and answered nothing, and a dialog that confirms later allows nothing.
+    const dismiss = () => {
+      if (done) return;
+      done = true;
+      asks.delete(respond);
+      withdraw();
+    };
+    asks.add(respond);
+    if (!permissions) {
+      respond("refuse");
+      return null;
+    }
+    // The whole text goes to the broker, which keeps its shown form and marks one too long to confirm in full.
+    withdraw = permissions.ask({ action: detached(redact(action)), reason: detached(redact(reason)), canAllow, ...(unavailable ? { unavailable: detached(redact(unavailable)) } : {}) }, respond);
+    return { respond, dismiss };
+  };
+  const refuseAsks = () => {
+    for (const respond of [...asks]) respond("refuse");
+  };
   const close = () => {
     if (!inputOpen) return;
+    refuseAsks();
     inputOpen = false;
     closeInput();
   };
-  const handle = host === "claude-code" ? claudeHandler() : codexHandler();
+  if (host !== "claude-code" && host !== "codex" && !acp) throw new Error(`Unknown host ${host}.`);
+  // Prism's own runs never run on an ACP agent, so its conversation always serves an initiative.
+  if (acp && typeof initiative !== "string") throw new Error("An ACP agent runs only an initiative's orchestration.");
+  const handle = host === "claude-code" ? claudeHandler() : host === "codex" ? codexHandler() : acpConversation({
+    label: acp!.label,
+    autoMode: acp!.autoMode,
+    initiative: initiative as string,
+    checkout,
+    hostSessionId,
+    resume,
+    coordinator: coordinatorOf(coordinator),
+    env: acp!.env,
+    launch: acp!.launch,
+    agentPid: acp!.agentPid,
+    facts,
+    write,
+    close,
+    inputOpen: () => inputOpen,
+    cut,
+    named,
+    onSessionId,
+    ask
+  });
 
   // Claude Code: the prompt is one stream-json user message, and the input closes at a result event once every background task
   // that the host reported as started has been reported as ended.
@@ -476,6 +662,8 @@ export function hostConversation(host: string, { initiative = null, migrationRun
     let untrackedTasks = 0;
     const taskKey = digestKey;
     let interruptId: string | null = null;
+    // Each can_use_tool request that waits, by its request id, so that a control_cancel_request withdraws it.
+    const waitingTools = new Map<string, WaitingAsk>();
     return {
       start: () => write(claudePrompt({ initiative, migrationRun })),
       interrupt() {
@@ -484,6 +672,30 @@ export function hostConversation(host: string, { initiative = null, migrationRun
         write(claudeInterrupt(interruptId));
       },
       event(event: any) {
+        if (event.type === "control_request" && event.request?.subtype === "can_use_tool" && typeof event.request_id === "string") {
+          const request = event.request;
+          const named = text(request.tool_name).trim() !== "";
+          const tool = named ? text(request.tool_name) : CLAUDE_UNNAMED_TOOL;
+          const input = request.input !== null && typeof request.input === "object" && !Array.isArray(request.input) ? request.input : null;
+          const requestId = event.request_id;
+          // The action is the tool and the input that an approval allows, as compact JSON; a request that names no tool can only be refused.
+          const waiting = ask({ action: `${tool} ${JSON.stringify(request.input ?? null)}`, reason: text(request.decision_reason), canAllow: named && input !== null, ...(named ? {} : { unavailable: CLAUDE_UNNAMED_TOOL_REASON }) }, (decision) => {
+            waitingTools.delete(requestId);
+            return {
+              type: "control_response",
+              response: { subtype: "success", request_id: requestId, response: decision === "approve" ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: REFUSED_ON_ATTENTION } }
+            };
+          });
+          if (waiting) waitingTools.set(requestId, waiting);
+          return;
+        }
+        if (event.type === "control_cancel_request" && typeof event.request_id === "string") {
+          // Claude Code settled the request itself, so it is withdrawn and answered nothing.
+          const waiting = waitingTools.get(event.request_id);
+          waitingTools.delete(event.request_id);
+          waiting?.dismiss();
+          return;
+        }
         if (event.type === "control_response") {
           if (interruptId !== null && event.response?.request_id === interruptId) close();
           return;
@@ -534,6 +746,21 @@ export function hostConversation(host: string, { initiative = null, migrationRun
   function codexHandler() {
     const pending = new Map<number | string, string>();
     const completed = new Map<string, any>();
+    // The changes list of each file change item that Codex described, by item digest, at most KEPT_FILE_CHANGES of them, and the
+    // refusal of each file change request that waits, by its item's digest.
+    const fileChanges = new Map<string, unknown[]>();
+    const waitingChanges = new Map<string, WaitingAsk>();
+    // Each approval request that waits, by its JSON-RPC id, so that serverRequest/resolved withdraws it.
+    const waitingApprovals = new Map<string, WaitingAsk>();
+    const requestKey = (id: unknown) => `${typeof id}:${String(id)}`;
+    // A notification that lists no change list describes no change, so a request for its item can only be refused.
+    const described = (itemId: unknown, changes: unknown) => {
+      if (typeof itemId !== "string" || !itemId) return;
+      const key = digestKey(itemId);
+      fileChanges.delete(key);
+      fileChanges.set(key, Array.isArray(changes) ? changes : []);
+      if (fileChanges.size > KEPT_FILE_CHANGES) fileChanges.delete(fileChanges.keys().next().value!);
+    };
     let nextId = 1;
     let threadId: string | null = null;
     let turnRequested = false;
@@ -602,6 +829,33 @@ export function hostConversation(host: string, { initiative = null, migrationRun
       event(message: any) {
         const hasId = typeof message.id === "string" || typeof message.id === "number";
         if (hasId && typeof message.method === "string") {
+          const itemId = message.method === "item/fileChange/requestApproval" && typeof message.params?.itemId === "string" && message.params.itemId ? message.params.itemId : null;
+          const approval = codexApproval(message.method, message.params, itemId === null ? undefined : fileChanges.get(digestKey(itemId)));
+          if (approval) {
+            const { id } = message;
+            let waiting: WaitingAsk | null = null;
+            let answered = false;
+            const forget = () => {
+              if (waiting === null) return;
+              if (itemId !== null && waitingChanges.get(digestKey(itemId)) === waiting) waitingChanges.delete(digestKey(itemId));
+              if (waitingApprovals.get(requestKey(id)) === waiting) waitingApprovals.delete(requestKey(id));
+            };
+            waiting = ask(approval.ask, (decision) => {
+              answered = true;
+              forget();
+              return { jsonrpc: "2.0", id, result: approval.answer(decision) };
+            });
+            if (waiting !== null && !answered) {
+              if (itemId !== null) waitingChanges.set(digestKey(itemId), waiting);
+              waitingApprovals.set(requestKey(id), waiting);
+              const { dismiss } = waiting;
+              waiting.dismiss = () => {
+                forget();
+                dismiss();
+              };
+            }
+            return;
+          }
           write({ jsonrpc: "2.0", id: message.id, error: { ...HOST_REQUEST_REFUSAL } });
           return;
         }
@@ -623,6 +877,21 @@ export function hostConversation(host: string, { initiative = null, migrationRun
           return;
         }
         const params = message.params ?? {};
+        if (message.method === "item/started" && params.item?.type === "fileChange") {
+          described(params.item.id, params.item.changes);
+          return;
+        }
+        if (message.method === "item/fileChange/patchUpdated") {
+          described(params.itemId, params.changes);
+          // A changed patch changes what an allow of its waiting request would cover, so that request is declined and withdrawn.
+          if (typeof params.itemId === "string" && params.itemId) waitingChanges.get(digestKey(params.itemId))?.respond("refuse");
+          return;
+        }
+        if (message.method === "serverRequest/resolved" && (typeof params.requestId === "string" || typeof params.requestId === "number")) {
+          // Codex settled the request itself, so it is withdrawn and answered nothing.
+          waitingApprovals.get(requestKey(params.requestId))?.dismiss();
+          return;
+        }
         if (message.method === "item/completed" && params.item?.status === "declined") {
           const tool = toolName(params.item.type, "an action");
           facts.refusalCount += 1;
@@ -663,6 +932,10 @@ export function hostConversation(host: string, { initiative = null, migrationRun
     send: (message: unknown) => { if (!inputOpen) return false; send(message); return true; },
     closeInput: close,
     /** Sends the host's interrupt for a stop; a run whose input is already closed gets none. */
-    interrupt: () => { if (inputOpen) handle.interrupt(); }
+    interrupt: () => {
+      if (!inputOpen) return;
+      refuseAsks();
+      handle.interrupt();
+    }
   };
 }

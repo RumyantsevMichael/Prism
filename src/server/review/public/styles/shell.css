@@ -435,6 +435,10 @@ body {
   font-size: var(--prism-font-size-sm);
 }
 
+.verification-log-note {
+  margin-top: var(--prism-space-4);
+}
+
 /* ---------- Status bar on the canvas ---------- */
 
 .statusbar {
@@ -516,6 +520,56 @@ body {
 
 .settings-section .about {
   margin-bottom: var(--prism-space-4);
+}
+
+/* Coding agents: a list of agent rows between the section's lead and the registry's note, each version muted beside its name. */
+.coding-agents-lead {
+  margin: 0 0 var(--prism-space-4);
+}
+
+.coding-agents-list {
+  margin-bottom: var(--prism-space-4);
+}
+
+.coding-agent-version {
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+.coding-agent-reason {
+  color: var(--prism-color-ink-muted);
+}
+
+.coding-agent-error {
+  color: var(--prism-color-danger);
+}
+
+.coding-agents-note {
+  margin: 0;
+}
+
+/* Personal: the section's notes above its rows, and each row's source under its hint. */
+.settings-notes {
+  display: grid;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  margin-bottom: var(--prism-space-4);
+}
+
+/* The read-only notice sits in the notes' own gap, so it takes none of its own. */
+.settings-notes .action-notice {
+  margin: 0;
+}
+
+.settings-source {
+  display: block;
+  min-width: 0;
+  margin-top: var(--prism-space-2);
+}
+
+.settings-source[hidden] {
+  display: none;
 }
 
 @media (max-width: 720px) {

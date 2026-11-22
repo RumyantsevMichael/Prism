@@ -299,7 +299,8 @@ Prism recommends accepting with deferred low findings whenever it offers that op
 Otherwise it recommends returning the slice to design when the latest wave raised at least as many findings above low severity as the wave before it, and continuing the review when it raised fewer.
 When you accept with deferred low findings, the agent files one follow-up per finding in the tracker that `## Tracker` in `.prism/workflow.md` names, or adds it to the roadmap's open questions when no tracker is named.
 A deferred finding has status `DEFERRED`, keeps the decision and its follow-up reference, counts as resolved, and no longer changes; `get_review` lists the deferred findings, and the slice page shows them apart from the unresolved ones.
-The slice page in the review browser shows the latest run with its command, exit code, and output tail, and a failed run also names the failing tests that Prism found anywhere in the output.
+The slice page in the review browser shows the latest run with its command and exit code, and a failed run also names the failing tests that Prism found anywhere in the output.
+Each run writes its whole output to a log in Prism's plugin data on the machine that ran it, and the run record keeps the last 4,000 characters of the output and names where that log is, with the home folder written as `~`.
 Verification runs need a git work tree, and `PRISM_VERIFY_TIMEOUT_MINUTES` changes the 30-minute default timeout.
 
 Each run record names the slice's files by their Git blob hashes and never holds their bytes.
@@ -315,6 +316,9 @@ Those later versions come from the refs of the shipping checkout, such as the sl
 The default branch is `origin/HEAD`, else `origin/main`, else `origin/master`, so a squash merge or a force push that keeps the verified files still leads to them.
 `shipped` is null when the run was in another repository, when the run listed no files, or when no commit qualifies, as when you ship before the slice's branch merges, and the `ship` result lists those slices under `noShipCommit`.
 `get_roadmap` lists `initiatives` with each one's `id` and `decision`, so a shipped initiative's `slices` read without the whole record.
+`get_roadmap` with `initiative` returns only that entry, its decision, and its derived state, without the other entries or the record's history, and refuses an id the roadmap does not hold with `unknown_initiative`.
+`update_roadmap` answers with the new revision, `touched` with the ids its operations named, and only those entries, beside its ship results, so read the whole roadmap with `get_roadmap`.
+`update_coordination_state` answers with the new revision, the opened gates, and the state without the person's history and setting marks and without each pending gate's context and artifacts, which `get_coordination_state` returns.
 
 ## Components
 
@@ -631,12 +635,32 @@ See [Share Prism state across worktrees and machines](shared-records.md) for set
 
 `prism:setup` writes `.prism/workflow.md` by asking you one topic at a time, with what it found in the project filled in and a recommended answer, so you mostly confirm.
 It covers whether the project is new or existing, the stack and test command, a shared store with this repository's name and the workspace name, components, the tracker and commit conventions, how questions reach you, and project constraints.
+How questions reach you, the review browser, whether it opens at session start, and whether a new conversation offers Prism are your [personal settings](#personal-settings), so setup saves them for you on this machine and writes no `## Interaction` section into `.prism/workflow.md`.
 In Claude Code the questions use the structured question prompt; elsewhere they are numbered options in the message.
 
 Setup stays the owner of `.prism/workflow.md` after the first run.
 Run it again, or the agent runs it for you, when you add a test, lint, or BDD tool, when a project with no tests gets its first test runner, when you bring in another repository, or when Prism reports a setting or record from an earlier version.
 During an orchestrated run, the orchestrator runs setup between slices in a child agent and asks you its questions on Attention.
 Setup never adds a component declaration, store, or repository name that you did not approve.
+
+## Personal settings
+
+Four settings belong to you rather than to a project, and apply to every project and to both Claude Code and Codex on this machine:
+
+| Setting | Values | Default |
+| --- | --- | --- |
+| `interactionStyle` | `structured` asks with the host's question prompt, and `plain-text` with numbered options in the message | `structured` |
+| `reviewBrowser` | `auto`, `internal`, or `external`, as [Review browser](review-browser.md) explains | `auto` |
+| `reviewBrowserOnStart` | `on` opens the review browser when a session starts, and `off` does not | `on` |
+| `sessionOffer` | `ask` offers Prism at the start of a new conversation, and `off` does not | `ask` |
+
+Prism keeps them in its application folder, beside the machine's checkout list, as [Share Prism state across worktrees and machines](shared-records.md) describes, and never in a project, a repository's configuration, or a record store, so a change reaches no one else.
+Ask the agent to change one, or answer setup's Interaction question, and it saves your answer with Prism's `update_personal_settings` tool; agents read them with `get_personal_settings`.
+
+A project set up by an earlier Prism may still record these values under `## Interaction` in `.prism/workflow.md`, as `- Interaction style:`, `- Review browser:`, `- Review browser on start:`, and `- Session offer:` lines.
+While you have no value of your own for a setting, Prism uses the project's line, and the first session or tool call for that project adopts it as your own, so from then on it applies to every project and a later change to that line no longer does.
+A value of your own always wins over a project's line.
+The environment variables `PRISM_SESSION_OFFER=off` and `PRISM_REVIEW_BROWSER_ON_START=off` still turn the offer and the review browser at start off for every process that has them, whatever your settings say.
 
 ## Offer at the start of a conversation
 
@@ -646,7 +670,7 @@ In a project without `.prism/workflow.md`, it offers `prism:setup` instead.
 It does not ask about a question on the code, a change that no requirement or ADR covers, such as a color or a typo, or a request that already names a Prism skill.
 When questions already wait on you in an initiative, it offers to resume that initiative.
 A resumed conversation and a child agent get no offer.
-Set `- Session offer: off` under `## Interaction` in `.prism/workflow.md`, or the environment variable `PRISM_SESSION_OFFER=off`, to turn the offer off.
+Set your [personal setting](#personal-settings) `sessionOffer` to `off`, or the environment variable `PRISM_SESSION_OFFER=off`, to turn the offer off.
 In Codex the offer needs Prism's hooks to be trusted through `/hooks`, like gate answers and run totals.
 
 ## Migrate an older setup

@@ -23,13 +23,16 @@ import { readIndexingStatus } from "../repository-intelligence/index-status.mjs"
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadAttention, loadClaims, loadDeclaredView, loadFormatMark, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
+import { frozenTestFile, verificationLog } from "./verification-view.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
-import { listLaunches } from "../session/launched-sessions.mjs";
+import { archiveEndedLaunches, archiveLaunch, listLaunches, unarchiveLaunch } from "../session/launched-sessions.mjs";
 import { readRunOptions, runOptionsQuery } from "../session/run-options.mjs";
 import { listAgents } from "./agents.mjs";
+import { listCodingAgents } from "../session/coding-agents.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
+import { PersonalSettingsError, readPersonalSettings, updatePersonalSettings } from "../workflow/personal-settings.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
@@ -802,7 +805,17 @@ const ACTION_STATUS: Record<string, any> = {
   invalid_choice: 409,
   supervision_lost: 409,
   stop_timeout: 409,
-  launch_failed: 500
+  // The refusals of an answer to a launched session's permission request.
+  unknown_request: 404,
+  approval_unavailable: 409,
+  approval_too_long: 409,
+  launch_failed: 500,
+  // The refusals of an install, update, or removal of a registry agent.
+  install_mismatch: 409,
+  install_running: 409,
+  install_refused: 409,
+  install_failed: 500,
+  agent_running: 409
 };
 // A refusal of an approval that would break the format names each artifact with its findings, as update_artifact names them.
 const ACTION_FIELDS = ["current", "reason", "field", "accepted", "artifacts"];
@@ -856,6 +869,36 @@ export async function exchangeWriteGrant(request: any, response: any, writeSessi
     return;
   }
   sendJson(response, 200, { token });
+}
+
+// A change to the person's own settings comes from the review page as JSON, as a change of the preferences does, and is checked as the agents' tool checks it.
+// writable says whether the request holds the page's write session, which a change needs as every other change of the review app does.
+async function changePersonalSettings(request: any, response: any, writable: boolean) {
+  if (!fromPage(request)) {
+    sendJson(response, 403, { code: "origin_refused", message: "Personal settings must come from the review page as JSON." });
+    return;
+  }
+  if (!writable) {
+    sendJson(response, 403, { code: "write_forbidden", message: READ_ONLY_NOTICE });
+    return;
+  }
+  let change;
+  try {
+    change = parseStoreJson(await readBody(request));
+  } catch {
+    change = undefined;
+  }
+  if (change === null || typeof change !== "object" || Array.isArray(change)) {
+    sendJson(response, 400, { code: "invalid_setting", message: "The change must be a JSON object that names one or more personal settings and their values.", setting: null });
+    return;
+  }
+  try {
+    sendJson(response, 200, await updatePersonalSettings(change));
+  } catch (error) {
+    if (!(error instanceof PersonalSettingsError)) throw error;
+    if (error.code === "invalid_setting") sendJson(response, 400, { code: error.code, message: error.message, setting: error.setting ?? null });
+    else sendJson(response, 409, { code: error.code, message: error.message });
+  }
 }
 
 /**
@@ -971,6 +1014,45 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   let viewerOpenLease: any = null;
   const canWrite = (token: string) => Boolean(writeSessions?.valid(token));
   const writableRequest = (request: any) => canWrite(request.headers["x-prism-write"]);
+
+  // Archives one ended launched session, or every ended one the page lists, or unarchives one: behind the same page-origin and
+  // write-session checks as an applied action, before anything is read or written. The mark stays on this machine and records no history.
+  async function archiveRoute(request: any, response: any, archiving: boolean) {
+    if (!fromPage(request)) {
+      sendJson(response, 403, { code: "origin_refused", message: "A change must come from the review page as JSON." });
+      return;
+    }
+    if (!writableRequest(request)) {
+      sendJson(response, 403, { code: "write_forbidden", message: READ_ONLY_NOTICE });
+      return;
+    }
+    const invalid = () => sendJson(response, 400, { code: "invalid_request", message: archiving ? "The request must be a JSON object that names a launch, or sets ended to true." : "The request must be a JSON object that names a launch." });
+    let body: any;
+    try {
+      body = await readJson(request);
+    } catch {
+      invalid();
+      return;
+    }
+    const keys = body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : null;
+    const names = keys?.length === 1 && keys[0] === "launch" && typeof body.launch === "string";
+    const ended = archiving && keys?.length === 1 && keys[0] === "ended" && body.ended === true;
+    if (!names && !ended) {
+      invalid();
+      return;
+    }
+    try {
+      const env = process.env;
+      const result = ended ? await archiveEndedLaunches({ projectRoot, env })
+        : archiving ? await archiveLaunch({ projectRoot, id: body.launch, env })
+          : await unarchiveLaunch({ projectRoot, id: body.launch, env });
+      sendJson(response, 200, result);
+    } catch (error) {
+      if (error?.code === "unknown_launch") sendJson(response, 404, { code: error.code, message: error.message });
+      else if (error?.code === "launch_not_ended") sendJson(response, 409, { code: error.code, message: error.message });
+      else throw error;
+    }
+  }
 
   function sessionSnapshot() {
     const snapshot = { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], groups: copyGroups(session.groups), activeSource: session.activeSource, revision: session.revision };
@@ -1229,6 +1311,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return {
       state: async (repository: string) => known.has(repository) ? workspace.code.state(repository) : { state: "off" },
       reachable: async (repository: string, commit: string) => known.has(repository) ? workspace.code.reachable(repository, commit) : null,
+      branchesHolding: async (repository: string, commit: string) => known.has(repository) ? workspace.code.branchesHolding(repository, commit) : null,
       blobs: async (repository: string, commit: string, paths: string[]) => known.has(repository) ? workspace.code.blobs(repository, commit, paths) : null
     };
   }
@@ -1532,6 +1615,20 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       sendJson(response, 200, await sliceFiles(projectRoot, parsed.id, parsed.slug, (await sliceCode() as any)));
+    } else if ((route === "/api/frozen-test" || route === "/api/verification-log") && request.method === "GET") {
+      // A slice's Verification tab opens one of its frozen tests, or one of its runs' logs, in the side panel.
+      const ref = `slice:${url.searchParams.get("initiative") ?? ""}/${url.searchParams.get("slice") ?? ""}`;
+      const parsed = parseEntityRef(ref);
+      if (parsed?.kind !== "slice" || !(await entityExists(projectRoot, ref))) {
+        send(response, 404, "The project has no slice of that initiative and slug.");
+        return;
+      }
+      const found = route === "/api/frozen-test"
+        ? await frozenTestFile(projectRoot, parsed.id, parsed.slug, url.searchParams.get("path") ?? "").catch(() => null)
+        : await verificationLog(projectRoot, parsed.id, parsed.slug, url.searchParams.get("id") ?? "").catch(() => null);
+      // A refusal is one sentence of text, which the side panel shows as it is.
+      if (found) sendJson(response, 200, found);
+      else send(response, 404, route === "/api/frozen-test" ? "The slice's accepted design freezes no test at that path, or no copy of it is left." : "The slice has no verification run with that id.");
     } else if (route === "/api/store/conflicts" && request.method === "GET") {
       // Saved local record versions are read-only here; a person redoes a lost change through an agent.
       send(response, 200, JSON.stringify({ conflicts: await listRecordStoreConflicts(projectRoot).catch(() => []) }), "application/json; charset=utf-8");
@@ -1561,14 +1658,25 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       try {
-        sendJson(response, 200, await readRunOptions({ ...runOptionsQuery(url.searchParams), checkout: projectRoot, env: process.env }));
+        sendJson(response, 200, await readRunOptions({ ...runOptionsQuery(url.searchParams, process.env), checkout: projectRoot, env: process.env }));
       } catch (error) {
         if (error?.name !== "RunOptionsError") throw error;
         sendJson(response, error.status, { code: error.code, message: error.message, ...(error.field ? { field: error.field } : {}) });
       }
+    } else if (route === "/api/coding-agents" && request.method === "GET") {
+      // The registry state, the registry agents for this computer with their install and update marks, and the installed and declared
+      // ACP agents with their launch availability, which stay listed while the registry is down; reading needs no write session.
+      sendJson(response, 200, await listCodingAgents({ env: process.env }));
     } else if (route === "/api/agents" && request.method === "GET") {
       // Every agent once: this computer's launched sessions and the workspace's claims that none of them holds; reading needs no write session.
       sendJson(response, 200, await listAgents({ projectRoot, env: process.env }));
+    } else if (route === "/api/personal-settings" && request.method === "GET") {
+      // The person's own settings for this project, adopting each value the project still records; reading needs no write session.
+      sendJson(response, 200, await readPersonalSettings({ projectRoot }));
+    } else if (route === "/api/personal-settings" && request.method === "PUT") {
+      await changePersonalSettings(request, response, writableRequest(request));
+    } else if ((route === "/api/agents/archive" || route === "/api/agents/unarchive") && request.method === "POST") {
+      await archiveRoute(request, response, route === "/api/agents/archive");
     } else if (route === "/api/actions/targets" && request.method === "GET") {
       try {
         sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind"), checkouts: await checkoutRoots() }));
@@ -1598,7 +1706,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
           const target = parseTarget(result.applied.target);
           // An approval or a comment belongs to no initiative, so its event names its artifact, as Attention's recent changes list it.
           const event = { ...result.applied, initiative: target?.initiative ?? (target?.kind === "launch" ? result.launch?.initiative ?? null : null), ...(result.artifact ? { artifact: result.artifact } : {}) };
-          if (onAction) await Promise.resolve(onAction(event, { shared: !["index", "machine"].includes(target?.kind), comment: result.comment ?? null })).catch(() => {});
+          if (onAction) await Promise.resolve(onAction(event, { shared: !["index", "machine", "agent"].includes(target?.kind), comment: result.comment ?? null })).catch(() => {});
           else notify("action", event);
         }
       } catch (error) {

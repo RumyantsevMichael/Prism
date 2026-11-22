@@ -34,11 +34,12 @@ import { appendDecision, readDecisionHistory, setDecisionRecording } from "./wor
 import { listArtifacts } from "./review/review-server.mjs";
 import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { opensAtStart } from "./review/open-at-start.mjs";
+import { PERSONAL_SETTINGS, PersonalSettingsError, readPersonalSettings, updatePersonalSettings } from "./workflow/personal-settings.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
 import { checkpointPause, effectiveSettings, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, claimedByUpdate, getInitiative, initiativeAcknowledgement, initiativeWork, readInitiative, requireClaimedWork, updateInitiative } from "./workflow/initiative.mjs";
-import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
+import { ROADMAP_TOOLS, RoadmapError, getRoadmap, roadmapAcknowledgement, updateRoadmap } from "./workflow/roadmap.mjs";
 import { ARTIFACT_TOOLS, artifactAtLocation, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
 import { savedComment } from "./workflow/artifact-comments.mjs";
 import { keptExplanation, shownPath } from "./workflow/artifact-migration.mjs";
@@ -62,6 +63,9 @@ import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, s
 import { callAgent, callAgentRole, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
+import { ACP_HOST_PATTERN } from "./session/acp-agents.mjs";
+import { markToolsListed, unmarkToolsListed } from "./session/options-read-marker.mjs";
+import { GET_SKILL_TOOL, getSkill, SkillFileError } from "./workflow/skill-files.mjs";
 import { HOSTS } from "./session/launch-hosts.mjs";
 import { EFFORT_PATTERN, MODEL_PATTERN, PROVIDER_PATTERN, RUN_KINDS } from "./session/run-options.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
@@ -406,6 +410,10 @@ function stateErrorData(error: any) {
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };
   }
+  // A refused personal setting names the first setting it refuses, or null when the change names none.
+  if (error instanceof PersonalSettingsError) {
+    return { code: error.code, ...(error.setting === undefined ? {} : { setting: error.setting }) };
+  }
   if (error instanceof ChangeMapError) {
     return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
   }
@@ -432,7 +440,9 @@ function stateErrorData(error: any) {
 // Hosts show agents the error message but not the error data, so the message also lists the problems that the data holds.
 // A problem that the message already states is not listed again.
 // The settings.models entry of one host: a provider and one run choice per kind, each part left out for the host default.
+// A host is Claude Code, Codex, or an ACP agent by its acp-<id> name, which the host list of the machine that runs it resolves.
 const RUN_HOST_NAMES = HOSTS.map(({ host }) => host);
+const RUN_HOST_SCHEMA = { anyOf: [{ enum: RUN_HOST_NAMES }, { pattern: ACP_HOST_PATTERN.source }] };
 const RUN_CHOICE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -521,6 +531,7 @@ const tools = [
   ...ROADMAP_TOOLS,
   ...INITIATIVE_TOOLS,
   ...ARTIFACT_TOOLS,
+  GET_SKILL_TOOL,
   {
     name: "verify_slice",
     description: "Run the project's test command from .prism/workflow.md for a slice with an accepted design, after checking that its frozen acceptance tests are unchanged, and record the run as the slice's completion evidence. A slice that records a component runs that component's Test command in the component's folder, or the repository's Test command under ## Stack in the project root when the component declares none; the root component and a slice without a component run the repository's command in the project root. Before asking for approval it refuses an invalid ## Components declaration, a recorded component the repository no longer declares with component_unknown, a missing command with test_command_missing, a working folder that does not exist with component_folder_missing, and a component folder that leads outside the project through a symbolic link with component_folder_outside. Before the command runs, a slice with a component compares the project with its content when the slice started, kept under this checkout's local ref refs/prism/<initiative>/<slice>/<checkout>/start, where <checkout> is the first 16 hexadecimal digits of the SHA-256 of the project root's real path: a change outside the component and every shared path, by the declaration recorded when the slice started, fails the run with reason component_boundary, listing the crossing paths, and the command does not run. Another slice's frozen test at its frozen content, and a path that another slice's latest passing run changed after this slice started and that still holds the content it tested, do not count, while this slice's own changes do. A slice without start content runs with boundary unchecked, and a run whose start content Git can no longer read, or was recorded while the ## Components declaration was invalid or lacked the slice's component, fails with reason start_content_missing without running the command: ask the user to fix the ## Components declaration first when the message says so, then set the slice back to not-started and start it again. Results name the command, the folder it runs in with links followed and project-relative, and the slice's component. A passing run completes a slice whose design marks no review and returns the initiative revision that write produced. The result is brief: the verdict, failing test names, the run record, and the path of the full output log. The first run of a command text in a working folder asks the user to allow it in the review browser and returns approval_needed with a gate id: wait for that gate, then call again with approvalGate. In a cloud session, where the user cannot open the review browser, approval_needed says so: ask the user in chat to allow the exact command in the folder it names, then call again with approvalGate and chatApproval quoting their answer word for word; the approval and the gate's history keep the quote, and any other session refuses chatApproval. An answer with a note and no choice returns approval_unclear and runs nothing. A host that cannot keep a long call open gets status running; calling again with the same arguments keeps waiting for the same run. An implementer that finds the contract wrong calls it with contractDefects instead: nothing runs, the defects are kept as a run entry and on the slice, and the slice is blocked until design revises the contract. With dependents true, slice names a finished fit scope (a slice whose design accepted a slice plan, or a leaf that is a scope of its own) and the call runs its dependents' run instead: the test command of every component of this repository that depends, directly or through others, on a component of the scope's leaves, each distinct command and folder once in dependency order, never a component of another repository. It refuses a slice that is not a fit scope, and contractDefects, with validation_failed, and a scope with a leaf that is not done with scope_unfinished, listing waiting; it applies the same refusals as above to each dependent, and returns no_dependents when nothing depends on the scope. One approval gate lists every command and folder not yet allowed, with the components each tests: allowing it allows each listed pair, and declining it marks their components declined while the allowed pairs still run. The run is recorded on the scope, and its result lists each dependent with its status, the blocked dependents, and each command's log; a run whose commands change project files fails with reason tracked_files_changed and blocks every dependent. update_roadmap ship refuses with dependents_blocked while a finished scope's dependents have no passing run of every one of them, or while that run started before a leaf of the scope last passed verification.",
@@ -531,6 +542,35 @@ const tools = [
     name: "update_design_view",
     description: "Replace a designed slice's design view, which the review browser shows at the design gate: one example per acceptance test, each a single line under the number of the slice.md Contract clause it checks, restating only what the test asserts. Prism checks that each cited test name occurs in its test file and each clause number exists, lists clauses without examples as gaps, and marks the view stale when the contract or a test file changes. It also checks the declared views of the folders that accept_design checks, by the same rules, and returns views ({ path, kind, elements, relations }) and viewProblems, each problem that accept_design would refuse.",
     inputSchema: UPDATE_DESIGN_VIEW_SCHEMA,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "get_personal_settings",
+    description: "Read the person's own settings, which Prism keeps on this machine for every project and host: interactionStyle (structured or plain-text), reviewBrowser (auto, internal, or external), reviewBrowserOnStart (on or off), and sessionOffer (ask or off). Each value is the person's own when they have one, else the value the project named by projectRoot records under ## Interaction in its .prism/workflow.md, else the default. A read with projectRoot adopts each value that project records for a setting the person has no value for as the person's own, once, and lists those names in adopted; a read without projectRoot adopts nothing and uses no project's value. It answers settings, sources (chosen, adopted, repository, or default for each setting), adopted, and problem, which is null or a settings_unreadable or settings_unsupported problem when the person's settings cannot be read, while the repository's values and the defaults apply.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the project whose recorded values apply and are adopted. Omit it to read only the person's values and the defaults." }
+      },
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "update_personal_settings",
+    description: "Change the person's own settings on this machine, which apply to every project and host and reach no one else. settings names one or more settings with their new values, and every other setting keeps its value. It refuses a name that is not a setting, a value the setting does not offer, or an empty object with invalid_setting and data.setting naming the first refused name, or null for an empty object, and changes nothing while the person's settings cannot be read, with settings_unreadable or settings_unsupported. It answers as get_personal_settings does without projectRoot.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        settings: {
+          type: "object",
+          description: "The settings to change and their new values.",
+          properties: Object.fromEntries(PERSONAL_SETTINGS.map((setting) => [setting.name, { type: "string", enum: [...setting.values] }]))
+        }
+      },
+      required: ["settings"],
+      additionalProperties: false
+    },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   ...CONSERVATION_TOOLS,
@@ -941,7 +981,7 @@ const tools = [
   },
   {
     name: "update_coordination_state",
-    description: "Apply a validated atomic update to an initiative's coordination state, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision; an update that only resolves gates by id goes through after other changes, such as the browser answer that prompted it.",
+    description: "Apply a validated atomic update to an initiative's coordination state, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision; an update that only resolves gates by id goes through after other changes, such as the browser answer that prompted it. The result is brief: the new revision, the opened gates, and the state without the person's history and setting marks and without each pending gate's context and artifacts, which get_coordination_state reads.",
     inputSchema: {
       type: "object",
       properties: {
@@ -958,7 +998,7 @@ const tools = [
               type: "object",
               additionalProperties: false,
               properties: {
-                host: { type: "string", enum: RUN_HOST_NAMES },
+                host: { type: "string", ...RUN_HOST_SCHEMA },
                 autonomy: { type: "string", enum: ["conservative", "broad", "full"] },
                 commit: { type: "string", enum: ["on", "off"] },
                 push: { type: "string", enum: ["on", "off"] },
@@ -970,7 +1010,7 @@ const tools = [
                     {
                       type: "object",
                       description: "The choices kept for each host; a part left out is the host's default, and an earlier { delivery, review, securityReview, examples } value is stored as typed choices of every host, with a name breaking the model rule kept as { earlier }.",
-                      propertyNames: { enum: RUN_HOST_NAMES },
+                      propertyNames: RUN_HOST_SCHEMA,
                       additionalProperties: RUN_HOST_ENTRY_SCHEMA
                     }
                   ]
@@ -1076,8 +1116,11 @@ function waitUnsupportedReason() {
   if (olderThan(clientVersion, FIRST_BACKGROUND_VERSION)) return `Claude Code ${clientVersion} predates background tool calls (2.1.212).`;
   const handoff = Number(process.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS ?? DEFAULT_BACKGROUND_MS);
   if (["1", "true"].includes(String(process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toLowerCase()) || handoff === 0) return "Background tool calls are disabled in this Claude Code session.";
-  const timeout = Number(process.env.MCP_TOOL_TIMEOUT);
-  if (Number.isFinite(timeout) && timeout > 0 && timeout <= handoff) return `MCP_TOOL_TIMEOUT (${timeout} ms) ends the call before Claude Code moves it to the background (${handoff} ms).`;
+  // The plugin's MCP configuration gives this server its own tool timeout, which overrides MCP_TOOL_TIMEOUT, and names it in PRISM_TOOL_TIMEOUT_MS,
+  // because a cloud session sets MCP_TOOL_TIMEOUT to one minute, which would end every wait before the handoff.
+  const own = Number(process.env.PRISM_TOOL_TIMEOUT_MS);
+  const [variable, timeout] = Number.isFinite(own) && own >= 1000 ? ["The prism-review server timeout", own] : ["MCP_TOOL_TIMEOUT", Number(process.env.MCP_TOOL_TIMEOUT)];
+  if (Number.isFinite(timeout) && timeout > 0 && timeout <= handoff) return `${variable} (${timeout} ms) ends the call before Claude Code moves it to the background (${handoff} ms).`;
   return null;
 }
 
@@ -1089,7 +1132,7 @@ function progress(progressToken: any, value: any, message: any) {
 // as latestAnswer is one way that checkout receives it. Failing to remember never fails the call, whose store change already happened.
 async function noteApprovalDelivery(name: string, projectRoot: string, value: any) {
   try {
-    if (name === "update_artifact") await recordAskedGates(projectRoot, (value.artifacts ?? []).map((entry: any) => entry.gate).filter((gate: any) => typeof gate === "string"));
+    if (name === "update_artifact") await recordAskedGates(projectRoot, (value.artifacts ?? []).map((entry: any) => entry.gate).filter((gate: any) => typeof gate === "string"), { session: claimHolder() });
     else if (typeof value.latestAnswer?.gate === "string") await forgetAskedGates(projectRoot, [value.latestAnswer.gate]);
   } catch {
   }
@@ -1245,6 +1288,16 @@ async function callStateTool(name: string, argumentsValue: any) {
   if (resultValue?.state?.closed) {
     const { closed, ...state } = resultValue.state;
     resultValue = { ...resultValue, state };
+  }
+  // An update answers with what its caller needs next, the revision, the settings, and the open work; the person's history and each gate's context and artifacts, which the caller wrote or can read with get_coordination_state, stay out of it.
+  if (name === "update_coordination_state" && resultValue?.state) {
+    const { history, personSettings, ...state } = resultValue.state;
+    const pending = Array.isArray(state.pending) ? state.pending.map((gate: any) => {
+      if (!gate || typeof gate !== "object") return gate;
+      const { context, artifacts, ...brief } = gate;
+      return brief;
+    }) : state.pending;
+    resultValue = { ...resultValue, state: { ...state, ...(pending === undefined ? {} : { pending }) } };
   }
   const content = [{ type: "text", text: stateContent(resultValue) }, ...await shippedHistoryContent(projectRoot, resultValue?.shippedHistory)];
   if (Array.isArray(resultValue?.keptSettings) && resultValue.keptSettings.length) content.push({ type: "text", text: keptSettingsText(resultValue.keptSettings) });
@@ -1772,6 +1825,18 @@ async function scopedArguments(argumentsValue: any) {
   return scoped.refusal ? { ...given, [SCOPE_REFUSAL]: scoped.refusal } : { ...given, projectRoot: scoped.root };
 }
 
+// The personal settings tools name their project only by projectRoot, never by the host's project, so a read without one adopts nothing.
+async function callPersonalSettingsTool(name: string, argumentsValue: any) {
+  try {
+    assertExactToolArguments(argumentsValue, name === "get_personal_settings" ? ["projectRoot"] : ["settings"], name === "get_personal_settings" ? [] : ["settings"], `${name} arguments`);
+  } catch (error) { error.code = "validation_failed"; throw error; }
+  if (name === "update_personal_settings") return updatePersonalSettings(argumentsValue.settings);
+  if (!Object.hasOwn(argumentsValue, "projectRoot")) return readPersonalSettings();
+  if (typeof argumentsValue.projectRoot !== "string" || !path.isAbsolute(argumentsValue.projectRoot)) throw projectRootRefusal("The projectRoot argument must be an absolute path.");
+  const projectRoot = await realpath(argumentsValue.projectRoot).catch(() => { throw projectRootRefusal("The projectRoot argument must name an existing folder."); });
+  return readPersonalSettings({ projectRoot });
+}
+
 async function callTool(name: string, argumentsValue: any = {}, metadata: any, requestId: any) {
   if (MIGRATION_SCOPE !== null) {
     if (argumentsValue?.[SCOPE_REFUSAL]) return scopeAnswer(argumentsValue[SCOPE_REFUSAL]);
@@ -1790,6 +1855,15 @@ async function callTool(name: string, argumentsValue: any = {}, metadata: any, r
   }
   if (name === "verify_slice") {
     return callVerifySlice(argumentsValue, metadata, requestId);
+  }
+  if (name === "get_skill") {
+    try {
+      const value = await getSkill(argumentsValue ?? {});
+      return { content: [{ type: "text", text: value.text }], structuredContent: value };
+    } catch (error) {
+      if (!(error instanceof SkillFileError)) throw error;
+      return { content: [{ type: "text", text: error.message }], structuredContent: { ...error.data, message: error.message }, isError: true };
+    }
   }
   if (CONSERVATION_TOOLS.some(tool => tool.name === name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
@@ -1818,7 +1892,7 @@ async function callTool(name: string, argumentsValue: any = {}, metadata: any, r
     let value;
     try {
       value = name === "get_roadmap" ? await getRoadmap(input)
-        : name === "update_roadmap" ? await updateRoadmap(input)
+        : name === "update_roadmap" ? roadmapAcknowledgement(await updateRoadmap(input), input.operations)
           : name === "get_initiative" ? await getInitiative(input)
             : initiativeAcknowledgement(await updateInitiative(input), input.operations);
     } catch (error) {
@@ -1850,6 +1924,10 @@ async function callTool(name: string, argumentsValue: any = {}, metadata: any, r
   }
   if (["propose_migration", "get_migration_run", "finish_migration_run", "fail_migration_run"].includes(name)) {
     return callMigrationTool(name, argumentsValue);
+  }
+  if (name === "get_personal_settings" || name === "update_personal_settings") {
+    const value = await callPersonalSettingsTool(name, argumentsValue);
+    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   const review = await server(argumentsValue, metadata);
   if (name === "get_review_url") {
@@ -1883,7 +1961,9 @@ if (MIGRATION_SCOPE !== null) {
     void recordStoreOf(root).catch(() => {});
     reviewServers.register(root, { open: await opensAtStart(root) });
   }, () => {});
-} else {
+} else if (process.env.PRISM_OPTIONS_READ !== "1" && !process.env.PRISM_LAUNCH) {
+  // A read of an ACP agent's run options only needs this server to list its tools, and a launched session runs under the review app
+  // that launched it, so neither starts a review app here.
   reviewServers.startApp();
 }
 
@@ -1913,6 +1993,7 @@ input.on("line", async (line) => {
       });
     } else if (request.method === "tools/list") {
       result(request.id, { tools: scopedTools(tools, MIGRATION_SCOPE) });
+      markToolsListed();
     } else if (request.method === "tools/call") {
       callsInProgress.add(request.id);
       const meta = request.params?._meta;
@@ -1974,6 +2055,7 @@ async function stop(reason: string) {
   closing = true;
   handOffRecordSyncs();
   log.info("process_stopping", { reason });
+  unmarkToolsListed();
   const deadline = setTimeout(() => process.exit(0), CLOSE_GRACE_MS);
   deadline.unref();
   try {

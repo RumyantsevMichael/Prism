@@ -418,8 +418,13 @@
   text-transform: uppercase;
 }
 
+/* The group's name shows in capitals as small capitals of a larger size, which match the label's capitals, so its text stays as written,
+   such as "Needs you", wherever the page's text is read or copied. */
 .attention-group-label > span:first-child {
   min-width: 0;
+  font-size: var(--prism-font-size-lg);
+  font-variant-caps: all-small-caps;
+  text-transform: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -899,9 +904,63 @@ a.inspect-tile:focus-visible {
   margin: 0;
 }
 
+/* A permission request names its initiative, host, action, and reason; the action and reason are one line of host text that wraps anywhere. */
+.gate-permission .key-values {
+  margin: 0;
+}
+
+.permission-action,
+.permission-reason {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Allow and Refuse sit side by side beside the facts, and under them in a narrow sheet, with the hint and any refusal below. */
+.permission-answer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.permission-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.permission-hint {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
 .approval-path {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* The initiative and slice an approval serves wrap as text, so a long title or an unbroken id reads whole at every width. */
+.approval-work {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--prism-space-1) var(--prism-space-2);
+  min-width: 0;
+  max-width: 100%;
+  padding-block: var(--prism-space-1);
+  line-height: var(--prism-line-height);
+}
+
+.approval-work-part {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.approval-work-separator {
+  color: var(--prism-color-ink-muted);
 }
 
 /* The status that approving writes holds up to 200 characters, so it is wrapping text, never a one-line label that cuts it off. */
@@ -1710,24 +1769,12 @@ a.inspect-tile:focus-visible {
   outline-offset: var(--prism-stroke);
 }
 
-.output-tail {
-  max-height: calc(var(--prism-row-height) * 16);
-  margin: 0;
-  overflow: auto;
-  padding: var(--prism-space-3) var(--prism-space-4);
-  border-radius: var(--prism-radius-md);
-  background: var(--prism-color-sunken);
-  font-family: var(--prism-font-code);
-  font-size: var(--prism-font-size-code);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 .code-list {
   display: inline-flex;
   flex-wrap: wrap;
   gap: var(--prism-space-1) var(--prism-space-3);
   min-width: 0;
+  max-width: 100%;
 }
 
 /* ---------- Agents: the Show choice over one library table of agents, and a launched session's details under its row ---------- */
@@ -1746,15 +1793,19 @@ a.inspect-tile:focus-visible {
   display: none;
 }
 
+/* Show takes the start of the line and Archive all ended its end, and the button wraps under Show when the line is too narrow for both. */
 .agents-toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3);
   min-width: 0;
 }
 
-/* The agent and what it works on take the room; the state, the time, and the one action keep a share each, so every row's cells line up. */
+/* The agent and what it works on take the room; the state, the time, and the actions keep a share each, so every row's cells line up and two buttons fit. */
 .agents-table {
-  --prism-lib-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) minmax(0, 1.8fr) minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 0.5fr);
+  --prism-lib-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) minmax(0, 1.8fr) minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 0.9fr);
 }
 
 .agents-time {
@@ -1763,7 +1814,9 @@ a.inspect-tile:focus-visible {
 
 .agents-action {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: var(--prism-space-1);
 }
 
 .agents-details {
@@ -1787,6 +1840,16 @@ a.inspect-tile:focus-visible {
 
 .agents-details-reason {
   color: var(--prism-color-ink);
+}
+
+/* The usage an agent reported reads as facts above the session's command, at the size of the lines around it. */
+.agents-usage .key-values {
+  gap: 0 var(--prism-space-5);
+  margin: 0;
+}
+
+.agents-usage .key-values dd {
+  font-size: var(--prism-font-size-sm);
 }
 
 .agents-folder {

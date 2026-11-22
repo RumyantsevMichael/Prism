@@ -11,8 +11,8 @@
       "source": {
         "source": "github",
         "repo": "RumyantsevMichael/Prism",
-        "ref": "prism--v0.28.0",
-        "sha": "40e76fbc81f6108c44da2a44a21f2961cf4bfdf7"
+        "ref": "prism--v0.30.0",
+        "sha": "87b303a04f3ae0c682d9334e1a1dd7310c6f3108"
       },
       "displayName": "Prism",
       "description": "Code-centered workflow with EARS requirements, architecture decisions, outcome slices designed as frozen contracts, verified implementation, and opt-in independent review.",

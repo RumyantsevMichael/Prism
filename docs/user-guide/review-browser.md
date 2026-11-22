@@ -18,8 +18,8 @@ Start a review from a Prism checkout when no agent session is active:
 
 The browser opens on Attention, or on the artifact you name, and later visits restore the tabs you left open.
 
-`Review browser: auto` in `.prism/workflow.md` uses the internal browser in desktop sessions and the system browser in CLI sessions.
-Set `internal` or `external` to override this choice.
+Your [personal setting](workflow.md#personal-settings) `reviewBrowser` chooses the browser, and its default `auto` uses the internal browser in desktop sessions and the system browser in CLI sessions.
+Set it to `internal` or `external` to override this choice.
 The agent opens the internal browser on a review URL that carries no grant, so that tab can only read, as [Which tabs can make changes](#which-tabs-can-make-changes) explains.
 Answer the agent in the conversation instead, or ask it to present the review, which opens the system browser, or run `prism review` in the project.
 When the selected browser is unavailable, Prism presents the URL and source artifacts.
@@ -33,12 +33,19 @@ The **Settings** button, the gear at the start of the status bar, or Ctrl+, (Cmd
 **Appearance** offers the themes System, Light, and Dark and the densities Compact and Comfortable.
 A choice applies at once, and System follows the operating system again.
 **Layout** shows or hides the sidebar on windows wider than 1100 pixels and returns the sidebar to its default width.
+**Personal** shows your [personal settings](workflow.md#personal-settings), which stay on this machine and apply to every project and every host you run Prism in: **Questions** (Question tool or Numbered options), **Review browser** (Auto, Internal, or External), **Open at session start** (On or Off), and **Offer Prism** (Ask or Off).
+Each row shows the value Prism uses and where it comes from: **Your choice**, **Adopted from a repository's configuration**, **From this repository's configuration**, or **Default**.
+A choice saves at once on this machine, reaches no one else, and the row then says **Your choice**; agents see it the next time they read your settings.
+Settings reads your settings again each time it opens, so it shows a change an agent made meanwhile.
+Changing a personal setting needs a tab that [can make changes](#which-tabs-can-make-changes): a tab that can only read shows each value with its choices disabled under the read-only notice.
+When Prism cannot read `personal-settings.json` in its application folder, the section warns that it uses the repository's values and its defaults, and it refuses every change until you fix or remove the file, so nothing in it is overwritten.
 **Record store** says where the project's records live and opens the store's details.
 **Prism's own runs** chooses, once for this computer, the host and model of the runs that Prism starts on its own, such as a run that moves records to a new format.
 Its **Host** select offers **Any available host** and every host Prism supports, a host this computer lacks shown as unavailable with its reason, and its **Model** picker offers the models, efforts, and provider that the chosen host reports, as the models of an initiative's **Settings** do, or a model name typed as written.
 **Any available host**, like no stored choice, starts each run with Codex and its GPT-6 Luna model where Codex lists it, and otherwise on the first host Prism finds on this computer with a small model, Claude Code's `haiku` or Codex's first listed model whose name ends in `-luna` or `-mini`, so its **Model** picker takes no choice.
 **Apply** stores the choice in `prism-runs.json` in the review app folder, readable only by you, and only a tab that Prism opened can apply it; a run already started keeps its own host and model.
 When the chosen host is no longer found, or the stored choice cannot be read, a run starts on the first host Prism finds with its default model and says why, and with no host found it does not start.
+**Coding agents** lists the [ACP agents](#acp-agents) that Prism can launch or install, as [Coding agents in Settings](#coding-agents-in-settings) describes.
 **About Prism** names the version of Prism that runs the review app, and **Open the catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
 The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
 
@@ -109,7 +116,7 @@ A new tab opens right after the selected tab.
 Close a tab with its close button or a middle click, and when you close the last tab the page says that nothing is open.
 Tabs that an agent presents carry the agent mark before their title and stay open until you close them, and a presentation of several artifacts opens a tab for each of them and shows the first.
 An agent can present tabs as a named group, whose head shows the agent before the group's name: the avatar of the claim that agent held when it presented the group, whose hover text names the holder, the harness and model, the activity, and the time left, or else an agent avatar named by its harness and model.
-Tabs, buttons, menus, and other controls do not select their text when you click, double-click, or drag on them, while documents, code, figures, messages, and fields stay selectable.
+Tabs, buttons, menus, and other controls do not select their text when you click, double-click, or drag on them, while documents, code, figures, messages, and fields stay selectable, except a graph or diagram, which you drag to pan.
 The open tabs belong to the session, so every browser window of the session shows the same tabs, and a reload or a later visit restores them.
 When tabs do not fit, the strip scrolls sideways and keeps the selected tab in view, and a long title ends with an ellipsis whose full text shows on hover or focus.
 With the focus on a tab, the arrow keys, Home, and End move between tabs, Enter opens one, and Tab reaches that tab's close button.
@@ -128,9 +135,12 @@ In a window 600 pixels wide or less the button shows two avatars and one small c
 Opening it shows the **Agents** menu.
 Its **Needs you** group, left out while nothing needs you, lists each launched session that failed or waits for you with its initiative, its harness, its model, what it works on, its state, and how long it ran.
 A waiting session offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown, and a failed one offers **Open**, which opens [the Agents page](#the-agents-page) with its details shown.
-Below that, **Launched on this computer**, **Other sessions**, and **Expired claims** say how many there are, also at 0, and each opens the Agents page showing only those; **Open Agents** opens the whole page.
+Below that, **Launched from Prism** counts the launched sessions that are not archived, **Started outside Prism** the live claims, and **Expired claims** the claims that expired less than a day ago, also at 0, and each opens the Agents page showing only those; **Open Agents** opens the whole page.
 The menu lists no claim, so every claim shows on the Agents page.
 Wherever the browser shows a claim, on a slice, an initiative, the roadmap, the sidebar, or the Agents page, it names the harness the agent runs in and the model of the session's main agent as `<harness> · <model>`, such as `Codex · gpt-5.5`, when the claim records them, and `Agent` and no model otherwise.
+When a claim records a session that you can open from a link, such as a Claude Code on the web session, an inline claim, a claim's strip, and its row on the Agents page end with a **Session** link that opens that session in a new tab.
+Only the person whose session it is can open it, so a teammate may see a link that does not open for them.
+An avatar claim shows no link, and a claim whose host has no session to open, such as a local Claude Code or Codex session, shows none either.
 The sidebar shows a claimed slice's holder at the end of its row.
 Claims are read-only in the browser.
 
@@ -157,6 +167,7 @@ Questions recorded by an earlier Prism version show only their question.
 A design or correctness review needs Approve or Request changes, and Request changes also needs a note that says what should change.
 Approving the correctness review of a finished initiative lets the agent ship it, which in a project with a record store also accepts the Proposed ADRs that its slice designs link, as [Ship an initiative](workflow.md#ship-an-initiative) describes.
 The approval of a requirement or ADR takes the same answers, and its card names the file, its scope, its recorded status, and the whole status that approving records, wrapped onto further lines when it is long.
+When the agent names the initiative the approval serves, and the slice when there is one, the card's **Asked for** row links to them, and shows an id that the roadmap does not list yet, as requirements that start a new initiative do before their roadmap entry exists, as text marked not on the roadmap yet.
 Approving writes that status into the file's `Status:` line, and for `Approved` the day you answer into its `Approved:` line, as [Statuses change only at gates](shared-records.md#statuses-change-only-at-gates) describes.
 A decision takes one of its options, a note in your own words, or both.
 To answer in your own words after choosing an option, choose that option again, or press **Clear choice** beside **Your answer**.
@@ -174,6 +185,7 @@ An answer to a question that an agent asked reaches only the session whose agent
 An answer to the approval of a requirement or ADR reaches, once and in the same ways, only an agent working in the checkout that asked for the approval, however long you take to answer.
 Agents in other checkouts or on other machines are not told, but any agent that reads that file also reads your latest answer and its note, so requested changes are not lost when nothing waits.
 Attention also lists blocked slices, open findings, failed verifications, and active work.
+In a window as narrow as a phone, Attention opens on its list, and picking an item shows its card in place of the list, with **All items** to go back.
 A slice that is not done is a failed verification while its latest verification run failed, with the reason in words, such as `The tests failed, 2 tests failed`, until a later run passes or the slice is done.
 Choosing a kind or an initiative in the sidebar opens Attention filtered to it, at an address such as `attention:failed` or `attention:work/<initiative>`, which shows only those items, says above them the filter and its count, such as `Failed verifications · 1 of 14 items`, and offers **Show everything**.
 Each filtered item opens where it is handled: a question opens Attention with that question picked so you can answer it, and a failed verification opens its slice.
@@ -215,7 +227,7 @@ A file in a record store that a run migrated says on its page `Prism migrated th
 
 Every change that the review page makes is an action: answering a question, changing an initiative setting, commenting on a file in the record store, rebuilding an index, or launching, stopping, or resuming a launched session.
 The page sends each action with the version of the record it showed you, so when an agent or another tab changed that record in the meantime, Prism refuses your action and changes nothing.
-Apart from a rebuild, which starts Prism's own indexer, and the launched-session actions of [Launched sessions](#launched-sessions) on [the Agents page](#the-agents-page), an action changes only Prism's records, and it never runs a command, changes a project file, or writes to Git.
+Apart from a rebuild, which starts Prism's own indexer, the launched-session actions of [Launched sessions](#launched-sessions) on [the Agents page](#the-agents-page), and the agent installs of [Install, update, or remove an agent](#install-update-or-remove-an-agent), which run `npm` or `uv` in Prism's own folder, an action changes only Prism's records, and it never runs a command, changes a project file, or writes to Git.
 Answering the approval of a requirement or ADR also needs a tab that can make changes, and Prism records nothing when the file changed since the approval was asked.
 When more than one pending approval holds the same id, as a copied status record or a scope move that stopped halfway can leave, Prism lists each one, names every file and scope that holds the id, and refuses an answer to any of them, so the agent asks again for the file it means.
 A comment needs a tab that can make changes and a Git `user.name` in the checkout, and Prism stores nothing when the file changed since the page showed it; the page then shows the current file and keeps your comment unsent.
@@ -243,7 +255,7 @@ An initiative has these settings, each with its default and the moment an agent 
 
 | Setting | Values | Default | Takes effect |
 | --- | --- | --- | --- |
-| Host | Each host Prism supports, Claude Code and Codex | None stored, shown as the first host found on this computer | For launches started after the change; a running or resumed session keeps the host it started on. |
+| Host | Each host Prism supports: Claude Code, Codex, and each [ACP agent](#acp-agents) this computer offers | None stored, shown as the first host found on this computer | For launches started after the change; a running or resumed session keeps the host it started on. |
 | Autonomy | `conservative`, `broad`, `full` | `conservative` | Decides which later gates wait for you; a gate already open keeps waiting for you. |
 | Commit | `off`, `on` | `on` with `full` autonomy, otherwise `off` | For agents started after the change. |
 | Push | `off`, `on` | `off` | For agents started after the change. |
@@ -252,6 +264,7 @@ An initiative has these settings, each with its default and the moment an agent 
 | Models | For each host, a provider and the model and effort of the coordinator, design and implementation, code review, security review, and design gate summary agents | The host's own default for each | The coordinator's for launches started after the change, and each agent's for agents started after it. |
 
 Choosing a host that is not found on this computer is refused with its reason, such as `Claude Code was not found: no claude executable on PATH.`
+An ACP agent is stored as `acp-<id>`, and a checkout on a computer that does not offer that agent shows it as not found.
 A change to Models names one host and keeps the choices of every other host.
 It takes only a provider, model, or effort that the host reports, its default, or a model name you typed, which Prism cannot check; a value the host does not offer is refused with a reason such as `Claude Code on this computer does not offer the model claude-opus-3.`
 While the host cannot report its options, Models takes only the host's defaults and typed model names.
@@ -271,15 +284,19 @@ Index actions are not part of an initiative, so shipping one leaves them availab
 An initiative whose record cannot be read and that the roadmap does not list has no settings, so its page offers none.
 On a slice page the card names the initiative above its title, because the settings belong to the whole initiative and a change there applies to every slice.
 Each setting shows its options as a button group, the sentence on when a change takes effect, and for an on or off setting what the picked option does.
-**Host** is one select of every host Prism supports, as found on this computer; a host this computer lacks shows as `<host>: unavailable` and cannot be chosen, and its reason, such as `Codex was not found: no codex executable on PATH.`, shows below the select.
-**Models** follows the host that the select shows, and switching the host shows the choices kept for that host, so switching back shows the first host's choices as they were.
+**Host** is one choice of every host Prism supports, as found on this computer: Claude Code, Codex, and each [ACP agent](#acp-agents), each with a line under its label.
+The line says what choosing the host does, or why it cannot run: a host this computer lacks shows its reason, such as `Codex was not found: no codex executable on PATH.`, and cannot be chosen, and an ACP agent whose models were read shows its sign-in or failed reason, such as `<label> needs you to sign in before it can run:` and its sign-in methods.
+**Models** follows the host that the choice shows, and switching the host shows the choices kept for that host, so switching back shows the first host's choices as they were.
 It shows a **Provider** picker when the host reports providers, as Codex does, and then one picker for the **Coordinator** and one for each kind of agent: **Design and implementation**, **Code review**, **Security review**, and **Design gate summary**.
 Each picker shows the chosen model and effort, such as **Fable 5.2 · High effort**, or **Host default** and **Host default effort** for the host's own choice.
 While the review app asks the host for its options, each picker reads **Reading <host>’s models…**; a host that does not answer shows its reason, such as `Claude Code did not report its run options: it gave no answer within 20 seconds.`, and its pickers still offer the host's default and a model name you type.
 A model picker opens a list you can filter, with **Host default**, the models the host reports with their descriptions, and **Other model…** last, and below the list the effort levels of the chosen model, which change when you choose another model.
 A host or provider that reports no models says so, such as `Codex reported no models.`, and offers only the host's default and **Other model…**.
+The **Models** section, and each model picker below its effort levels, names the program its list came from, with the version that program reported and its path, such as `Listed by Claude Code 2.1.330 at /opt/homebrew/bin/claude.`, so a list of only older models points at an older installation that comes first on the review app's `PATH`.
+A host that reports no version says so, such as `Listed by Codex at /usr/local/bin/codex, which did not report its version.`, and a host that did not answer reads `Prism asked Claude Code at /opt/homebrew/bin/claude.`
 **Other model…** shows a **Model name** field: Enter takes a name of letters, digits, and `. _ - : / @ [ ] +` that starts with a letter or digit, and the picker then says `Prism cannot check a model you typed; Claude Code receives it as written.`
 A choice the host does not offer, such as a saved model this computer's host no longer lists or an effort the newly chosen model does not take, shows as **Not offered** with its reason until you choose a value the host offers.
+A saved choice the review app cannot check, because the host did not report its options or Codex could not list its models, shows as **Not checked** with the host's own reason, such as `Not checked: Claude Code did not report its run options: Not logged in.`, and **Apply** refuses it with that reason, so you can retry once the host answers instead of replacing a choice it may still offer.
 An earlier model name that Prism kept shows as not offered in the same way, and **Apply** sends it back as it was, so the change is refused until you choose another model for that agent.
 In the dialog, the options you pick wait for **Apply**, which counts them, such as **Apply 2 changes**, and applies them one by one; it stops at a change that is refused or that you do not confirm, and closes once all of them applied.
 **Cancel**, Esc, or **Close** closes the dialog and drops the changes you have not applied.
@@ -296,9 +313,127 @@ Rebuilding a component's index prepares only that component, also one that has n
 A rebuild is refused while that component's index is already being built, and a rebuild of another component waits for the running build without stopping it.
 In a repository without components, the root component's rebuild prepares the checkout's one index.
 
+## ACP agents
+
+Besides Claude Code and Codex, Prism lists as a host each Agent Client Protocol (ACP) agent that you declare on this computer, and each one installed in the review app folder's `agents/` folder, whose `current.json` names the version in use.
+Every host list reads the declarations and installs again on each request, so an agent you declare, install, or remove appears or disappears without restarting the review app.
+The **Host** setting lists Claude Code, then Codex, then the installed agents in the order they were installed, then the declared ones in file order, each as `acp-<id>` with its label.
+Prism's own runs do not run on ACP agents, so **Prism's own runs** lists each of them as unavailable.
+**Launch** starts a [launched session](#launched-sessions) on an ACP agent as on Claude Code or Codex, and [What runs](#what-runs) says how it runs there.
+
+To show an ACP agent's models and efforts, the review app starts the agent's own command in the checkout, opens one session with Prism's tools, reads the options the agent reports, and closes the session without sending it any prompt.
+The **Coordinator** picker lists the agent's models in the agent's order and the efforts of the chosen model lowest first, each after **Host default**, and leaves out every other option the agent reports, such as its mode.
+The pickers of the other agents offer only **Host default** and say `<label> chooses the models of its own child agents.`, because the protocol gives Prism no way to choose them.
+An agent that speaks another protocol version shows `<label> speaks ACP version <n>, and Prism speaks version 1.`
+An agent whose session does not start Prism's tools shows `<label> did not start Prism's tools, so it cannot run Prism's workflow.`
+An agent that needs you to sign in shows `<label> needs you to sign in before it can run:` and the sign-in methods it names; Prism never signs in for you, so sign in with the agent's own command in a terminal, and the pickers read the agent again the next time they open.
+While the initiative's ACP host shows one of these reasons, **Launch** is unavailable with that reason and asks you nothing.
+
+Declare agents in `acp-agents.json`, which Prism only reads and never writes:
+
+| Platform | File |
+| --- | --- |
+| Any | The file that `PRISM_ACP_AGENTS` names, when it is set |
+| Windows | `%APPDATA%\Prism\acp-agents.json` |
+| macOS | `~/Library/Application Support/Prism/acp-agents.json` |
+| Linux and others | `$XDG_CONFIG_HOME/prism/acp-agents.json`, or `~/.config/prism/acp-agents.json` without that variable |
+
+```json
+{
+  "agents": [
+    { "id": "gemini", "label": "Gemini CLI", "command": "gemini" }
+  ]
+}
+```
+
+Each entry takes these fields:
+
+| Field | Rule |
+| --- | --- |
+| `id` | 1 to 40 lowercase letters, digits, and `-`, starting with a letter or digit; the host is `acp-<id>`. |
+| `label` | 1 to 60 characters without control characters. |
+| `command` | An absolute path, or a bare name of 1 to 100 letters, digits, `.`, `_`, and `-` that `PATH` resolves. |
+| `args` | Optional: at most 32 strings of at most 2000 characters. |
+| `env` | Optional: at most 32 names of the form `[A-Za-z_][A-Za-z0-9_]*`, each with a string of at most 2000 characters. |
+| `autoMode` | Optional: the agent's mode value, of at most 100 characters, that runs without asking for each step. |
+| `resumeCommand` | Optional: at most 500 characters holding `{session}`, the terminal command that continues a session. |
+
+Prism takes an agent's command, arguments, and environment only from this file or an install record, and the review page cannot name any of them.
+An entry that breaks a rule or takes the `id` of an installed agent is no host.
+An entry that repeats an earlier entry's `id` is left out, and the earlier entry counts for that `id`.
+The ids `claude-acp` and `codex-acp` are no hosts either, because Prism runs Claude Code and Codex through its own integrations.
+A missing file declares no agent, and a file that cannot be read or parsed declares none.
+An agent whose command is not found shows its reason, such as `Gemini CLI was not found: no gemini executable on PATH.`
+
+`GET api/coding-agents` lists every installed and declared agent with its origin, its installed version, and whether it can be launched, with the reason when it cannot, such as the rule its entry breaks, and an unreadable declaration file is listed once with its reason.
+
+### Agents from the registry
+
+`GET api/coding-agents` also lists the agents of the public ACP registry at `https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`, or of the index that `PRISM_ACP_REGISTRY_URL` names.
+That URL must use `https`, or `http` to `127.0.0.1` or `localhost`, and any other URL is not read.
+Prism keeps a read of the index for 10 minutes, so an agent that the registry adds or updates can take that long to show.
+
+Prism lists only the registry agents that this computer can run: those with a build for this operating system and processor, such as `linux-x86_64`, `linux-x86_64-musl` on a musl Linux, `darwin-aarch64`, or `windows-x86_64`, and those with an `npx` or `uvx` package, which every computer takes.
+The registry's `claude-acp` and `codex-acp` are never listed, because Prism runs Claude Code and Codex through its own integrations.
+Each agent shows its name, version, authors, license, source (its repository, else its website, else its download), and description, and whether it is installed, with an update when the registry lists another version of the installed one.
+
+Prism installs only what it can check and lock, so an agent cannot be installed, and says why, when:
+
+- its build for this computer lists no SHA-256 checksum, so its download cannot be checked;
+- its build's archive is not a `.tar.gz`, `.tgz`, or `.zip` file;
+- its `npx` package does not name an exact version, such as `@google/gemini-cli@0.70.0`;
+- its `uvx` package does not pin one with `==`, such as `fast-agent-acp==0.10.1`;
+- `npm`, for an `npx` package, or `uv`, for a `uvx` package, is not on `PATH`.
+
+While the registry cannot be read, the list says why, keeps every installed and declared agent with the details its install recorded, and offers no install or update until the registry answers again.
+
+### Coding agents in Settings
+
+**Coding agents** in [Settings](#layout) lists every agent of `GET api/coding-agents`, read again each time you open the section: the installed agents, then the registry's other agents for this computer, then the declared ones.
+Each row shows the agent's name and version, its authors, license, and source, which opens in a new tab, and its description.
+An installed agent is marked **Installed**, a declared one **Declared**, and an available update shows as **Update <version>**.
+A registry agent that is not installed offers **Install**, or in its place the reason it cannot be installed, such as a build without a SHA-256 checksum.
+An installed agent offers **Update** while the registry lists another version, and **Remove**, which asks you in the page first.
+A declared agent offers neither, because Prism does not install it; change it in `acp-agents.json`.
+An installed or declared agent that cannot run says why under its description, such as `Broken agent was not found: no executable file at /nowhere/broken-agent.`
+**Install** and **Update** wait for the confirmation outside the browser that [Install, update, or remove an agent](#install-update-or-remove-an-agent) describes, and the row says so meanwhile; a refused or declined one shows its message in the row.
+Below the list the section says when the registry was read, and while the registry cannot be read a warning names its reason, such as `it answered HTTP 503`, and the list keeps only the installed and declared agents.
+In a tab that can only read, the section shows the read-only notice and its buttons are disabled.
+
+### Install, update, or remove an agent
+
+The actions `agents.install`, `agents.update`, and `agents.remove` on the target `agent:<id>` install, update, and remove a registry agent on this computer.
+Install and update read the registry again when you apply them, so they install the version the registry lists at that moment, not the one a page showed earlier.
+Before anything is downloaded, Prism asks you every time in a dialog of your operating system, outside the browser.
+The dialog names the agent, its authors, its exact version, its license, its source, and the download or package, and says that it runs with your permissions on this computer.
+Its default answer cancels, and a cancelled dialog installs nothing and refuses the action with `confirmation_declined`.
+
+Prism runs no install, build, or lifecycle script of an agent or its dependencies, and runs no code of a download before you confirm:
+
+| Kind | Before the dialog | After the dialog |
+| --- | --- | --- |
+| Build for this computer | Nothing | Downloads the archive, checks its SHA-256 against the registry's, and only then unpacks it with Prism's own code, refusing any entry with an absolute path, a `..` part, or a link that leads outside the version folder, read as written or followed through the archive's other links, whether or not its target exists |
+| `npx` package | Resolves a lockfile with `npm install --package-lock-only --ignore-scripts` | Installs from that lockfile with `npm ci --ignore-scripts` and checks that the installed version is the registry's |
+| `uvx` package | Resolves hashed requirements with `uv pip compile --generate-hashes --no-build` | Creates a virtual environment and installs them with `uv pip sync --no-build --require-hashes`, so a requirement that needs a build fails, and checks that the requirements pin the registry's package and version and that the environment holds a program named after the package |
+
+A download whose checksum or package version differs from the registry's installs nothing, leaves no file of it behind, and is refused with `install_mismatch`, naming the expected and the found value.
+An agent that needs its install scripts to work fails when it starts, with its own error.
+Every `uv` run has `UV_PYTHON_DOWNLOADS=never`, so `uv` uses only a Python already on the computer, and a computer without one refuses the install with `uv`'s own reason.
+
+Each install lives in the review app folder's `agents/<id>/<version>/` beside its `install.json`, which records the registry entry, the command, arguments, and environment, and the install time.
+`agents/<id>/current.json` names the version that new sessions run.
+Each install lays out its downloads, the `npm` and `uv` caches, and the new version in a folder of its own under `agents/.staging/`, which it removes when it ends, and moves the version into `agents/<id>/<version>/` only once every check passed, so nothing outside `agents/` changes, neither your own `npm` or `uv` configuration nor any sign-in.
+
+An update makes the new version current only once it installed and its command, arguments, and environment keep the rules of a [declaration](#acp-agents), and otherwise it is refused with `install_failed` and the rule it breaks, so a failed update keeps the earlier version in use.
+Each launched session runs on the version that was current when its run started, and a later run of it, such as a resume, runs on the version current then.
+The earlier version's folder is removed once no launched session runs on that version: when the last such session's run ends, or at the next start or periodic check of any review app on this computer, even if the review app that ran the update has ended.
+While it is still kept for such a session, an update back to that version is refused with `agent_running`, so the running session keeps its files; stop the session and update again.
+A removal deletes every folder of the agent, reads nothing from the registry, and is refused with `agent_running` while a launched session runs on it; afterwards the agent is no host.
+One install, update, or removal runs at a time on a computer, and another one meanwhile is refused with `install_running`.
+
 ## Launched sessions
 
-A launched session is a headless Claude Code or Codex session that runs Prism's orchestrate skill for one initiative on this computer, started from the review page.
+A launched session is a headless Claude Code, Codex, or [ACP agent](#acp-agents) session that runs Prism's orchestrate skill for one initiative on this computer, started from the review page.
 It works on the initiative as an agent you started in a terminal would, and you watch, stop, and resume it from the page.
 Prism also launches a session of its own for each [format migration run](workflow.md#format-migrations), without asking and without the dialog, which runs Prism's `migrate-artifact` skill for that run alone.
 
@@ -308,7 +443,7 @@ Prism also launches a session of its own for each [format migration run](workflo
 It shows the latest run when there is one, then **Host**, **How the run works** with **Autonomy**, **Commit**, **Push**, **Continuation**, and **Review**, and **Models** with the coordinator and each kind of agent, each set to the initiative's current value as **Settings** shows it.
 Each option says what it does when you point at it, and the chosen option's effect shows under its group.
 Opening the dialog starts nothing.
-Changing **Host** shows the choices kept for that host and renames the launch button, such as **Launch with Codex**, and a host this computer lacks shows as unavailable with its reason and cannot be chosen.
+Changing **Host** shows the choices kept for that host and renames the launch button, such as **Launch with Codex**, and each host shows under its label why it cannot run, as in **Settings**, and a host this computer lacks cannot be chosen.
 **Cancel**, Escape, and the close button discard the dialog's changes and launch nothing.
 **Launch with <host>** saves every changed choice as the initiative's settings, asking you in the page first for a risky one such as **Push** on, and then starts the session, so the initiative's history records the settings before the launch.
 While a choice is not offered, the button is disabled and the dialog names the field and its reason, such as `Code review: Claude Code on this computer does not offer the model claude-opus-3.`, until you choose a value the host offers.
@@ -345,8 +480,16 @@ A computer that cannot show the dialog refuses every launch with `This computer 
 
 ### What runs
 
-Claude Code runs as `claude -p --verbose --session-id <session id> --input-format stream-json --output-format stream-json --permission-mode auto --permission-prompts none` with the prompt `/prism:orchestrate <initiative>`.
+Claude Code runs as `claude -p --verbose --session-id <session id> --input-format stream-json --output-format stream-json --permission-mode auto --permission-prompts host --permission-prompt-tool stdio` with the prompt `/prism:orchestrate <initiative>`.
 Codex runs as `codex app-server` with the approval policy `on-request`, the automatic approval reviewer, and the `workspace-write` sandbox, and the prompt `$prism:orchestrate <initiative>`.
+An ACP agent runs as the command, arguments, and environment of its declaration or install record, and Prism declares no file system or terminal capability to it.
+Prism opens one session in the checkout whose only MCP server is Prism's own, run by the review app's Node with `NODE_USE_ENV_PROXY=1`, `PRISM_LAUNCH`, and the review app folder, and it sets the agent's automatic mode, the declaration's `autoMode` or else the agent's `auto` mode, then the coordinator's model and effort, before the prompt.
+Prism never sets a mode that bypasses or accepts all permissions, such as `bypassPermissions` or `agent-full-access`, even when a declaration names it, and an agent without an automatic mode keeps its own.
+A value the agent does not offer fails the run before its prompt with `<label> does not offer <value> for <option>.`.
+Prism waits up to 60 seconds for its tools to start in the agent's session, and an agent that does not start them ends with `<label> did not start Prism's tools, so it cannot run Prism's workflow.` and receives no prompt.
+Prism's skills are not installed in an ACP agent, so the prompt carries the text of the orchestrate skill, as an attached resource where the agent takes one, and the instruction to run it for the initiative and to read every other skill file it names with Prism's `get_skill` tool.
+Prism answers no other request of the agent's, and a permission request it asks waits on Attention as described in [Permission requests](#permission-requests).
+A run on an ACP agent fails with `<label> stopped: <reason>.` when the agent stops for a refusal, its token limit, or its turn limit.
 A format migration run's session reads only.
 It runs in an empty folder of its own, `launch-work/<launch id>` in the review app folder, outside the checkout, and that folder is removed with its launch.
 Claude Code runs with `--tools ""`, so it has no built-in tool and reads no file, `--mcp-config` naming only Prism's own server, `prism-run`, scoped to the run, with `--strict-mcp-config`, so no MCP server of your own configuration or of another plugin loads, `--settings` with `disableClaudeAiConnectors` and `ENABLE_CLAUDEAI_MCP_SERVERS=false`, so no claude.ai connector loads, an `--allowedTools` list of that server's five tools alone, a `--disallowedTools` list that denies `Read` of the checkout and everything below it, which wins over any allow rule or added folder in your own Claude Code settings, naming a Windows checkout as Claude Code matches it, such as `//c/Users/me/api`, no `--add-dir`, and `--permission-mode dontAsk` in place of the automatic permission mode, so no shell command runs, and the prompt is `/prism:migrate-artifact <run id>`.
@@ -355,11 +498,52 @@ Whether Codex replaces your own `mcp_servers` with that configuration or adds it
 The session's environment holds `PRISM_MIGRATION_RUN` with the run's id and `PRISM_MIGRATION_PROJECT` with the checkout's real path, and a Prism server started with them lists and takes only `get_migration_run`, `get_artifact`, `propose_migration`, `finish_migration_run`, and `fail_migration_run`, each for that run and that project only, so a call may leave `projectRoot` out.
 There `get_migration_run` also gives the configured paths, whether a record store is configured, each source's Git history, and `format`, the set type's current format with the path and exact text of its reference in the Prism that serves the run, which the session takes in place of reading the reference file, and `get_artifact` reads the run's artifacts and the files of their type under its configured path, by that type's extension and name rules, in the checkout too and without a store, and refuses every other path, every dot-file, and everything in a dot-folder, such as `.env`, `.prism`, or `.git/config`, and every other call with `migration_scope`.
 An initiative's session runs in the checkout's folder; each runs with the review app's environment, without the variables of an agent session that the review app may have inherited, and with `PRISM_LAUNCH` set to the launch's id.
-The host's own permission handling and the project's own host settings apply: Prism grants no permission and answers no question of the host itself, so an action the host's automatic handling refuses ends as a refusal that the session shows.
+In an initiative's session, the host's own permission handling and the project's own host settings apply first: Claude Code decides what it can in its auto mode and Codex under its automatic reviewer, and each asks Prism only the rest, so how often a session asks depends on your host settings.
+Prism answers no question of the host itself, and an action that the host's automatic handling refuses ends as a refusal that the session shows.
 A session keeps running when the review app exits, idles out, restarts, or is replaced by a newer release, because a supervisor process of its own starts and watches the host.
 Each launched session keeps its record in `launches/<launch id>/` in the review app folder, readable only by you, and Prism removes it 14 days after the session's last run ended.
 The host's session id stays in that record on this computer: no shared record, history entry, or log holds it, and only this computer's page shows it, in the command that continues the session in a terminal.
+Each run keeps the last 64 KiB of its host's standard error, with the host's session id replaced, in `run-<n>.stderr` of the launch's folder, and a run that failed without an error answer gives as its reason the last line of that text that is not a stack frame.
+A run on an ACP agent also keeps the usage the agent reported: the tokens of its answer, the context used and its size, and the cost, each shown as not reported when the agent gave none.
 Each run also keeps the model its host reports as soon as the host names it, from Claude Code's first `init` event or from the result of Codex's thread start or resume, and a launched session names the model of its latest run; a run whose host names no model, or a value longer than 128 characters or holding a control character, keeps none.
+
+### Permission requests
+
+Each permission request that a launched session's host still asks, Claude Code's prompt to use a tool, a Codex approval of a command, a file change, or more permissions, or an ACP agent's request to run a tool, keeps the session waiting and waits for you on this computer's Attention.
+It lists with the initiative, the host, the action that the host named, the host's reason, and when it was asked, oldest first, and it counts toward the waiting questions that the page's title and desktop notification show.
+The action holds everything that an allow of the request covers, as compact JSON after a short name:
+- A Claude Code request shows the tool and the input it would run with, such as `Write {"file_path":".claude/settings.local.json","content":"{}"}`, because that input is what an approval allows.
+- A Codex command shows the command, such as `touch /etc/hosts`, followed by the folder, environment, kind, and network host it runs with whenever Codex sets them, such as `curl https://example.com {"cwd":"/","networkApprovalContext":{"host":"example.com","protocol":"https"}}`; the amendments Codex proposes are left out, because Prism never applies one.
+- A Codex file change shows `File change` and the paths, kinds, and diffs of every file it writes, as Codex last described the change before it asked, plus the folder it asks to write under for the rest of the session when it asks for one, such as `File change {"changes":[{"path":"src/new.txt","kind":{"type":"add"},"diff":"hello\\n"}]}`.
+- A Codex permissions request shows `Permissions` and the permissions it asks for.
+- An ACP agent's request shows its tool call's title followed by the tool call's raw input, such as `Write file {"file_path":"notes.txt","content":"hello"}`, with the title, kind, and raw input taken from the agent's earlier updates of the same tool call when the request leaves them out; an agent that sends no raw input shows only the title, or `a tool of kind <kind>` without one, because that is all it says the tool call does.
+The action and the reason show on one line with every character the host sent visible: a backslash shows as `\\`, a line feed as `\n`, a carriage return as `\r`, a tab as `\t`, and any other control, format, or line or paragraph separator character as `\u{<code>}`, such as `\u{202E}`, so no host text can hide part of itself or add a line.
+An action or reason longer than 1,000 characters shows as its first 1,000 characters followed by `…`, and such a request can only be refused: **Allow** answers `approval_too_long` before any dialog, because a confirmation could not show what you would allow.
+The session shows **Waiting for you** with the reason `Asks you to allow: <action>.`.
+On Attention each request lists under **Needs you**, before the questions, with a lock, the action as its title, `Permission · <initiative> · <host>` under it, and how long ago it was asked.
+Its card is headed `<host> asks you to allow: <action>`, lists **Initiative**, **Host**, **Action**, and **Reason**, and offers **Allow** and **Refuse** with the hint `You confirm outside the browser.`.
+When Prism refuses your answer, such as an **Allow** answered with `approval_too_long`, `approval_unavailable`, or a declined confirmation, the card shows why in plain words and the request stays on Attention until you refuse it or it ends.
+A request lives only in the session's folder on this computer, so it never reaches a shared record or another machine, and only the review app of the computer whose session asked it can answer it.
+
+**Allow** asks you again outside the browser every time, in a dialog of the operating system that names the initiative and the host, then shows the whole action and the whole reason each on its own line, and whose default button refuses; an open launch window does not skip it.
+The process that runs the session and answers its host shows that dialog itself, and it allows only the request whose own dialog you confirmed, so no file or message that another program of this computer writes, the session's host included, can approve anything.
+Only once you choose **Allow** there does Prism answer the host, and it answers with the host's allow for this one request alone: Claude Code runs the tool with the input it asked for, Codex accepts the command or file change and nothing more, and an ACP agent gets its allow-once option.
+When you choose **Refuse** in that dialog, or nobody answers within 2 minutes, the request keeps waiting and the action is refused with `confirmation_declined` or `confirmation_timeout`.
+A request whose host offers no allow that covers only this one request, such as an ACP agent that offers only an always-allow option, cannot be allowed and is refused with `approval_unavailable`.
+Some requests can only be refused, and **Allow** answers `approval_unavailable` before any dialog, with the request still waiting until you refuse it or it ends:
+- A Codex permissions request, because the narrowest grant Codex takes lasts for the rest of its turn: `Codex asks for these permissions for the rest of its turn, so Prism can only refuse it.`
+- A Codex file change that asks to write under a folder for the rest of the session: `Codex asks to allow writes under <folder> for the rest of the session, so Prism can only refuse it.`
+- A Codex file change whose files Codex did not describe before it asked, or described as no change, whose action shows as `A file change that Codex did not describe`: `Codex did not say which files this change writes, so Prism can only refuse it.`
+- A Codex command request without a command, whose action shows as `A command that Codex did not name` followed by the folder, environment, kind, and network host Codex sets: `Codex did not say which command this runs, so Prism can only refuse it.`
+- A Claude Code request without a tool name, whose action shows as `A tool that Claude Code did not name` followed by its input: `Claude Code did not say which tool this runs, so Prism can only refuse it.`
+- An ACP agent's request whose tool call has neither a title nor a raw input, whose action shows as `A tool of kind <kind> that <label> did not describe`: `<label> did not say what this tool call does, so Prism can only refuse it.`
+
+**Refuse** needs no dialog: Claude Code is told `The person refused this on Attention.`, Codex declines, or for a permissions request is granted no permission, and an ACP agent gets its reject-once option, or a cancelled answer when it offers none.
+When the session's run ends, or you stop it, while a request waits, Prism refuses the request to the host if it still runs and removes it from Attention.
+When Codex changes the patch of a file change while its request waits, what an allow would cover has changed, so Prism declines that request and removes it from Attention, and a dialog for it that is open then allows nothing.
+When the host reports that it settled a waiting request by itself, as Codex does with `serverRequest/resolved`, an ACP agent with `$/cancel_request`, and Claude Code with `control_cancel_request`, Prism removes the request from Attention without answering it, the session no longer shows **Waiting for you** for it, and a dialog for it that is open then or that you confirm later allows nothing.
+An answer to a request that no longer waits in the session is refused with `unknown_request`.
+Each answer is recorded in the initiative's history as `launch.permission` with the decision and the action.
 
 ### How the review app reads a host's models
 
@@ -381,18 +565,21 @@ Its lead reads `Every agent working on this workspace, and every session launche
 It lists every launched session on this computer whose checkout shares this checkout's records, and every live or expired claim on the workspace's slices that no launched session here holds.
 A launched session holds the claims its own agent takes, so its slice shows in its row rather than in a row of its own.
 
-**Show** narrows the table: **All**, **Needs you**, **This computer**, **Other sessions**, and **Expired**, each with its count.
-**This computer** shows every launched session, and the addresses `agents:needs-you`, `agents:this-computer`, `agents:other`, and `agents:expired` open the page with that choice made.
+**Show** narrows the table: **All**, **Needs you**, **Launched from Prism**, **Started outside Prism**, **Expired**, and **Archived**, each with its count.
+**All** shows neither an archived session nor a claim whose lease passed a day ago or more, and counts only what it shows; a claim leaves it once its expiry is a day old.
+**Launched from Prism** shows the **Needs you** and **Launched from Prism** groups, every launched session that is not archived, **Expired** shows every expired claim however long ago it expired, and **Archived** shows only the archived sessions.
+The addresses `agents:needs-you`, `agents:this-computer`, `agents:other`, `agents:expired`, and `agents:archived` open the page with that choice made.
 
-The table's columns are **Agent**, **Host · model**, **Working on**, **State**, and **Time**, and a last column holds a row's one action.
-Its groups come in this order, each with its count, and a group without agents is left out:
+The table's columns are **Agent**, **Host · model**, **Working on**, **State**, and **Time**, and a last column holds a row's actions.
+Its groups come in this order, each with the count of what the Show choice shows of it, and a group without agents is left out:
 
 | Group | What it lists |
 | --- | --- |
 | Needs you | Launched sessions that failed, then those that wait for your answer, the latest launched first. |
-| Launched on this computer | Every other launched session, the latest launched first. |
-| Other sessions | Agents that hold a live claim, the claim that lapses first first. |
+| Launched from Prism | Every other launched session that is not archived, the latest launched first. |
+| Started outside Prism | Agents that hold a live claim, the claim that lapses first first. |
 | Claims that expired | Claims whose lease passed, the latest to lapse first. |
+| Archived | Archived launched sessions, the latest launched first, shown only under **Archived**. |
 
 A launched session's name is its initiative's title, which opens the initiative page, or for a format migration run's session `Format migration` with the type's label, such as `Format migration · Requirements`, which opens the run's page, and under it the row says when it started, how its last run ended, and how many runs it had when more than one.
 A claim's name is the claim's label, such as `Dana on studio-mac`, which opens the slice it works on.
@@ -400,11 +587,13 @@ A claim's name is the claim's label, such as `Dana on studio-mac`, which opens t
 **Working on** says `Ended <time> ago: <reason>` for a failed session, and otherwise the activity and the slice, such as `design · Retention policy`, or the session's reason.
 **Time** is how long a launched session has run, which counts every second while it runs, `<n> min left` for a live claim, and `expired <time> ago` for an expired one.
 A session that waits offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown; a running session offers **Stop**; any other session offers **Open**, which unfolds its details under its row.
+A finished, failed, stopped, or blocked session that is not archived also offers **Archive** beside **Open**, and an archived one offers **Unarchive** there.
 A claim offers no action.
 
-The details hold the session's reason, the command that continues it in a terminal while no run runs and the host reported its session id, `claude --resume <session id>` or `codex resume <thread id>`, with the folder to run it in and **Copy**, which copies the command, and the session's own actions, such as **Resume**.
+The details of a session on an ACP agent start with the usage the agent reported for its last run: **Tokens** with the total and the cached tokens, such as `182,400 (12,000 cached)`, **Context** as the used and whole context, such as `61,200 of 200,000`, and **Cost** with its currency, such as `0.42 USD`, each `Not reported by <agent>` when the agent gave none.
+The details hold the session's reason, the command that continues it in a terminal while no run runs and the host reported its session id, `claude --resume <session id>`, `codex resume <thread id>`, or an ACP agent's declared `resumeCommand` with `{session}` replaced, with the folder to run it in and **Copy**, which copies the command, and the session's own actions, such as **Resume**.
 The page reads the list again every 5 seconds and after each action you apply there, and moves a claim to **Claims that expired** once its lease passes.
-In a tab that cannot make changes the page says so, **Stop** stays unavailable, and the details offer no action, while **Answer** still opens the question.
+In a tab that cannot make changes the page says so, **Stop**, **Archive**, **Unarchive**, and **Archive all ended** stay unavailable with the tip `This tab can only read.`, and the details offer no action, while **Answer** still opens the question.
 With no agent and no launched session it says `No agent works on this workspace, and nothing was launched on this computer.`.
 
 A launched session's state is one of these:
@@ -412,7 +601,7 @@ A launched session's state is one of these:
 | State | Meaning |
 | --- | --- |
 | Running | The host is working. |
-| Waiting for you | A question that the session asked waits for your answer. |
+| Waiting for you | A question or a permission request of the session waits for your answer. |
 | Blocked | The host refused an action that the session needed, with a reason such as `Claude Code refused Bash: <the host's reason>`. |
 | Finished | The last run ended by itself. |
 | Failed | The host reported an error, its process ended with an exit code other than 0 or by a signal, or Prism stopped supervising it, each with its reason. |
@@ -420,14 +609,29 @@ A launched session's state is one of these:
 
 A session whose supervisor ended without recording the run's end shows `Prism stopped supervising this session; its host process may still run.`.
 
+### Archive a session
+
+Archive a session that ended so that it stops asking for you: an archived failed session leaves **Needs you**, the agents menu, and the mark on the top bar's **Agents** button.
+**Archive** on a finished, failed, stopped, or blocked session's row archives it, and the row leaves its group and every count at once while the toast says `Archived. The Archived filter keeps it.`.
+When the session ran again before you pressed it, the row stays and the toast says why, such as `Only a finished, failed, stopped, or blocked session can be archived.`.
+**Archive all ended** beside **Show** archives every finished, failed, stopped, and blocked session at once, without asking, and the toast counts them, such as `Archived 3 sessions. The Archived filter keeps them.`.
+It shows while the Show choice includes **Needs you** or **Launched from Prism** and one of the sessions it shows can be archived.
+
+**Show** **Archived** lists the archived sessions, each with its state, **Open**, which unfolds its terminal command, **Copy**, and **Resume** as for any launched session, and **Unarchive**, which brings it back to its group with the toast `Unarchived.`.
+An archived session that runs or waits for you again leaves the archive by itself, and shows in its group and counts again by the next refresh.
+An archived session is removed 14 days after its last run ended, as any other launched session is, and until then keeps its record and its terminal command.
+Archiving is kept on this computer only, beside the session's record, so it changes nothing in the project, its records, or its history, and a teammate's page is not affected.
+
 ### Stop, resume, or continue a session
 
 **Stop** interrupts the host's turn as the host's own Stop button does, after which the host ends its turn and exits by itself.
+An ACP agent receives `session/cancel` while its prompt runs, and Prism closes its input once the prompt answers, or at once before the prompt.
 When the host still runs 10 seconds after you stopped it, Prism ends the host process; `PRISM_LAUNCH_STOP_GRACE_MS` sets another wait in milliseconds.
 A stop ends only the host process, so a process that the host or its agent started and detached may keep running, as after the host's own Stop button.
 **Stop** stays available while a run runs, also after the initiative shipped.
 
 **Resume** starts the same host session again headless, with the dialog unless the launch window is open.
+An ACP agent reopens its session with `session/resume`, or with `session/load` when it cannot resume, and Prism sets the recorded mode, model, and effort again and sends the prompt again; an agent that can do neither fails with `<label> cannot resume a session.`.
 It is unavailable while the session runs, after the initiative shipped, while another launched session of the initiative runs, while the host's executable is not on `PATH`, and when the host never reported its session id.
 To continue a session in a terminal instead, run its command in its folder once no run runs.
 
@@ -467,6 +671,10 @@ Under its title a tag line names the slice's phase with its gate or status, such
 The tabs are Design, Views, Verification, Review, Files, and Change map.
 The Views tab counts the views, the Review tab the open findings, and the Files tab the slice folder's files.
 The Change map tab is last and marked Deprecated, because the Files tab and the verified result replace it; it stays until existing slices no longer need it.
+The Verification tab shows the latest verification run, and each frozen test, each failing test, and the run's log open in the side panel.
+A frozen test shows the content the design froze: the work tree's file, the copy Prism keeps for a slice that has not started, or, with a note, the changed file when no frozen copy is left.
+A failing test opens its frozen test at the line that names it when exactly one frozen test names it, and otherwise stays plain text, so it never opens a test that only shares its name.
+Open the log opens the run's output at its end: the whole log, or its last 2 MB when it is larger, on the machine that ran the command, and elsewhere the last 4,000 characters that the run record keeps, with a note naming the machine and where the full log is.
 The Review tab holds the slice's review ledger, which the review record's own page shows too.
 Its summary line names the current wave and whether it is open or accepted, counts the unresolved findings, those that block shipping until verified, the deferred ones, and open conflicts, and shows each reviewer with the result of their lane.
 The wave's run totals end the line, and choosing them shows the full table.
@@ -538,6 +746,7 @@ Take current intent from Approved requirements, Accepted ADRs, the glossary, and
 ## Documents and diagrams
 
 Prism stores diagrams as PlantUML `.puml` source files, and the browser renders them without creating image files.
+A graph or diagram larger than its card pans when you drag it with a mouse or pen, and with a finger on a touch screen, while a click on a link or a graph's item still opens it; its text is not selected by the drag, and Show source and Copy give the diagram's text.
 Markdown links open the linked file or heading in the review.
 A link to a missing file or a target outside the project is marked as missing, and an external link opens in a new browser tab.
 A store artifact's links resolve by its place in the store; see [Every scope in one view](#every-scope-in-one-view).
@@ -551,7 +760,10 @@ Code in source files, Markdown code blocks, previews, and diagram source is high
 Hover over or focus any internal link to preview its target.
 An open preview stays while the pointer crosses other links on its way to the preview, and switches to another link only when the pointer rests on it.
 An initiative preview shows its state, band, intent, and progress, and a slice preview shows its status and outcome.
-A link to a document section previews that section.
+A link to a document section previews that whole section, up to the next heading of its level, and a link to a document without a section previews the whole document.
+A link to a source file previews its first 400 lines, and a link to lines of one previews those lines.
+A preview is as wide as a readable column and never wider than the window, sits beside its link without covering it, and scrolls when its content is taller than the room there, fading at its end while more lies below.
+The preview follows its link when the page scrolls, and closes once the link leaves the window.
 A link to a PlantUML file previews the diagram drawn small enough to fit.
 A declared design view opened on its own page, or in the side panel, takes its question as its title with its kind above it, and the same line with its clause links under the title.
 A file's preview has a Show in side panel button, and Alt+click on a link does the same: the whole file opens in a panel beside the current page, at the linked heading or lines.
@@ -692,6 +904,8 @@ Each run records only a fingerprint of each file, its Git blob hash, and never i
 While the repository's code content is on, the page reads each file at the verified commit when a branch of the repository holds that commit.
 After a squash merge or force push removes the verified commit, the page reads the files at the commit of the default branch that Prism recorded when the initiative shipped.
 Each file is marked **same as verified** when its content at that commit is the content the run tested, and **changed after verification** when it differs, as for a file the run tested with an uncommitted change.
+**On branches** names the branches that hold that commit, up to five besides the default branch.
+When the default branch does not hold it, as for a feature branch not merged yet or a ship commit that a force push took off the default branch, the card says **not on the default branch yet**, unless the commit recorded at ship is on the default branch, as after a squash merge that kept the feature branch.
 When neither commit is in the repository's code clone, or the repository's code content is off or unreachable, each file is **not available** and the card says why; a slice without a passing run has no verified files yet.
 
 Work on a slice that exists only on the machine that holds it, unpushed or uncommitted, shows only as its presence under **Work in progress**, such as `in progress in feature-x on vm, not pushed`, named from the slice's latest verification run and its live claim, and never as its content.
@@ -742,8 +956,8 @@ A new session opens the review browser on its project when no review tab of any 
 Codex does not name the project when a session starts, so a Codex session opens the review browser at its first Prism tool call.
 Starting several sessions at once opens at most one window.
 Cloud, CI, print-mode, and display-less sessions open nothing.
-Add `- Review browser on start: off` under `## Interaction` in `.prism/workflow.md` to turn this off for a project, or set `PRISM_REVIEW_BROWSER_ON_START=off` to turn it off for every project you work on.
-`Review browser: internal` also turns it off, because only the agent can open the internal browser, and a tab there can only read.
+Set your [personal setting](workflow.md#personal-settings) `reviewBrowserOnStart` to `off` to turn this off for every project, or set `PRISM_REVIEW_BROWSER_ON_START=off` to turn it off for every process that has the variable, whatever your settings say.
+A `reviewBrowser` of `internal` also turns it off, because only the agent can open the internal browser, and a tab there can only read.
 It keeps its state in `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere.
 A session serves its project from its own review server when the shared app cannot start, and `PRISM_REVIEW_APP=off` makes every session do so.
 When a session falls back on its own, its page shows a banner with the reason, and the agent's review links say that the link belongs to that session, because another session may show the same project at a different link.

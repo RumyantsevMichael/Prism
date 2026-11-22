@@ -236,7 +236,19 @@ function answerForm(item: any, draft: any) {
 
 // An approval gate names the requirement or ADR in full, with its scope and the status an approval records, since the answer applies to exactly that file.
 // Both statuses are plain text that wraps, so the whole status that approving writes reads at every width; a status of up to 200 characters fits no one-line label.
-function approvalSubject(item: any) {
+// The work item an approval serves links to its initiative and slice once the roadmap or the initiative's record knows them, as wrapping text so a long title reads whole.
+// Requirements are often approved before their roadmap entry exists, so an id that names nothing yet stays plain text that says so.
+function servedWork(item: any, ctx: any) {
+  const work = item.workItem;
+  if (!work?.initiative) return "";
+  const { initiative, slice } = work;
+  const unknown = (id: string, why: string) => `<span class="approval-work-part"><code class="approval-path" data-code-subject>${escapeHtml(id)}</code> <span class="muted">${why}</span></span>`;
+  const parts = [initiative.known ? `<span class="approval-work-part">${artifactLink(`initiative:${initiative.id}`, ctx, initiative.title)}</span>` : unknown(initiative.id, "not on the roadmap yet")];
+  if (slice) parts.push(initiative.known && slice.known ? `<span class="approval-work-part">${artifactLink(`slice:${initiative.id}/${slice.slug}`, ctx, slice.title)}</span>` : unknown(slice.slug, "no slice yet"));
+  return `<span class="approval-work">${parts.join('<span class="approval-work-separator" aria-hidden="true">›</span>')}</span>`;
+}
+
+function approvalSubject(item: any, ctx: any) {
   const scope = item.artifact.scope?.label ?? "workspace";
   const status = (text: string, modifier: any) => `<span class="approval-status-value ${modifier}">${escapeHtml(text)}</span>`;
   const change = item.recorded && item.recorded !== item.status
@@ -245,6 +257,7 @@ function approvalSubject(item: any) {
   return `${keyValues([
       ["File", `<code class="approval-path" data-code-subject>${escapeHtml(item.artifact.path)}</code>`],
       ["Scope", chip(escapeHtml(scope))],
+      ["Asked for", servedWork(item, ctx)],
       ["Approving records", change]
     ])}
     ${item.ambiguous ? `<p class="notice">Another pending approval holds this question's id, so an answer cannot tell which file it approves and is refused. The agent asks again for the file it means.</p>` : ""}
@@ -264,7 +277,7 @@ export function gateDetail(item: any, ctx: any, draft: any) {
     </header>
     <div class="gate-body">
       <div class="gate-main">
-        ${approvalSubject(item)}
+        ${approvalSubject(item, ctx)}
         ${gateContext(item, ctx)}
       </div>
       ${answerForm(item, draft)}
@@ -423,6 +436,92 @@ function bindAnswers(container: any, ctx: any, gates: any) {
       note.focus();
       const [start, end] = draft.selection ?? [note.value.length, note.value.length];
       note.setSelectionRange(start, end);
+    }
+  }
+}
+
+// A host's permission request: the session waits until the person allows it, after a native confirmation, or refuses it.
+// The action and reason arrive as the server's shown text, one line in which every character the host sent shows, so they are written as plain text.
+function permissionWhere(item: any) {
+  return [item.initiative?.title ?? item.initiative?.id, item.host?.label ?? item.host?.id].filter(Boolean).join(" · ");
+}
+
+export function permissionDetail(item: any, draft: any = {}) {
+  const host = item.host?.label ?? item.host?.id ?? "The host";
+  const key = escapeHtml(item.id);
+  const busy = draft.sending ? " disabled" : "";
+  return `<article class="gate attention-item gate-permission" aria-label="Permission">
+    <header class="gate-head">
+      <div class="gate-chips">${badge("Permission", "warning")}<span class="attention-where">${escapeHtml(permissionWhere(item))}</span>${when(item.askedAt, "attention-time gate-time")}</div>
+      <h3 class="gate-question">${escapeHtml(host)} asks you to allow: ${escapeHtml(item.action)}</h3>
+    </header>
+    <div class="gate-body">
+      <div class="gate-main">
+        ${keyValues([
+          ["Initiative", escapeHtml(item.initiative?.title ?? item.initiative?.id ?? "")],
+          ["Host", escapeHtml(host)],
+          ["Action", `<code class="permission-action" data-code-subject>${escapeHtml(item.action)}</code>`],
+          ["Reason", `<span class="permission-reason">${escapeHtml(item.reason ?? "")}</span>`]
+        ])}
+        <p class="attention-footnote muted">The session waits until you answer. An allow covers this one request only.</p>
+      </div>
+      <div class="permission-answer" data-permission="${key}" data-launch="${escapeHtml(item.launch)}">
+        <div class="permission-buttons">
+          <prism-button variant="primary" icon="lock" text="Allow" data-permission-decision="approve"${busy}></prism-button>
+          <prism-button text="Refuse" data-permission-decision="refuse"${busy}></prism-button>
+        </div>
+        <p class="permission-hint muted" id="permission-hint-${key}" aria-live="polite">${escapeHtml(draft.sending === "approve" ? "Confirm or refuse in the dialog on this computer." : "You confirm outside the browser.")}</p>
+        <p class="gate-error" id="permission-error-${key}" role="alert"${draft.error ? "" : " hidden"}>${escapeHtml(draft.error ?? "")}</p>
+      </div>
+    </div>
+  </article>`;
+}
+
+// How long an approval may wait for its answer: the session shows its dialog, and the person has up to two minutes to answer it.
+const PERMISSION_DEADLINE_MS = 200000;
+
+/** A refused permission answer in words, and whether the request may no longer wait, so the page reads Attention again. */
+export function permissionError(code: any, message: any) {
+  const text = typeof message === "string" && message ? message : "The answer was not applied.";
+  if (code === "unknown_request") return { message: "This request no longer waits: the session answered it, withdrew it, or ended.", rerender: true };
+  if (typeof code === "string" && code.startsWith("confirmation_")) return { message: `The approval was not confirmed, so the request still waits. ${text}`, rerender: false };
+  return { message: text, rerender: false };
+}
+
+function bindPermissions(container: any, ctx: any) {
+  const drafts = (ctx.state.permissionDrafts ??= {});
+  for (const form of container.querySelectorAll(".permission-answer")) {
+    const id = form.dataset.permission;
+    const launch = form.dataset.launch;
+    const buttons = [...form.querySelectorAll("[data-permission-decision]")];
+    const hint = form.querySelector(".permission-hint");
+    const failure = form.querySelector(".gate-error");
+    for (const button of buttons) {
+      button.addEventListener("click", async () => {
+        const decision = button.dataset.permissionDecision;
+        const draft = (drafts[id] ??= {});
+        if (draft.sending) return;
+        draft.sending = decision;
+        draft.error = null;
+        failure.hidden = true;
+        for (const each of buttons) each.setAttribute("disabled", "");
+        if (decision === "approve") hint.textContent = "Confirm or refuse in the dialog on this computer.";
+        const result = await ctx.actionApi.apply({ action: "launch.permission", target: `launch:${launch}`, input: { request: id, decision }, revision: null }, { deadlineMs: PERMISSION_DEADLINE_MS });
+        draft.sending = null;
+        if (result.status === 200) {
+          delete drafts[id];
+          ctx.showToast(decision === "approve" ? "Allowed. The session goes on with this one request." : "Refused. The session was told that you refused.");
+          ctx.rerender();
+          return;
+        }
+        const refusal = permissionError(result.json?.code, result.json?.reason ?? result.json?.message);
+        draft.error = refusal.message;
+        failure.textContent = refusal.message;
+        failure.hidden = false;
+        hint.textContent = "You confirm outside the browser.";
+        for (const each of buttons) each.removeAttribute("disabled");
+        if (refusal.rerender) ctx.rerender();
+      });
     }
   }
 }
@@ -642,6 +741,9 @@ function group(id: string, label: string, entries: any, { count = entries.length
   </section>`;
 }
 
+// The width below which the list and the picked item take turns, as the Attention stylesheet's phone rules say.
+const PHONE_QUERY = "(max-width: 720px)";
+
 // A question chosen on a filtered page opens Everything with that question picked, so it can be answered there.
 let pendingSelection: any = null;
 
@@ -779,7 +881,14 @@ export function render(container: any, entity: any, ctx: any) {
   const notes = data.needsYou.filter((item: any) => item.type !== "gate");
   const watched = data.watch.length + claims.length;
 
+  const permissions = data.permissions ?? [];
+  const permissionDrafts = (ctx.state.permissionDrafts ??= {});
   const needs = [
+    ...permissions.map((item: any) => ({
+      key: `permission:${item.id}`,
+      row: { icon: "lock", tone: "warning", unread: true, title: escapeHtml(item.action), meta: escapeHtml(["Permission", permissionWhere(item)].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
+      detail: permissionDetail(item, permissionDrafts[item.id] ?? {})
+    })),
     ...gates.map((item: any) => ({
       key: `gate:${item.id}`,
       row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
@@ -814,7 +923,8 @@ export function render(container: any, entity: any, ctx: any) {
   }];
   const all = [...needs, ...shippedRows, ...waiting, ...watch, ...closed, ...history];
   if (!all.some((entry) => entry.key === ctx.state.selected)) ctx.state.selected = all[0].key;
-  ctx.state.pane ??= "detail";
+  // On a phone the list and the picked item take turns, so the page opens on the list until the person picks an item.
+  ctx.state.pane ??= typeof matchMedia === "function" && matchMedia(PHONE_QUERY).matches ? "list" : "detail";
   const selected = ctx.state.selected;
 
   container.innerHTML = `
@@ -842,7 +952,7 @@ export function render(container: any, entity: any, ctx: any) {
   if (head) {
     head.querySelector(".attention-stats")?.remove();
     head.insertAdjacentHTML("beforeend", `<div class="attention-stats">
-      ${stat(`${gates.length === 1 ? "question waits" : "questions wait"} on you`, String(gates.length), { tone: gates.length ? "accent" : "success", attributes: ' layout="inline"' })}
+      ${stat(`${gates.length + permissions.length === 1 ? "question waits" : "questions wait"} on you`, String(gates.length + permissions.length), { tone: gates.length + permissions.length ? "accent" : "success", attributes: ' layout="inline"' })}
       ${stat(`other ${notes.length === 1 ? "item needs" : "items need"} you`, String(notes.length), { attributes: ' layout="inline"' })}
       ${stat(`${watched === 1 ? "thing" : "things"} to watch`, String(watched), { attributes: ' layout="inline"' })}
     </div>`);
@@ -883,6 +993,7 @@ export function render(container: any, entity: any, ctx: any) {
       else button.toggleAttribute("disabled", false);
     });
   }
+  bindPermissions(container, ctx);
   // A change applied while the page is open names its question from the questions the page shows.
   const questions = new Map([...gates, ...(data.shippedGates ?? []), ...answered, ...earlier].filter((item) => item.initiative?.id).map((item) => [`gate:${item.initiative.id}/${item.id}`, item.question]));
   followChanges(container, ctx, questions);
