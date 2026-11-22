@@ -1391,7 +1391,13 @@ async function applyLaunchAction({ projectRoot, definition, context, request, en
   if (outcome.record === false) return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env, checkouts })).actions, launch: outcome.launch, ...wake };
   try {
     await recordPersonAction({ projectRoot, initiative: outcome.initiative, prepare: async () => ({ entry }) });
-  } catch (error) {
+  } catch (error: any) {
+    // A wake already posted its turn and cannot be taken back, so its result stands and the missing history entry is only a warning;
+    // answering with an error would invite the person to wake the session again and post a second turn.
+    if (outcome.wake !== undefined) {
+      const actions = await listActions({ projectRoot, target, indexer, env, checkouts }).then((listed) => listed.actions, () => []);
+      return { applied: entry, actions, launch: outcome.launch, ...wake, warnings: [`The wake was sent, but Prism could not record it in the initiative's history: ${String(error?.message ?? error)}`] };
+    }
     // A launch or resume that cannot be recorded does not stay started.
     if (outcome.started) await stopLaunch({ id: outcome.started, env }).catch(() => {});
     throw error;
