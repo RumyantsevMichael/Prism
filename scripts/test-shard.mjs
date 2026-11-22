@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-// Each test process runs with a PATH that holds no real Claude Code or Codex, since Prism launches a session by itself for each format migration run.
+export const TEST_DIRECTORY = "test/server";
 export const DURATIONS = path.join(TEST_DIRECTORY, "durations.json");
 
 // The table a system records into and balances by: its own table, or the shared one where the system has none.
