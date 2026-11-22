@@ -458,8 +458,8 @@ export interface HostConversationOptions {
   closeInput: () => void;
   onSessionId?: (id: string) => void;
   onModel?: (model: string) => void;
-  /** An ACP agent's run: its label and automatic mode, the starter's environment, the launch id, and the agent's process id. */
-  acp?: { label: string; autoMode: string | null; env: NodeJS.ProcessEnv; launch: string; agentPid: () => number | null } | null;
+  /** An ACP agent's run: its label and automatic mode, the starter's environment, and the launch id. */
+  acp?: { label: string; autoMode: string | null; env: NodeJS.ProcessEnv; launch: string } | null;
   /**
    * Where the host's permission requests wait for the person: ask() keeps one waiting, calls respond once it is answered, and returns
    * the function that withdraws it. Without it every permission request is refused at once.
@@ -554,7 +554,6 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     coordinator: coordinatorOf(coordinator),
     env: acp!.env,
     launch: acp!.launch,
-    agentPid: acp!.agentPid,
     facts,
     write,
     close,

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pluginPath } from "../../plugin-root.mjs";
 import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, LAUNCH_NOTE, lineSplitter, MODEL_PATTERN, strippedEnvironment, validHostSessionId } from "../launch-hosts.mjs";
-import { toolsListed } from "../options-read-marker.mjs";
+import { acpLaunchArgument, acpTokenArgument, newAcpToken, toolsListed } from "../options-read-marker.mjs";
 import type { PermissionAsk, PermissionDecision } from "../permission-requests.mjs";
 
 // The Agent Client Protocol (ACP) version 1 client: JSON-RPC 2.0 over an agent's standard input and output. Prism declares no
@@ -36,18 +36,20 @@ export class AcpError extends Error {
 }
 
 /**
- * Prism's MCP server as an ACP session names it: the Node executable that runs this server with the plugin's MCP entry point, and
- * only NODE_USE_ENV_PROXY, PRISM_LAUNCH for a launched run, PRISM_OPTIONS_READ for a read of run options, and PRISM_REVIEW_APP_DIR
- * when this server has it.
+ * Prism's MCP server as an ACP session names it: the Node executable that runs this server with the plugin's MCP entry point and the
+ * token of the read or run, by which Prism learns that the server listed its tools, with the launch for a launched run, and only
+ * NODE_USE_ENV_PROXY, PRISM_LAUNCH for a launched run, PRISM_OPTIONS_READ for a read of run options, and PRISM_REVIEW_APP_DIR when this
+ * server has it. The token and the launch go in the arguments too because an agent may start the server with its own environment in
+ * place of these variables.
  */
-export function prismMcpServer({ env = process.env, launch = null, optionsRead = false }: { env?: NodeJS.ProcessEnv; launch?: string | null; optionsRead?: boolean } = {}) {
+export function prismMcpServer({ env = process.env, token, launch = null, optionsRead = false }: { env?: NodeJS.ProcessEnv; token: string; launch?: string | null; optionsRead?: boolean }) {
   const variables = [
     { name: "NODE_USE_ENV_PROXY", value: "1" },
     ...(launch ? [{ name: "PRISM_LAUNCH", value: launch }] : []),
     ...(optionsRead ? [{ name: "PRISM_OPTIONS_READ", value: "1" }] : []),
     ...(env.PRISM_REVIEW_APP_DIR ? [{ name: "PRISM_REVIEW_APP_DIR", value: env.PRISM_REVIEW_APP_DIR }] : [])
   ];
-  return { name: "prism", command: process.execPath, args: [pluginPath("dist", "server", "mcp.mjs")], env: variables };
+  return { name: "prism", command: process.execPath, args: [pluginPath("dist", "server", "mcp.mjs"), ...(launch ? [acpLaunchArgument(launch)] : []), acpTokenArgument(token)], env: variables };
 }
 
 export interface AcpClientOptions {
@@ -214,14 +216,24 @@ export const acpReasons = Object.freeze({
   childModels: (label: string) => `${label} chooses the models of its own child agents.`
 });
 
-// The names, with their descriptions in parentheses, of the sign-in methods an agent answered, or its own command without any.
+// The names of the sign-in methods an agent answered, or its own command without any. A method's description follows its name in
+// parentheses only when it says more than the name: when it has at least two words that the name lacks, apart from linking words,
+// so "Log in with Google (Log in with your Google account)" reads "Log in with Google".
 function signInMethods(methods: unknown) {
   const named = (Array.isArray(methods) ? methods : []).filter((method) => isObject(method) && text(method.name).trim()).map((method: any) => {
     const name = text(method.name).replace(/\s+/g, " ").trim().slice(0, NAME_MAX);
     const description = text(method.description).replace(/\s+/g, " ").trim().slice(0, DESCRIPTION_MAX).replace(/\.+$/, "");
-    return description ? `${name} (${description})` : name;
+    return description && addsToName(name, description) ? `${name} (${description})` : name;
   });
   return named.length ? named.join(", ") : "sign in with the agent's own command";
+}
+
+const LINKING_WORDS = new Set(["a", "an", "the", "and", "or", "to", "of", "for", "with", "by", "via", "on", "in", "your", "you", "use", "using"]);
+const wordsOf = (value: string) => value.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+function addsToName(name: string, description: string) {
+  const own = new Set(wordsOf(name));
+  return new Set(wordsOf(description).filter((word) => !own.has(word) && !LINKING_WORDS.has(word))).size >= 2;
 }
 
 export interface AcpOptionsDefinition { label: string; command: string; prefix: readonly string[]; acp: { args: readonly string[]; env: Readonly<Record<string, string>> } }
@@ -236,6 +248,7 @@ export interface AcpOptionsDefinition { label: string; command: string; prefix: 
 export async function readAcpOptions(definition: AcpOptionsDefinition, { checkout, env, model = null, timeoutMs }: { checkout: string; env: NodeJS.ProcessEnv; model?: string | null; timeoutMs: number }): Promise<any> {
   const { label } = definition;
   const deadline = Date.now() + timeoutMs;
+  const token = newAcpToken();
   const client = acpClient({
     command: definition.command,
     args: [...definition.prefix, ...definition.acp.args],
@@ -262,14 +275,14 @@ export async function readAcpOptions(definition: AcpOptionsDefinition, { checkou
     canClose = isObject(initialized?.agentCapabilities?.sessionCapabilities?.close);
     let opened: any;
     try {
-      opened = await within(client.request("session/new", { cwd: checkout, mcpServers: [prismMcpServer({ env, optionsRead: true })] }));
+      opened = await within(client.request("session/new", { cwd: checkout, mcpServers: [prismMcpServer({ env, token, optionsRead: true })] }));
     } catch (error: any) {
       if (error instanceof AcpError && error.code === AUTH_REQUIRED_CODE && !timedOut) return { state: "sign-in", reason: acpReasons.signIn(label, initialized?.authMethods) };
       throw error;
     }
     sessionId = typeof opened?.sessionId === "string" && opened.sessionId ? opened.sessionId : null;
     if (!sessionId) return { state: "failed", message: "it named no session" };
-    const listed = client.pid !== null && await toolsListed({ env, agentPid: client.pid, deadline, stopped: () => client.hasExited() });
+    const listed = await toolsListed({ env, token, deadline, stopped: () => client.hasExited() });
     if (!listed) return { state: "failed", reason: acpReasons.noTools(label) };
     let options = opened.configOptions;
     const before = acpConfigChoices(options);
@@ -357,8 +370,6 @@ export interface AcpConversationOptions {
   coordinator: { model: string | null; effort: string | null };
   env: NodeJS.ProcessEnv;
   launch: string | null;
-  /** The process id of the agent that the supervisor started. */
-  agentPid: () => number | null;
   facts: AcpRunFacts;
   write: (message: unknown) => void;
   close: () => void;
@@ -449,7 +460,9 @@ export function acpConversation(options: AcpConversationOptions) {
     facts.failure = cut(reason);
     close();
   };
-  const server = () => prismMcpServer({ env, launch });
+  // One token for the run, whether it opens a new session or resumes one.
+  const token = newAcpToken();
+  const server = () => prismMcpServer({ env, token, launch });
 
   // The options a run sets, in order, each checked against what the agent offers now; a value it does not offer fails the run.
   const plan = () => {
@@ -487,8 +500,7 @@ export function acpConversation(options: AcpConversationOptions) {
     void awaitTools();
   };
   const awaitTools = async () => {
-    const pid = options.agentPid();
-    const listed = pid !== null && await toolsListed({ env, agentPid: pid, deadline: Date.now() + TOOLS_WAIT_MS, stopped: () => stopAsked || !options.inputOpen() });
+    const listed = await toolsListed({ env, token, deadline: Date.now() + TOOLS_WAIT_MS, stopped: () => stopAsked || !options.inputOpen() });
     if (stopAsked || !options.inputOpen()) {
       close();
       return;

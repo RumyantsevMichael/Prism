@@ -13,13 +13,23 @@ export { actionOf, apply, get, listing };
 
 // A plan, per agent name: { protocolVersion = 1, authRequired, authMethods = [], startMcp = true, embeddedContext = true,
 // close = true, resume = true, load = false, configOptions, efforts: { <model>: [<level>] }, permission: { title, kind, options },
-// hold, stopReason = "end_turn", stderr: [<line>], exitBeforeAnswer: <code>, usage, usageUpdate, askFs }.
+// hold, stopReason = "end_turn", stderr: [<line>], exitBeforeAnswer: <code>, usage, usageUpdate, askFs, mcpEnv: "inherit", mcpVia: "wrapper" | "detached" }.
 export const DEFAULT_OPTIONS = Object.freeze([
   { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "ask", options: [{ value: "ask", name: "Ask" }, { value: "auto", name: "Auto", description: "The agent decides permissions" }, { value: "bypassPermissions", name: "Bypass", description: "Accepts all permissions" }] },
   { id: "model", name: "Model", category: "model", type: "select", currentValue: "fake-large", options: [{ value: "fake-large", name: "Fake Large", description: "The big one" }, { value: "fake-small", name: "Fake Small", description: "The quick one" }] },
   { id: "effort", name: "Effort", category: "thought_level", type: "select", currentValue: "medium", options: [{ value: "high", name: "High" }, { value: "low", name: "Low" }, { value: "medium", name: "Medium" }] },
   { id: "fast", name: "Fast", category: "model_config", type: "select", currentValue: "off", options: [{ value: "off", name: "Off" }, { value: "on", name: "On" }] }
 ]);
+
+// The launchers through which the fake agent can start an MCP server, each run as `node -e <launcher> <command> <args...>` with the
+// agent's pipes as its standard streams. "wrapper" stays the server's parent, as a shell or an npm launcher does. "detached" stays
+// alive without reading its input and starts the server through a helper that exits at once, so the server no longer descends from
+// the agent at all; it exits once the agent is gone.
+const START = 'require("node:child_process").spawn(process.argv[1], process.argv.slice(2), { stdio: "inherit" })';
+const LAUNCHERS = Object.freeze({
+  wrapper: `${START}.on("exit", (code) => process.exit(code ?? 0));`,
+  detached: `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(`${START}.unref(); process.exit(0);`)}, ...process.argv.slice(1)], { stdio: "inherit" }); const parent = process.ppid; setInterval(() => { try { process.kill(parent, 0); } catch { process.exit(0); } }, 200);`
+});
 
 const AGENT = String.raw`#!${process.execPath}
 const fs = require("node:fs");
@@ -36,12 +46,16 @@ let options = JSON.parse(process.env.FAKE_ACP_OPTIONS);
 if (plan.configOptions) options = plan.configOptions;
 const efforts = plan.efforts ?? {};
 const servers = [];
+const LAUNCHERS = ${JSON.stringify(LAUNCHERS)};
 function startServers(list) {
   for (const server of list ?? []) {
     if (plan.startMcp === false) continue;
-    const env = { PATH: process.env.PATH, HOME: process.env.HOME ?? "" };
-    for (const item of server.env ?? []) env[item.name] = item.value;
-    const child = spawn(server.command, server.args ?? [], { env, stdio: ["pipe", "pipe", "ignore"] });
+    // mcpEnv "inherit" ignores the env of the mcpServers entry and passes the agent's own environment, as some agents do.
+    const env = plan.mcpEnv === "inherit" ? { ...process.env } : { PATH: process.env.PATH, HOME: process.env.HOME ?? "" };
+    if (plan.mcpEnv !== "inherit") for (const item of server.env ?? []) env[item.name] = item.value;
+    // mcpVia names a launcher of LAUNCHERS that starts the server, so the server is no child of the agent.
+    const [command, args] = LAUNCHERS[plan.mcpVia] ? [process.execPath, ["-e", LAUNCHERS[plan.mcpVia], server.command, ...(server.args ?? [])]] : [server.command, server.args ?? []];
+    const child = spawn(command, args, { env, stdio: ["pipe", "pipe", "ignore"] });
     servers.push(child);
     let buffer = "";
     const send = (message) => child.stdin.write(JSON.stringify(message) + "\n");

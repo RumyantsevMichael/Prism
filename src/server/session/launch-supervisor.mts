@@ -146,7 +146,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     });
     const conversation = hostConversation(record.host, {
       permissions,
-      acp: acp && { label: resolved.label, autoMode: acp.autoMode ?? null, env, launch: record.id, agentPid: () => child.pid ?? null },
+      acp: acp && { label: resolved.label, autoMode: acp.autoMode ?? null, env, launch: record.id },
       initiative: record.initiative,
       checkout: record.checkout,
       hostSessionId: record.hostSessionId,

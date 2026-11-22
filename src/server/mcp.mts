@@ -57,12 +57,16 @@ import { callAgent, callAgentRole, currentCallAgent, withCallAgent } from "./wor
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { ACP_HOST_PATTERN } from "./session/acp-agents.mjs";
-import { markToolsListed, unmarkToolsListed } from "./session/options-read-marker.mjs";
+import { acpLaunch, acpToken, markToolsListed, unmarkToolsListed } from "./session/options-read-marker.mjs";
 import { GET_SKILL_TOOL, getSkill, SkillFileError } from "./workflow/skill-files.mjs";
 import { HOSTS } from "./session/launch-hosts.mjs";
 import { EFFORT_PATTERN, MODEL_PATTERN, PROVIDER_PATTERN, RUN_KINDS } from "./session/run-options.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
+
+// A launched run's server learns its launch from PRISM_LAUNCH, which an ACP agent may drop when it starts the server with its own
+// environment; the launch in the server's arguments then names it, so the run's gates and its result still reach its launch.
+if (!process.env.PRISM_LAUNCH && acpLaunch()) process.env.PRISM_LAUNCH = acpLaunch()!;
 
 // PRISM_REVIEW_APP=off keeps this session on its own review server, as tests and plugin checkouts under development need.
 const reviewServers = createReviewServerPool(reviewAppDisabled() ? {} : { app: { directory: reviewAppDirectory(), evidenceDirectory: conservationStore.directory, intelligenceDirectory: nativeSemanticRuntime.directory, recordStoreDirectory: managedStoresDirectory() } });
@@ -1764,9 +1768,9 @@ if (process.env.CLAUDE_PROJECT_DIR) {
     void recordStoreOf(root).catch(() => {});
     reviewServers.register(root, { open: await opensAtStart(root) });
   }, () => {});
-} else if (process.env.PRISM_OPTIONS_READ !== "1" && !process.env.PRISM_LAUNCH) {
+} else if (process.env.PRISM_OPTIONS_READ !== "1" && !process.env.PRISM_LAUNCH && !acpToken()) {
   // A read of an ACP agent's run options only needs this server to list its tools, and a launched session runs under the review app
-  // that launched it, so neither starts a review app here.
+  // that launched it, so neither starts a review app here; an ACP agent may drop the variables that name them, never the token argument.
   reviewServers.startApp();
 }
 

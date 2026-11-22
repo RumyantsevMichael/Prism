@@ -60,7 +60,10 @@ test("clauses 18, 19: a launch starts the agent in the checkout without host ses
   const [server] = opened.params.mcpServers;
   assert.equal(server.name, "prism");
   assert.equal(server.command, process.execPath);
-  assert.deepEqual(server.args, [path.join(PLUGIN, "dist/server/mcp.mjs")]);
+  assert.equal(server.args.length, 3);
+  assert.equal(server.args[0], path.join(PLUGIN, "dist/server/mcp.mjs"));
+  assert.equal(server.args[1], `--prism-launch=${id}`);
+  assert.match(server.args[2], /^--prism-acp-token=[0-9a-f]{32}$/);
   assert.deepEqual(server.env.map((item) => item.name).sort(), ["NODE_USE_ENV_PROXY", "PRISM_LAUNCH", "PRISM_REVIEW_APP_DIR"]);
   assert.equal(server.env.find((item) => item.name === "PRISM_LAUNCH").value, id);
   assert.equal(server.env.find((item) => item.name === "NODE_USE_ENV_PROXY").value, "1");
