@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { runGit } from "./record-store-sync.mjs";
 import { hostLabel } from "../review/workspace-identity.mjs";
 import { parseStoreJson } from "./store-json.mjs";
+import { validUntil } from "./view-validity.mjs";
 import { isAgentModel } from "../session/agent-models.mjs";
 import { environmentSessionLink, isSessionLink, type SessionLink } from "../session/session-links.mjs";
 
@@ -111,8 +112,14 @@ export async function claimLabel(folder: string) {
   return labels.get(folder)!;
 }
 
-/** Whether a claim is still live at a time in milliseconds of this machine's clock. */
-export const isLive = <C extends Pick<Claim, "expiresAt">>(claim: C | null | undefined, now = Date.now()): claim is C => Boolean(claim) && Date.parse(claim!.expiresAt) > now;
+/** Whether a claim is still live at a time in milliseconds of this machine's clock; a view that finds it live holds only until it expires. */
+export const isLive = <C extends Pick<Claim, "expiresAt">>(claim: C | null | undefined, now = Date.now()): claim is C => {
+  if (!claim) return false;
+  const expires = Date.parse(claim.expiresAt);
+  if (!(expires > now)) return false;
+  validUntil(expires);
+  return true;
+};
 
 /** What a result shows of a claim. */
 export const claimView = (claim: Claim) => ({ slug: claim.slug, holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, expiresAt: claim.expiresAt });
