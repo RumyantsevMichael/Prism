@@ -397,7 +397,11 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       const hostLabel = hostField.options.find((option: any) => option.value === host)?.label ?? host ?? "";
       // A host value that fixes the run fields to the host defaults reads no host and offers no choice.
       const fixed = runFieldsFixed(action, input);
-      controller.update({ fields: action.fields, input, host: fixed ? null : host, hostLabel, writable: writable() && Boolean(reader), disabled: entry.sending || !action.available || fixed });
+      // A choice of host that leads the run action shows under the shown host why it cannot run, so the pickers' note leaves that reason out.
+      const items = actionsOf();
+      const leader = hostLeader(itemOf(target, action, items), items);
+      const shownReason = leader && host ? leader.action.fields[0].options?.find((option: any) => option.value === host)?.reason ?? reportReason(host) : null;
+      controller.update({ fields: action.fields, input, host: fixed ? null : host, hostLabel, writable: writable() && Boolean(reader), disabled: entry.sending || !action.available || fixed, shownReason });
       const row = controller.section.closest("[data-action-key]");
       if (!row) continue;
       const state = actionFormState(action, entry.draft);
@@ -668,6 +672,8 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       const item = listedAction(id);
       return item ? actionFormState(item.action, drafts[keyOf(item.target, item.action)] ?? null).input : null;
     },
+    /** Why a host's latest report says it cannot run, such as a sign-in it needs, as the choice of host shows it under that host, or null. */
+    reportReason: (host: string) => reportReason(host),
     /** What holds the list's run choices: reading while a shown choice waits for its host, and each choice not offered as { label, reason }. */
     held() {
       const held: { reading: boolean; reasons: any[] } = { reading: false, reasons: [] };

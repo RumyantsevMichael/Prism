@@ -31,6 +31,12 @@
           },
           {
             "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/withdraw-launch-questions.mjs\"",
+            "statusMessage": "Prism: closing the question of a launched session that runs again",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/offer-prism.mjs\"",
             "statusMessage": "Prism: checking project setup",
             "timeout": 5,
@@ -73,6 +79,12 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/wait-for-gate-answers.mjs\"",
             "statusMessage": "Prism: waiting for answers to open questions",
             "timeout": 3600
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-runs-to-a-result.mjs\"",
+            "statusMessage": "Prism: checking that the launched run has a result",
+            "timeout": 10
           }
         ]
       }

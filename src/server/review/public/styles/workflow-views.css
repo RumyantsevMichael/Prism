@@ -904,8 +904,22 @@ a.inspect-tile:focus-visible {
   margin: 0;
 }
 
-/* A permission request names its initiative, host, action, and reason; the action and reason are one line of host text that wraps anywhere. */
-.gate-permission .key-values {
+/* A permission request names its initiative, host, action, and reason; the action and reason are one line of host text that wraps anywhere.
+   A run that ended without a result names its initiative, host, and times in the same rows, under the same place line. */
+.gate-permission .key-values,
+.gate-no-result .key-values {
+  margin: 0;
+}
+
+/* The run's last message reads as a quoted reply: sunken and framed, so it stands apart from what Prism says about the run. */
+.gate-last-message {
+  padding: var(--prism-space-4) var(--prism-space-5);
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-sunken);
+}
+
+.gate-last-message-none {
   margin: 0;
 }
 

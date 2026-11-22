@@ -34,6 +34,9 @@ import {
   listLaunchRecords,
   newLaunchId,
   readGateRecord,
+  readResultMarks,
+  noResultGates,
+  writeResultMarks,
   readStopRequest,
   prepareLaunchesDirectory,
   readLaunchRecord,
@@ -47,6 +50,7 @@ import {
   writeStopRequest
 } from "./launch-records.mjs";
 import { launchRequests } from "./permission-requests.mjs";
+import { isNoResultGate, noResultContext, noResultQuestion, runHasResult } from "./run-result.mjs";
 
 // Starting, listing, resuming, and stopping launched sessions: headless host sessions that Prism runs on this machine for one initiative,
 // or for one format migration run, which Prism launches by itself without asking anyone.
@@ -342,12 +346,187 @@ export async function markLaunchGates({ projectRoot, initiative, gates, env = pr
   if (!found) return false;
   return withLaunchLock(env, async () => {
     if (!(await readLaunchRecord(found.folder))) return false;
-    const current = await readGateRecord(found.folder);
-    const at = new Date().toISOString();
-    const known = new Set(current.marks.map((mark) => mark.gate));
-    await writeGateRecord(found.folder, { ...current, marks: [...current.marks, ...ids.filter((gate) => !known.has(gate)).map((gate) => ({ gate, at }))] });
+    await addGateMarks(found.folder, ids);
     return true;
   });
+}
+
+// Adds the gates that the launch folder does not mark yet to its gate record; the caller holds the launch lock.
+async function addGateMarks(folder: string, ids: string[]) {
+  const current = await readGateRecord(folder);
+  const at = new Date().toISOString();
+  const known = new Set(current.marks.map((mark) => mark.gate));
+  await writeGateRecord(folder, { ...current, marks: [...current.marks, ...ids.filter((gate) => !known.has(gate)).map((gate) => ({ gate, at }))] });
+}
+
+/**
+ * Marks a pause that the launched run that env.PRISM_LAUNCH names recorded, in that launch folder only, when the launch is of this
+ * machine, of the same initiative, and in the record store of projectRoot; otherwise it marks nothing. A pause is a result of the run.
+ */
+export async function markLaunchPause({ projectRoot, initiative, env = process.env }: { projectRoot: string; initiative: string; env?: NodeJS.ProcessEnv }) {
+  const found = await launchOf(env, env.PRISM_LAUNCH!, { projectRoot, initiative });
+  if (!found) return false;
+  return withLaunchLock(env, async () => {
+    if (!(await readLaunchRecord(found.folder))) return false;
+    const marks = await readResultMarks(found.folder);
+    await writeResultMarks(found.folder, { ...marks, pauses: [...marks.pauses, { at: new Date().toISOString() }] });
+    return true;
+  });
+}
+
+/** Marks that this process checks whether the run with this token ended with a result, so the run shows as running until the check ends. */
+export async function markResultCheck({ id, token, env = process.env }: { id: string; token: string; env?: NodeJS.ProcessEnv }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return;
+  const folder = launchFolder(env, id);
+  await withLaunchLock(env, async () => {
+    const marks = await readResultMarks(folder);
+    await writeResultMarks(folder, { ...marks, checks: [...marks.checks.filter((check) => check.run !== token), { run: token, pid: process.pid, at: new Date().toISOString() }] });
+  });
+}
+
+const NEWER_RUN = "A newer run of this launched session ended without a result.";
+const SUPERSEDED = "A newer run of this launched session started before Prism recorded this question.";
+
+// Applies the gate operations that operationsOf gives for the pending gates to the initiative's coordination state, again after a revision
+// conflict: { opened } with the gates it opened, or { failure } with why it could not apply them.
+async function changeGates(record: any, operationsOf: (pending: any[]) => any[]) {
+  const { readCoordinationState: read, updateCoordinationState } = await import("../workflow/state.mjs");
+  let failure = "The coordination state kept changing.";
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const current: any = await read({ projectRoot: record.checkout, initiative: record.initiative });
+      const pending = current.valid && Array.isArray(current.state?.pending) ? current.state.pending : [];
+      const result: any = await updateCoordinationState({ projectRoot: record.checkout, initiative: record.initiative, expectedRevision: current.revision ?? null, changes: { gateOperations: operationsOf(pending) } });
+      return { opened: Array.isArray(result.openedGates) ? result.openedGates : [] };
+    } catch (error: any) {
+      failure = typeof error?.message === "string" && error.message ? error.message : String(error);
+      if (error?.code !== "revision_conflict") break;
+    }
+  }
+  return { failure };
+}
+
+// Records the no-result gate of a run in the initiative's coordination state, first resolving the launch's earlier unanswered one:
+// { gate } with the new gate's id, or { failure } with why it could not be recorded.
+async function askNoResultGate(record: any, earlier: string[], lastMessage: string | null, env: NodeJS.ProcessEnv) {
+  const label = hostDefinition(record.host, env)?.label ?? record.host;
+  const ask = { op: "ask", kind: "assistance", question: noResultQuestion(label, record.initiative), context: noResultContext(lastMessage), artifacts: [] };
+  const changed = await changeGates(record, (pending) => [
+    ...pending.filter((gate: any) => gate && earlier.includes(gate.id) && !gate.answer && isNoResultGate(gate)).map((gate: any) => ({ op: "resolve", id: gate.id, reason: NEWER_RUN })),
+    ask
+  ]);
+  if ("failure" in changed) return { failure: changed.failure };
+  const gate = changed.opened.at(-1)?.id;
+  return typeof gate === "string" && GATE_ID_PATTERN.test(gate) ? { gate } : { failure: "The coordination state named no new gate." };
+}
+
+const ARCHIVED = "The person archived the launched session.";
+const RUNS_AGAIN = "The launched session runs again.";
+
+// Resolves every no-result gate of the launch in this folder that is pending without an answer, with the reason; an answered one stays
+// for the run to act on. It changes the coordination state only when such a gate exists, and never takes the launch lock.
+async function withdrawNoResultGates(folder: string, record: any, reason: string) {
+  const gates = new Set(noResultGates(await readResultMarks(folder)));
+  if (!gates.size) return;
+  const unanswered = (pending: any[]) => pending.filter((gate: any) => gate && gates.has(gate.id) && !gate.answer);
+  const read: any = await readCoordinationState({ projectRoot: record.checkout, initiative: record.initiative }).catch(() => null);
+  if (!unanswered(read?.valid && Array.isArray(read.state?.pending) ? read.state.pending : []).length) return;
+  await changeGates(record, (pending) => unanswered(pending).map((gate: any) => ({ op: "resolve", id: gate.id, reason })));
+}
+
+/** Resolves the unanswered no-result gate of the launch whose new run started, with the reason that the session runs again. */
+export async function withdrawRunQuestions({ id, env = process.env }: { id: string; env?: NodeJS.ProcessEnv }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return;
+  const folder = launchFolder(env, id);
+  const record = await readLaunchRecord(folder);
+  if (record) await withdrawNoResultGates(folder, record, RUNS_AGAIN);
+}
+
+/**
+ * Resolves the unanswered no-result gate of each Claude Code or Codex launch on this machine whose host session id is sessionId, as
+ * when that session starts again in a terminal; it changes nothing for any other session. Answers whether such a launch exists.
+ */
+export async function withdrawSessionQuestions({ sessionId, env = process.env }: { sessionId: string; env?: NodeJS.ProcessEnv }) {
+  if (!validHostSessionId(sessionId)) return false;
+  let found = false;
+  for (const { folder, record } of await listLaunchRecords(env)) {
+    if (!record || (record.host !== "claude-code" && record.host !== "codex") || record.hostSessionId !== sessionId) continue;
+    found = true;
+    await withdrawNoResultGates(folder, record, RUNS_AGAIN);
+  }
+  return found;
+}
+
+// Records the no-result gate of a Claude Code or Codex launch as asked by its host session, so Prism's gate delivery gives that session the answer.
+async function rememberHostGate(record: any, gate: string, env: NodeJS.ProcessEnv) {
+  if ((record.host !== "claude-code" && record.host !== "codex") || !validHostSessionId(record.hostSessionId)) return;
+  const { noticeDirectory, rememberAskedGates } = await import("../workflow/change-notices.mjs");
+  const { holderOf } = await import("../workflow/slice-claims.mjs");
+  await rememberAskedGates({ projectRoot: record.checkout, initiative: record.initiative, gateIds: [gate], session: holderOf(record.hostSessionId), directory: noticeDirectory(env) }).catch(() => {});
+}
+
+// Whether the run with this token is still the launch's last run and nobody asked to stop it; the caller holds the launch lock.
+async function stillLastRun(folder: string, token: string) {
+  const record = await readLaunchRecord(folder);
+  const last = record?.runs.at(-1);
+  return Boolean(last && last.token === token && !last.stopRequestedAt) && (await readStopRequest(folder))?.token !== token;
+}
+
+/**
+ * After a run of a launched session ended, checks whether it ended with a result, then removes this process's check mark. A run that ended
+ * normally, that no answer resumed, and that has no result gets one no-result gate, marked as asked by the launch and, for Claude Code
+ * and Codex, by its host session, and a no-result mark that names the gate, or why Prism could not record it.
+ * Once the gate is recorded, the run is checked again under the launch lock: a gate of a run that another run followed, or that a stop
+ * request names, is resolved and gets no mark. Otherwise the host session learns of the gate, then the no-result mark and the gate mark
+ * are written, all under that same lock.
+ * normal says whether the host ended normally by its own facts, such as an ACP agent's stop reason; the record decides the rest.
+ */
+export async function settleRunResult({ id, token, normal, resumed, lastMessage, env = process.env }: { id: string; token: string; normal: boolean; resumed: boolean; lastMessage: string | null; env?: NodeJS.ProcessEnv }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return;
+  const folder = launchFolder(env, id);
+  let mark: { run: string; gate: string | null; failure: string | null; at: string } | null = null;
+  let settled = false;
+  try {
+    const record = await readLaunchRecord(folder);
+    const run = record?.runs.find((entry: any) => entry.token === token);
+    const ended = run && run === record.runs.at(-1) && run.endedAt && !run.stopRequestedAt && run.exit?.code === 0 && !run.exit?.signal
+      && typeof run.failure !== "string" && typeof run.hostError !== "string" && !(Array.isArray(run.refusals) && run.refusals.length) && !(run.refusalCount > 0);
+    if (!normal || resumed || !ended || (await readStopRequest(folder))?.token === token) return;
+    const marks = await readResultMarks(folder);
+    if (await runHasResult({ checkout: record.checkout, initiative: record.initiative, since: run.startedAt, pauses: marks.pauses })) return;
+    const asked = await askNoResultGate(record, noResultGates(marks), lastMessage, env);
+    if (!("gate" in asked)) {
+      mark = { run: token, gate: null, failure: asked.failure!, at: new Date().toISOString() };
+      return;
+    }
+    const gate = asked.gate!;
+    // A view reads the gate record before the result marks, so no view counts the gate as marked before its no-result mark exists.
+    const current = await withLaunchLock(env, async () => {
+      const latest = await readResultMarks(folder);
+      const checks = latest.checks.filter((check) => check.run !== token);
+      if (!(await stillLastRun(folder, token))) {
+        await writeResultMarks(folder, { ...latest, checks });
+        return false;
+      }
+      // The host session learns of the gate before any view shows the run ended without a result.
+      await rememberHostGate(record, gate, env);
+      const noResult = [...latest.noResult.filter((item) => item.run !== token), { run: token, gate, failure: null, at: new Date().toISOString() }];
+      await writeResultMarks(folder, { ...latest, checks, noResult });
+      await addGateMarks(folder, [gate]);
+      return true;
+    });
+    settled = true;
+    if (!current) {
+      await changeGates(record, (pending) => (pending.some((item: any) => item?.id === gate && !item.answer) ? [{ op: "resolve", id: gate, reason: SUPERSEDED }] : []));
+    }
+  } finally {
+    if (!settled) {
+      await withLaunchLock(env, async () => {
+        const marks = await readResultMarks(folder);
+        await writeResultMarks(folder, { ...marks, checks: marks.checks.filter((check) => check.run !== token), noResult: mark ? [...marks.noResult.filter((item) => item.run !== token), mark] : marks.noResult });
+      }).catch(() => {});
+    }
+  }
 }
 
 // The launch of this machine, in the record store of projectRoot, that marked the gate of the initiative: { folder, record }, or null.
@@ -489,7 +668,12 @@ async function pageViewer(projectRoot: string, at: number) {
     }
     return pendingOf.get(initiative);
   };
-  const viewOf = async (folder: string, record: any) => launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative)), permission: (await launchRequests(folder, record, at))[0] ?? null });
+  const viewOf = async (folder: string, record: any) => {
+    // The gate record is read before the result marks, which settleRunResult writes first, so a marked no-result gate always has its mark here.
+    const gates = await readGateRecord(folder);
+    const results = await readResultMarks(folder);
+    return launchView(record, { now: at, gates: gateFacts(gates, await pending(record.initiative), noResultGates(results)), permission: (await launchRequests(folder, record, at))[0] ?? null, results });
+  };
   return { checkout, store, viewOf };
 }
 
@@ -560,16 +744,23 @@ async function archiveLocked(found: PageLaunch, at: number) {
   return true;
 }
 
-/** Archives a launched session that the page lists and that ended: { archived: [id] }, or { archived: [] } when it is already archived. */
+/**
+ * Archives a launched session that the page lists and that ended, ended without a result included: { archived: [id] }, or
+ * { archived: [] } when it is already archived. It resolves the session's unanswered no-result gate and starts no run.
+ */
 export async function archiveLaunch({ projectRoot, id, env = process.env }: { projectRoot: string; id: string; env?: NodeJS.ProcessEnv }) {
   const viewer = await pageViewer(projectRoot, Date.now());
-  return withLaunchLock(env, async () => {
+  const archived = await withLaunchLock(env, async () => {
     const at = Date.now();
     const found = await pageLaunch(env, id, viewer, at);
     if (!found) throw unknownLaunch(id);
     if (!launchEnded(found.view.state)) throw notEnded();
-    return { archived: (await archiveLocked(found, at)) ? [id] : [] };
+    return (await archiveLocked(found, at)) ? found : null;
   });
+  // Archiving starts no run and closes the session's unanswered no-result gate, after the lock, since a gate change may take it.
+  if (!archived) return { archived: [] };
+  await withdrawNoResultGates(archived.folder, archived.record, ARCHIVED).catch(() => {});
+  return { archived: [id] };
 }
 
 /** Removes the archive mark of a launched session that the page lists: { unarchived: [id] }, or { unarchived: [] } when it was not archived. */
@@ -587,11 +778,11 @@ export async function unarchiveLaunch({ projectRoot, id, env = process.env }: { 
 
 /**
  * Archives every launched session that the page lists, that ended, and that is not archived: { archived: [ids] }, failed ones first and
- * then the latest launched first, the order the agents list gives them.
+ * then the latest launched first, the order the agents list gives them. Each one's unanswered no-result gate is resolved.
  */
 export async function archiveEndedLaunches({ projectRoot, env = process.env }: { projectRoot: string; env?: NodeJS.ProcessEnv }) {
   const viewer = await pageViewer(projectRoot, Date.now());
-  return withLaunchLock(env, async () => {
+  const archived = await withLaunchLock(env, async () => {
     const at = Date.now();
     const found: PageLaunch[] = [];
     for (const { record } of await listLaunchRecords(env)) {
@@ -599,10 +790,12 @@ export async function archiveEndedLaunches({ projectRoot, env = process.env }: {
       if (launch && launchEnded(launch.view.state)) found.push(launch);
     }
     found.sort((left, right) => (left.view.state === "failed" ? 0 : 1) - (right.view.state === "failed" ? 0 : 1) || byLaunch(left.view, right.view));
-    const archived: string[] = [];
-    for (const launch of found) if (await archiveLocked(launch, at)) archived.push(launch.record.id);
-    return { archived };
+    const archived: PageLaunch[] = [];
+    for (const launch of found) if (await archiveLocked(launch, at)) archived.push(launch);
+    return archived;
   });
+  for (const launch of archived) await withdrawNoResultGates(launch.folder, launch.record, ARCHIVED).catch(() => {});
+  return { archived: archived.map((launch) => launch.record.id) };
 }
 
 /**

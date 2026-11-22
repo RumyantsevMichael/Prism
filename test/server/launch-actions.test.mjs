@@ -201,7 +201,7 @@ test("a session whose initiative shipped while it runs stays stoppable, records 
 test("the person's resume runs the session again, confirming outside the page once the window ended", { skip: posixOnly }, async (t) => {
   const s = await setup(t, { plans: { claude: [{ hold: 50 }, { hold: 50 }, { hold: 50 }] } });
   const id = (await launch(s)).json.launch.id;
-  await s.settled(id, ["finished"]);
+  await s.settled(id, ["ended-without-result"]);
   const resumed = await apply(s.base, { action: "launch.resume", target: `launch:${id}`, input: {}, revision: null }, s.headers);
   assert.equal(resumed.status, 200, resumed.text);
   assert.deepEqual(resumed.json.applied.after, { launch: id, run: 2 });
@@ -211,7 +211,7 @@ test("the person's resume runs the session again, confirming outside the page on
   // The window lives in the review app folder; ending it there makes the next resume ask again.
   const { writeFile } = await import("node:fs/promises");
   await writeFile(path.join(s.app, "launches", "window.json"), JSON.stringify({ confirmedAt: new Date(Date.now() - 40 * 60000).toISOString(), endsAt: new Date(Date.now() - 10 * 60000).toISOString() }));
-  await s.settled(id, ["finished"]);
+  await s.settled(id, ["ended-without-result"]);
   await s.setDialog({ code: 1 });
   const declined = await apply(s.base, { action: "launch.resume", target: `launch:${id}`, input: {}, revision: null }, s.headers);
   assert.equal(declined.status, 409);
@@ -255,7 +255,7 @@ test("an answer given while the session runs reaches it there, and resumes it on
   const answered = await answer(s, gateId);
   assert.deepEqual(answered.json.launch, { id, resumed: false, reason: "The session is running and receives the answer there." });
   await waitFor(() => s.runs("claude").length === 2, { what: "the one resume after the run ended" });
-  await s.settled(id, ["finished"]);
+  await s.settled(id, ["ended-without-result"]);
   await pause(800, "no second resume may follow, and a change that must not happen leaves nothing to wait for");
   assert.equal(s.runs("claude").length, 2, "one answer causes at most one resume");
 });
@@ -309,7 +309,7 @@ test("the launch list is readable without a write session", { skip: posixOnly },
   assert.equal(read.status, 200);
   const [view] = read.json.launches;
   assert.equal(view.id, id);
-  assert.deepEqual(Object.keys(view).sort(), ["answerWaits", "checkout", "endedAt", "exit", "holder", "host", "hostLabel", "id", "initiative", "launchedAt", "model", "reason", "resumeCommand", "runningMs", "runs", "state", "waitingGate"]);
+  assert.deepEqual(Object.keys(view).sort(), ["answerWaits", "checkout", "endedAt", "exit", "holder", "host", "hostLabel", "id", "initiative", "launchedAt", "model", "questionGate", "reason", "resumeCommand", "runningMs", "runs", "state", "waitingGate"]);
 });
 
 test("no Prism tool lets an agent launch, resume, or stop a session", async (t) => {

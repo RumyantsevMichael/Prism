@@ -4,6 +4,8 @@ import path from "node:path";
 import { readInitiativeRecordRunTotals } from "../session/run-totals.mjs";
 import { storeLocation } from "../session/launch-records.mjs";
 import { pendingRequests } from "../session/permission-requests.mjs";
+import { listLaunches } from "../session/launched-sessions.mjs";
+import { hostDefinition } from "../session/launch-hosts.mjs";
 import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workflow/initiative.mjs";
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
@@ -963,7 +965,29 @@ export async function loadAttention(projectRoot: string) {
   const items = formats.filter((entry: any) => entry.count > 0).map((entry: any) => ({ type: "format-findings", artifactType: entry.type, label: entry.label, count: entry.count, earlier: entry.earlier, artifacts: entry.artifacts }));
   // A run's question waits on the person as a gate does, so it counts among the questions that the rail and a background tab's notification count.
   const questions = runs.needsYou.filter((item: any) => item.type === "migration-question").length;
-  return { ...attention, needsYou: [...runs.needsYou, ...attention.needsYou, ...items], watch: [...attention.watch, ...runs.watch], formats, permissions, gateCount: attention.gateCount + questions + permissions.length };
+  const launched = await withLaunchQuestions(projectRoot, attention.needsYou);
+  return { ...attention, needsYou: [...runs.needsYou, ...launched, ...items], watch: [...attention.watch, ...runs.watch], formats, permissions, gateCount: attention.gateCount + questions + permissions.length };
+}
+
+/**
+ * The Needs you items, where each no-result gate of a launched session on this machine carries that session as
+ * launch: { id, host: { id, label }, launchedAt, endedAt, state }, read again at each request from the private launch folders.
+ * A gate that no launch of this machine asked, or a list the launches cannot be read for, stays as it is.
+ */
+async function withLaunchQuestions(projectRoot: string, needsYou: any[]) {
+  if (!needsYou.some((item: any) => item.type === "gate" && item.kind === "assistance")) return needsYou;
+  const { launches } = await listLaunches({ projectRoot }).catch(() => ({ launches: [] as any[] }));
+  const asked = new Map<string, any>();
+  for (const launch of launches) {
+    if (typeof launch.questionGate !== "string") continue;
+    const label = hostDefinition(launch.host)?.label ?? launch.hostLabel ?? launch.host;
+    asked.set(`${launch.initiative}/${launch.questionGate}`, { id: launch.id, host: { id: launch.host, label }, launchedAt: launch.launchedAt, endedAt: launch.endedAt, state: launch.state });
+  }
+  if (!asked.size) return needsYou;
+  return needsYou.map((item: any) => {
+    const launch = item.type === "gate" && item.kind === "assistance" ? asked.get(`${item.initiative?.id}/${item.id}`) : undefined;
+    return launch ? { ...item, launch } : item;
+  });
 }
 
 /**

@@ -133,11 +133,11 @@ test("a stop is refused for a session that is not running and for an unknown lau
   const fixture = await launchFixture(t, { plans: { claude: [{ hold: 50 }] } });
   const { startLaunch, stopLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "claude-code", env: fixture.env });
-  await waitFor(async () => (await viewOf(fixture, launch.id))?.state === "finished", { what: "the run to finish" });
+  await waitFor(async () => (await viewOf(fixture, launch.id))?.state === "ended-without-result", { what: "the run to finish" });
   const refused = await rejection(stopLaunch({ id: launch.id, env: fixture.env }));
   assert.equal(refused.code, "launch_not_running");
   assert.equal(refused.message, "The session is not running.");
-  assert.equal((await viewOf(fixture, launch.id)).state, "finished", "a refused stop leaves the session's end as it was");
+  assert.equal((await viewOf(fixture, launch.id)).state, "ended-without-result", "a refused stop leaves the session's end as it was");
   assert.equal((await rejection(stopLaunch({ id: "launch-0000000000000000", env: fixture.env }))).code, "unknown_launch");
 });
 

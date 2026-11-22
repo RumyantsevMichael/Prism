@@ -79,6 +79,34 @@ test("a fully watched root is still checked against its listing at the long inte
   assert.notEqual(await versions.current(root), first);
 });
 
+test("a missing target leaves the watched ones unlisted between full listings, and its creation shows at once", async (t) => {
+  const root = await folder(t);
+  let clock = 1000;
+  const watched = new Map();
+  const fake = (target, options, listener) => { watched.set(target, listener); return { on() {}, close() { watched.delete(target); }, unref() {} }; };
+  const failing = (target, options, listener) => {
+    if (target === path.join(root, "docs", "ADRs") || target === path.join(root, "docs")) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    return fake(target, options, listener);
+  };
+  const versions = createViewVersions({ targetsOf: async () => ({ folders: [path.join(root, "docs", "ADRs"), path.join(root, "store")], files: [], gitRoots: [] }), watchTree: failing, isEventless: async () => false, verifyMs: 5000, watchedVerifyMs: 30000, now: () => clock });
+  t.after(() => versions.close());
+  const first = await versions.current(root);
+  assert.ok(watched.has(root), "the missing folder is watched through the nearest folder that exists");
+  // A change the watched store's watcher does not report waits for the full listing, so the store is not listed at every read.
+  await writeFile(path.join(root, "store", "initiatives", "silent.json.tmp"), "{}\n");
+  await rename(path.join(root, "store", "initiatives", "silent.json.tmp"), path.join(root, "store", "initiatives", "silent.json"));
+  clock += 6000;
+  assert.equal(await versions.current(root), first, "a watched target is not listed between full listings");
+  await mkdir(path.join(root, "docs", "ADRs"), { recursive: true });
+  watched.get(root)("rename", "docs");
+  const created = await versions.current(root);
+  assert.notEqual(created, first, "the creation changes the version at once");
+  assert.ok(watched.has(path.join(root, "store")), "the watchers start again, now on the created folder");
+  await writeFile(path.join(root, "store", "roadmap.json"), '{"silent":true}\n');
+  clock += 30000;
+  assert.notEqual(await versions.current(root), created, "the full listing finds a change no watcher reported");
+});
+
 test("changes inside Git's data and the store's sync state never change the version", async (t) => {
   const root = await folder(t);
   let clock = 1000;

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { installAgent, removeAgent, sweepUnusedVersions, versionsInUse } from "../../dist/server/session/agent-installs.mjs";
+import { HEARTBEAT_STALE_MS } from "../../dist/server/session/launch-records.mjs";
 import { INITIATIVE, TARGET, acpFixture, apply, get, setSettings } from "./fixtures/acp-agents.mjs";
 import { binaryAgent, platformKey, registryFixture } from "./fixtures/acp-registry.mjs";
 import { settled } from "./fixtures/wait.mjs";
@@ -203,6 +204,11 @@ test("a launch that is starting keeps every version folder until its run records
 });
 
 test("a run whose supervisor or host lives keeps its version folder and its agent however late its heartbeat", { skip: posixOnly }, async (t) => {
+  // A late heartbeat, yet after the computer started: a heartbeat from before then ends the run, so on a computer that started under a
+  // minute ago, as a fresh CI machine can, the test waits until a heartbeat older than the stale age can still come after its start.
+  const late = HEARTBEAT_STALE_MS + 1_000;
+  const upMs = () => os.uptime() * 1000;
+  if (upMs() < late + 5_000) await new Promise((resolve) => setTimeout(resolve, late + 5_000 - upMs()));
   const { app, env } = await appFolder(t);
   const folder = path.join(app, "agents", "opencode");
   for (const version of ["1.0.0", "1.1.0"]) {
@@ -218,9 +224,10 @@ test("a run whose supervisor or host lives keeps its version folder and its agen
   const id = `launch-${"e".repeat(16)}`;
   const launchFolder = path.join(app, "launches", id);
   await mkdir(launchFolder, { recursive: true, mode: 0o700 });
-  const at = new Date(Date.now() - 5 * 60_000).toISOString();
+  const heartbeatAt = new Date(Date.now() - late).toISOString();
+  const at = new Date(Date.now() - Math.min(5 * 60_000, upMs() - 1_000)).toISOString();
   const writeRun = (run) => writeFile(path.join(launchFolder, "launch.json"), JSON.stringify({ id, initiative: "late", host: "acp-opencode", checkout: app, store: "test", createdAt: at, hostSessionId: "s1", coordinator: { provider: null, model: null, effort: null, typed: false },
-    runs: [{ number: 1, cause: "launch", token: "a".repeat(16), agentVersion: "1.0.0", startedAt: at, heartbeatAt: new Date(Date.now() - 61_000).toISOString(), outputAt: at, model: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: 5000, stopRequestedAt: null, ...run }] }));
+    runs: [{ number: 1, cause: "launch", token: "a".repeat(16), agentVersion: "1.0.0", startedAt: at, heartbeatAt, outputAt: at, model: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: 5000, stopRequestedAt: null, ...run }] }));
   const remove = () => removeAgent({ id: "opencode", env }).then(() => null, (error) => error.code ?? error.message);
   await writeRun({ supervisorPid: supervisor.pid, hostPid: host.pid });
   assert.deepEqual([...await versionsInUse("opencode", env)], ["1.0.0"]);

@@ -1052,6 +1052,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const result = ended ? await archiveEndedLaunches({ projectRoot, env })
         : archiving ? await archiveLaunch({ projectRoot, id: body.launch, env })
           : await unarchiveLaunch({ projectRoot, id: body.launch, env });
+      // Archiving resolves the session's no-result gate in the coordination state, so Attention reads it again.
+      forgetWorkspace();
       sendJson(response, 200, result);
     } catch (error) {
       if (error?.code === "unknown_launch") sendJson(response, 404, { code: error.code, message: error.message });

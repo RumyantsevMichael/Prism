@@ -68,10 +68,13 @@ const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const mac = (key, value) => createHmac("sha256", key).update(value).digest("hex");
 
 /** One HTTP request: { status, headers, body, json }, with json the parsed body or null. */
+// A body names its length, as a browser's does: Node's client sends the body of a DELETE unframed, which the app reads as a malformed
+// next request and answers by closing the keep-alive connection, so the request after it could find that connection reset.
 export function request(url, { method = "GET", headers = {}, body } = {}) {
   const payload = body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body);
+  const framing = payload === undefined ? {} : { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(payload)) };
   return new Promise((resolve, reject) => {
-    const outgoing = http.request(url, { method, headers: { ...(payload === undefined ? {} : { "Content-Type": "application/json" }), ...headers } }, (response) => {
+    const outgoing = http.request(url, { method, headers: { ...framing, ...headers } }, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => {

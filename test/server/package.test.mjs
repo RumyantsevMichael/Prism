@@ -68,12 +68,15 @@ test("packages compatible capacity and trace hooks at the default plugin path", 
     const answerHook = hookManifest.hooks[event].flatMap((group) => group.hooks).find((hook) => hook.command === "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/deliver-gate-answers.mjs\"");
     assert.deepEqual([answerHook.timeout, answerHook.additionalContextLimit], [5, 4000], event);
   }
-  assert.deepEqual(hookManifest.hooks.Stop.flatMap((group) => group.hooks), [{ type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/wait-for-gate-answers.mjs\"", statusMessage: "Prism: waiting for answers to open questions", timeout: 3600 }]);
+  assert.deepEqual(hookManifest.hooks.Stop.flatMap((group) => group.hooks), [{ type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/wait-for-gate-answers.mjs\"", statusMessage: "Prism: waiting for answers to open questions", timeout: 3600 }, { type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-runs-to-a-result.mjs\"", statusMessage: "Prism: checking that the launched run has a result", timeout: 10 }]);
   // Each hook carries a short name of what it does, which Claude Code and Codex show instead of its command line.
   for (const hook of Object.values(hookManifest.hooks).flat().flatMap((group) => group.hooks)) assert.match(hook.statusMessage ?? "", /^Prism: [a-z]/, hook.command);
   for (const event of ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PreCompact", "SubagentStart", "SubagentStop", "SessionEnd"]) {
     assert.ok(commands(event).includes(traceCommand));
   }
+  // A launched Claude Code or Codex session that starts again in a terminal closes its unanswered no-result gate.
+  const withdrawHook = hookManifest.hooks.SessionStart.flatMap((group) => group.hooks).find((hook) => hook.command === "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/withdraw-launch-questions.mjs\"");
+  assert.deepEqual([withdrawHook?.timeout, withdrawHook?.additionalContextLimit], [5, undefined]);
   const offerHook = hookManifest.hooks.SessionStart.flatMap((group) => group.hooks).find((hook) => hook.command === "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/offer-prism.mjs\"");
   assert.deepEqual([offerHook.timeout, offerHook.additionalContextLimit], [5, 1500]);
   const roleCommand = "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-orchestrator-role.mjs\"";
