@@ -8,7 +8,7 @@ import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { listInitiatives } from "../workflow/record-store.mjs";
 import { readRoadmap } from "../workflow/roadmap.mjs";
 import { readCoordinationState } from "../workflow/state.mjs";
-import { checkedCoordinator, hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { askerResumeOf, checkedCoordinator, hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 import {
   LAUNCH_ID_PATTERN,
   LaunchError,
@@ -77,7 +77,9 @@ async function withLaunchLock<T>(env: NodeJS.ProcessEnv, action: () => Promise<T
   return withFileLock(path.join(launchesDirectory(env), "launches"), action, (code, message) => refuse(code === "lock_timeout" ? "launch_failed" : code, message), { timeoutMs });
 }
 
-async function otherRunning(env: NodeJS.ProcessEnv, { initiative, store, except = null }: { initiative: string; store: string; except?: any }) {
+async function otherRunning(env: NodeJS.ProcessEnv, { initiative, store, except = null }: { initiative: string | null; store: string; except?: any }) {
+  // A resumed asker of an approval gate that names no initiative shares the one-session rule with no other session.
+  if (initiative === null) return false;
   const now = Date.now();
   for (const { record } of await listLaunchRecords(env)) {
     if (!record || record.id === except) continue;
@@ -172,6 +174,57 @@ export async function startLaunch({ projectRoot, initiative, host, coordinator =
       coordinator: choice,
       // A launch that continues an answered gate names it in its first run's start, so the orchestrate skill acts on that answer first.
       ...(answeredGate === null ? {} : { answeredGate }),
+      runs: []
+    };
+    await writeLaunchRecord(folder, record);
+    try {
+      return { launch: await startRun({ folder, record, env, cause: "launch" }) };
+    } catch (error) {
+      await removeLaunchFolder(folder);
+      throw error;
+    }
+  });
+}
+
+const ASKER_RUNNING = "The session is open, so a resume would run beside it.";
+
+/** Whether a run of a launched session that continues this host session id runs on this machine, such as a resumed asker. */
+export async function hostSessionRunning(env: NodeJS.ProcessEnv, hostSessionId: string) {
+  const now = Date.now();
+  return (await listLaunchRecords(env)).some(({ record }) => record?.hostSessionId === hostSessionId && launchRunning(record, now));
+}
+
+/**
+ * Resumes the session that asked a gate as a launched session of this machine: a Claude Code or Codex session under its kept id in its
+ * kept checkout, whose first run is a resume with the message that the person answered the gate; resume is { gate, initiative, artifact },
+ * initiative null for an approval gate that names none. Answers { launch }, its view in state running. The caller confirmed it outside the page.
+ */
+export async function startAskerResume({ checkout: kept, host, hostSessionId, resume, env = process.env }: { checkout: string; host: string; hostSessionId: string; resume: unknown; env?: NodeJS.ProcessEnv }) {
+  if (host !== "claude-code" && host !== "codex") throw refuse("unknown_host", `${hostDefinition(host, env)?.label ?? String(host)} does not let Prism resume a session by its id.`);
+  if (!validHostSessionId(hostSessionId)) throw refuse("no_host_session", "Prism kept no session id for it.");
+  const asker = askerResumeOf(resume);
+  if (!asker) throw refuse("invalid_gate", "The answered gate is not a gate id that Prism records.");
+  const checkout = await realpath(kept).catch(() => null);
+  if (!checkout) throw refuse("launch_failed", `The checkout ${kept} of the session that asked no longer exists.`);
+  const resolved = await resolveHost(host, env);
+  if (!resolved!.available) throw refuse("host_unavailable", resolved!.reason!);
+  const store = await storeLocation(checkout);
+  return withLaunchLock(env, async () => {
+    if (await otherRunning(env, { initiative: asker.initiative, store })) throw refuse("launch_running", runningMessage(asker.initiative!));
+    if (await hostSessionRunning(env, hostSessionId)) throw refuse("launch_running", ASKER_RUNNING);
+    const id = newLaunchId();
+    const folder = await createLaunchFolder(env, id);
+    const record = {
+      id,
+      initiative: asker.initiative,
+      host,
+      checkout,
+      store,
+      createdAt: new Date().toISOString(),
+      hostSessionId,
+      coordinator: checkedCoordinator(null),
+      // Every run of a resumed asker continues its own session under the kept id, with the message that its gate has an answer.
+      askerResume: asker,
       runs: []
     };
     await writeLaunchRecord(folder, record);

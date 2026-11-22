@@ -205,7 +205,11 @@ A session that later waits on a withdrawn question learns at once that you withd
 An answered question whose answer cannot reach its asking session, because no wait holds it and that session is not open, has **Continue the work** on its card.
 It lists the ways to continue, and names why each one that does not apply cannot, such as a question that names no initiative or an initiative that the roadmap does not list, was superseded, or shipped.
 **New orchestration session** is the default: it launches the question's initiative as **Launch** does, with the initiative's host and models, and its start names the answered question, so the new session acts on your answer first.
-Nothing starts until you confirm the launch outside the browser, and a declined confirmation starts nothing.
+**Resume the session that asked** continues the asking Claude Code or Codex session itself, under its own session id and headless in its own checkout, with a message that your answer is in Prism's records.
+It applies only on the computer where that session ran, while that session is not running and Prism can tell so, and while no launched session of the question's initiative runs there, and never to a cloud session.
+The confirmation names the session's host, the question, and the checkout, and shares the 30-minute window of **Launch**.
+The resumed session then shows under the agents as a launched session, which **Stop** and **Resume** act on as on any other.
+Nothing starts until you confirm the launch or resume outside the browser, and a declined confirmation starts nothing.
 Answering a question starts no session by itself, here or when an answer arrives from another machine through the shared records.
 Continue is unavailable while a session waits on the question or the asking session is open, since that session reads your answer itself, and for a session that Prism launched, which resumes from its launched session.
 An answered requirement or ADR approval whose asking session Prism recorded stays under Answered with its answer, so you can continue its work, until a newer approval of the same file is asked or for 7 days.

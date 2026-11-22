@@ -34,7 +34,9 @@ import {
   LaunchError,
   listLaunches,
   resumeLaunch,
+  hostSessionRunning,
   resumeRefusal,
+  startAskerResume,
   startLaunch,
   stopLaunch
 } from "../session/launched-sessions.mjs";
@@ -733,8 +735,7 @@ const NO_INITIATIVE = "The question names no initiative, so a new session has no
 const NOT_LISTED = "The roadmap does not list this initiative, so a new session has nothing to resume from.";
 const SUPERSEDED = "The initiative was superseded, so it is history.";
 const LAUNCHED_ASKER = "Prism launched the session that asked, so answering resumes it from its launched session.";
-// Resuming and waking an asker are later additions, so their options name why they do not apply yet once every other reason passes.
-const RESUME_NOT_YET = "Prism cannot resume the session that asked in this release.";
+// Waking an asker is a later addition, so its option names why it does not apply yet once every other reason passes.
 const WAKE_NOT_YET = "Prism cannot wake the session that asked in this release.";
 
 // What the ways to continue read: the initiative the gate names, its roadmap entry, whether it shipped, the launch a new session runs
@@ -744,7 +745,10 @@ async function continuationOf(projectRoot: string, context: any, env: NodeJS.Pro
   const hosts = await hostAvailability({ env });
   // A review app that runs in a Claude Code cloud session cannot send a wake.
   const remote = env.CLAUDE_CODE_REMOTE === "true" || Boolean(env.CLAUDE_CODE_REMOTE_SESSION_ID);
-  if (named === null) return { initiative: null, listed: false, superseded: false, shipped: null, launch: null, hosts, running: false, remote };
+  // A resumed asker runs as a launched session under its own id, so a second resume would run beside it.
+  const sessionId = context.asker?.kept?.sessionId;
+  const askerRunning = typeof sessionId === "string" && sessionId ? await hostSessionRunning(env, sessionId).catch(() => false) : false;
+  if (named === null) return { initiative: null, listed: false, superseded: false, shipped: null, launch: null, hosts, running: false, remote, askerRunning };
   const [{ entry }, shipped, running] = await Promise.all([
     roadmapEntry(projectRoot, named).catch(() => ({ entry: undefined })),
     context.kind === "gate" ? context.shipped : shippedDecision(projectRoot, named).catch(() => null),
@@ -757,7 +761,7 @@ async function continuationOf(projectRoot: string, context: any, env: NodeJS.Pro
     const target = initiative ? await readTarget(projectRoot, initiative, null, undefined, env, null, readOptions ?? runOptionsReader(projectRoot, env)).catch(() => null) : null;
     launch = target ? { context: target, reason: LAUNCH_RUN.unavailable(target) } : null;
   }
-  return { initiative: named, listed: Boolean(entry) && launch !== null, superseded, shipped, launch, hosts, running, remote };
+  return { initiative: named, listed: Boolean(entry) && launch !== null, superseded, shipped, launch, hosts, running, remote, askerRunning };
 }
 
 function newSessionReason(c: any) {
@@ -780,10 +784,11 @@ function resumeReason(context: any, c: any) {
   if (asker.state === "unknown") return `Prism cannot tell whether the session is open: ${asker.reason}`;
   if (asker.state === "waiting") return "A session waits on this question, so it reads your answer.";
   if (asker.state === "open") return "The session is open, so a resume would run beside it.";
+  if (c.askerRunning) return "The session is open, so a resume would run beside it.";
   if (c.running) return `A launched session of ${c.initiative} is running on this machine.`;
   const found = c.hosts.find((item: any) => item.host === host);
   if (!found?.available) return found?.reason ?? `${hostLabel(c, host)} was not found.`;
-  return RESUME_NOT_YET;
+  return null;
 }
 
 // A wake posts a pointer into the asking cloud session, which only a computer of the person's own can send.
@@ -835,6 +840,7 @@ const GATE_CONTINUE = {
   async launch({ projectRoot, context, env, values }: { projectRoot: string; context: any; env: NodeJS.ProcessEnv; values: any }) {
     const picked = continuationOptions(context).find((item: any) => item.value === values.continuation);
     if (!picked || picked.reason) throw fail("action_unavailable", picked?.reason ?? "No way to continue applies to this question.", { reason: picked?.reason ?? null });
+    if (picked.value === "resume") return resumeAsker({ projectRoot, context, env });
     // A new session is the initiative's launch, with its run configuration, confirmation, and one-session rule, whose start names the answered gate.
     const target = context.continuation.launch.context;
     const host = launchHostOf(target);
@@ -846,6 +852,22 @@ const GATE_CONTINUE = {
     return { launch, after: { continuation: "new-session", launch: launch.id, host, coordinator: { provider, model, effort } }, initiative: target.initiative, started: launch.id };
   }
 };
+
+// A resume continues the asker itself under its kept id in its kept checkout, as a launched session of this machine, once the person
+// confirmed it outside the page; the confirmation may take minutes, so every reason of the option is checked again after it.
+async function resumeAsker({ projectRoot, context, env }: { projectRoot: string; context: any; env: NodeJS.ProcessEnv }) {
+  const kept = context.asker.kept;
+  const initiative = context.continuation.initiative;
+  const resume = { gate: context.gate, initiative, artifact: initiative === null ? context.gateRecord.artifact?.path ?? null : null };
+  await confirmLaunch({ initiative, host: kept.host, checkout: kept.checkout, resume, env });
+  const again = await readTarget(projectRoot, parseTarget(context.reference), null, undefined, env);
+  const reason = continueUnavailable(again) ?? resumeReason(again, again.continuation);
+  if (reason) throw fail("action_unavailable", reason, { reason });
+  const current = again.asker.kept;
+  const { launch }: any = await startAskerResume({ checkout: current.checkout, host: current.host, hostSessionId: current.sessionId, resume, env });
+  // The history entry names the launch and its host, never the host session id; a gate that names no initiative has no history to record it in.
+  return { launch, after: { continuation: "resume", launch: launch.id, host: current.host }, initiative, started: launch.id, ...(initiative === null ? { record: false } : {}) };
+}
 
 const LAUNCH_STOP = {
   ...launchBase,
