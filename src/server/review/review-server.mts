@@ -21,7 +21,7 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, loadAttention, loadClaims, loadDeclaredView, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, loadAttention, loadClaims, loadDeclaredView, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { frozenTestFile, verificationLog } from "./verification-view.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
@@ -53,6 +53,8 @@ const TRUSTED_HOSTS = new Set(["127.0.0.1", "localhost"]);
 const VIEWER_OPEN_RETRY_MS = 10 * 1000;
 // The stale hint runs Git in the project, so its answer is reused for this long however often the page asks.
 const FRESHNESS_CHECK_MS = 30 * 1000;
+// How often the server checks, while a page is connected, whether the records its views read changed.
+const RECORDS_CHECK_MS = 1000;
 // The build code loads only when a page asks for the index state, so a review server starts without the native runtime's modules.
 const backgroundPreparation = () => import("../repository-intelligence/background-preparation.mjs");
 // An out-of-date index is rebuilt once the files stopped changing for this long, so a burst of edits causes one build, and at most once per gap.
@@ -1099,9 +1101,37 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     }
   }
 
+  // While a page is connected, the server checks every second whether the files its views read changed, and tells every page with a records event,
+  // so a page reads its index again when an agent or a sync changed the records instead of reading it on a short timer.
+  let recordsWatch: any = null;
+  let recordsVersion: number | null = null;
+  function watchRecords() {
+    if (recordsWatch) return;
+    let checking = false;
+    recordsWatch = setInterval(async () => {
+      if (viewers.size + hub.count(hubKey) === 0) {
+        clearInterval(recordsWatch);
+        recordsWatch = null;
+        recordsVersion = null;
+        return;
+      }
+      if (checking) return;
+      checking = true;
+      try {
+        const version = await viewVersion(projectRoot).catch(() => null);
+        if (version !== null && recordsVersion !== null && version !== recordsVersion) notify("records", {});
+        if (version !== null) recordsVersion = version;
+      } finally {
+        checking = false;
+      }
+    }, RECORDS_CHECK_MS);
+    recordsWatch.unref?.();
+  }
+
   function openViewerStream(response: any, writable: any) {
     const heartbeat = openEventStream(response, () => removeViewer(response));
     viewers.set(response, { heartbeat, writable });
+    watchRecords();
     reportViewers();
     if (writable) clearViewerOpenLease();
     writeEvent(response, "session", sessionSnapshot());
@@ -1112,6 +1142,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // It starts from the session snapshot and the pending notices, sent on the shared stream for this page only.
   function joinHub(stream: any, tab: any, writable: any) {
     if (!hub.join(stream, tab, hubKey, writable)) return false;
+    watchRecords();
     reportViewers();
     if (writable) clearViewerOpenLease();
     hub.send(stream, hubKey, "session", sessionSnapshot());
@@ -1548,6 +1579,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
 
   function closeViewerStreams() {
     clearViewerOpenLease();
+    if (recordsWatch) clearInterval(recordsWatch);
+    recordsWatch = null;
     // A shared hub serves other pages too, so only a hub of this page alone closes with its viewers.
     if (!sharedHub) hub.close();
     for (const response of viewers.keys()) {

@@ -24,6 +24,14 @@ The agent opens the internal browser on a review URL that carries no grant, so t
 Answer the agent in the conversation instead, or ask it to present the review, which opens the system browser, or run `prism review` in the project.
 When the selected browser is unavailable, Prism presents the URL and source artifacts.
 
+### How the page stays current
+
+The review app keeps each page it has built until a file that the page reads changes, so an open tab that nothing changes costs almost nothing.
+It watches the record store, the checkout's `.prism` folder, and the artifact paths in `.prism/workflow.md`, and a change that an agent, a store sync, or an edit by hand makes there shows in an open tab within about a second.
+On Windows, where a watched folder could not be deleted or renamed, and on a file system that reports no changes, such as a network drive or a Windows folder opened from WSL, the review app compares the folders' times at each read instead, so a file that is added, removed, or replaced shows at once, and an edit made in place shows within 5 seconds.
+Anywhere else it also checks every 30 seconds for a change that a watcher missed.
+A tab connected to the review app reads the checkout's other files and the store's sync status every 5 seconds, and every 1.5 seconds while its connection is down.
+
 ## Layout
 
 The browser follows the operating system's light or dark setting and changes with it while the page is open.
@@ -787,7 +795,7 @@ While the changes show, **Source lines** shows the lines that changed instead, w
 The changes stay shown, in the way you chose, while comments arrive and the file changes.
 It then lists the comments on the file, oldest first, each with its author's Git name, the host it came from, the line it names, and its time, and marks a comment made on an earlier version of the file.
 Comments that a record store sync brings from other machines appear the next time the page checks the file, and comments from this machine's tabs appear at once.
-The page checks again 1.5 seconds after its last check ended, never while one still runs, and the review app reads only the comment files that the page lists and those that changed since its last read, so a file with many comments keeps the page responsive.
+The page checks again when [the records change](#how-the-page-stays-current), and otherwise 5 seconds after its last check ended, never while one still runs, and the review app reads only the comment files that the page lists and those that changed since its last read, so a file with many comments keeps the page responsive.
 The heading counts every comment on the file, while the list shows the first 20; while more follow, select **More comments** under the list to show the next 20, until every comment shows.
 After **More comments** shows the next comments, keyboard focus moves to the **More comments** button that follows them, or to the first comment it added when none follows, also when the page redrew the list meanwhile.
 Agents read the comments in the same pages of at most 20, with the total and where the next page starts.
