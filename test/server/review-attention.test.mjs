@@ -33,3 +33,18 @@ test("an assistance gate answers done with an optional note", () => {
   assert.deepEqual(pick(answerState({ kind: "assistance" }, { choice: null, note: "" })), ["done", true, false, "Mark as done", ""]);
   assert.deepEqual(pick(answerState({ kind: "assistance" }, { choice: null, note: "Installed it." })), ["done", true, false, "Mark as done", ""]);
 });
+
+test("the shared renderer sends a gate's answer on the rules its listing gives, and a one-option answer such as Done needs no pick", async () => {
+  const { actionFormState } = await import("../../dist/server/review/public/views/actions.js");
+  const choice = (options, extra = {}) => ({ name: "choice", kind: "choice", label: "Answer", options: options.map((value) => ({ value, label: value, consequence: null })), required: false, requiredWhen: null, ...extra });
+  const note = (extra = {}) => ({ name: "note", kind: "text", label: "Note", maxLength: 4000, multiline: true, required: false, requiredWhen: null, ...extra });
+  const action = (fields) => ({ id: "gate.answer", available: true, value: null, fields });
+  const review = action([choice(["approve", "request-changes"], { required: true }), note({ requiredWhen: { field: "choice", values: ["request-changes"] } })]);
+  const ready = (subject, values) => actionFormState(subject, { values }).ready;
+  assert.deepEqual([ready(review, {}), ready(review, { note: "Looks right." }), ready(review, { choice: "approve" }), ready(review, { choice: "request-changes", note: "  " }), ready(review, { choice: "request-changes", note: "Split it." })], [false, false, true, false, true]);
+  const decision = action([choice(["keep", "drop"]), note({ requiredWhen: { field: "choice", values: [null] } })]);
+  assert.deepEqual([ready(decision, {}), ready(decision, { choice: "keep" }), ready(decision, { note: "Keep it a week." })], [false, true, true]);
+  const assistance = action([choice(["done"], { required: true }), note()]);
+  assert.equal(actionFormState(assistance, null).input.choice, "done");
+  assert.equal(ready(assistance, {}), true);
+});

@@ -40,9 +40,10 @@ test("§13 on this machine Attention lists the no-result gate with its launch, a
   assert.equal(item.type, "gate");
   assert.equal(item.kind, "assistance");
   assert.deepEqual(item.launch, { id: view.id, host: { id: "claude-code", label: "Claude Code" }, launchedAt: view.launchedAt, endedAt: view.endedAt, state: STATE });
-  const { gateDetail, answerState } = await import("../../dist/server/review/public/views/attention.js");
-  const html = gateDetail(item, ctx, {});
-  for (const text of ["Run ended without a result", "Last message", "done", "Claude Code", "Archive session", "Answer and resume"]) assert.ok(html.includes(text), `the card shows ${text}`);
+  const { gateDetail, answerState, answerFormOptions } = await import("../../dist/server/review/public/views/attention.js");
+  const html = gateDetail(item, ctx);
+  for (const text of ["Run ended without a result", "Last message", "done", "Claude Code"]) assert.ok(html.includes(text), `the card shows ${text}`);
+  assert.match(answerFormOptions(item).trailing(), /Archive session/, "Archive session follows the answer's submit button");
   assert.equal(html.includes("What happened"), false, "the last message replaces the context block");
   const form = answerState(item, { note: "" });
   assert.deepEqual([form.choice, form.ready, form.noteLabel, form.notePlaceholder, form.submitLabel], ["done", true, "Your answer", "Answer the run's question, or say what it should do next", "Answer and resume"]);
@@ -51,13 +52,15 @@ test("§13 on this machine Attention lists the no-result gate with its launch, a
 test("§13 a card of a run that left no message says so, and a gate without its launch reads as an ordinary assistance gate", async () => {
   const { gateDetail } = await import("../../dist/server/review/public/views/attention.js");
   const base = { type: "gate", id: "gate-0123456789ab", kind: "assistance", question: `The launched Codex run of ${INITIATIVE} ended without a result. What should it do next?`, context: "Prism launched this run headless, and it ended without a gate, a pause, or a ship, so nobody saw what it needs.\n\nThe run left no message.", askedAt: "2026-11-21T10:00:00Z", answer: null, initiative: { id: INITIATIVE, title: "Export reports" }, slice: null, phase: null, claim: null, artifacts: [], unavailable: null };
-  const local = gateDetail({ ...base, launch: { id: "launch-0123456789abcdef", host: { id: "codex", label: "Codex" }, launchedAt: "2026-11-21T09:00:00Z", endedAt: "2026-11-21T10:00:00Z", state: STATE } }, ctx, {});
+  const { answerState, answerFormOptions } = await import("../../dist/server/review/public/views/attention.js");
+  const launched = { ...base, launch: { id: "launch-0123456789abcdef", host: { id: "codex", label: "Codex" }, launchedAt: "2026-11-21T09:00:00Z", endedAt: "2026-11-21T10:00:00Z", state: STATE } };
+  const local = gateDetail(launched, ctx);
   assert.ok(local.includes("The run left no message."));
-  assert.ok(local.includes("Answer and resume"));
-  const elsewhere = gateDetail(base, ctx, {});
+  assert.equal(answerState(launched).submitLabel, "Answer and resume");
+  const elsewhere = gateDetail(base, ctx);
   assert.equal(elsewhere.includes("Run ended without a result"), false);
-  assert.equal(elsewhere.includes("Archive session"), false);
-  assert.ok(elsewhere.includes("Mark as done"));
+  assert.equal(answerFormOptions(base).trailing(), "", "only a launched run's card offers Archive session");
+  assert.equal(answerState(base).submitLabel, "Mark as done");
 });
 
 test("§14 the agents list puts a session that ended without a result in Needs you after failed ones, with Answer, and counts it apart", { skip: posixOnly }, async (t) => {

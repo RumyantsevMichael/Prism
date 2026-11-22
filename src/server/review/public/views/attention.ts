@@ -7,6 +7,7 @@ import { currentPhase } from "./slice.js";
 import { timeLeft } from "../kit/claim-time.js";
 import { findingsList, formatBadge } from "./format-marks.js";
 import { POINT_KINDS, rerunRun, scopeWords, whereChip } from "./format-migration.js";
+import { createActionList } from "./actions.js";
 
 const GATE_LABELS: Record<string, any> = {
   "visual-review": "Visual review",
@@ -43,12 +44,6 @@ function location(item: any, ctx: any) {
 
 const REVIEW_KINDS = new Set(["visual-review", "correctness", "approval"]);
 
-// What each answer of a review gate leads to, shown under the option as a decision's consequence is.
-const REVIEW_OUTCOMES = {
-  approve: "The agent goes on with the work as it stands.",
-  "request-changes": "The agent revises the work from your note before it goes on."
-};
-
 // An assistance gate has one answer, so its Send button gives it instead of a separate choice.
 function choices(item: any) {
   if (REVIEW_KINDS.has(item.kind)) return [["approve", "Approve"], ["request-changes", "Request changes"]];
@@ -63,7 +58,8 @@ function choiceLabel(item: any, choice: any) {
 
 const NO_RESULT_PLACEHOLDER = "Answer the run's question, or say what it should do next";
 
-// The form follows the server's answer rules, so Send is enabled only for an answer the server accepts, and the hint names what is missing.
+// The words of a gate's answer for the person's draft: the note's label and placeholder, the submit label, and what is missing.
+// Whether the answer can be sent comes from the gate.answer listing, which the shared action renderer applies; ready here says the same for the words.
 // Nothing is guessed from the note: a review gate needs an explicit choice, and the note is kept whatever the person picks.
 export function answerState(item: any, draft: any = {}) {
   const options = choices(item);
@@ -91,10 +87,9 @@ function noteLabel(state: any) {
   return `${label} · ${state.noteRequired ? "required" : "optional"}`;
 }
 
-// The line beside Send: what is missing, or, once the answer can go, who resumes with it.
-function readyText(item: any, state: any) {
-  if (state.hint) return state.hint;
-  if (!state.ready) return "";
+// The line beside Send: once the listing's rules let the answer go, who resumes with it, and otherwise what is missing.
+function readyText(item: any, words: any, ready: boolean, fallback: string) {
+  if (!ready) return words.hint || fallback;
   return liveHolder(item) ? `Ready to send. ${item.claim.label} resumes shortly after.` : "Ready to send.";
 }
 
@@ -216,25 +211,33 @@ function evidence(item: any) {
   return tiles.length ? `<div class="gate-evidence" role="list" aria-label="Evidence">${tiles.map((tile) => `<span role="listitem">${tile}</span>`).join("")}</div>` : "";
 }
 
-function answerForm(item: any, draft: any, extra = "") {
-  const options = choices(item);
-  const state = answerState(item, draft);
-  const key = escapeHtml(item.id);
-  const consequences = new Map((item.kind === "decision" ? item.options ?? [] : []).map((option: any) => [option.id, option.consequence]));
-  if (REVIEW_KINDS.has(item.kind)) for (const [id, text] of Object.entries<any>(REVIEW_OUTCOMES)) consequences.set(id, text);
-  const optional = !REVIEW_KINDS.has(item.kind) && options.length > 0;
-  const choice = options.length
-    ? `<div class="gate-choices"><div class="gate-choices-head"><p class="label-caps" aria-hidden="true">Your answer</p>${optional ? `<prism-button size="sm" variant="ghost" data-clear-choice tip="Unchoose the option to answer in your own words"${state.choice ? "" : " hidden"}><prism-icon name="close" size="xs"></prism-icon>Clear choice</prism-button>` : ""}</div><prism-choice aria-label="Your answer" data-choice${optional ? " clearable" : ""}${state.choice ? ` value="${escapeHtml(state.choice)}"` : ""}>${options.map(([id, label]: any) => `<prism-choice-option value="${escapeHtml(id)}"${id === "request-changes" ? ' tone="danger"' : ""}>${escapeHtml(label)}${id === item.recommended?.option ? ` ${badge("Recommended", "accent")}` : ""}${consequences.get(id) ? `<span slot="detail">${escapeHtml(consequences.get(id))}</span>` : ""}</prism-choice-option>`).join("")}</prism-choice></div>`
-    : '<p class="label-caps">Your answer</p>';
-  const ready = readyText(item, state);
-  // An approval gate is the target approval:<id> of the review app's actions, every other gate the target gate:<initiative>/<id>.
-  const target = item.kind === "approval" ? " data-approval" : ` data-initiative="${escapeHtml(item.initiative.id)}"`;
-  return `<div class="gate-answer" data-gate="${key}"${target}>
-    ${choice}
-    <prism-field class="gate-note" type="textarea" data-note label="${escapeHtml(noteLabel(state))}" placeholder="${escapeHtml(state.notePlaceholder)}"${state.noteRequired ? " required" : ""} value="${escapeHtml(draft.note ?? "")}"></prism-field>
-    <div class="gate-actions"><p class="gate-hint${state.ready && !state.hint ? " is-ready" : ""}" id="gate-hint-${key}" aria-live="polite"><prism-icon name="check-circle" size="sm"${state.ready && !state.hint ? "" : " hidden"}></prism-icon><span class="gate-hint-text">${escapeHtml(ready)}</span></p><prism-button variant="${state.choice === "request-changes" ? "danger" : "primary"}" data-submit${state.ready ? "" : " disabled"}>${escapeHtml(state.submitLabel)}</prism-button>${extra}</div>
-    <p class="gate-error" id="gate-error-${key}" role="alert"${draft.error ? "" : " hidden"}>${escapeHtml(draft.error ?? "")}</p>
-  </div>`;
+// An approval gate is the target approval:<id> of the review app's actions, every other gate the target gate:<initiative>/<id>.
+const answerTarget = (item: any) => item.kind === "approval" ? `approval:${item.id}` : `gate:${item.initiative.id}/${item.id}`;
+
+// The answer's place in the card: the shared action renderer draws the gate.answer listing of its target into it once the page is drawn.
+function answerSlot(item: any) {
+  const owner = item.kind === "approval" ? " data-approval" : ` data-initiative="${escapeHtml(item.initiative.id)}"`;
+  return `<div class="gate-answer" data-gate="${escapeHtml(item.id)}"${owner} data-answer-target="${escapeHtml(answerTarget(item))}"><p class="muted action-loading">Loading…</p></div>`;
+}
+
+const ARCHIVE_SESSION = (launch: any) => `<prism-button variant="ghost" data-archive-session data-launch="${escapeHtml(launch.id)}" text="Archive session"></prism-button>`;
+
+/** The form options of a gate's answer for the shared action renderer: its cards, its words, and Archive session after a no-result gate's submit. */
+export function answerFormOptions(item: any) {
+  return {
+    heading: "Your answer",
+    tone: (option: any) => option.value === "request-changes" ? "danger" : null,
+    trailing: () => item.launch ? ARCHIVE_SESSION(item.launch) : "",
+    wording: (_action: any, form: any) => {
+      const words = answerState(item, { choice: form.input.choice ?? null, note: form.input.note ?? "" });
+      return {
+        field: { note: { label: noteLabel(words), placeholder: words.notePlaceholder } },
+        submit: { label: words.submitLabel, variant: words.choice === "request-changes" ? "danger" : "primary" },
+        hint: readyText(item, words, form.ready, form.hint),
+        ready: form.ready
+      };
+    }
+  };
 }
 
 // An approval gate names the requirement or ADR in full, with its scope and the status an approval records, since the answer applies to exactly that file.
@@ -272,8 +275,8 @@ function unavailableAnswer(item: any) {
   return `<prism-banner class="gate-unavailable" tone="warning" heading="Cannot be answered"><p>${escapeHtml(item.unavailable)}</p></prism-banner>`;
 }
 
-export function gateDetail(item: any, ctx: any, draft: any) {
-  if (item.kind === "assistance" && item.launch) return noResultDetail(item, ctx, draft);
+export function gateDetail(item: any, ctx: any) {
+  if (item.kind === "assistance" && item.launch) return noResultDetail(item, ctx);
   if (item.kind === "approval") {
     return `<article class="gate attention-item gate-approval" aria-label="${escapeHtml(GATE_LABELS.approval)}">
     <header class="gate-head">
@@ -284,7 +287,7 @@ export function gateDetail(item: any, ctx: any, draft: any) {
         ${approvalSubject(item, ctx)}
         ${gateContext(item, ctx)}
       </div>
-      ${answerForm(item, draft)}
+      ${answerSlot(item)}
     </div>
   </article>`;
   }
@@ -302,7 +305,7 @@ export function gateDetail(item: any, ctx: any, draft: any) {
         ${inspectList(item, ctx)}
         ${item.stale ? `<p class="notice">Every file this question refers to is gone, so it may no longer apply. The agent that asked it withdraws it when it does not.</p>` : ""}
       </div>
-      ${item.unavailable ? unavailableAnswer(item) : answerForm(item, draft)}
+      ${item.unavailable ? unavailableAnswer(item) : answerSlot(item)}
     </div>
   </article>`;
 }
@@ -329,12 +332,11 @@ function dayTime(at: any) {
 }
 
 // A launched run that ended without a result: one card with its session, its last message, one answer that resumes it, and Archive session.
-function noResultDetail(item: any, ctx: any, draft: any) {
+function noResultDetail(item: any, ctx: any) {
   const launch = item.launch;
   const host = launch.host?.label ?? launch.host?.id ?? "";
   const message = lastMessage(item.context);
   const body = message === null ? `<p class="gate-last-message-none muted">${NO_MESSAGE}</p>` : `<div class="gate-last-message gate-context">${ctx.renderMarkdown ? ctx.renderMarkdown(message) : `<p class="gate-context-plain">${escapeHtml(message)}</p>`}</div>`;
-  const archive = `<prism-button variant="ghost" data-archive-session data-launch="${escapeHtml(launch.id)}" text="Archive session"></prism-button>`;
   return `<article class="gate attention-item gate-assistance gate-no-result" aria-label="${NO_RESULT_CHIP}">
     <header class="gate-head">
       <div class="gate-chips">${badge(NO_RESULT_CHIP, "info")}<span class="attention-where">${escapeHtml(sessionPlace(item.initiative, launch.host))}</span>${when(item.askedAt, "attention-time gate-time")}</div>
@@ -350,7 +352,7 @@ function noResultDetail(item: any, ctx: any, draft: any) {
         ])}
         <div class="gate-block"><p class="label-caps">Last message</p>${body}</div>
       </div>
-      ${item.unavailable ? unavailableAnswer(item) : answerForm(item, draft, archive)}
+      ${item.unavailable ? unavailableAnswer(item) : answerSlot(item)}
     </div>
   </article>`;
 }
@@ -398,97 +400,35 @@ export function answerError(error: any) {
   return { message: error.message, rerender: false };
 }
 
-function bindAnswers(container: any, ctx: any, gates: any) {
-  const drafts = (ctx.state.drafts ??= {});
-  for (const form of container.querySelectorAll(".gate-answer")) {
-    const id = form.dataset.gate;
-    const item = gates.find((gate: any) => gate.id === id);
-    const draft = (drafts[id] ??= { choice: null, note: "" });
-    const field = form.querySelector("[data-note]");
-    const note = field.control ?? field.querySelector("textarea");
-    const failure = form.querySelector(".gate-error");
-    const submit = form.querySelector("[data-submit]");
-    const hint = form.querySelector(".gate-hint");
-    const hintText = hint.querySelector(".gate-hint-text");
-    const hintIcon = hint.querySelector("prism-icon");
-    const choice = form.querySelector("prism-choice[data-choice]");
-    const clear = form.querySelector("[data-clear-choice]");
-    note.rows = 3;
-    note.maxLength = 4000;
-    note.setAttribute("aria-describedby", [note.getAttribute("aria-describedby"), hint.id, failure.id].filter(Boolean).join(" "));
-    let sending = false;
-    // A change updates the form in place, so focus and the typed note stay where they are.
-    const refresh = () => {
-      const state = answerState(item, draft);
-      const ready = !sending && state.ready && !state.hint;
-      field.setAttribute("label", noteLabel(state));
-      field.setAttribute("placeholder", state.notePlaceholder);
-      field.toggleAttribute("required", state.noteRequired);
-      submit.textContent = state.submitLabel;
-      submit.setAttribute("variant", state.choice === "request-changes" ? "danger" : "primary");
-      submit.toggleAttribute("disabled", sending || !state.ready);
-      if (clear) clear.hidden = !draft.choice;
-      const text = readyText(item, state);
-      if (hintText.textContent !== text) hintText.textContent = text;
-      hint.classList.toggle("is-ready", ready);
-      hintIcon.hidden = !ready;
-    };
-    const clearFailure = () => {
-      draft.error = null;
-      failure.hidden = true;
-    };
-    choice?.addEventListener("change", () => {
-      draft.choice = choice.value || null;
-      clearFailure();
-      refresh();
-    });
-    // Clear choice, or choosing the chosen option again, leaves the answer to the note.
-    clear?.addEventListener("click", () => {
-      choice.clear();
-      note.focus();
-    });
-    note.addEventListener("input", () => {
-      draft.note = note.value;
-      draft.selection = [note.selectionStart, note.selectionEnd];
-      clearFailure();
-      refresh();
-    });
-    note.addEventListener("focus", () => {
-      ctx.state.focus = id;
-    });
-    note.addEventListener("blur", () => {
-      if (ctx.state.focus === id) ctx.state.focus = null;
-    });
-    submit.addEventListener("click", async () => {
-      const state = answerState(item, draft);
-      if (!state.ready || sending) return;
-      sending = true;
-      clearFailure();
-      refresh();
-      try {
-        const target = form.hasAttribute("data-approval") ? { approval: true } : { initiative: form.dataset.initiative };
-        await ctx.answerGate({ ...target, id, choice: state.choice, note: draft.note });
-        delete drafts[id];
-        ctx.state.focus = null;
+// Each open gate's answer is the shared action renderer's form of its gate.answer listing; the person's unsent answer survives the page
+// drawing Attention again when live data changes, and the page gives focus back to the control that had it by its focus key.
+function mountAnswers(container: any, ctx: any, gates: any) {
+  if (!ctx.actionApi) return;
+  const drafts = (ctx.state.answerDrafts ??= {});
+  for (const slot of container.querySelectorAll(".gate-answer[data-answer-target]")) {
+    const item = gates.find((gate: any) => gate.id === slot.dataset.gate && answerTarget(gate) === slot.dataset.answerTarget);
+    if (!item) continue;
+    const target = slot.dataset.answerTarget;
+    createActionList({
+      root: slot,
+      targets: [target],
+      api: ctx.actionApi,
+      drafts,
+      renderMarkdown: ctx.renderMarkdown ?? null,
+      groups: ["Question"],
+      emptyText: "This question takes no answer here.",
+      form: answerFormOptions(item),
+      onApplied: () => {
         ctx.showToast(item.launch ? "Answer recorded. The launched session resumes with it." : "Answer recorded. An agent that is waiting resumes on its own; any other agent sees it with your next message.");
         ctx.rerender();
-      } catch (error) {
-        // The server stays the backstop: its refusal shows beside the form, and the draft keeps the note through a re-render.
-        const refusal = answerError(error);
-        draft.error = refusal.message;
-        failure.textContent = draft.error;
-        failure.hidden = false;
-        sending = false;
-        refresh();
-        if (refusal.rerender) ctx.rerender();
+      },
+      // The server stays the backstop: its refusal shows beside the form in words, and a question that changed under the page is read again.
+      onRefused: (_action: any, result: any) => {
+        const refusal = answerError({ code: result.code === "unknown_target" ? "unknown_gate" : result.code, message: result.reason ?? result.message ?? "The answer was not recorded." });
+        if (refusal.rerender) queueMicrotask(() => ctx.rerender());
+        return refusal.message;
       }
     });
-    // The page re-renders when live data changes, so an unsent note and its cursor are restored.
-    if (ctx.state.focus === id) {
-      note.focus();
-      const [start, end] = draft.selection ?? [note.value.length, note.value.length];
-      note.setSelectionRange(start, end);
-    }
   }
 }
 
@@ -542,23 +482,23 @@ export function permissionError(code: any, message: any) {
 }
 
 // Archive session archives the launched session, which closes its no-result gate and starts no run.
+// The button follows the answer's submit button, which the shared renderer draws after the page, so the detail listens for it.
 function bindArchiveSession(container: any, ctx: any) {
-  for (const button of container.querySelectorAll("[data-archive-session]")) {
-    button.addEventListener("click", async () => {
-      if (button.hasAttribute("disabled")) return;
-      button.setAttribute("disabled", "");
-      const headers = { "Content-Type": "application/json", ...(typeof ctx.writeHeaders === "function" ? ctx.writeHeaders() : {}) };
-      const response = await fetch("./api/agents/archive", { method: "POST", headers, body: JSON.stringify({ launch: button.dataset.launch }) }).catch(() => null);
-      const json = response ? await response.json().catch(() => ({})) : { message: "The review app did not answer, so nothing changed. Try again in a moment." };
-      if (response?.status === 200) {
-        ctx.showToast("Archived. The Agents page keeps it under Archived.");
-        ctx.rerender();
-        return;
-      }
-      button.removeAttribute("disabled");
-      ctx.showToast(json?.message ?? "The session could not be archived.");
-    });
-  }
+  container.querySelector(".attention-detail")?.addEventListener("click", async (event: any) => {
+    const button = event.target.closest?.("[data-archive-session]");
+    if (!button || button.hasAttribute("disabled")) return;
+    button.setAttribute("disabled", "");
+    const headers = { "Content-Type": "application/json", ...(typeof ctx.writeHeaders === "function" ? ctx.writeHeaders() : {}) };
+    const response = await fetch("./api/agents/archive", { method: "POST", headers, body: JSON.stringify({ launch: button.dataset.launch }) }).catch(() => null);
+    const json = response ? await response.json().catch(() => ({})) : { message: "The review app did not answer, so nothing changed. Try again in a moment." };
+    if (response?.status === 200) {
+      ctx.showToast("Archived. The Agents page keeps it under Archived.");
+      ctx.rerender();
+      return;
+    }
+    button.removeAttribute("disabled");
+    ctx.showToast(json?.message ?? "The session could not be archived.");
+  });
 }
 
 function bindPermissions(container: any, ctx: any) {
@@ -945,7 +885,6 @@ export function render(container: any, entity: any, ctx: any) {
     ctx.state.pane = "detail";
     pendingSelection = null;
   }
-  const drafts = (ctx.state.drafts ??= {});
   const answered = data.answered ?? [];
   const earlier = data.earlier ?? [];
   const recent = data.recentChanges ?? [];
@@ -965,7 +904,7 @@ export function render(container: any, entity: any, ctx: any) {
     ...gates.map((item: any) => ({
       key: `gate:${item.id}`,
       row: item.launch && item.kind === "assistance" ? { icon: "question", tone: "info", unread: true, title: escapeHtml(item.question), meta: escapeHtml([NO_RESULT_CHIP, sessionPlace(item.initiative, item.launch.host)].join(" · ")), end: shortTime(item.askedAt) } : { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
-      detail: gateDetail(item, ctx, drafts[item.id] ?? { choice: null, note: "" })
+      detail: gateDetail(item, ctx)
     })),
     ...notes.map((item: any, index: number) => ({ key: `note:${index}`, ...noteEntry(item, ctx) }))
   ];
@@ -973,7 +912,7 @@ export function render(container: any, entity: any, ctx: any) {
   const shippedRows = (data.shippedGates ?? []).map((item: any) => ({
     key: `shipped:${item.id}`,
     row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: "neutral", title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, "Cannot be answered", item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
-    detail: gateDetail(item, ctx, {})
+    detail: gateDetail(item, ctx)
   }));
   const waiting = answered.map((item: any) => ({
     key: `answered:${item.id}`,
@@ -1057,7 +996,7 @@ export function render(container: any, entity: any, ctx: any) {
     lists.find((list) => list.value)?.focus();
   });
   bindLinks(container, ctx);
-  bindAnswers(container, ctx, gates);
+  mountAnswers(container, ctx, gates);
   // A failed format migration run runs again from its sheet, after the person confirms it.
   for (const button of container.querySelectorAll("[data-migration-rerun]")) {
     button.addEventListener("click", async () => {
