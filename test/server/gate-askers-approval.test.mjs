@@ -20,6 +20,10 @@ test("clauses 1, 2, 3, 6: an approval gate names its asker on its card, and the 
   await writeArtifact(prism, FILE, requirementFile("Billing"));
   const asked = ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: FILE, question: "Approve billing?", context: "Billing." }] }));
   const gate = asked.artifacts[0].gate;
+  // The review page reads this machine's private asker file from the same review app folder as the server, as clause 6 has it.
+  const saved = process.env.PRISM_REVIEW_APP_DIR;
+  process.env.PRISM_REVIEW_APP_DIR = place.app;
+  t.after(() => { if (saved === undefined) delete process.env.PRISM_REVIEW_APP_DIR; else process.env.PRISM_REVIEW_APP_DIR = saved; });
   const review = await reviewBrowser(t, api);
   let item;
   await eventually(async () => (item = (await browserRequest(review, "/api/entity?ref=attention")).body.data.needsYou.find((entry) => entry.id === gate))?.asker !== undefined, 30000, "the approval card names its asker");

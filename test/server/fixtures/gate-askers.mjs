@@ -124,7 +124,8 @@ export async function askerServer(context, fixture, { client = CLAUDE_CLIENT, en
     for (const listener of listeners) listener();
   });
   defer(context, async () => {
-    if (child.exitCode === null) {
+    // A child that a signal ended, such as kill's SIGKILL, has a null exitCode but a signalCode, and emits no further exit.
+    if (child.exitCode === null && child.signalCode === null) {
       child.stdin.end();
       const timer = setTimeout(() => child.kill("SIGKILL"), 10000);
       await new Promise((resolve) => child.once("exit", resolve));
