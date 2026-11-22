@@ -7,8 +7,8 @@ import path from "node:path";
 // The folders inside a watched tree that hold no file a view reads: Git's own data, which every git command can touch, and the store's sync state.
 const SKIPPED = new Set([".git", ".prism-sync"]);
 // A file watcher misses changes on some file systems, such as a network drive or a Windows folder seen from WSL, and can drop events under load,
-// so every version is also checked against a listing of its files while a page reads it: at most every VERIFY_MS while any target has no working watcher,
-// and at most every WATCHED_VERIFY_MS while every target has one, which bounds how long a dropped event can go unnoticed.
+// so every version is also checked against a listing of its files while a page reads it: the targets without a working watcher at most every VERIFY_MS,
+// and every target at most every WATCHED_VERIFY_MS, which bounds how long a dropped event can go unnoticed.
 export const VERIFY_MS = 5000;
 export const WATCHED_VERIFY_MS = 30000;
 // Linux file systems whose changes made elsewhere, as by Windows under WSL or by another machine, reach no watcher here.
@@ -100,13 +100,28 @@ export type Targets = { folders: string[]; files: string[]; gitRoots: string[] }
 
 /**
  * A version per project root that changes whenever a file its views read may have changed, so a view computed once can be reused until then.
- * A recursive file watcher on each target changes the version at once; a listing of the targets, taken while versions are read at most every verifyMs
- * while a target has no working watcher and every watchedVerifyMs otherwise, changes it for anything a watcher missed. targetsOf(root) names what to watch, and is asked again at each check, since a configuration change can move the store.
+ * A file watcher on each target changes the version at once; a target that does not exist yet is watched through its nearest existing folder, so its creation shows at once too.
+ * Only the targets without a working watcher are listed while versions are read: their folders at every read, and their whole trees at most every verifyMs.
+ * Every target is listed at most every watchedVerifyMs, for an event a watcher dropped and for the checkouts' commits.
+ * targetsOf(root) names what to watch, and is asked again at each full listing, since a configuration change can move the store.
  * Watchers never keep the process alive.
  */
 // On Windows a watcher holds its folder open, so neither this process nor another, such as the review app replacing a store's clone or removing a workspace,
 // could delete or rename the folder while it is watched; there the listings alone notice changes: its folders at every read, and every file at the short interval.
 const defaultWatch: typeof watch = process.platform === "win32" ? (() => { throw new Error("Folders are not watched on Windows."); }) as any : watch;
+
+// The nearest folder above a missing target that exists, and the name in it that leads to the target, or null when none can be found.
+async function nearestExisting(target: string) {
+  let child = target;
+  for (let parent = path.dirname(target); parent !== child; child = parent, parent = path.dirname(parent)) {
+    const info = await lstat(parent).catch(() => null);
+    if (info?.isDirectory()) return { folder: parent, name: path.basename(child) };
+    if (info) return null;
+  }
+  return null;
+}
+
+const none = (): Targets => ({ folders: [], files: [], gitRoots: [] });
 
 export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVerifyMs = WATCHED_VERIFY_MS, now = () => Date.now(), watchTree = defaultWatch, isEventless = eventless }: { targetsOf: (root: string) => Promise<Targets>; verifyMs?: number; watchedVerifyMs?: number; now?: () => number; watchTree?: typeof watch; isEventless?: (target: string) => Promise<boolean> }) {
   const roots = new Map<string, any>();
@@ -118,29 +133,49 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
     state.watchers = [];
   }
 
+  // The targets that no working watcher covers, which the listings between full ones read.
+  const unwatchedOf = (state: any): Targets => ({ folders: state.targets.folders.filter((folder: string) => !state.watched.has(folder)), files: state.targets.files.filter((file: string) => !state.watched.has(file)), gitRoots: [] });
+  const anyUnwatched = (state: any) => state.targets && (unwatchedOf(state).folders.length > 0 || unwatchedOf(state).files.length > 0);
+
   async function startWatchers(state: any, targets: Targets) {
     stopWatchers(state);
-    state.unwatched = false;
-    // A watched change makes the next listing the new baseline, so the change is counted once.
-    const changed = () => { state.version += 1; state.signature = null; };
+    state.watched = new Set<string>();
+    // A watched change makes the next listings the new baseline, so the change is counted once.
+    const changed = () => { state.version += 1; state.signature = null; state.partialSignature = null; state.quickSignature = null; };
+    const open = (target: string, watchedPath: string, recursive: boolean, relevant: (name: string) => boolean, onEvent = changed) => {
+      const watcher = watchTree(watchedPath, { recursive, persistent: false }, (_event, name) => {
+        if (name === null || name === undefined || relevant(String(name))) onEvent();
+      });
+      // A watcher that fails, as one on a folder that was removed does, leaves the listing checks to notice changes.
+      watcher.on("error", () => {
+        try { watcher.close(); } catch {}
+        state.watchers = state.watchers.filter((item: any) => item !== watcher);
+        state.watched.delete(target);
+        changed();
+      });
+      watcher.unref?.();
+      state.watchers.push(watcher);
+    };
     const add = async (target: string, recursive: boolean, relevant: (name: string) => boolean) => {
-      if (await isEventless(target).catch(() => true)) state.unwatched = true;
+      // A target on a file system that delivers no events for changes made elsewhere keeps a watcher for this computer's own changes, but counts as unwatched.
+      if (await isEventless(target).catch(() => true)) {
+        try { open(target, target, recursive, relevant); } catch {}
+        return;
+      }
       try {
-        const watcher = watchTree(target, { recursive, persistent: false }, (_event, name) => {
-          if (name === null || name === undefined || relevant(String(name))) changed();
-        });
-        // A watcher that fails, as one on a folder that was removed does, leaves the listing check to notice changes.
-        watcher.on("error", () => {
-          try { watcher.close(); } catch {}
-          state.watchers = state.watchers.filter((item: any) => item !== watcher);
-          state.unwatched = true;
-          changed();
-        });
-        watcher.unref?.();
-        state.watchers.push(watcher);
+        open(target, target, recursive, relevant);
+        state.watched.add(target);
+        return;
+      } catch {}
+      // A target that does not exist yet is watched through the nearest folder that does; its creation restarts the watchers at the next read, so the new target gets its own.
+      if (await lstat(target).then(() => true, () => false)) return;
+      const above = await nearestExisting(target);
+      if (!above) return;
+      try {
+        open(target, above.folder, false, (name) => name === above.name, () => { changed(); state.targetsKey = null; state.checkedAt = -Infinity; });
+        state.watched.add(target);
       } catch {
-        // A target that cannot be watched, or does not exist yet, is covered by the listing check alone.
-        state.unwatched = true;
+        // A target that cannot be watched is covered by the listing checks alone.
       }
     };
     for (const folder of targets.folders) await add(folder, true, (name) => !skipped(name));
@@ -165,36 +200,48 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
       state.targetsKey = key;
       await startWatchers(state, targets);
       state.version += 1;
+      state.signature = null;
     }
     const signature = await signatureOf(targets);
     if (state.signature !== null && signature !== state.signature) state.version += 1;
     state.signature = signature;
     state.targets = targets;
-    state.quickSignature = state.unwatched ? await quickSignatureOf(targets) : null;
+    const unwatched = anyUnwatched(state) ? unwatchedOf(state) : none();
+    state.partialSignature = await signatureOf(unwatched);
+    state.quickSignature = await quickSignatureOf(unwatched);
     state.checkedAt = now();
+    state.partialAt = state.checkedAt;
   }
 
-  // Between full listings, a root without a working watcher compares its folders at every read, which costs one look per folder rather than one per file.
-  async function quickCheck(state: any) {
-    const signature = await quickSignatureOf(state.targets);
-    if (signature !== state.quickSignature) {
-      state.quickSignature = signature;
-      state.version += 1;
+  // Between full listings, the targets without a working watcher are listed in full at most every verifyMs, and their folders at every other read,
+  // which costs one look per folder rather than one per file.
+  async function partialCheck(state: any) {
+    const unwatched = unwatchedOf(state);
+    if (now() - state.partialAt >= verifyMs) {
+      const signature = await signatureOf(unwatched);
+      if (state.partialSignature !== null && signature !== state.partialSignature) state.version += 1;
+      state.partialSignature = signature;
+      state.quickSignature = await quickSignatureOf(unwatched);
+      state.partialAt = now();
+      return;
     }
+    const signature = await quickSignatureOf(unwatched);
+    if (state.quickSignature !== null && signature !== state.quickSignature) state.version += 1;
+    state.quickSignature = signature;
   }
 
-  /** The current version of a root's views, checked against a listing of its targets when the last check is older than verifyMs. */
+  /** The current version of a root's views, checked against listings of its targets as described above. */
   async function current(root: string) {
     let state = roots.get(root);
     if (!state) {
-      state = { version: 0, watchers: [], unwatched: true, targetsKey: null, targets: null, signature: null, quickSignature: null, checkedAt: -Infinity, checking: null, targetsOf: () => targetsOf(root) };
+      state = { version: 0, watchers: [], watched: new Set(), targetsKey: null, targets: null, signature: null, partialSignature: null, quickSignature: null, checkedAt: -Infinity, partialAt: -Infinity, checking: null, targetsOf: () => targetsOf(root) };
       roots.set(root, state);
     }
-    if (now() - state.checkedAt >= (state.unwatched ? verifyMs : watchedVerifyMs)) {
+    if (now() - state.checkedAt >= watchedVerifyMs || !state.targets) {
       state.checking ??= check(state).finally(() => { state.checking = null; });
       await state.checking;
-    } else if (state.unwatched && state.targets) {
-      state.checking ??= quickCheck(state).finally(() => { state.checking = null; });
+    } else if (anyUnwatched(state)) {
+      state.checking ??= partialCheck(state).finally(() => { state.checking = null; });
       await state.checking;
     }
     return state.version;
