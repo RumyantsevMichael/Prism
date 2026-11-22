@@ -1130,6 +1130,12 @@ export async function updateCoordinationState({ projectRoot, initiative, expecte
     return applyStateChange(resolved, expectedRevision, changes, standing);
   }, error, { renew: Boolean(changes.activeOperations?.length) }));
   await markLaunchedGates(projectRoot, initiative, result.openedGates);
+  // Each gate opened records its asker beside the gate, never as a field of it, since earlier releases refuse a gate field they do not know.
+  const opened = (Array.isArray(result.openedGates) ? result.openedGates : []).map((gate: any) => gate?.id).filter((id: any) => typeof id === "string");
+  if (opened.length) {
+    const { recordGateAskers } = await import("./gate-askers.mjs");
+    await recordGateAskers(projectRoot, opened.map((gate: string) => ({ initiative, gate })));
+  }
   return result;
 }
 

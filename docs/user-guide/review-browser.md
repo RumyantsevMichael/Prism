@@ -179,6 +179,24 @@ Elsewhere, or after the 55 minutes, the agent receives the answer with your next
 An answer to a question that an agent asked reaches only the session whose agent or sub-agents asked it, so another session working in the same project, on the same initiative or another, never receives it.
 An answer to the approval of a requirement or ADR reaches, once and in the same ways, only an agent working in the checkout that asked for the approval, however long you take to answer.
 Agents in other checkouts or on other machines are not told, but any agent that reads that file also reads your latest answer and its note, so requested changes are not lost when nothing waits.
+
+### Who asked a question
+
+Under its question each card names the session that asked it, as `Asked by <harness> on <machine> · <repository>/<branch>`, such as `Asked by Claude Code on studio · shop/main`, with ` · cloud session` added for a Claude Code on the web session.
+A question asked before Prism recorded who asks, or whose record is missing or damaged, reads `Asked by an unknown session`.
+Beside that line a chip names the state of the asking session, and its description says why when Prism cannot tell:
+
+| Chip | Meaning |
+|---|---|
+| Waits for your answer | A wait of an agent, on any machine that shares the records, holds the question, so your answer reaches it on its own. |
+| Open, not waiting | The session is open on this computer but no wait holds the question. |
+| Not running | The session is not open on this computer. |
+| Prism cannot tell | The session is a cloud session, ran on another machine, ran in a harness that Prism cannot ask, or its harness did not answer. |
+
+Prism tells whether a Claude Code session is open from `claude agents --json`, run in the checkout that asked, a Codex session from its thread lock under `CODEX_HOME`, or `~/.codex` without it, and a session that Prism launched from its launch.
+Only the machine that asked can tell, because the session's id stays in that machine's review app folder and never reaches the shared records.
+A wait holds its questions for 15 minutes and renews the hold every 5 minutes, so a wait that stopped without ending, such as one whose computer crashed, stops counting as waiting within 15 minutes.
+For a session that is open but not waiting, the card says `Prism cannot reach this session, because no wait holds the question. Send any message in that <harness> session, and it reads the answer.`
 Attention also lists blocked slices, open findings, failed verifications, and active work.
 In a window as narrow as a phone, Attention opens on its list, and picking an item shows its card in place of the list, with **All items** to go back.
 A slice that is not done is a failed verification while its latest verification run failed, with the reason in words, such as `The tests failed, 2 tests failed`, until a later run passes or the slice is done.

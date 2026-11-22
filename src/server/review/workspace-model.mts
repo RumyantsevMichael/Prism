@@ -845,7 +845,32 @@ function gateOrder(left: any, right: any) {
  */
 export async function loadAttention(projectRoot: string) {
   const [attention, permissions] = await Promise.all([remember(`attention:${projectRoot}`, () => computeAttention(projectRoot)), launchPermissions(projectRoot)]);
-  return { ...attention, permissions, gateCount: attention.gateCount + permissions.length };
+  // Who asked each gate, and in what state that session is, is read again at each request, since a hold lapses and a session opens or ends at any time.
+  const [needsYou, answered] = await Promise.all([withAskers(projectRoot, attention.needsYou), withAskers(projectRoot, attention.answered)]);
+  return { ...attention, needsYou, answered, permissions, gateCount: attention.gateCount + permissions.length };
+}
+
+/**
+ * Each gate item with its asker: { known, harness, machine, checkout, cloud, launched, thisMachine, state, reason, reach, wake },
+ * read from the gate's shared asker record and, for a session of this machine, from its kept session; no field names a session id.
+ */
+async function withAskers(projectRoot: string, items: any[]) {
+  if (!items.some((item) => item?.type === "gate")) return items;
+  const { readGateAsker } = await import("../workflow/gate-askers.mjs");
+  const { askerReach, askerState, readAskerSessions } = await import("../session/asker-sessions.mjs");
+  const kept = await readAskerSessions().catch(() => ({} as Record<string, any>));
+  return Promise.all(items.map(async (item) => {
+    if (item?.type !== "gate") return item;
+    const key = item.kind === "approval" ? { gate: item.id } : typeof item.initiative?.id === "string" ? { initiative: item.initiative.id, gate: item.id } : null;
+    if (!key) return item;
+    const target = key.initiative === undefined ? `approval:${key.gate}` : `gate:${key.initiative}/${key.gate}`;
+    const read = await readGateAsker(projectRoot, key as any);
+    const own = Object.hasOwn(kept, target) ? kept[target] : null;
+    const thisMachine = read.known && own !== null;
+    const { state, reason } = await askerState(read, thisMachine ? own : null).catch(() => ({ state: "unknown", reason: "Prism cannot tell whether this session is open." }));
+    const asker = { known: read.known, harness: read.harness, machine: read.machine, checkout: read.checkout, cloud: read.cloud, launched: read.launched, thisMachine, state, reason, reach: askerReach(state, read), wake: null };
+    return { ...item, asker };
+  }));
 }
 
 // Each waiting permission request with its initiative's title, oldest first; none when the launches cannot be read.

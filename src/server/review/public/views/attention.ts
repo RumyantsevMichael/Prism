@@ -123,7 +123,29 @@ function gateHead(item: any, ctx: any, time: any) {
   const where = location(item, ctx);
   return `<div class="gate-chips">${tag}${kindChip(item)}${when(time, "attention-time gate-time")}</div>
     <h3 class="gate-question">${escapeHtml(item.question)}</h3>
+    ${gateAsker(item)}
     ${where ? `<p class="attention-where gate-where">${where}</p>` : ""}`;
+}
+
+// The state of the session that asked, as the state chip names it and the tone it takes.
+const ASKER_STATES: Record<string, { label: string; tone: string }> = {
+  waiting: { label: "Waits for your answer", tone: "success" },
+  open: { label: "Open, not waiting", tone: "info" },
+  "not-running": { label: "Not running", tone: "neutral" },
+  unknown: { label: "Prism cannot tell", tone: "warning" }
+};
+
+// Who asked the question, where, and whether that session waits, is open, is not running, or is in a state Prism cannot tell, with how to reach an open one.
+function gateAsker(item: any) {
+  const asker = item.asker;
+  if (!asker) return "";
+  const who = asker.known
+    ? `Asked by ${asker.harness ?? "an unnamed harness"} on ${asker.machine ?? "an unnamed machine"} · ${asker.checkout ?? "an unnamed checkout"}${asker.cloud ? " · cloud session" : ""}`
+    : "Asked by an unknown session";
+  const look = ASKER_STATES[asker.state] ?? ASKER_STATES.unknown;
+  const state = chip(escapeHtml(look.label), { tone: look.tone, tip: asker.reason ?? "" });
+  const wake = asker.wake ? `<p class="gate-asker-note muted">${escapeHtml(asker.wake.delivered ? `Wake sent ${asker.wake.at}` : `Wake not delivered: ${asker.wake.reason ?? ""}`)}</p>` : "";
+  return `<div class="gate-asker"><p class="gate-asker-line"><span>${escapeHtml(who)}</span>${state}</p>${asker.reach ? `<p class="gate-asker-note">${escapeHtml(asker.reach)}</p>` : ""}${wake}</div>`;
 }
 
 // Whose work resumes once the gate is answered: the agent whose live claim holds the slice, for what, and how long the claim has left.
@@ -319,7 +341,7 @@ function answeredDetail(item: any, ctx: any) {
     className: `is-answered gate-${escapeHtml(item.kind)}`,
     head: `${kindChip(item)}<span class="attention-where">${location(item, ctx)}</span>${when(item.answer.answeredAt, "attention-time gate-time")}`,
     title: escapeHtml(item.question),
-    body: `<p class="gate-given">${given(item)}</p><p class="attention-footnote muted">An agent that is waiting for these answers resumes on its own shortly after your last answer. Any other agent receives them with your next message in its conversation, even a short one such as “go”.</p>`
+    body: `${gateAsker(item)}<p class="gate-given">${given(item)}</p><p class="attention-footnote muted">An agent that is waiting for these answers resumes on its own shortly after your last answer. Any other agent receives them with your next message in its conversation, even a short one such as “go”.</p>`
   });
 }
 

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { forgetAskedGates } from "./approval-deliveries.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { endGateWait, gateWaitStep, personChangesText } from "./change-notices.mjs";
+import { holdGates } from "./gate-askers.mjs";
 
 export const DEFAULT_WAIT_MINUTES = 720;
 export const MAX_WAIT_MINUTES = 1440;
@@ -100,7 +101,7 @@ export async function waitForUserGates(input: any) {
   return result;
 }
 
-async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries, notices = null, watchChanges = false, leaseMs = Math.max(HOLD_LEASE_MS, 10 * pollMs) }: { projectRoot: string; initiative: string; artifact: any; scope: any; gateIds: any; maxWaitMinutes?: any; signal: any; onProgress: any; heartbeatMs?: number; pollMs?: number; settleMs?: number; knownEntries: any; notices?: any; watchChanges?: boolean; leaseMs?: any }) {
+async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries, notices = null, watchChanges = false, leaseMs = Math.max(HOLD_LEASE_MS, 10 * pollMs), holdAskers = true }: { projectRoot: string; initiative: string; artifact: any; scope: any; gateIds: any; maxWaitMinutes?: any; signal: any; onProgress: any; heartbeatMs?: number; pollMs?: number; settleMs?: number; knownEntries: any; notices?: any; watchChanges?: boolean; leaseMs?: any; holdAskers?: boolean }) {
   if (!Array.isArray(gateIds) || !gateIds.length || gateIds.length > MAX_WAIT_GATES || gateIds.some((id) => typeof id !== "string" || !id)) {
     throw new Error(`Pass one to ${MAX_WAIT_GATES} gate ids.`);
   }
@@ -144,6 +145,8 @@ async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, 
       return decide(state, history, new Set(history.map((entry: any) => entry.id))).result;
     };
   let value;
+  // Once the first read finds the gates still waiting, the wait holds them in their shared asker records, so every machine that shares the records sees that a session waits.
+  let askerHold: ReturnType<typeof holdGates> | null = null;
   try {
     // Only the wait's very first read throws.
     let firstRead = true;
@@ -166,6 +169,7 @@ async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, 
       if (signal?.aborted) {
         return (value = { status: "cancelled", gateIds: ids });
       }
+      if (holdAskers && !askerHold) askerHold = holdGates(projectRoot, ids.map((gate) => (readArtifactGates ? { gate } : { initiative, gate })));
       if (Date.now() >= deadline) {
         return (value = last ? { ...last, gateIds: ids } : { status: "timeout", gateIds: ids });
       }
@@ -173,6 +177,7 @@ async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, 
     }
   } finally {
     if (heartbeat) clearInterval(heartbeat);
+    if (askerHold) await askerHold.release();
     if (notices) {
       await endGateWait({ projectRoot, initiative, ...session, waitId, cancelled: !value || value.status === "cancelled", hold: value?.status === "timeout" ? hold : null }).catch(() => {});
     }

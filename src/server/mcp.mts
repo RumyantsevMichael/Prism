@@ -60,6 +60,9 @@ import { ACP_HOST_PATTERN } from "./session/acp-agents.mjs";
 import { markToolsListed, unmarkToolsListed } from "./session/options-read-marker.mjs";
 import { GET_SKILL_TOOL, getSkill, SkillFileError } from "./workflow/skill-files.mjs";
 import { HOSTS } from "./session/launch-hosts.mjs";
+import { environmentSessionLink } from "./session/session-links.mjs";
+import { LAUNCH_ID_PATTERN } from "./session/launch-records.mjs";
+import { withGateAsker } from "./workflow/gate-askers.mjs";
 import { EFFORT_PATTERN, MODEL_PATTERN, PROVIDER_PATTERN, RUN_KINDS } from "./session/run-options.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
@@ -981,6 +984,8 @@ const endingWaits = new Set();
 const DEFERRED_HOLD_MS = 2 * 60000;
 let clientName: any = null;
 let clientVersion: any = null;
+// The harness the client names itself, by title or name, for a gate asker of a client that maps to no launch host.
+let clientHarness: string | null = null;
 
 function olderThan(version: any, minimum: any) {
   const parts = String(version ?? "").split(/[.-]/).slice(0, 3).map(Number);
@@ -1050,7 +1055,7 @@ async function callGateWait(argumentsValue: any, metadata: any, requestId: any) 
     // The gates stay held for a short lease, which the polls of the hook's wait, under the same wait id, renew.
     const waitId = randomBytes(16).toString("hex");
     const held = notices && { ...notices, waitId, hold: Date.now() + DEFERRED_HOLD_MS };
-    value = await waitForUserGates({ projectRoot, ...source, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, notices: held, watchChanges: coordinates });
+    value = await waitForUserGates({ projectRoot, ...source, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, notices: held, watchChanges: coordinates, holdAskers: false });
     if (value.status === "timeout") {
       const maxWaitMinutes = Math.min(argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES, HOOK_WAIT_MINUTES);
       const { replaced } = await recordWaitRequest({ sessionId: hookSession, projectRoot, ...source, gateIds: value.gateIds, maxWaitMinutes, knownEntries, coordinates, ...(held ? { waitId } : {}) });
@@ -1108,6 +1113,19 @@ async function withRecordStore(projectRoot: string, value: any) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const recordStore = await recordStoreSummary(projectRoot).catch(() => null);
   return recordStore ? { ...value, recordStore } : value;
+}
+
+/**
+ * The session a tool call asks gates as: the launch host's label that the client maps to, else the client's own harness name, the
+ * host session id, which Claude Code gives in the server's environment and Codex in each call's metadata, the cloud session the
+ * environment names, and the launch PRISM_LAUNCH names.
+ */
+function gateAsker(metadata: any) {
+  const host = clientHost();
+  const label = HOSTS.find((entry) => entry.host === host)?.label ?? clientHarness;
+  const sessionId = host === "claude-code" ? (process.env.CLAUDE_CODE_SESSION_ID?.trim() || null) : host === "codex" ? callSessionId(metadata) : null;
+  const launch = typeof process.env.PRISM_LAUNCH === "string" && LAUNCH_ID_PATTERN.test(process.env.PRISM_LAUNCH) ? process.env.PRISM_LAUNCH : null;
+  return { harness: label, host, sessionId, cloud: environmentSessionLink(), launch };
 }
 
 // The calling client's host: the first supported host whose label's first word, such as Claude or Codex, the client's name contains.
@@ -1761,7 +1779,8 @@ input.on("line", async (line) => {
       clientName = typeof request.params?.clientInfo?.name === "string" ? request.params.clientInfo.name : null;
       clientVersion = typeof request.params?.clientInfo?.version === "string" ? request.params.clientInfo.version : null;
       // The harness the client names itself is what each claim this server takes records as its host.
-      configureClaims({ host: harnessName(request.params?.clientInfo) });
+      clientHarness = harnessName(request.params?.clientInfo);
+      configureClaims({ host: clientHarness });
       result(request.id, {
         protocolVersion: request.params?.protocolVersion ?? "2025-06-18",
         capabilities: { tools: {} },
@@ -1777,12 +1796,12 @@ input.on("line", async (line) => {
       callNames.set(request.id, name);
       const started = performance.now(), done = log.doing(`call:${request.id}`, String(name));
       const call = toolCallContext();
-      const value: any = await withToolCall(call, () => withCallSession(meta, async () => {
+      const value: any = await withToolCall(call, () => withGateAsker(gateAsker(meta), () => withCallSession(meta, async () => {
         const agent = await callAgent(meta).catch(() => undefined);
         // A claim records the session's main agent model only when the call is positively that agent's.
         const role = await callAgentRole(meta).catch(() => "unknown");
         return withCallAgent(agent, () => withClaimAgent(role === "main", async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id))));
-      })).finally(done);
+      }))).finally(done);
       log.debug("tool_call", { tool: name, ms: Math.round(performance.now() - started), ...(value?.isError ? { isError: true } : {}) });
       // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
       if (value.structuredContent?.status === "cancelled" || cancelledCalls.has(request.id)) return;

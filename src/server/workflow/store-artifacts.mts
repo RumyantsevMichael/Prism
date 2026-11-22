@@ -694,7 +694,14 @@ export async function updateArtifact(input: any) {
     const seen = await seenScopes(input.projectRoot);
     for (const item of checked) if (item.operation.op === "ask_approval" && item.operation.shipped !== undefined) item.shipped = await shippedRealization(input.projectRoot, seen, kinds, item.operation.shipped);
     // The tool call notes what its update wrote, so a move that the call finishes still removes a moved file whose artifact the update changed.
-    return withArtifactStoreLock(seen, () => applyOperations(seen, checked, { noteWrites: true }));
+    const result = await withArtifactStoreLock(seen, () => applyOperations(seen, checked, { noteWrites: true }));
+    // Each approval gate asked records its asker beside the gate, outside its status record.
+    const asked = (result?.artifacts ?? []).map((entry: any) => entry?.gate).filter((gate: any) => typeof gate === "string");
+    if (asked.length) {
+      const { recordGateAskers } = await import("./gate-askers.mjs");
+      await recordGateAskers(input.projectRoot, asked.map((gate: string) => ({ gate })));
+    }
+    return result;
   });
 }
 
