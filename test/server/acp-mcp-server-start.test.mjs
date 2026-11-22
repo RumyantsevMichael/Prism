@@ -47,11 +47,13 @@ test("a launched run prompts when the agent starts Prism's server outside its ow
   assert.equal(result.status, 200, result.text);
   const id = result.json.launch.id;
   const view = await settled(async () => (await launches(s)).find((item) => item.id === id), (item) => item && !["running", "waiting"].includes(item.state));
-  assert.equal(view.state, "finished", view.reason);
+  // The fake agent leaves no gate, pause, or ship, so the run that got its prompt ends without a result rather than failing.
+  assert.equal(view.state, "ended-without-result", view.reason);
   assert.equal(s.requests("session/prompt").length, 1);
   // The read of run options before the launch opened the first session, and each names a token of its own.
   const [read, launched] = s.requests("session/new").map((message) => message.params.mcpServers[0]);
   assert.match(launched.args.at(-1), TOKEN);
   assert.notEqual(launched.args.at(-1), read.args.at(-1));
   assert.equal(launched.env.find((item) => item.name === "PRISM_LAUNCH").value, id);
+  assert.ok(launched.args.includes(`--prism-launch=${id}`), "the arguments name the launch for an agent that drops the server's environment");
 });

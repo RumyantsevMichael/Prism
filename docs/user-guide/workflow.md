@@ -350,6 +350,12 @@ In Claude Code, a Prism hook refuses the orchestrating session's own load of tho
 When no child agent can start, the orchestrator stops and asks you to run it where child agents are available.
 An `agentFlow` setting stored by an earlier Prism is dropped when the initiative's coordination state is next read.
 Full autonomy turns commits on when you have not set them, while explicit commit, continuation, and push settings always apply.
+Under full autonomy, a run also decides each undoable step by itself and does not ask you.
+An undoable step is a band or park change of a roadmap entry, a removal or change of a Draft requirement or Proposed ADR in the record store, or a tracker issue that the run files.
+A push, a ship, an approval, and a removal outside the record store are never undoable steps, and a commit follows the commit setting.
+The run keeps each such choice as a closed decision question in the initiative's coordination state, with its options, the option it chose, and its reason.
+The review browser shows that decision with the other closed questions, so you can read what the run chose and undo it.
+Under conservative or broad autonomy, Prism refuses such a decision, and the run asks you instead.
 
 ## Changes you make in the review app
 

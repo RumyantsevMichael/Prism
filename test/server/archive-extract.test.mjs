@@ -18,6 +18,11 @@ async function scratch(t) {
   return folder;
 }
 
+// The system tar's option that renames the member `from` to `to` as it is archived: GNU tar's --transform, or -s of the bsdtar of
+// macOS and the BSDs, with -P so that bsdtar keeps a .. part that it would otherwise strip.
+const bsdtar = process.platform !== "win32" && /bsdtar/.test(execFileSync("tar", ["--version"], { encoding: "utf8" }));
+const renamed = (from, to) => (bsdtar ? ["-P", "-s", `,^${from},${to},`] : [`--transform=s,^${from},${to},`]);
+
 // A .tar.gz of a content folder that setup lays out, built with the system tar from the given member names.
 async function tarOf(folder, setup, members, extra = []) {
   const content = path.join(folder, "content");
@@ -76,7 +81,7 @@ test("a tar.gz entry written through a link it made refuses the archive", { skip
     await symlink(".", path.join(content, "here"));
     await mkdir(path.join(content, "real"));
     await writeFile(path.join(content, "real", "x"), "x");
-  }, ["here", "real/x"], ["--transform=s,^real,here,"]);
+  }, ["here", "real/x"], renamed("real", "here"));
   await assert.rejects(extractTarGz(file, path.join(folder, "out")), /not a folder/);
 });
 
@@ -85,7 +90,7 @@ test("a tar.gz entry with an absolute path or a .. part refuses the archive befo
   const file = await tarOf(folder, async (content) => {
     await writeFile(path.join(content, "first"), "1");
     await writeFile(path.join(content, "second"), "2");
-  }, ["first", "second"], ["--transform=s,^second,../second,"]);
+  }, ["first", "second"], renamed("second", "../second"));
   const out = path.join(folder, "out");
   await assert.rejects(extractTarGz(file, out), /\.\. part/);
   assert.equal(existsSync(path.join(out, "first")), false);

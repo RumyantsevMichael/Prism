@@ -4,6 +4,8 @@ import path from "node:path";
 import { readInitiativeRecordRunTotals } from "../session/run-totals.mjs";
 import { storeLocation } from "../session/launch-records.mjs";
 import { pendingRequests } from "../session/permission-requests.mjs";
+import { listLaunches } from "../session/launched-sessions.mjs";
+import { hostDefinition } from "../session/launch-hosts.mjs";
 import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workflow/initiative.mjs";
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
@@ -897,7 +899,29 @@ function gateOrder(left: any, right: any) {
  */
 export async function loadAttention(projectRoot: string) {
   const [attention, permissions] = await Promise.all([remember(projectRoot, `attention:${projectRoot}`, () => computeAttention(projectRoot)), launchPermissions(projectRoot)]);
-  return { ...attention, permissions, gateCount: attention.gateCount + permissions.length };
+  const needsYou = await withLaunchQuestions(projectRoot, attention.needsYou);
+  return { ...attention, needsYou, permissions, gateCount: attention.gateCount + permissions.length };
+}
+
+/**
+ * The Needs you items, where each no-result gate of a launched session on this machine carries that session as
+ * launch: { id, host: { id, label }, launchedAt, endedAt, state }, read again at each request from the private launch folders.
+ * A gate that no launch of this machine asked, or a list the launches cannot be read for, stays as it is.
+ */
+async function withLaunchQuestions(projectRoot: string, needsYou: any[]) {
+  if (!needsYou.some((item: any) => item.type === "gate" && item.kind === "assistance")) return needsYou;
+  const { launches } = await listLaunches({ projectRoot }).catch(() => ({ launches: [] as any[] }));
+  const asked = new Map<string, any>();
+  for (const launch of launches) {
+    if (typeof launch.questionGate !== "string") continue;
+    const label = hostDefinition(launch.host)?.label ?? launch.hostLabel ?? launch.host;
+    asked.set(`${launch.initiative}/${launch.questionGate}`, { id: launch.id, host: { id: launch.host, label }, launchedAt: launch.launchedAt, endedAt: launch.endedAt, state: launch.state });
+  }
+  if (!asked.size) return needsYou;
+  return needsYou.map((item: any) => {
+    const launch = item.type === "gate" && item.kind === "assistance" ? asked.get(`${item.initiative?.id}/${item.id}`) : undefined;
+    return launch ? { ...item, launch } : item;
+  });
 }
 
 // Each waiting permission request with its initiative's title, oldest first; none when the launches cannot be read.

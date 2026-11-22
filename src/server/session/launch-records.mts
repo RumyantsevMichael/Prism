@@ -8,6 +8,7 @@ import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { checkedCoordinator, hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts.mjs";
 import { isAgentModel } from "./agent-models.mjs";
 import { isAcpHost } from "./acp-agents.mjs";
+import { isNoResultGate } from "./run-result.mjs";
 import { sessionHolder } from "../workflow/slice-claims.mjs";
 
 // The record of each launched session lives in <review app folder>/launches/<launch id>/launch.json, private to the user.
@@ -167,6 +168,54 @@ export async function readGateRecord(folder: string) {
   return { marks, answers };
 }
 
+// The result marks of a launched session, kept beside its record on this machine only and written only under the launch lock:
+// { pauses: [{ at }], checks: [{ run, pid, at }], noResult: [{ run, gate, failure, at }] }. A pause is one that a run of the launch
+// recorded; a check is a supervisor that checks whether its run ended with a result; a no-result mark is a run that ended normally
+// without a result, with the id of its no-result gate, or null and why Prism could not record it.
+const RESULTS_FILE = "results.json";
+const FAILURE_MAX = 1000;
+// A check whose supervisor started it this long ago no longer counts, so a reused process id never holds the run as running.
+const CHECK_STALE_MS = 10 * 60 * 1000;
+export const NO_RESULT_UNRECORDED = (message: string) => `Prism could not record a question for this run: ${message}`;
+
+export interface ResultMarks {
+  pauses: { at: string }[];
+  checks: { run: string; pid: number; at: string }[];
+  noResult: { run: string; gate: string | null; failure: string | null; at: string }[];
+}
+
+export const NO_RESULT_MARKS: ResultMarks = Object.freeze({ pauses: [], checks: [], noResult: [] }) as ResultMarks;
+
+/** The result marks of a launch folder, empty when absent, keeping only well-formed entries, so nothing else that a file holds reaches a decision. */
+export async function readResultMarks(folder: string): Promise<ResultMarks> {
+  let value = null;
+  try {
+    const info = await lstat(path.join(folder, RESULTS_FILE));
+    if (info.isFile() && info.size <= 1024 * 1024) value = JSON.parse(await readFile(path.join(folder, RESULTS_FILE), "utf8"));
+  } catch {
+    value = null;
+  }
+  const list = (items: any) => (Array.isArray(items) ? items : []).slice(-GATES_KEPT);
+  const at = (item: any) => typeof item?.at === "string" && item.at.length <= 40;
+  const pauses = list(value?.pauses).filter(at).map((item) => ({ at: item.at }));
+  const checks = list(value?.checks).filter((item) => at(item) && typeof item.run === "string" && TOKEN_PATTERN.test(item.run) && validPid(item.pid))
+    .map((item) => ({ run: item.run, pid: item.pid, at: item.at }));
+  const noResult = list(value?.noResult)
+    .filter((item) => at(item) && typeof item.run === "string" && TOKEN_PATTERN.test(item.run) && (item.gate === null || (typeof item.gate === "string" && GATE_ID_PATTERN.test(item.gate)))
+      && (item.failure === null || typeof item.failure === "string"))
+    .map((item) => ({ run: item.run, gate: item.gate, failure: item.failure === null ? null : String(item.failure).slice(0, FAILURE_MAX), at: item.at }));
+  return { pauses, checks, noResult };
+}
+
+/** Writes the result marks of a launch folder, keeping the newest of each kind; the caller holds the launch lock. */
+export async function writeResultMarks(folder: string, { pauses, checks, noResult }: ResultMarks) {
+  const value = { pauses: pauses.slice(-GATES_KEPT), checks: checks.slice(-GATES_KEPT), noResult: noResult.slice(-GATES_KEPT) };
+  await writeAtomically(path.join(folder, RESULTS_FILE), `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+}
+
+/** The no-result gate ids that a launch's marks name. */
+export const noResultGates = (marks: ResultMarks | null) => (marks?.noResult ?? []).map((mark) => mark.gate).filter((gate): gate is string => gate !== null);
+
 /** Writes the gate record of a launch folder, keeping the newest marks and answers; the caller holds the launch lock. */
 export async function writeGateRecord(folder: string, { marks, answers }: { marks: any[]; answers: any[] }) {
   const value = { marks: marks.slice(-GATES_KEPT), answers: answers.slice(-GATES_KEPT) };
@@ -174,26 +223,32 @@ export async function writeGateRecord(folder: string, { marks, answers }: { mark
 }
 
 /**
- * What the coordination state says about the gates a launch marked: { waiting, waitingGate, answerWaits }.
+ * What the coordination state says about the gates a launch marked: { waiting, waitingGate, answerWaits, questionGate }.
  * A gate counts as marked while its mark exists and it is pending; it waits while it has no answer, and an answer whose history entry
  * this machine did not record came through the record store from another machine. waitingGate is the id of the first gate, in the
- * order the launch marked them, that waits, or null.
+ * order the launch marked them, that waits, or null. A no-result gate, named in noResult or read as one, never makes it wait:
+ * questionGate is the id of the launch's latest no-result gate while that gate is pending without an answer, or null.
  */
-export function gateFacts(gates: any, pending: any) {
+export function gateFacts(gates: any, pending: any, noResult: string[] = []) {
   const byId = new Map<string, any>();
   for (const gate of Array.isArray(pending) ? pending : []) {
     if (gate && typeof gate === "object" && typeof gate.id === "string") byId.set(gate.id, gate);
   }
   const recorded = new Set(gates.answers.map((answer: any) => answer.entry));
+  const questions = new Set(noResult);
   let waitingGate: string | null = null as string | null;
   let elsewhere = false;
   for (const id of new Set<string>(gates.marks.map((mark: any) => mark.gate))) {
     const gate = byId.get(id);
     if (!gate) continue;
-    if (!gate.answer) waitingGate ??= id;
-    else if (!(typeof gate.answer.entry === "string" && recorded.has(gate.answer.entry))) elsewhere = true;
+    if (!gate.answer) {
+      // The gate that a launch's own supervisor asks is marked as soon as it is written, before its no-result mark names it.
+      if (!questions.has(id) && !isNoResultGate(gate)) waitingGate ??= id;
+    } else if (!(typeof gate.answer.entry === "string" && recorded.has(gate.answer.entry))) elsewhere = true;
   }
-  return { waiting: waitingGate !== null, waitingGate, answerWaits: elsewhere };
+  const latest = noResult.at(-1) ?? null;
+  const questionGate = latest !== null && byId.has(latest) && !byId.get(latest).answer ? latest : null;
+  return { waiting: waitingGate !== null, waitingGate, answerWaits: elsewhere, questionGate };
 }
 
 /** Every launch folder on this machine with its record: [{ folder, record }], skipping unreadable ones. */
@@ -304,7 +359,7 @@ function lastEnd(record: any, status: string): number | null {
 
 export const asksToAllow = (action: string) => `Asks you to allow: ${action}.`;
 
-function stateOf(record: any, status: any, label: string, gates: any, permission: { action: string } | null) {
+function stateOf(record: any, status: any, label: string, gates: any, permission: { action: string } | null, results: ResultMarks, now: number) {
   const run = record.runs.at(-1);
   // A run that waits on a permission request waits on the person before any gate.
   if (status === "running" && permission) return { state: "waiting", reason: asksToAllow(permission.action) };
@@ -329,23 +384,28 @@ function stateOf(record: any, status: any, label: string, gates: any, permission
     const more = count > 1 ? ` (and ${count - 1} more)` : "";
     return { state: "blocked", reason: gates.answerWaits ? ANSWER_WAITS : `${label} refused ${first.tool}: ${first.reason}${more}` };
   }
+  // A run whose supervisor still checks whether it ended with a result shows as running until the check is done.
+  if (results.checks.some((check) => check.run === run.token && processAlive(check.pid) && now - time(check.at) <= CHECK_STALE_MS)) return { state: "running", reason: null };
+  const noResult = results.noResult.find((mark) => mark.run === run.token);
+  if (noResult) return { state: "ended-without-result", reason: noResult.failure !== null ? NO_RESULT_UNRECORDED(noResult.failure) : gates.answerWaits ? ANSWER_WAITS : null, question: noResult.gate };
   return { state: "finished", reason: gates.answerWaits ? ANSWER_WAITS : null };
 }
 
 /**
  * The launch view of a record: { id, initiative, host, hostLabel, model, holder, checkout, launchedAt, runningMs, runs, endedAt, state,
- * reason, exit, resumeCommand, waitingGate, answerWaits }, and for an ACP agent's launch usage, the last run's { tokens, context, cost },
+ * reason, exit, resumeCommand, waitingGate, answerWaits, questionGate }, and for an ACP agent's launch usage, the last run's { tokens, context, cost },
  * each null when the agent did not report it.
  * model is the last run's recorded model, holder the claim holder that the host session takes claims as, and only resumeCommand
  * names the host session id.
  * gates is gateFacts of the launch as the page's checkout reads its initiative's coordination state; without it no gate is counted.
  * permission is the oldest permission request that waits in the running run, which makes the launch waiting on it.
+ * results is the launch's result marks; without them no run ended without a result.
  */
-export function launchView(record: any, { now = Date.now(), gates = null, permission = null }: { now?: number; gates?: { waiting?: boolean; answerWaits?: boolean; waitingGate?: string | null } | null; permission?: { action: string } | null } = {}) {
+export function launchView(record: any, { now = Date.now(), gates = null, permission = null, results = null }: { now?: number; gates?: { waiting?: boolean; answerWaits?: boolean; waitingGate?: string | null; questionGate?: string | null } | null; permission?: { action: string } | null; results?: ResultMarks | null } = {}) {
   const status = lastRunStatus(record, now);
   const label = hostDefinition(record.host)?.label ?? record.host;
   const facts = { waiting: gates?.waiting === true, answerWaits: status !== "running" && gates?.answerWaits === true };
-  const { state, reason: hostText } = stateOf(record, status, label, facts, permission);
+  const { state, reason: hostText, question = null } = stateOf(record, status, label, facts, permission, results ?? NO_RESULT_MARKS, now);
   const reason = redactSessionId(hostText, record.hostSessionId);
   const runningMs = record.runs.reduce((sum: any, run: any, index: number) => {
     const start = time(run.startedAt);
@@ -379,6 +439,7 @@ export function launchView(record: any, { now = Date.now(), gates = null, permis
     resumeCommand,
     waitingGate: state === "waiting" && typeof gates?.waitingGate === "string" ? gates.waitingGate : null,
     answerWaits: facts.answerWaits,
+    questionGate: question !== null && gates?.questionGate === question ? question : null,
     ...(isAcpHost(record.host) ? { usage: runUsage(last) } : {})
   };
 }
@@ -407,14 +468,14 @@ export function expired(record: any, now = Date.now()) {
 // The archive mark of a launched session, kept beside its record on this machine only and written only under the launch lock:
 // { archivedAt, runs }, the time of the archive and the record's run count then.
 const ARCHIVE_FILE = "archive.json";
-const ENDED_STATES = new Set(["finished", "failed", "stopped", "blocked"]);
+const ENDED_STATES = new Set(["finished", "ended-without-result", "failed", "stopped", "blocked"]);
 
 export interface ArchiveMark {
   archivedAt: string;
   runs: number;
 }
 
-/** Whether a launch view's state is one that can be archived: finished, failed, stopped, or blocked. */
+/** Whether a launch view's state is one that can be archived: finished, ended without a result, failed, stopped, or blocked. */
 export function launchEnded(state: unknown): boolean {
   return typeof state === "string" && ENDED_STATES.has(state);
 }

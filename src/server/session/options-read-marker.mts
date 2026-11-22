@@ -12,6 +12,8 @@ import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 const POLL_MS = 50;
 const TOKEN_FLAG = "--prism-acp-token=";
 const TOKEN_PATTERN = /^[0-9a-f]{32}$/;
+const LAUNCH_FLAG = "--prism-launch=";
+const LAUNCH_PATTERN = /^launch-[0-9a-f]{16}$/;
 
 export const optionsReadFolder = (env: NodeJS.ProcessEnv = process.env) => path.join(reviewAppDirectory(env), "options-reads");
 const markerFile = (env: NodeJS.ProcessEnv, token: string) => path.join(optionsReadFolder(env), `${token}.json`);
@@ -21,6 +23,16 @@ export const newAcpToken = () => randomBytes(16).toString("hex");
 
 /** The server argument that names a token. */
 export const acpTokenArgument = (token: string) => `${TOKEN_FLAG}${token}`;
+
+/** The server argument that names the launch a run's server serves, for an agent that drops PRISM_LAUNCH from the server's environment. */
+export const acpLaunchArgument = (launch: string) => `${LAUNCH_FLAG}${launch}`;
+
+/** The launch that this server's arguments name, or null. */
+export function acpLaunch(argv: readonly string[] = process.argv) {
+  const argument = argv.slice(2).find((item) => item.startsWith(LAUNCH_FLAG));
+  const launch = argument?.slice(LAUNCH_FLAG.length) ?? "";
+  return LAUNCH_PATTERN.test(launch) ? launch : null;
+}
 
 /** The token that this server's arguments name, or null: a server started with one serves a read of run options or a launched run. */
 export function acpToken(argv: readonly string[] = process.argv) {

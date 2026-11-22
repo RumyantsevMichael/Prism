@@ -1,4 +1,4 @@
-// The top bar's agents button and its short menu, read from api/agents: the button counts the working agents and marks failed and waiting launched sessions,
+// The top bar's agents button and its short menu, read from api/agents: the button counts the working agents and marks failed, ended without a result, and waiting launched sessions,
 // and the menu lists only the launched sessions that need the person, counts the rest, and leads to the Agents page. Nothing here takes, releases, or renews a claim.
 import { hostText, stateOf, workText } from "./agents.js";
 import { createPoller } from "./poller.js";
@@ -37,7 +37,7 @@ function rowHtml(entry: any, now: any) {
 
 /**
  * Keeps `button`, a prism-agent-summary, and `popover`, its prism-popover, in step with api/agents, every five seconds while the tab is shown and at once through `refresh`.
- * `onOpen(ref)` opens an address, `onAnswer(gate)` opens the question a launch waits on in Attention, and `onOpenAgent(id)` the Agents page with that entry's details shown.
+ * `onOpen(ref)` opens an address, `onAnswer(gate)` opens the question a launch waits on, or its no-result gate, in Attention, and `onOpenAgent(id)` the Agents page with that entry's details shown.
  */
 export function createAgentsMenu({ button, popover, onOpen, onAnswer, onOpenAgent, fetchAgents = defaultFetch }: { button: any; popover: any; onOpen: any; onAnswer: any; onOpenAgent: any; fetchAgents?: any }) {
   const content = document.createElement("div");
@@ -49,7 +49,7 @@ export function createAgentsMenu({ button, popover, onOpen, onAnswer, onOpenAgen
   let rendered = "";
 
   function paintButton() {
-    for (const [name, value] of [["working", counts.working], ["failed", counts.failed], ["waiting", counts.waiting], ["expired", counts.expired], ["needs", counts.needsYou]]) {
+    for (const [name, value] of [["working", counts.working], ["failed", counts.failed], ["no-result", counts.endedWithoutResult], ["waiting", counts.waiting], ["expired", counts.expired], ["needs", counts.needsYou]]) {
       const text = String(Number(value) || 0);
       if (button.getAttribute(name) !== text) button.setAttribute(name, text);
     }
@@ -58,7 +58,7 @@ export function createAgentsMenu({ button, popover, onOpen, onAnswer, onOpenAgen
   function paintMenu() {
     const now = Date.now();
     const needs = agents.filter((entry) => entry.group === "needs-you");
-    const key = JSON.stringify([needs.map((entry) => [entry.id, entry.name, entry.state, entry.action, entry.harness, entry.model, entry.activity, entry.slice?.title, entry.reason, entry.launch?.endedAt, entry.launch?.waitingGate]), COUNT_LINKS.map(([, count]) => counts[count] ?? 0)]);
+    const key = JSON.stringify([needs.map((entry) => [entry.id, entry.name, entry.state, entry.action, entry.harness, entry.model, entry.activity, entry.slice?.title, entry.reason, entry.launch?.endedAt, entry.launch?.waitingGate, entry.launch?.questionGate]), COUNT_LINKS.map(([, count]) => counts[count] ?? 0)]);
     if (key === rendered) return paintTimes(now);
     rendered = key;
     const group = needs.length
@@ -110,7 +110,7 @@ export function createAgentsMenu({ button, popover, onOpen, onAnswer, onOpenAgen
     if (target.dataset.agentsRef) return onOpen(target.dataset.agentsRef);
     const entry = agents.find((item) => item.id === target.closest("[data-menu-agent]")?.dataset.menuAgent);
     if (!entry) return;
-    if (target.dataset.menuAction === "answer") return onAnswer(entry.launch?.waitingGate ?? null);
+    if (target.dataset.menuAction === "answer") return onAnswer(entry.launch?.waitingGate ?? entry.launch?.questionGate ?? null);
     return onOpenAgent(entry.id);
   });
   popover.addEventListener("prism-open", () => void poller.now());
