@@ -8,6 +8,7 @@ import { ARTIFACT_COMMENTS, artifactAddress, artifactLocation } from "./artifact
 import { ARTIFACT_COMMENT_FILE, COMMENTS_PER_ARTIFACT_MAX, resolveStatusFile } from "./record-store.mjs";
 import { scheduleRecordSync } from "./record-store-sync.mjs";
 import { parseStoreJson } from "./store-json.mjs";
+import { validUntil } from "./view-validity.mjs";
 const COMMENT_TEXT_MAX = 4e3;
 const COMMENT_FILE_MAX = 64 * 1024;
 const FUTURE_SLACK_MS = 5 * 60 * 1e3;
@@ -26,7 +27,12 @@ function storedTime(value) {
 function storedAuthor(by) {
   return hasKeys(by, ["name", "email", "checkout"]) && textOf(by.name, 1, 200) && (by.email === null || textOf(by.email, 0, 200)) && textOf(by.checkout, 1, 400);
 }
-const aheadOfClock = (at, now = Date.now()) => Date.parse(at) > now + FUTURE_SLACK_MS;
+const aheadOfClock = (at, now = Date.now()) => {
+  const time = Date.parse(at);
+  if (!(time > now + FUTURE_SLACK_MS)) return false;
+  validUntil(time - FUTURE_SLACK_MS);
+  return true;
+};
 const commentsFolder = (scope, address) => path.posix.join(ARTIFACT_COMMENTS, artifactLocation(scope, address));
 const nameTime = (at) => at.replace(/[:.]/g, "-");
 const commentName = (at) => `${nameTime(at)}-${randomBytes(4).toString("hex")}.json`;

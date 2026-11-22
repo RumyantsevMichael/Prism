@@ -4,6 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { runGit } from "./record-store-sync.mjs";
 import { hostLabel } from "../review/workspace-identity.mjs";
 import { parseStoreJson } from "./store-json.mjs";
+import { validUntil } from "./view-validity.mjs";
 import { isAgentModel } from "../session/agent-models.mjs";
 import { environmentSessionLink, isSessionLink } from "../session/session-links.mjs";
 const CLAIM_ACTIVITIES = Object.freeze(["design", "implementation"]);
@@ -68,7 +69,13 @@ async function claimLabel(folder) {
   }
   return labels.get(folder);
 }
-const isLive = (claim, now = Date.now()) => Boolean(claim) && Date.parse(claim.expiresAt) > now;
+const isLive = (claim, now = Date.now()) => {
+  if (!claim) return false;
+  const expires = Date.parse(claim.expiresAt);
+  if (!(expires > now)) return false;
+  validUntil(expires);
+  return true;
+};
 const claimView = (claim) => ({ slug: claim.slug, holder: claim.holder, label: claim.label, ...claim.host ? { host: claim.host } : {}, ...claim.model ? { model: claim.model } : {}, activity: claim.activity, expiresAt: claim.expiresAt });
 function serializeClaim(claim) {
   return `${JSON.stringify(Object.fromEntries(CLAIM_FIELDS.map((key) => [key, key === "schemaVersion" ? 1 : claim[key]])), null, 2)}

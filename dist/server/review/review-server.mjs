@@ -22,7 +22,7 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadAttention, loadClaims, loadDeclaredView, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, loadAttention, loadClaims, loadDeclaredView, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { frozenTestFile, verificationLog } from "./verification-view.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
@@ -179,10 +179,10 @@ async function listedFiles(projectRoot, wanted = []) {
   return { artifacts: await withStoreArtifacts(projectRoot, value.artifacts), sources: value.sources };
 }
 async function storeArtifactEntries(projectRoot) {
-  return listStoreArtifacts(projectRoot).catch((error) => {
+  return rememberView(projectRoot, "store-artifacts", () => listStoreArtifacts(projectRoot).catch((error) => {
     if (recordsUnavailable(error) || error?.name === "ArtifactError") return [];
     throw error;
-  });
+  }));
 }
 async function artifactStoreRefusal(projectRoot) {
   return (await describeRecordStore(projectRoot).catch(() => null))?.unavailable ?? null;
@@ -196,6 +196,9 @@ async function listReviewSources(projectRoot) {
   return (await listSourceFiles(projectRoot)).filter((file) => !isArtifact(file));
 }
 async function storeArtifactRefs(projectRoot) {
+  return rememberView(projectRoot, "store-artifact-refs", () => computeStoreArtifactRefs(projectRoot));
+}
+async function computeStoreArtifactRefs(projectRoot) {
   const refs = {};
   for (const entry of await storeArtifactEntries(projectRoot) ?? []) {
     if (Object.hasOwn(refs, entry.path)) continue;
@@ -233,10 +236,10 @@ async function listCheckoutArtifacts(projectRoot) {
 const STORE_REF = "store:";
 const storeRefOf = (location) => `${STORE_REF}${location}`;
 async function workspaceStoreArtifacts(projectRoot) {
-  return workspaceArtifacts(projectRoot).catch((error) => {
+  return rememberView(projectRoot, "workspace-store-artifacts", () => workspaceArtifacts(projectRoot).catch((error) => {
     if (recordsUnavailable(error) || error?.name === "ArtifactError") return null;
     throw error;
-  });
+  }));
 }
 const scopePrefix = (scope) => scope.kind === "workspace" ? "" : scope.kind === "repository" ? `repositories/${scope.repository}/` : `repositories/${scope.repository}/components/${scope.component}/`;
 const byScope = (left, right) => left.kind === "workspace" ? -1 : right.kind === "workspace" ? 1 : left.label < right.label ? -1 : left.label > right.label ? 1 : 0;

@@ -11,7 +11,7 @@ import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { historyOrder, readCoordinationState } from "../workflow/state.mjs";
 import { readIndexHistory } from "../workflow/index-history.mjs";
-import { inArtifactStore, isStoreWithoutCheckout, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, inArtifactStore, isStoreWithoutCheckout, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordStoreOf, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig as readCheckoutConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
@@ -26,6 +26,8 @@ import { relativeLinkTargets } from "./artifact-links.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
 import { keptSession, sessionFields } from "../session/session-links.mjs";
 import { failingTestLinks } from "./verification-view.mjs";
+import { createViewVersions } from "./view-versions.mjs";
+import { collectValidity, validUntil } from "../workflow/view-validity.mjs";
 async function readWorkflowConfig(projectRoot) {
   const config = await readCheckoutConfig(projectRoot);
   return await isStoreWithoutCheckout(projectRoot) ? { ...config, diagnostics: [] } : config;
@@ -34,24 +36,62 @@ const LIBRARY_LIMIT = 500;
 const RECENT_CHANGES_LIMIT = 20;
 const SLICE_FILE_LIMIT = 200;
 const UNRESOLVED = /* @__PURE__ */ new Set(["OPEN", "IN PROGRESS", "REOPENED"]);
-const MEMO_MS = 1e3;
+const MAX_AGE_MS = 10 * 60 * 1e3;
 const memo = /* @__PURE__ */ new Map();
+const versions = createViewVersions({ targetsOf: viewTargets });
+async function viewTargets(projectRoot) {
+  const root = await realpath(projectRoot);
+  const store = await recordStoreOf(root);
+  const folders = /* @__PURE__ */ new Set([store.base]);
+  const files = /* @__PURE__ */ new Set();
+  if (!store.checkoutless) {
+    folders.add(path.join(root, RECORD_DIRECTORY));
+    const config = await readCheckoutConfig(root).catch(() => null);
+    for (const value of Object.values(config?.paths ?? {})) {
+      if (typeof value !== "string" || value === "" || value === ".") continue;
+      const target = path.join(root, value);
+      const info = await stat(target).catch(() => null);
+      (info?.isDirectory() ? folders : files).add(target);
+    }
+  }
+  const nested = [...folders].filter((folder) => [...folders].some((other) => other !== folder && folder.startsWith(`${other}${path.sep}`)));
+  return { folders: [...folders].filter((folder) => !nested.includes(folder)).sort(), files: [...files].sort(), gitRoots: store.checkoutless ? [] : [root] };
+}
 const workspaceView = new AsyncLocalStorage();
 const inWorkspaceView = () => workspaceView.getStore() === true;
 function asWorkspaceView(run) {
   return workspaceView.run(true, run);
 }
-function remember(raw, compute) {
+async function remember(projectRoot, raw, compute) {
   const key = `${inWorkspaceView() ? "workspace" : "checkout"}|${raw}`;
-  const hit = memo.get(key);
-  if (hit && Date.now() - hit.at < MEMO_MS) return hit.value;
-  const value = compute();
-  memo.set(key, { at: Date.now(), value });
-  value.catch(() => memo.delete(key));
+  const version = await versions.current(projectRoot);
+  const now = Date.now();
+  let hit = memo.get(key);
+  if (!hit || hit.version !== version || now >= hit.until) {
+    const entry = { version, until: now + MAX_AGE_MS, value: null };
+    entry.value = collectValidity(compute).then(({ value: value2, until }) => {
+      entry.until = Math.min(entry.until, until);
+      return value2;
+    });
+    entry.value.catch(() => {
+      if (memo.get(key) === entry) memo.delete(key);
+    });
+    memo.set(key, entry);
+    hit = entry;
+  }
+  const value = await hit.value;
+  validUntil(hit.until);
   return value;
+}
+function rememberView(projectRoot, name, compute) {
+  return remember(projectRoot, `${name}:${projectRoot}`, compute);
+}
+function recheckViews(projectRoot) {
+  versions.recheck(projectRoot);
 }
 function forgetWorkspace() {
   memo.clear();
+  versions.bump();
 }
 const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "code", "agents"]);
 const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", code: "Code", agents: "Agents" });
@@ -78,7 +118,7 @@ const storeRef = (location) => `${STORE_REF}${location}`;
 const textOf = (bytes) => Buffer.isBuffer(bytes) ? bytes.toString("utf8") : String(bytes ?? "");
 function workspaceListing(projectRoot) {
   if (!inWorkspaceView()) return Promise.resolve(null);
-  return remember(`workspace-listing:${projectRoot}`, () => workspaceArtifacts(projectRoot).then((listed) => listed.held ? listed : null, (error) => {
+  return remember(projectRoot, `workspace-listing:${projectRoot}`, () => workspaceArtifacts(projectRoot).then((listed) => listed.held ? listed : null, (error) => {
     if (recordsUnavailable(error) || error?.name === "ArtifactError") return null;
     throw error;
   }));
@@ -217,7 +257,7 @@ async function initiativeFindings(root, config, id) {
   return totals;
 }
 function loadRoadmapView(projectRoot) {
-  return remember(`roadmap:${projectRoot}`, () => computeRoadmapView(projectRoot));
+  return remember(projectRoot, `roadmap:${projectRoot}`, () => computeRoadmapView(projectRoot));
 }
 async function computeRoadmapView(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
@@ -272,10 +312,10 @@ async function computeRoadmapView(projectRoot) {
   };
 }
 function loadClaims(projectRoot) {
-  return remember(`claims:${projectRoot}`, async () => ({ claims: (await loadHeldClaims(projectRoot)).claims.map(({ holder, ...claim }) => claim) }));
+  return remember(projectRoot, `claims:${projectRoot}`, async () => ({ claims: (await loadHeldClaims(projectRoot)).claims.map(({ holder, ...claim }) => claim) }));
 }
 function loadHeldClaims(projectRoot) {
-  return remember(`held-claims:${projectRoot}`, () => computeClaims(projectRoot));
+  return remember(projectRoot, `held-claims:${projectRoot}`, () => computeClaims(projectRoot));
 }
 async function computeClaims(projectRoot) {
   const roadmap = await loadRoadmapView(projectRoot);
@@ -284,10 +324,10 @@ async function computeClaims(projectRoot) {
   return { claims: initiatives.flatMap(({ id, title, claims }) => claims.map((claim) => ({ ref: `slice:${id}/${claim.slug}`, initiative: id, initiativeTitle: title, ...claim }))) };
 }
 function loadInitiativeView(projectRoot, id) {
-  return remember(`initiative:${id}:${projectRoot}`, () => computeInitiativeView(projectRoot, id));
+  return remember(projectRoot, `initiative:${id}:${projectRoot}`, () => computeInitiativeView(projectRoot, id));
 }
 function loadInitiativeRunTotals(projectRoot, initiative) {
-  return remember(`run-totals:${initiative.id}:${projectRoot}`, () => readInitiativeRecordRunTotals(projectRoot, initiative.id, initiative));
+  return remember(projectRoot, `run-totals:${initiative.id}:${projectRoot}`, () => readInitiativeRecordRunTotals(projectRoot, initiative.id, initiative));
 }
 async function withExpiredClaims(projectRoot, id, read) {
   const slices = read.loaded.record?.slices;
@@ -564,7 +604,7 @@ function decisionRequirements(source, file, directory) {
   return [...byFile].map(([path2, anchors]) => ({ path: path2, anchors }));
 }
 function loadLibrary(projectRoot, kind) {
-  return remember(`library:${kind}:${projectRoot}`, () => computeLibrary(projectRoot, kind));
+  return remember(projectRoot, `library:${kind}:${projectRoot}`, () => computeLibrary(projectRoot, kind));
 }
 async function computeLibrary(projectRoot, kind) {
   const config = await readWorkflowConfig(projectRoot);
@@ -702,7 +742,7 @@ function gateOrder(left, right) {
   return newestFirst(left.askedAt, right.askedAt);
 }
 async function loadAttention(projectRoot) {
-  const [attention, permissions] = await Promise.all([remember(`attention:${projectRoot}`, () => computeAttention(projectRoot)), launchPermissions(projectRoot)]);
+  const [attention, permissions] = await Promise.all([remember(projectRoot, `attention:${projectRoot}`, () => computeAttention(projectRoot)), launchPermissions(projectRoot)]);
   return { ...attention, permissions, gateCount: attention.gateCount + permissions.length };
 }
 async function launchPermissions(projectRoot) {
@@ -716,7 +756,7 @@ async function launchPermissions(projectRoot) {
 }
 async function loadAttentionView(projectRoot) {
   const { changes, ...attention } = await loadAttention(projectRoot);
-  const recentChanges = [...changes, ...await artifactChanges(projectRoot)].sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
+  const recentChanges = [...changes, ...await remember(projectRoot, `artifact-changes:${projectRoot}`, () => artifactChanges(projectRoot))].sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
   return { ...attention, recentChanges };
 }
 async function computeAttention(projectRoot) {
@@ -875,6 +915,7 @@ function recentlyAnswered(answered, closed) {
     ...answered.map((gate) => ({ gate, at: gate.answer?.answeredAt ?? null })),
     ...closed.map((gate) => ({ gate, at: gate.closedAt ?? gate.answer?.answeredAt ?? null }))
   ].filter(({ at }) => Date.parse(at ?? "") >= since);
+  for (const { at } of entries) validUntil(Date.parse(at) + WEEK_MS);
   entries.sort((left, right) => newestFirst(left.at, right.at));
   return entries.map(({ gate, at }) => ({ id: gate.id ?? null, kind: gate.kind ?? null, question: gate.question, initiative: gate.initiative, slice: gate.slice ?? null, answer: gate.answer ?? null, reason: gate.reason ?? null, at }));
 }
@@ -996,7 +1037,7 @@ function diagramName(file, source) {
   return named && !named.startsWith("(") ? named : path.posix.basename(file, ".puml");
 }
 function loadDiagrams(projectRoot) {
-  return remember(`diagrams:${projectRoot}`, () => computeDiagrams(projectRoot));
+  return remember(projectRoot, `diagrams:${projectRoot}`, () => computeDiagrams(projectRoot));
 }
 async function computeDiagrams(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
@@ -1163,7 +1204,7 @@ async function slicesInProgress(projectRoot) {
   return slices;
 }
 function loadNavigation(projectRoot) {
-  return remember(`navigation:${projectRoot}`, () => computeNavigation(projectRoot));
+  return remember(projectRoot, `navigation:${projectRoot}`, () => computeNavigation(projectRoot));
 }
 async function computeNavigation(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
@@ -1453,7 +1494,9 @@ export {
   loadRoadmapView,
   loadSliceView,
   parseEntityRef,
+  recheckViews,
   recordFiles,
+  rememberView,
   searchRecords,
   slicePresence
 };

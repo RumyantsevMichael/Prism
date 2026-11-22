@@ -32,7 +32,7 @@ import { nativeSemanticRuntime } from "../repository-intelligence/native-semanti
 import { errorFields, log } from "../log.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { createProjectReview, exchangeWriteGrant, fromPage, isTrustedHost, normalizeTabs, READ_ONLY_NOTICE, readBody, readJson, send, sendJson, serveOutsideSession, servePageRoute, storeTabRef, wantsPage } from "./review-server.mjs";
-import { loadAttention } from "./workspace-model.mjs";
+import { loadAttention, recheckViews } from "./workspace-model.mjs";
 import { readWorkspaceIdentity, workspaceLabel } from "./workspace-identity.mjs";
 import { createAddedWorkspaces, storeAddresses } from "./added-workspaces.mjs";
 import { checkoutWorkspace, listWorkspaces, nameOfWorkspace, storeFolder, storeWorkspaceId } from "./workspaces.mjs";
@@ -569,6 +569,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   }
   function forgetSummary(project) {
     for (const value of Object.values(project.summary)) value.invalidate();
+    recheckViews(project.root);
   }
   async function projectList(current) {
     const now = Date.now();
