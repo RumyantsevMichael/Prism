@@ -371,6 +371,14 @@ export async function withdrawSessionQuestions({ sessionId, env = process.env }:
   return found;
 }
 
+// Records the no-result gate of a Claude Code or Codex launch as asked by its host session, so Prism's gate delivery gives that session the answer.
+async function rememberHostGate(record: any, gate: string, env: NodeJS.ProcessEnv) {
+  if ((record.host !== "claude-code" && record.host !== "codex") || !validHostSessionId(record.hostSessionId)) return;
+  const { noticeDirectory, rememberAskedGates } = await import("../workflow/change-notices.mjs");
+  const { holderOf } = await import("../workflow/slice-claims.mjs");
+  await rememberAskedGates({ projectRoot: record.checkout, initiative: record.initiative, gateIds: [gate], session: holderOf(record.hostSessionId), directory: noticeDirectory(env) }).catch(() => {});
+}
+
 // Whether the run with this token is still the launch's last run and nobody asked to stop it; the caller holds the launch lock.
 async function stillLastRun(folder: string, token: string) {
   const record = await readLaunchRecord(folder);
@@ -383,7 +391,8 @@ async function stillLastRun(folder: string, token: string) {
  * normally, that no answer resumed, and that has no result gets one no-result gate, marked as asked by the launch and, for Claude Code
  * and Codex, by its host session, and a no-result mark that names the gate, or why Prism could not record it.
  * Once the gate is recorded, the run is checked again under the launch lock: a gate of a run that another run followed, or that a stop
- * request names, is resolved and gets no mark. Otherwise the no-result mark, then the gate mark, are written under that same lock.
+ * request names, is resolved and gets no mark. Otherwise the host session learns of the gate, then the no-result mark and the gate mark
+ * are written, all under that same lock.
  * normal says whether the host ended normally by its own facts, such as an ACP agent's stop reason; the record decides the rest.
  */
 export async function settleRunResult({ id, token, normal, resumed, lastMessage, env = process.env }: { id: string; token: string; normal: boolean; resumed: boolean; lastMessage: string | null; env?: NodeJS.ProcessEnv }) {
@@ -413,6 +422,8 @@ export async function settleRunResult({ id, token, normal, resumed, lastMessage,
         await writeResultMarks(folder, { ...latest, checks });
         return false;
       }
+      // The host session learns of the gate before any view shows the run ended without a result.
+      await rememberHostGate(record, gate, env);
       const noResult = [...latest.noResult.filter((item) => item.run !== token), { run: token, gate, failure: null, at: new Date().toISOString() }];
       await writeResultMarks(folder, { ...latest, checks, noResult });
       await addGateMarks(folder, [gate]);
@@ -421,12 +432,6 @@ export async function settleRunResult({ id, token, normal, resumed, lastMessage,
     settled = true;
     if (!current) {
       await changeGates(record, (pending) => (pending.some((item: any) => item?.id === gate && !item.answer) ? [{ op: "resolve", id: gate, reason: SUPERSEDED }] : []));
-      return;
-    }
-    if ((record.host === "claude-code" || record.host === "codex") && validHostSessionId(record.hostSessionId)) {
-      const { noticeDirectory, rememberAskedGates } = await import("../workflow/change-notices.mjs");
-      const { holderOf } = await import("../workflow/slice-claims.mjs");
-      await rememberAskedGates({ projectRoot: record.checkout, initiative: record.initiative, gateIds: [gate], session: holderOf(record.hostSessionId), directory: noticeDirectory(env) }).catch(() => {});
     }
   } finally {
     if (!settled) {
