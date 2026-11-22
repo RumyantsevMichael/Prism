@@ -214,8 +214,9 @@ export function acpConfigChoices(options: unknown) {
 /** The reasons of an agent's run options report that are its own sentences. */
 export const acpReasons = Object.freeze({
   version: (label: string, version: unknown) => `${label} speaks ACP version ${String(version)}, and Prism speaks version ${ACP_PROTOCOL_VERSION}.`,
-  signIn: (label: string, methods: unknown) => `${label} needs you to sign in before it can run: ${signInMethods(methods)}.`,
-  noTools: (label: string) => `${label} did not start Prism's tools, so it cannot run Prism's workflow.`,
+  // An agent that needs sign-in opens no session, so whether it starts Prism's tools is known only once the person has signed in.
+  signIn: (label: string, methods: unknown) => `${label} needs you to sign in before it can run: ${signInMethods(methods)}. Prism checks that it starts Prism's tools once you have signed in.`,
+  noTools: (label: string) => `${label} did not start Prism's tools, so it cannot run Prism's workflow: it ignores the tool servers that Prism names when it opens a session, or starts them later than Prism waits.`,
   childModels: (label: string) => `${label} chooses the models of its own child agents.`,
   childModel: (label: string, model: string) => `${label} chooses the models of its own child agents, so Prism cannot give them ${model}.`,
   childEffort: (label: string, effort: string) => `${label} chooses the effort of its own child agents, so Prism cannot give them ${effort}.`

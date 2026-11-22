@@ -309,8 +309,8 @@ To show an ACP agent's models and efforts, the review app starts the agent's own
 The **Coordinator** picker lists the agent's models in the agent's order and the efforts of the chosen model lowest first, each after **Host default**, and leaves out every other option the agent reports, such as its mode.
 The pickers of the other agents offer only **Host default** and say `<label> chooses the models of its own child agents.`, because the protocol gives Prism no way to choose them.
 An agent that speaks another protocol version shows `<label> speaks ACP version <n>, and Prism speaks version 1.`
-An agent whose session does not start Prism's tools shows `<label> did not start Prism's tools, so it cannot run Prism's workflow.`
-An agent that needs you to sign in shows `<label> needs you to sign in before it can run:` and the names of the sign-in methods it names, each with its description only when the description says more than the name; Prism never signs in for you, so sign in with the agent's own command in a terminal, and the pickers read the agent again the next time they open.
+An agent whose session does not start Prism's tools shows `<label> did not start Prism's tools, so it cannot run Prism's workflow: it ignores the tool servers that Prism names when it opens a session, or starts them later than Prism waits.`
+An agent that needs you to sign in shows `<label> needs you to sign in before it can run:` and the names of the sign-in methods it names, each with its description only when the description says more than the name, followed by `Prism checks that it starts Prism's tools once you have signed in.`, since an agent opens no session before then; Prism never signs in for you, so sign in with the agent's own command in a terminal, and the pickers read the agent again the next time they open.
 While the initiative's ACP host shows one of these reasons, **Launch** is unavailable with that reason and asks you nothing.
 In the **Launch** and **Settings** dialogs the reason shows once, under the host in the **Host** choice, and **Launch** stays unavailable while the chosen host cannot run; the dialog's banners show only reasons that the **Host** choice does not, such as a model the host does not offer.
 
@@ -473,7 +473,7 @@ An ACP agent runs as the command, arguments, and environment of its declaration 
 Prism opens one session in the checkout whose only MCP server is Prism's own, run by the review app's Node with `NODE_USE_ENV_PROXY=1`, `PRISM_LAUNCH`, and the review app folder, and it sets the agent's automatic mode, the declaration's `autoMode` or else the agent's `auto` mode, then the coordinator's model and effort, before the prompt.
 Prism never sets a mode that bypasses or accepts all permissions, such as `bypassPermissions` or `agent-full-access`, even when a declaration names it, and an agent without an automatic mode keeps its own.
 A value the agent does not offer fails the run before its prompt with `<label> does not offer <value> for <option>.`.
-Prism waits up to 60 seconds for its tools to start in the agent's session, and an agent that does not start them ends with `<label> did not start Prism's tools, so it cannot run Prism's workflow.` and receives no prompt.
+Prism waits up to 60 seconds for its tools to start in the agent's session, and an agent that does not start them ends with that reason and receives no prompt.
 Prism's skills are not installed in an ACP agent, so the prompt carries the text of the orchestrate skill, as an attached resource where the agent takes one, and the instruction to run it for the initiative and to read every other skill file it names with Prism's `get_skill` tool.
 Prism answers no other request of the agent's, and a permission request it asks waits on Attention as described in [Permission requests](#permission-requests).
 A run on an ACP agent fails with `<label> stopped: <reason>.` when the agent stops for a refusal, its token limit, or its turn limit.
