@@ -1084,7 +1084,7 @@ async function callGateWait(argumentsValue: any, metadata: any, requestId: any) 
     value = await waitForUserGates({ projectRoot, ...source, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, notices: held, watchChanges: coordinates });
     if (value.status === "timeout") {
       const maxWaitMinutes = Math.min(argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES, HOOK_WAIT_MINUTES);
-      const { replaced } = await recordWaitRequest({ sessionId: hookSession, projectRoot, ...source, gateIds: value.gateIds, maxWaitMinutes, knownEntries, coordinates, ...(held ? { waitId } : {}) });
+      const { replaced } = await recordWaitRequest({ sessionId: hookSession, agent: currentCallAgent(), projectRoot, ...source, gateIds: value.gateIds, maxWaitMinutes, knownEntries, coordinates, ...(held ? { waitId } : {}) });
       // The request this one replaced never reaches the hook, so its wait lets go of its gates.
       if (replaced) await endGateWait({ ...replaced, cancelled: true }).catch(() => {});
       value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
