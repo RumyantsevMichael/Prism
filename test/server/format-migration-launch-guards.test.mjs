@@ -11,6 +11,7 @@ import { COMPONENTS, STORE_PATHS } from "./fixtures/artifact-formats-store.mjs";
 import { listedTools, readRun, runCheckout, runFor, serve, stubHosts, waitFor } from "./fixtures/format-migration-runs.mjs";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { checkout, isolateGit, syncedWorkspace } from "./fixtures/workspace-artifacts.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // A run's session reads only, an artifact has at most one open run, and a run whose owner is gone fails so that it can run again.
 // Every host here is a stub on a PATH that holds no real Claude Code or Codex.
@@ -253,6 +254,6 @@ test("two machines that see one waiting run in a synced store launch it once", {
   const [callA2, callB] = [await serve(context, rootA, hostsA), await serve(context, rootB, hostsB)];
   await Promise.all([callA2("check_artifacts", {}), callB("check_artifacts", {})]);
   await waitFor(async () => (await readRun(callA2, run)).status === "running" || null, { what: "the run to launch", ms: 60000 });
-  await new Promise((resolve) => setTimeout(resolve, 3000));
+  await pause(3000, "the check is that no second session starts, which no event marks");
   assert.equal(hostsA.runs("claude").length + hostsB.runs("claude").length, 1, "one session of the run starts");
 });

@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { CONFORMING, REQUIREMENT, formatProject, write } from "./fixtures/artifact-formats.mjs";
 import { get, pageSession, startActionReview } from "./fixtures/review-actions.mjs";
+import { settled } from "./fixtures/wait.mjs";
 
 // Attention's format findings, read from the review server.
 
@@ -60,6 +61,5 @@ test("clause 23: Attention with 300 nonconforming artifacts answers within 5 sec
   assert.ok(Date.now() - started < 5000, `answered in ${Date.now() - started} ms`);
   assert.equal((await attention()).formats[0].count, 302);
   await write(root, "docs/requirements/bulk/old-000.md", REQUIREMENT);
-  await new Promise((resolve) => setTimeout(resolve, 1100));
-  assert.equal((await attention()).formats[0].count, 301);
+  assert.equal(await settled(async () => (await attention()).formats[0].count, 301), 301);
 });

@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { CONFORMING, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
 import { AUDIT, AUDIT_SOURCE, auditProposal, listedTools, readRun, runCheckout, runFor, serve, stubHosts, waitFor } from "./fixtures/format-migration-runs.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // Prism launches each format migration run on this machine at once, on the first available host with a small model when no host and model are chosen,
 // with the migrate-artifact prompt alone, and fails a run whose session ends before it finishes.
@@ -104,7 +105,7 @@ test("clause 6: a session that ends after the run asked its question leaves the 
   assert.equal((await call("propose_migration", auditProposal(run, { asked }))).refused, false);
   assert.equal((await call("finish_migration_run", { run })).refused, false);
   // The stub's turn ends six seconds after it started, which ends the session once the run asks.
-  await new Promise((resolve) => setTimeout(resolve, 8000));
+  await pause(8000, "the check is that the ended session starts no other one and leaves the run asking, which no event marks");
   assert.equal(hosts.runs("claude").length, 1);
   assert.equal((await readRun(call, run)).status, "asking", "the person's answer is still awaited");
 });
