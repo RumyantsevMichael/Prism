@@ -365,7 +365,7 @@ Each agent shows its name, version, authors, license, source (its repository, el
 Prism installs only what it can check and lock, so an agent cannot be installed, and says why, when:
 
 - its build for this computer lists no SHA-256 checksum, so its download cannot be checked;
-- its build's archive is not a `.tar.gz`, `.tgz`, or `.zip` file;
+- its build is neither a `.zip`, `.tar.gz`, `.tgz`, `.tar.bz2`, or `.tbz2` archive nor the program itself, such as a `.dmg` or `.tar.xz` download;
 - its `npx` package does not name an exact version, such as `@google/gemini-cli@0.70.0`;
 - its `uvx` package does not pin one with `==`, such as `fast-agent-acp==0.10.1`;
 - `npm`, for an `npx` package, or `uv`, for a `uvx` package, is not on `PATH`.
@@ -397,7 +397,7 @@ Prism runs no install, build, or lifecycle script of an agent or its dependencie
 
 | Kind | Before the dialog | After the dialog |
 | --- | --- | --- |
-| Build for this computer | Nothing | Downloads the archive, checks its SHA-256 against the registry's, and only then unpacks it with Prism's own code, refusing any entry with an absolute path, a `..` part, or a link that leads outside the version folder, read as written or followed through the archive's other links, whether or not its target exists |
+| Build for this computer | Nothing | Downloads the build, checks its SHA-256 against the registry's, and only then unpacks it with Prism's own code, or places it as the program when the download is the program itself, refusing any entry with an absolute path, a `..` part, or a link that leads outside the version folder, read as written or followed through the archive's other links, whether or not its target exists |
 | `npx` package | Resolves a lockfile with `npm install --package-lock-only --ignore-scripts` | Installs from that lockfile with `npm ci --ignore-scripts` and checks that the installed version is the registry's |
 | `uvx` package | Resolves hashed requirements with `uv pip compile --generate-hashes --no-build` | Creates a virtual environment and installs them with `uv pip sync --no-build --require-hashes`, so a requirement that needs a build fails, and checks that the requirements pin the registry's package and version and that the environment holds a program named after the package |
 
