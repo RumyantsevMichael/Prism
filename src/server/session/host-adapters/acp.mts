@@ -35,6 +35,9 @@ export class AcpError extends Error {
   }
 }
 
+// The name of Prism's server in the sessions that Prism opens on an ACP agent.
+const PRISM_SERVER = "prism";
+
 /**
  * Prism's MCP server as an ACP session names it: the Node executable that runs this server with the plugin's MCP entry point and the
  * token of the read or run, by which Prism learns that the server listed its tools, with the launch for a launched run, and only
@@ -49,7 +52,7 @@ export function prismMcpServer({ env = process.env, token, launch = null, option
     ...(optionsRead ? [{ name: "PRISM_OPTIONS_READ", value: "1" }] : []),
     ...(env.PRISM_REVIEW_APP_DIR ? [{ name: "PRISM_REVIEW_APP_DIR", value: env.PRISM_REVIEW_APP_DIR }] : [])
   ];
-  return { name: "prism", command: process.execPath, args: [pluginPath("dist", "server", "mcp.mjs"), ...(launch ? [acpLaunchArgument(launch)] : []), acpTokenArgument(token)], env: variables };
+  return { name: PRISM_SERVER, command: process.execPath, args: [pluginPath("dist", "server", "mcp.mjs"), ...(launch ? [acpLaunchArgument(launch)] : []), acpTokenArgument(token)], env: variables };
 }
 
 export interface AcpClientOptions {
@@ -358,7 +361,7 @@ const finiteTokens = (usage: unknown) => {
   return Object.keys(counts).length ? counts : null;
 };
 
-export interface AcpRunFacts { hostSessionId: string | null; agentSessionId: string | null; settled: boolean; model: string | null; hostError: string | null; failure: string | null; usage: AcpUsage | null; refusals: { tool: string; reason: string }[]; refusalCount: number; lastMessage: string | null; stopReason: string | null }
+export interface AcpRunFacts { hostSessionId: string | null; agentSessionId: string | null; settled: boolean; model: string | null; hostError: string | null; failure: string | null; usage: AcpUsage | null; refusals: { tool: string; reason: string }[]; refusalCount: number; ownToolAllows: number; lastMessage: string | null; stopReason: string | null }
 
 export interface AcpConversationOptions {
   label: string;
@@ -420,6 +423,24 @@ export function acpPermission(label: string, params: unknown, known: KnownToolCa
 }
 
 /**
+ * The single-use allow of a permission request that asks to call one of Prism's own tools, or null for any other request: its tool
+ * call's title names Prism's server and one of `tools`, the tools that server listed to the agent in this run, as server/tool,
+ * server__tool, server.tool, server:tool, or mcp__server__tool, and its raw input, when it has one, is an object. Such a call is what
+ * the run exists to make, so it needs no dialog; every other request is asked as acpPermission says.
+ */
+export function prismToolAllow(params: unknown, tools: ReadonlySet<string>, known: KnownToolCall = {}) {
+  const values = isObject(params) ? params : {};
+  const sent = isObject(values.toolCall) ? values.toolCall : {};
+  const title = typeof sent.title === "string" ? sent.title : typeof known.title === "string" ? known.title : "";
+  const rawInput = isSet(sent.rawInput) ? sent.rawInput : known.rawInput;
+  if (isSet(rawInput) && !isObject(rawInput)) return null;
+  const match = /^(?:mcp__prism__|prism(?:\/|__|\.|:))([A-Za-z0-9_-]+)$/.exec(title.trim());
+  if (!match || !tools.has(match[1])) return null;
+  const allow = (Array.isArray(values.options) ? values.options : []).find((option: any) => isObject(option) && option.kind === "allow_once" && typeof option.optionId === "string" && option.optionId);
+  return allow ? { outcome: { outcome: "selected", optionId: (allow as any).optionId } } : null;
+}
+
+/**
  * One launched run's conversation with an ACP agent: initialize, session/new with Prism's server or a resume of the recorded session
  * with session/resume or session/load, the automatic mode and the coordinator's model and effort with session/set_config_option, a wait
  * until Prism's server listed its tools, and one session/prompt with the orchestrate skill and the instruction. Every request of the
@@ -430,6 +451,8 @@ export function acpConversation(options: AcpConversationOptions) {
   const { label, initiative, checkout, hostSessionId, resume, coordinator, env, launch, facts, write, close, cut } = options;
   const pending = new Map<number, string>();
   const toolCalls = new Map<string, KnownToolCall>();
+  // The tools that Prism's server listed to the agent in this run, whose calls need no dialog; none until the server listed them.
+  let prismTools: ReadonlySet<string> = new Set();
   // Each permission request that waits, by its JSON-RPC id, so that $/cancel_request withdraws it.
   const waitingPermissions = new Map<string, { dismiss: () => void }>();
   const permissionKey = (id: unknown) => `${typeof id}:${String(id)}`;
@@ -509,6 +532,7 @@ export function acpConversation(options: AcpConversationOptions) {
       fail(acpReasons.noTools(label));
       return;
     }
+    prismTools = new Set(listed);
     let skill: string;
     try {
       skill = readFileSync(pluginPath("skills", "orchestrate", "SKILL.md"), "utf8");
@@ -602,9 +626,15 @@ export function acpConversation(options: AcpConversationOptions) {
       const hasId = typeof message.id === "string" || typeof message.id === "number";
       if (hasId && typeof message.method === "string") {
         if (message.method === "session/request_permission") {
-          // The request waits for the person on Attention; the run keeps waiting until it is answered.
           const { id } = message;
           const callId = message.params?.toolCall?.toolCallId;
+          const own = prismToolAllow(message.params, prismTools, typeof callId === "string" ? toolCalls.get(callId) : undefined);
+          if (own) {
+            facts.ownToolAllows += 1;
+            write({ jsonrpc: "2.0", id, result: own });
+            return;
+          }
+          // Any other request waits for the person on Attention; the run keeps waiting until it is answered.
           const permission = acpPermission(label, message.params, typeof callId === "string" ? toolCalls.get(callId) : undefined);
           const key = permissionKey(id);
           let answered = false;

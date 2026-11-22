@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 
@@ -44,13 +44,16 @@ export function acpToken(argv: readonly string[] = process.argv) {
   return null;
 }
 
-/** Writes this server's marker, when its arguments name a token; a failed write only leaves the read or run to time out. */
-export function markToolsListed(env: NodeJS.ProcessEnv = process.env, argv: readonly string[] = process.argv) {
+/**
+ * Writes this server's marker, naming the tools it listed, when its arguments name a token; a failed write only leaves the read or run
+ * to time out.
+ */
+export function markToolsListed(env: NodeJS.ProcessEnv = process.env, argv: readonly string[] = process.argv, tools: readonly string[] = []) {
   const token = acpToken(argv);
   if (!token) return;
   try {
     mkdirSync(optionsReadFolder(env), { recursive: true, mode: 0o700 });
-    writeFileSync(markerFile(env, token), JSON.stringify({ pid: process.pid, at: new Date().toISOString() }), { mode: 0o600 });
+    writeFileSync(markerFile(env, token), JSON.stringify({ pid: process.pid, tools, at: new Date().toISOString() }), { mode: 0o600 });
   } catch {}
 }
 
@@ -61,19 +64,31 @@ export function unmarkToolsListed(env: NodeJS.ProcessEnv = process.env, argv: re
   try { rmSync(markerFile(env, token), { force: true }); } catch {}
 }
 
-function takeMarker(env: NodeJS.ProcessEnv, token: string) {
+const TOOL_NAME = /^[A-Za-z0-9_-]{1,128}$/;
+
+// The names of the tools that the marker of token lists once it exists, an empty list for a marker that cannot be read, or null.
+function takeMarker(env: NodeJS.ProcessEnv, token: string): string[] | null {
   const file = markerFile(env, token);
-  try { statSync(file); } catch { return false; }
+  try { statSync(file); } catch { return null; }
+  let tools: string[] = [];
+  try {
+    const listed = JSON.parse(readFileSync(file, "utf8"))?.tools;
+    if (Array.isArray(listed)) tools = listed.filter((name: unknown): name is string => typeof name === "string" && TOOL_NAME.test(name));
+  } catch {}
   try { rmSync(file, { force: true }); } catch {}
-  return true;
+  return tools;
 }
 
-/** Resolves true once a server started with token listed its tools, or false at the deadline or when stopped() answers true. */
-export function toolsListed({ env, token, deadline, stopped }: { env: NodeJS.ProcessEnv; token: string; deadline: number; stopped: () => boolean }): Promise<boolean> {
+/**
+ * Resolves with the names of the tools that a server started with token listed, once it listed them, or null at the deadline or when
+ * stopped() answers true.
+ */
+export function toolsListed({ env, token, deadline, stopped }: { env: NodeJS.ProcessEnv; token: string; deadline: number; stopped: () => boolean }): Promise<string[] | null> {
   return new Promise((resolve) => {
     const check = () => {
-      if (takeMarker(env, token)) resolve(true);
-      else if (stopped() || Date.now() >= deadline) resolve(false);
+      const tools = takeMarker(env, token);
+      if (tools) resolve(tools);
+      else if (stopped() || Date.now() >= deadline) resolve(null);
       else setTimeout(check, POLL_MS);
     };
     check();

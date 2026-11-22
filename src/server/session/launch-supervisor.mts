@@ -275,7 +275,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
           const run = current.runs.find((entry: any) => entry.token === token);
           if (!run) return;
           const last = lastReasonLine(redactSessionId(kept, current.hostSessionId));
-          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, failure: facts.failure, stderr: last?.slice(0, STDERR_LINE_MAX) ?? null, ...(acp ? { usage: facts.usage, settled: facts.settled } : {}) });
+          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, failure: facts.failure, stderr: last?.slice(0, STDERR_LINE_MAX) ?? null, ...(acp ? { usage: facts.usage, settled: facts.settled, ownToolAllows: facts.ownToolAllows } : {}) });
           if (!run.stopRequestedAt && request) run.stopRequestedAt = new Date(requestTime(request)).toISOString();
         });
         resolve();

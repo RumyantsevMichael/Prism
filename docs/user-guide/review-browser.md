@@ -490,6 +490,7 @@ Each run also keeps the model its host reports as soon as the host names it, fro
 ### Permission requests
 
 Each permission request that a launched session's host still asks, Claude Code's prompt to use a tool, a Codex approval of a command, a file change, or more permissions, or an ACP agent's request to run a tool, keeps the session waiting and waits for you on this computer's Attention.
+An ACP agent's request to call one of Prism's own tools, which the agent names as `prism/<tool>`, `prism__<tool>`, `prism.<tool>`, `prism:<tool>`, or `mcp__prism__<tool>` for a tool that Prism's server listed to it in the run, is the exception: Prism allows it once without asking you, because those calls are what the run was launched to make, and counts it in the run's record.
 It lists with the initiative, the host, the action that the host named, the host's reason, and when it was asked, oldest first, and it counts toward the waiting questions that the page's title and desktop notification show.
 The action holds everything that an allow of the request covers, as compact JSON after a short name:
 - A Claude Code request shows the tool and the input it would run with, such as `Write {"file_path":".claude/settings.local.json","content":"{}"}`, because that input is what an approval allows.
