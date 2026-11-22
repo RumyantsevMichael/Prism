@@ -212,14 +212,24 @@ export const acpReasons = Object.freeze({
   childModels: (label: string) => `${label} chooses the models of its own child agents.`
 });
 
-// The names, with their descriptions in parentheses, of the sign-in methods an agent answered, or its own command without any.
+// The names of the sign-in methods an agent answered, or its own command without any. A method's description follows its name in
+// parentheses only when it says more than the name: when it has at least two words that the name lacks, apart from linking words,
+// so "Log in with Google (Log in with your Google account)" reads "Log in with Google".
 function signInMethods(methods: unknown) {
   const named = (Array.isArray(methods) ? methods : []).filter((method) => isObject(method) && text(method.name).trim()).map((method: any) => {
     const name = text(method.name).replace(/\s+/g, " ").trim().slice(0, NAME_MAX);
     const description = text(method.description).replace(/\s+/g, " ").trim().slice(0, DESCRIPTION_MAX).replace(/\.+$/, "");
-    return description ? `${name} (${description})` : name;
+    return description && addsToName(name, description) ? `${name} (${description})` : name;
   });
   return named.length ? named.join(", ") : "sign in with the agent's own command";
+}
+
+const LINKING_WORDS = new Set(["a", "an", "the", "and", "or", "to", "of", "for", "with", "by", "via", "on", "in", "your", "you", "use", "using"]);
+const wordsOf = (value: string) => value.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+function addsToName(name: string, description: string) {
+  const own = new Set(wordsOf(name));
+  return new Set(wordsOf(description).filter((word) => !own.has(word) && !LINKING_WORDS.has(word))).size >= 2;
 }
 
 export interface AcpOptionsDefinition { label: string; command: string; prefix: readonly string[]; acp: { args: readonly string[]; env: Readonly<Record<string, string>> } }

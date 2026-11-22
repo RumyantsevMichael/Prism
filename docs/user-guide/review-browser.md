@@ -299,8 +299,9 @@ The **Coordinator** picker lists the agent's models in the agent's order and the
 The pickers of the other agents offer only **Host default** and say `<label> chooses the models of its own child agents.`, because the protocol gives Prism no way to choose them.
 An agent that speaks another protocol version shows `<label> speaks ACP version <n>, and Prism speaks version 1.`
 An agent whose session does not start Prism's tools shows `<label> did not start Prism's tools, so it cannot run Prism's workflow.`
-An agent that needs you to sign in shows `<label> needs you to sign in before it can run:` and the sign-in methods it names; Prism never signs in for you, so sign in with the agent's own command in a terminal, and the pickers read the agent again the next time they open.
+An agent that needs you to sign in shows `<label> needs you to sign in before it can run:` and the names of the sign-in methods it names, each with its description only when the description says more than the name; Prism never signs in for you, so sign in with the agent's own command in a terminal, and the pickers read the agent again the next time they open.
 While the initiative's ACP host shows one of these reasons, **Launch** is unavailable with that reason and asks you nothing.
+In the **Launch** and **Settings** dialogs the reason shows once, under the host in the **Host** choice, and **Launch** stays unavailable while the chosen host cannot run; the dialog's banners show only reasons that the **Host** choice does not, such as a model the host does not offer.
 
 Declare agents in `acp-agents.json`, which Prism only reads and never writes:
 
