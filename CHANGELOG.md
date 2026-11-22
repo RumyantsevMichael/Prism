@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.1](https://github.com/RumyantsevMichael/Prism/compare/v0.31.0...v0.31.1) (2026-11-22)
+
+
+### Fixed
+
+* **review:** reuse built views until the records they read change ([#419](https://github.com/RumyantsevMichael/Prism/issues/419)) ([1e8e086](https://github.com/RumyantsevMichael/Prism/commit/1e8e08660029b4d06f29f2f94a52fa6e3ad1fb3d)), closes [#418](https://github.com/RumyantsevMichael/Prism/issues/418)
+
 ## [0.31.0](https://github.com/RumyantsevMichael/Prism/compare/v0.30.0...v0.31.0) (2026-11-21)
 
 
