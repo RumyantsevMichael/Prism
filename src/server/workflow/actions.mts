@@ -481,7 +481,10 @@ const SETTING_ACTIONS = SETTING_DEFINITIONS.filter((definition) => INITIATIVE_SE
 function gateFields(gate: any) {
   const note = (extra?: any) => text("note", "Note", NOTE_LIMIT, { multiline: true, ...extra });
   if (gate.kind === "visual-review" || gate.kind === "correctness" || gate.kind === "approval") {
-    return [choice("choice", "Answer", [option("approve", "Approve"), option("request-changes", "Request changes")], { required: true }), note({ requiredWhen: { field: "choice", values: ["request-changes"] } })];
+    return [choice("choice", "Answer", [
+      option("approve", "Approve", "The agent goes on with the work as it stands."),
+      option("request-changes", "Request changes", "The agent revises the work from your note before it goes on.")
+    ], { required: true }), note({ requiredWhen: { field: "choice", values: ["request-changes"] } })];
   }
   if (gate.kind === "decision" && Array.isArray(gate.options) && gate.options.length) {
     return [choice("choice", "Answer", gate.options.map((item: any) => option(item.id, item.label, typeof item.consequence === "string" ? item.consequence : null))), note({ requiredWhen: { field: "choice", values: [null] } })];

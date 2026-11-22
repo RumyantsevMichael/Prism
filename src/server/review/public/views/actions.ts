@@ -37,6 +37,9 @@ export function currentInput(action: any) {
   return input;
 }
 
+// A required choice of one option, such as an assistance question's Done, offers nothing to pick, so it holds that option and draws no control.
+const impliedOption = (field: any) => field.kind !== "text" && field.required && Array.isArray(field.options) && field.options.length === 1 ? field.options[0].value : null;
+
 function isRequired(field: any, input: any) {
   if (field.required) return true;
   const when = field.requiredWhen;
@@ -70,7 +73,7 @@ export function actionFormState(action: any, draft: any = {}) {
   const values = draft?.values ?? {};
   const fields = action.fields ?? [];
   const current = keyedInput(action, currentInput(action), values);
-  const input = Object.fromEntries(fields.map((field: any) => [field.name, Object.hasOwn(values, field.name) ? values[field.name] : current[field.name]]));
+  const input = Object.fromEntries(fields.map((field: any) => [field.name, Object.hasOwn(values, field.name) ? values[field.name] : current[field.name] ?? impliedOption(field)]));
   const missing = fields.find((field: any) => isRequired(field, input) && !filled(input[field.name]));
   // An action without a value, such as an answer or a rebuild, is never unchanged; a setting is unchanged while every field holds its current value.
   const unchanged = action.value !== null && action.value !== undefined && fields.every((field: any) => same(normalized(input[field.name]), normalized(current[field.name])));
@@ -180,17 +183,35 @@ function hostChoiceHtml(action: any, field: any, input: any, { disabled, key, re
   return `<div class="action-choice is-wide"><prism-choice class="action-host-choice" aria-label="${escapeHtml(field.label)}" value="${escapeHtml(picked ?? "")}" data-select data-field="${escapeHtml(field.name)}">${options}</prism-choice>${hint}</div>`;
 }
 
-function fieldHtml(action: any, field: any, input: any, { disabled, key, layout }: { disabled: any; key: any; layout: any }) {
+// A form draws a choice as kit choice cards: each option with its consequence under its label, the recommended one with its badge, and a tone
+// the form gives it, such as Request changes in danger. A choice that is not required can be unpicked with Clear choice, leaving the answer to the text fields.
+function cardsHtml(action: any, field: any, input: any, { disabled, key, form }: { disabled: any; key: any; form: any }) {
+  const picked = normalized(input[field.name]);
+  const recommended = action.recommended?.value ?? null;
+  const options = field.options.map((option: any) => {
+    const tone = form.tone?.(option) ?? null;
+    return `<prism-choice-option value="${escapeHtml(option.value)}" data-focus-key="${escapeHtml(`${key}|${field.name}|${option.value}`)}"${tone ? ` tone="${escapeHtml(tone)}"` : ""}${disabled ? " disabled" : ""}>${escapeHtml(option.label ?? option.value)}${option.value === recommended ? ` ${badge("Recommended", "accent")}` : ""}${option.consequence ? `<span slot="detail">${escapeHtml(option.consequence)}</span>` : ""}</prism-choice-option>`;
+  }).join("");
+  const clear = field.required ? "" : `<prism-button size="sm" variant="ghost" data-clear data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}|clear`)}" tip="Unchoose the option to answer in your own words"${picked === null || disabled ? " hidden" : ""}><prism-icon name="close" size="xs"></prism-icon>Clear choice</prism-button>`;
+  const heading = form.heading ? `<p class="label-caps" aria-hidden="true">${escapeHtml(form.heading)}</p>` : "";
+  return `<div class="action-cards"><div class="action-cards-head">${heading}${clear}</div><prism-choice aria-label="${escapeHtml(form.heading ?? field.label)}" data-select data-field="${escapeHtml(field.name)}"${field.required ? "" : " clearable"}${picked === null ? "" : ` value="${escapeHtml(picked)}"`}>${options}</prism-choice></div>`;
+}
+
+function fieldHtml(action: any, field: any, input: any, { disabled, key, layout, form }: { disabled: any; key: any; layout: any; form: any }) {
+  if (impliedOption(field) !== null) return "";
   if (layout.choice(field)) return hostChoiceHtml(action, field, input, { disabled, key, reportReason: layout.reportReason });
   if (layout.select(field)) return selectHtml(action, field, input, { disabled, key });
   if (layout.skip(field)) return "";
   if (field.kind === "text") {
     const required = isRequired(field, input);
-    // The field's hint says whether it is required; maxlength reaches the native control after the field is drawn.
-    return `<prism-field class="action-field" type="${field.multiline ? "textarea" : "text"}" label="${escapeHtml(field.label)}" hint="${required ? "Required" : "Optional"}" value="${escapeHtml(input[field.name] ?? "")}" data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}`)}"${field.maxLength ? ` data-max-length="${field.maxLength}"` : ""}${required ? " required" : ""}${disabled ? " disabled" : ""}></prism-field>`;
+    // The field's hint says whether it is required, or a form's own words for the field do; maxlength reaches the native control after the field is drawn.
+    const words = form?.words?.field?.[field.name] ?? null;
+    const text = words ? `label="${escapeHtml(words.label)}" placeholder="${escapeHtml(words.placeholder ?? "")}"` : `label="${escapeHtml(field.label)}" hint="${required ? "Required" : "Optional"}"`;
+    return `<prism-field class="action-field" type="${field.multiline ? "textarea" : "text"}" ${text} value="${escapeHtml(input[field.name] ?? "")}" data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}`)}"${field.maxLength ? ` data-max-length="${field.maxLength}"` : ""}${required ? " required" : ""}${disabled ? " disabled" : ""}></prism-field>`;
   }
   // A field without options, such as a run choice, has a control of its own that this generic view does not draw.
   if (!Array.isArray(field.options)) return "";
+  if (form) return cardsHtml(action, field, input, { disabled, key, form });
   const picked = normalized(input[field.name]);
   const chosen = field.options.find((option: any) => option.value === picked);
   const group = `<div class="action-options" role="group" aria-label="${escapeHtml(field.label)}">${field.options.map((option: any) =>
@@ -199,7 +220,30 @@ function fieldHtml(action: any, field: any, input: any, { disabled, key, layout 
   return `<div class="action-choice">${group}${consequence}</div>`;
 }
 
-function actionHtml(action: any, entry: any, { writable, renderMarkdown, heading, submitLabel, batch, unavailableButtons, layoutOf, named = false }: { writable: any; renderMarkdown: any; heading: any; submitLabel: any; batch: any; unavailableButtons: any; layoutOf: any; named?: boolean }) {
+// A form's own words for its state: each text field's label and placeholder, the submit button's label and variant, and the line beside it,
+// which reads as ready once the action can be sent.
+function formWords(form: any, action: any, state: any) {
+  const words = form.wording?.(action, state) ?? {};
+  return { field: words.field ?? {}, submit: { label: words.submit?.label ?? action.label, variant: words.submit?.variant ?? "primary" }, hint: words.hint ?? state.hint, ready: Boolean(words.ready) && state.ready };
+}
+
+function formHintHtml(id: string, words: any) {
+  return `<p class="action-hint is-form${words.ready ? " is-ready" : ""}" id="${id}-hint" aria-live="polite"><prism-icon name="check-circle" size="sm"${words.ready ? "" : " hidden"}></prism-icon><span class="action-hint-text">${escapeHtml(words.hint)}</span></p>`;
+}
+
+// One action drawn as a form, such as a question's answer: its fields, then the line that says what is missing or that it is ready, its submit button, and what the form adds after it.
+// The page around the form shows the action's context and recommendation unless the form asks for them.
+function formHtml(action: any, entry: any, state: any, { disabled, layout, renderMarkdown, form, id }: any) {
+  const { key } = entry;
+  const words = formWords(form, action, state);
+  const fields = shownFields(action, state.input).map((field: any) => fieldHtml(action, field, state.input, { disabled, key, layout, form: { ...form, words } })).join("");
+  const guidance = form.guidance ? `${contextHtml(action, renderMarkdown)}${guidanceHtml(action, null)}` : "";
+  const heading = !fields.includes("action-cards") && form.heading ? `<p class="label-caps">${escapeHtml(form.heading)}</p>` : "";
+  const ready = !disabled && state.ready;
+  return `${guidance}${heading}${fields ? `<div class="action-fields is-form">${fields}</div>` : ""}<div class="action-submit is-form">${formHintHtml(id, words)}<prism-button variant="${escapeHtml(words.submit.variant)}" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${ready ? "" : " disabled"}>${escapeHtml(words.submit.label)}</prism-button>${form.trailing?.(action) ?? ""}</div>`;
+}
+
+function actionHtml(action: any, entry: any, { writable, renderMarkdown, heading, submitLabel, batch, unavailableButtons, layoutOf, form = null, named = false }: { writable: any; renderMarkdown: any; heading: any; submitLabel: any; batch: any; unavailableButtons: any; layoutOf: any; form?: any; named?: boolean }) {
   const { key, draft, error, sending } = entry;
   const layout = layoutOf(entry.target, action);
   const state = actionFormState(action, draft);
@@ -210,6 +254,13 @@ function actionHtml(action: any, entry: any, { writable, renderMarkdown, heading
   const label = named ? "" : `<span class="action-label" id="${id}-label">${head.label}</span>`;
   const choice = action.fields.find((field: any) => field.kind !== "text");
   let control;
+  // A form that can no longer be sent, such as a question someone already answered, shows only why.
+  if (form) {
+    control = action.available ? formHtml(action, entry, state, { disabled, layout, renderMarkdown, form, id }) : `<p class="action-reason">${escapeHtml(action.reason ?? "")}</p>`;
+    return `<div class="action-row is-form" data-action-key="${escapeHtml(key)}" aria-busy="${Boolean(sending)}">
+    <div class="action-control">${control}<p class="action-error" role="alert"${error ? "" : " hidden"}>${escapeHtml(error ?? "")}</p></div>
+  </div>`;
+  }
   if (!action.available) {
     // A list of a few actions without fields, such as a launched session's, keeps each one's button, unavailable, beside its reason.
     const button = unavailableButtons && !action.fields.length ? `<div class="action-submit"><prism-button size="sm" disabled data-focus-key="${escapeHtml(`${key}|apply`)}">${escapeHtml(submitLabel?.(action) ?? action.label)}</prism-button></div>` : "";
@@ -217,7 +268,7 @@ function actionHtml(action: any, entry: any, { writable, renderMarkdown, heading
   } else if (!action.fields.length) {
     control = `<div class="action-submit"><prism-button size="sm" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${disabled ? " disabled" : ""}>${escapeHtml(submitLabel?.(action) ?? action.label)}</prism-button></div>`;
   } else {
-    const fields = shownFields(action, state.input).map((field: any) => fieldHtml(action, field, state.input, { disabled, key, layout })).join("");
+    const fields = shownFields(action, state.input).map((field: any) => fieldHtml(action, field, state.input, { disabled, key, layout, form: null })).join("");
     // The run choices are kit pickers that stay in place while the list redraws, so their row draws only where they go,
     // and its buttons are drawn alike with or without a change, which the pickers enable in place.
     const run = isRunAction(action);
@@ -271,8 +322,12 @@ const lastListings = new WeakMap();
  * notice false leaves out the read-only notice, for a page that shows many lists and says it once for all of them.
  * sections, [{ heading, actions }], heads the rows of the action ids each lists with its heading, in the list's order.
  * unavailableButtons keeps the button of an unavailable action without fields, disabled, beside the reason it is unavailable.
+ * form draws each action as a form, such as a question's answer: { heading, tone(option), wording(action, state), trailing(action), guidance }, where wording gives
+ * { field: { <name>: { label, placeholder } }, submit: { label, variant }, hint, ready } for the form's state. A form keeps the person's input when the record changed
+ * under it, and sends once more against the current revision when the action is still available, since its input does not depend on the record's other values.
+ * onApplied(action, input, result) replaces the toast of an applied change, and onRefused(action, result) may return the words to show for a refusal.
  */
-export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false, groups = null, batch = false, sections = null, unavailableButtons = false }: any) {
+export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false, groups = null, batch = false, sections = null, unavailableButtons = false, form = null, onApplied = null, onRefused = null }: any) {
   if (!lastListings.has(api)) lastListings.set(api, new Map());
   const known = lastListings.get(api);
   const listings = new Map(targets.filter((target: any) => known.has(target)).map((target: any) => [target, known.get(target)]));
@@ -407,7 +462,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     if (!wanted.every((target) => listings.has(target))) return '<p class="muted action-loading">Loading…</p>';
     const items = actionsOf();
     if (!items.length) return `<p class="empty-note">${escapeHtml(emptyText)}</p>`;
-    const options = { writable: writable(), renderMarkdown, heading, submitLabel, batch, unavailableButtons, layoutOf };
+    const options = { writable: writable(), renderMarkdown, heading, submitLabel, batch, unavailableButtons, layoutOf, form };
     const readOnly = writable() || !notice ? "" : readOnlyNotice();
     let section: any = null;
     const rows = items.map(({ target, action }) => {
@@ -417,7 +472,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       const named = Boolean(own) && own.actions.length === 1 && own.heading === action.label;
       return `${head}${actionHtml(action, entryOf(target, action), { ...options, named })}`;
     });
-    return `${readOnly}<div class="action-list${compact ? " is-compact" : ""}">${rows.join("")}</div>`;
+    return `${readOnly}<div class="action-list${compact ? " is-compact" : ""}${form ? " is-form" : ""}">${rows.join("")}</div>`;
   }
 
   // A re-render keeps the focused control and the cursor in a text field, so a refresh never takes the person's place.
@@ -498,7 +553,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     return accepted;
   }
 
-  async function send(item: any, values: any, confirmed = false) {
+  async function send(item: any, values: any, confirmed = false, retried = false) {
     const { target, action, entry } = item;
     const state = actionFormState(action, { values });
     const title = `Change ${action.label} to ${valueText(action, state.input) || "the new value"}?`;
@@ -521,7 +576,8 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     if (answer.status === 200) {
       setDraft(entry, null);
       listings.set(target, { ...(listings.get(target) as any), actions: result.actions ?? (listings.get(target) as any).actions });
-      if (result.applied) api.toast(`${action.label}: ${valueText(action, state.input) || "done"}. ${action.effect}`);
+      if (onApplied) onApplied(action, requestInput(action, state.input), result);
+      else if (result.applied) api.toast(`${action.label}: ${valueText(action, state.input) || "done"}. ${action.effect}`);
       render();
       return true;
     }
@@ -530,11 +586,18 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       if (await confirmed_(title, result.message, entry)) return send(locate(root.querySelector(`[data-action-key="${CSS.escape(entry.key)}"]`)) ?? item, values, true);
       return false;
     }
+    // A form's input stays the same answer against the record as it is now, so it goes once more against the current revision.
+    if (form && !retried && result.code === "stale_revision" && result.current?.available) {
+      replaceAction(target, result.current);
+      return send({ ...item, action: result.current }, values, confirmed, true);
+    }
     if (result.code === "stale_revision" || result.code === "action_unavailable") {
       // The page shows the action as it is now and drops the draft made against the old value, unless the draft stays meaningful against the new one.
-      if (!keepStaleDrafts) setDraft(entry, null);
+      if (!keepStaleDrafts && !form) setDraft(entry, null);
+      const own = onRefused?.(action, result) ?? null;
+      if (own) entry.error = own;
       replaceAction(target, result.current);
-      api.toast(STALE_MESSAGE);
+      if (!own) api.toast(STALE_MESSAGE);
       render();
       void refresh();
       return false;
@@ -542,10 +605,37 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     if (result.code === "write_forbidden") {
       for (const name of wanted) if (listings.has(name)) listings.set(name, { ...(listings.get(name) as any), writable: false });
     } else {
-      entry.error = result.message ?? "The change was not applied.";
+      entry.error = onRefused?.(action, result) ?? result.message ?? "The change was not applied.";
     }
     render();
     return false;
+  }
+
+  // Typing in a form updates its words in place: the fields' labels, the submit button, and the line beside it, so the field keeps its focus.
+  function updateForm(item: any, state: any) {
+    const words = formWords(form, item.action, state);
+    const apply = item.row.querySelector("[data-apply]");
+    if (apply) {
+      if (apply.textContent !== words.submit.label) apply.textContent = words.submit.label;
+      apply.setAttribute("variant", words.submit.variant);
+    }
+    const hint = item.row.querySelector(".action-hint");
+    if (hint) {
+      const text = hint.querySelector(".action-hint-text");
+      if (text.textContent !== words.hint) text.textContent = words.hint;
+      hint.classList.toggle("is-ready", words.ready && !item.entry.sending);
+      hint.querySelector("prism-icon").hidden = !(words.ready && !item.entry.sending);
+    }
+    for (const field of item.row.querySelectorAll("prism-field[data-field]:not([data-select])")) {
+      const own = words.field[field.dataset.field];
+      const required = isRequired(item.action.fields.find((candidate: any) => candidate.name === field.dataset.field), state.input);
+      field.toggleAttribute("required", required);
+      if (own) {
+        if (field.getAttribute("label") !== own.label) field.setAttribute("label", own.label);
+        if (field.getAttribute("placeholder") !== (own.placeholder ?? "")) field.setAttribute("placeholder", own.placeholder ?? "");
+      }
+    }
+    item.row.querySelector(".action-error").hidden = true;
   }
 
   root.addEventListener("click", (event: any) => {
@@ -564,6 +654,12 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       }
       setDraft(item.entry, values);
       render();
+    } else if (button.hasAttribute("data-clear")) {
+      // Clear choice unpicks a form's option, leaving the answer to its text fields.
+      item.entry.error = null;
+      setDraft(item.entry, { ...values, [button.dataset.field]: null });
+      render();
+      nativeOf(root.querySelector(`[data-action-key="${CSS.escape(item.entry.key)}"] prism-field:not([disabled])`))?.focus();
     } else if (button.hasAttribute("data-reset")) {
       item.entry.error = null;
       setDraft(item.entry, null);
@@ -584,6 +680,10 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     const state = actionFormState(item.action, item.entry.draft);
     const apply = item.row.querySelector("[data-apply]");
     if (apply) apply.toggleAttribute("disabled", !state.ready || item.entry.sending);
+    if (form) {
+      updateForm(item, state);
+      return;
+    }
     const hint = item.row.querySelector(".action-hint");
     if (hint && hint.textContent !== state.hint) hint.textContent = state.hint;
     item.row.querySelector(".action-error").hidden = true;

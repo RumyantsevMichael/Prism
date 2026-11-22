@@ -766,67 +766,12 @@ a.inspect-tile:focus-visible {
   background: var(--prism-color-sunken);
 }
 
-.gate-choices {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  justify-items: stretch;
-  gap: var(--prism-space-3);
-  min-width: 0;
-}
-
-/* "Your answer" with Clear choice at its end; the row keeps the button's height, so the options do not move when it shows. */
-.gate-choices-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--prism-space-3);
-  min-width: 0;
-  min-height: var(--prism-control-height-sm);
-}
-
-.gate-note {
-  min-width: 0;
-}
-
-.gate-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--prism-space-4);
-  min-width: 0;
-}
-
-.gate-hint,
 .gate-error {
   min-width: 0;
   margin: 0;
+  color: var(--prism-color-danger);
   font-size: var(--prism-font-size-sm);
   overflow-wrap: anywhere;
-}
-
-.gate-hint {
-  display: flex;
-  flex: 1 1 100%;
-  align-items: center;
-  gap: var(--prism-space-3);
-  color: var(--prism-color-ink-muted);
-}
-
-.gate-hint.is-ready {
-  color: var(--prism-color-success);
-}
-
-.gate-hint-text {
-  min-width: 0;
-}
-
-.gate-hint:not(:has(.gate-hint-text:not(:empty))) {
-  display: none;
-}
-
-.gate-error {
-  color: var(--prism-color-danger);
 }
 
 .gate-given {
@@ -1886,10 +1831,6 @@ a.inspect-tile:focus-visible {
 
   .gate {
     padding: var(--prism-space-5);
-  }
-
-  .gate-actions > :last-child {
-    flex: 1 1 auto;
   }
 
   .key-values {

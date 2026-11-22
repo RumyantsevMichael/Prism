@@ -43,11 +43,11 @@ test("a shipped initiative's open question shows as unavailable with the shipped
 
   const { gateDetail } = await import("../../dist/server/review/public/views/attention.js");
   const ctx = { renderMarkdown: null, hasArtifact: () => true };
-  const card = gateDetail(shipped.find((item) => item.id === gateIds.decision), ctx, { choice: null, note: "" });
+  const card = gateDetail(shipped.find((item) => item.id === gateIds.decision), ctx);
   assert.ok(card.includes(REASON));
-  assert.doesNotMatch(card, /data-submit|data-choice|gate-answer/, "a shipped question offers no answer form");
-  const open = gateDetail(gates.find((item) => item.initiative.id === "search"), ctx, { choice: null, note: "" });
-  assert.match(open, /data-submit/);
+  assert.doesNotMatch(card, /gate-answer/, "a shipped question offers no answer form");
+  const open = gateDetail(gates.find((item) => item.initiative.id === "search"), ctx);
+  assert.match(open, /class="gate-answer"[^>]*data-answer-target="gate:search\//, "an open question holds the place of its answer form");
   assert.doesNotMatch(open, /gate-unavailable/);
 });
 
