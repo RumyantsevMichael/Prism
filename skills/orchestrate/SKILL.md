@@ -35,8 +35,7 @@ When a Prism result carries a [person change notice](../workflow/SKILL.md#common
 
 - `conservative` waits for the user at every design gate and decision.
 - `broad` accepts a design automatically unless it changes requirements, adds an ADR, or reports an open question.
-- `full` accepts every design and resolves internal decisions, but never invents external facts or turns on push.
-- Under `full`, for each choice about an [undoable step](../workflow/SKILL.md#common-terms), record your choice and its reason through a `gateOperations` `decide` operation with the fields of a decision `ask`, and ask the user nothing about it.
+- `full` accepts every design and resolves internal decisions, records each choice about an [undoable step](../workflow/SKILL.md#common-terms) with its reason through a `gateOperations` `decide` operation that takes the fields of a decision `ask` and asks the user nothing, but never invents external facts or turns on push.
 
 ## 2. Start
 
