@@ -8,6 +8,8 @@ import { labelOf, storeRead } from "./fixtures/artifact-formats-store.mjs";
 import { runCheckout, runStore, waitFor } from "./fixtures/format-migration-runs.mjs";
 import { defer } from "./fixtures/teardown.mjs";
 
+const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scripts" : false;
+
 // Prism launches each run's session, so these projects see stub hosts that hold their turn while the test calls the run's tools as that session would.
 const formatServer = (context, files) => runCheckout(context, files);
 const storeProject = (context, files) => runStore(context, files);
@@ -88,7 +90,7 @@ async function editRun(folder, run, edit) {
   await writeFile(runFile(folder, run), JSON.stringify(record, null, 2));
 }
 
-test("a checkout target through a linked folder is refused at the proposal, and nothing outside the project is written", async (context) => {
+test("a checkout target through a linked folder is refused at the proposal, and nothing outside the project is written", { skip: posixOnly }, async (context) => {
   const { root, call } = await formatServer(context, { ...CONFORMING, [AUDIT]: DRAFT_SOURCE });
   const run = await runOf(call, AUDIT);
   const outside = await outsideFolder(context);
@@ -98,7 +100,7 @@ test("a checkout target through a linked folder is refused at the proposal, and 
   assert.equal(await exists(path.join(outside, "audit.md")), false);
 });
 
-test("a source folder replaced by a link after the proposal fails the run, so the outside file is neither changed nor removed", async (context) => {
+test("a source folder replaced by a link after the proposal fails the run, so the outside file is neither changed nor removed", { skip: posixOnly }, async (context) => {
   const { root, call } = await formatServer(context, { ...CONFORMING, [PATH]: UNANCHORED });
   const run = await runOf(call, PATH);
   const proposed = await call("propose_migration", repair(run));
@@ -112,7 +114,7 @@ test("a source folder replaced by a link after the proposal fails the run, so th
   assert.equal(await readFile(path.join(outside, "requirements/retries.md"), "utf8"), UNANCHORED, "the outside file is kept as it was");
 });
 
-test("a Draft source cannot be proposed as Approved through a word or a date found elsewhere in the source", async (context) => {
+test("a Draft source cannot be proposed as Approved through a word or a date found elsewhere in the source", { skip: posixOnly }, async (context) => {
   const source = "# Audit log\n\nStatus: Draft\nCreated: 2026-08-01\nApproved: n/a\n\n## 1\n\nThe system shall record every administrative action.\n";
   const { call } = await formatServer(context, { ...CONFORMING, [AUDIT]: source });
   const run = await runOf(call, AUDIT);
@@ -121,7 +123,7 @@ test("a Draft source cannot be proposed as Approved through a word or a date fou
   assert.deepEqual(result.value.statements.map((statement) => statement.text).sort(), ["2026-08-01", "Approved"]);
 });
 
-test("a content statement cut from a longer source sentence is invented, even with the whole sentence listed as a leftover", async (context) => {
+test("a content statement cut from a longer source sentence is invented, even with the whole sentence listed as a leftover", { skip: posixOnly }, async (context) => {
   const full = "The system shall record every administrative action only after a person confirms it.";
   const { call } = await formatServer(context, { ...CONFORMING, [AUDIT]: `# Audit log\n\nStatus: Draft\nCreated: 2026-08-01\n\n## 1\n\n${full}\n` });
   const run = await runOf(call, AUDIT);
@@ -131,7 +133,7 @@ test("a content statement cut from a longer source sentence is invented, even wi
   assert.deepEqual(result.value.statements.map((statement) => statement.text), [cut]);
 });
 
-test("a target at the source's path in another named scope is read as its own target, not as the source", async (context) => {
+test("a target at the source's path in another named scope is read as its own target, not as the source", { skip: posixOnly }, async (context) => {
   const { place, call } = await storeProject(context, { ...CONFORMING, [AUDIT]: content({ status: "Approved", approved: "2026-08-02" }) });
   const repository = await storeRead(call, AUDIT, { scope: "repository" });
   assert.equal(repository.status, "Approved", JSON.stringify(repository));
@@ -143,7 +145,7 @@ test("a target at the source's path in another named scope is read as its own ta
   assert.deepEqual([labelOf(migration.source), labelOf(migration.target), migration.separateSource], ["workspace", "api", true]);
 });
 
-test("a run record whose target or source was changed to leave the project is refused when the run finishes, and nothing outside it is written or removed", async (context) => {
+test("a run record whose target or source was changed to leave the project is refused when the run finishes, and nothing outside it is written or removed", { skip: posixOnly }, async (context) => {
   for (const name of ["target", "source"]) {
     const { root, call } = await formatServer(context, { ...CONFORMING, [PATH]: UNANCHORED });
     const run = await runOf(call, PATH);
@@ -164,7 +166,7 @@ test("a run record whose target or source was changed to leave the project is re
   }
 });
 
-test("a run record whose content or target changed after its proposal was checked does not apply", async (context) => {
+test("a run record whose content or target changed after its proposal was checked does not apply", { skip: posixOnly }, async (context) => {
   for (const edit of [
     (record) => { record.migrations[0].content = record.migrations[0].content.replace("Clients give up on the first dropped connection.", "Clients never retry."); },
     (record) => { record.migrations[0].target.path = "docs/requirements/other.md"; record.migrations[0].separateSource = true; }
@@ -181,7 +183,7 @@ test("a run record whose content or target changed after its proposal was checke
   }
 });
 
-test("concurrent proposals of one source keep one migration of it in the run", async (context) => {
+test("concurrent proposals of one source keep one migration of it in the run", { skip: posixOnly }, async (context) => {
   const { call } = await formatServer(context, { ...CONFORMING, [PATH]: UNANCHORED });
   const run = await runOf(call, PATH);
   const results = await Promise.all([1, 2, 3].map(() => call("propose_migration", repair(run))));
@@ -209,7 +211,7 @@ async function storeSourceAnswered(context, target = FEATURE_TARGET) {
   return { place, root, call, run, source };
 }
 
-test("a store source of a checkout target is removed in the store once the checkout target is written", async (context) => {
+test("a store source of a checkout target is removed in the store once the checkout target is written", { skip: posixOnly }, async (context) => {
   const { root, call, run } = await storeSourceAnswered(context);
   const finished = (await call("finish_migration_run", { run })).value.run;
   assert.equal(finished.status, "applied", JSON.stringify(finished.failure));
@@ -218,7 +220,7 @@ test("a store source of a checkout target is removed in the store once the check
   assert.equal(entryOf(await checked(call, [FEATURE_TARGET]), FEATURE_TARGET).conforms, true);
 });
 
-test("a checkout target that cannot be written fails the run and keeps its store source, leaving no temporary file", async (context) => {
+test("a checkout target that cannot be written fails the run and keeps its store source, leaving no temporary file", { skip: posixOnly }, async (context) => {
   const target = "docs/Features/sub/F-retry-scenarios.feature";
   const { root, call, run, source } = await storeSourceAnswered(context, target);
   // A regular file where the target's folder belongs, so the checkout write fails.

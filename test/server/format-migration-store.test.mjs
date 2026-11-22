@@ -7,6 +7,8 @@ import { labelOf, storeRead, storeWrite } from "./fixtures/artifact-formats-stor
 import { runStore, waitFor } from "./fixtures/format-migration-runs.mjs";
 import { exists } from "./fixtures/workspace-artifacts.mjs";
 
+const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scripts" : false;
+
 // Format migrations of store artifacts: named by path and scope, checked against recorded statuses, and applied through Prism's store writes when their run finishes.
 
 const AUDIT = "docs/requirements/audit.md";
@@ -81,7 +83,7 @@ async function answer(place, run, answers) {
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
 }
 
-test("clauses 48, 57, 58, 60: an in-place migration of a store requirement names it by path and scope, lives under the store's format-migrations/, and applies through the store with the person's values", async (context) => {
+test("clauses 48, 57, 58, 60: an in-place migration of a store requirement names it by path and scope, lives under the store's format-migrations/, and applies through the store with the person's values", { skip: posixOnly }, async (context) => {
   const { place, root, call } = await project(context);
   const run = await runOf(call, AUDIT);
   const proposed = await propose(call, auditProposal(run));
@@ -101,7 +103,7 @@ test("clauses 48, 57, 58, 60: an in-place migration of a store requirement names
   assert.equal(await exists(path.join(root, AUDIT)), false, "nothing is written into the checkout");
 });
 
-test("clause 59: content whose Status: line differs from the recorded status is refused as a changed decision", async (context) => {
+test("clause 59: content whose Status: line differs from the recorded status is refused as a changed decision", { skip: posixOnly }, async (context) => {
   const { place, call } = await project(context);
   // Brought into the workspace scope's files with no status record, the file is recorded Draft until a person approves it at its gate, whatever its Status: line says.
   await storeFile(place, "artifacts/requirements/unapproved.md", AUDIT_SOURCE);
@@ -115,7 +117,7 @@ test("clause 59: content whose Status: line differs from the recorded status is 
   assert.ok(kept.value.migration.points.every((point) => point.allowsUnknown === true), "a Draft target may keep unknown values");
 });
 
-test("clauses 18, 58: a store artifact changed through update_artifact since the proposal fails the run and changes nothing", async (context) => {
+test("clauses 18, 58: a store artifact changed through update_artifact since the proposal fails the run and changes nothing", { skip: posixOnly }, async (context) => {
   const { place, call } = await project(context);
   const run = await runOf(call, AUDIT);
   const { migration } = (await propose(call, auditProposal(run))).value;

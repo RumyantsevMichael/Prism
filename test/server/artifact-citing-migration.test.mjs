@@ -3,6 +3,8 @@ import test from "node:test";
 import { CONFORMING, FEATURE, PATHS, REQUIREMENT, write } from "./fixtures/artifact-formats.mjs";
 import { AUDIT, AUDIT_SOURCE, auditProposal, readRun, runCheckout, runFor } from "./fixtures/format-migration-runs.mjs";
 
+const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scripts" : false;
+
 // Work that cites a nonconforming artifact is refused with the artifact, its broken rules, and the state of its format migration, and never offers a migration.
 
 const UNANCHORED = REQUIREMENT.replace('<a id="2"></a>\n', "");
@@ -37,7 +39,7 @@ test("clauses 1, 2, 3: a refusal while Prism runs the migration names the run an
   assert.equal((await call("get_initiative", { initiative: "retries" })).value.exists, false, "nothing changes");
 });
 
-test("clause 2: a refusal while the run waits for the person says it waits for answers on Attention", async (context) => {
+test("clause 2: a refusal while the run waits for the person says it waits for answers on Attention", { skip: posixOnly }, async (context) => {
   const { call } = await runCheckout(context, { ...CONFORMING, [AUDIT]: AUDIT_SOURCE });
   const run = await runFor(call, AUDIT);
   const bare = await call("propose_migration", auditProposal(run));

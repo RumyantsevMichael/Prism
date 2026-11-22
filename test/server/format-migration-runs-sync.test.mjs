@@ -9,13 +9,15 @@ import { COMPONENTS, STORE_PATHS } from "./fixtures/artifact-formats-store.mjs";
 import { readRun, runFor, serve, stubHosts } from "./fixtures/format-migration-runs.mjs";
 import { checkout, isolateGit, syncedWorkspace } from "./fixtures/workspace-artifacts.mjs";
 
+const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scripts" : false;
+
 // Format migration runs of a store whose sync is on: a run is confirmed with the store's remote, so another machine names the same run,
 // and an applied run is pushed as a commit of its own that holds only its artifact's files.
 
 const UNANCHORED = REQUIREMENT.replace('<a id="2"></a>\n', "");
 const remoteGit = (remote, ...args) => execFileSync("git", args, { cwd: remote, encoding: "utf8" });
 
-test("a synced store's run is the one run of its set on both machines, and its apply is pushed as a commit of its own", { timeout: 240000 }, async (context) => {
+test("a synced store's run is the one run of its set on both machines, and its apply is pushed as a commit of its own", { skip: posixOnly, timeout: 240000 }, async (context) => {
   await isolateGit();
   const place = await syncedWorkspace(context);
   const hosts = await stubHosts(context);

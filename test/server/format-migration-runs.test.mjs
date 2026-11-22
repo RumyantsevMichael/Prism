@@ -6,6 +6,8 @@ import test from "node:test";
 import { CONFORMING, FEATURE, GLOSSARY, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
 import { AUDIT, AUDIT_SOURCE, auditContent, auditProposal, entryFor, readRun, runCheckout, runFor, waitFor } from "./fixtures/format-migration-runs.mjs";
 
+const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scripts" : false;
+
 // Prism starts one format migration run per set of nonconforming artifacts, applies it without a person when nothing is lost or invented,
 // asks once otherwise, leaves a checkout's migration uncommitted, and applies nothing from a run that fails.
 
@@ -52,7 +54,7 @@ test("clauses 1, 2: checking again starts no second run of a set, a changed file
   assert.notEqual(second, first);
 });
 
-test("clauses 9, 14, 15, 16, 17, 20: a proposal that keeps every statement in corresponding sections applies when the run finishes, and the checkout change stays uncommitted", async (context) => {
+test("clauses 9, 14, 15, 16, 17, 20: a proposal that keeps every statement in corresponding sections applies when the run finishes, and the checkout change stays uncommitted", { skip: posixOnly }, async (context) => {
   const { root, call } = await runCheckout(context, { ...CONFORMING, [PATHS.requirements]: UNANCHORED });
   const run = await runFor(call, PATHS.requirements);
   const proposed = await call("propose_migration", repairProposal(run));
@@ -80,7 +82,7 @@ test("clauses 9, 14, 15, 16, 17, 20: a proposal that keeps every statement in co
   assert.equal(entry.migration, null, "no run holds the artifact at its new version");
 });
 
-test("clauses 11, 12, 14, 16: unknown values are points the run asks about once, with a recommendation each, and the run then waits", async (context) => {
+test("clauses 11, 12, 14, 16: unknown values are points the run asks about once, with a recommendation each, and the run then waits", { skip: posixOnly }, async (context) => {
   const { root, call } = await runCheckout(context, { ...CONFORMING, [AUDIT]: AUDIT_SOURCE });
   const run = await runFor(call, AUDIT);
   const bare = await call("propose_migration", auditProposal(run));
@@ -111,7 +113,7 @@ test("clauses 11, 12, 14, 16: unknown values are points the run asks about once,
   assert.equal(again.value?.code, "migration_run_closed", "a waiting run takes no proposal");
 });
 
-test("clauses 9, 10, 12, 13: proposals outside the run's set, unsettled leftovers, and statements moved between sections that do not correspond are refused", async (context) => {
+test("clauses 9, 10, 12, 13: proposals outside the run's set, unsettled leftovers, and statements moved between sections that do not correspond are refused", { skip: posixOnly }, async (context) => {
   const { call } = await runCheckout(context, { ...CONFORMING, [AUDIT]: AUDIT_SOURCE });
   const run = await runFor(call, AUDIT);
   assert.equal((await call("propose_migration", auditProposal("run-0000000000000000"))).value?.code, "migration_run_unknown");
@@ -127,7 +129,7 @@ test("clauses 9, 10, 12, 13: proposals outside the run's set, unsettled leftover
   assert.ok(leftover.value.points.some((point) => point.kind === "leftover" && point.statement === "Administrators change settings that nobody can trace."));
 });
 
-test("clauses 15, 23: a run finishes only once each artifact of its set is proposed, and a failed run applies nothing and takes no further call", async (context) => {
+test("clauses 15, 23: a run finishes only once each artifact of its set is proposed, and a failed run applies nothing and takes no further call", { skip: posixOnly }, async (context) => {
   const { root, call } = await runCheckout(context, { ...CONFORMING, [PATHS.requirements]: UNANCHORED });
   const run = await runFor(call, PATHS.requirements);
   const early = await call("finish_migration_run", { run });
@@ -145,7 +147,7 @@ test("clauses 15, 23: a run finishes only once each artifact of its set is propo
   assert.equal((await call("get_migration_run", { run: "run-0000000000000000" })).value?.code, "migration_run_unknown");
 });
 
-test("clause 18: a source that changed since its proposal fails the run and changes nothing", async (context) => {
+test("clause 18: a source that changed since its proposal fails the run and changes nothing", { skip: posixOnly }, async (context) => {
   const { root, call } = await runCheckout(context, { ...CONFORMING, [PATHS.requirements]: UNANCHORED });
   const run = await runFor(call, PATHS.requirements);
   assert.equal((await call("propose_migration", repairProposal(run))).refused, false);
@@ -158,7 +160,7 @@ test("clause 18: a source that changed since its proposal fails the run and chan
   assert.equal(await readFile(path.join(root, PATHS.requirements), "utf8"), changed);
 });
 
-test("clauses 18, 25: a checkout target that the write check refuses when the run applies fails the run and changes nothing", async (context) => {
+test("clauses 18, 25: a checkout target that the write check refuses when the run applies fails the run and changes nothing", { skip: posixOnly }, async (context) => {
   const unanchored = GLOSSARY.replace('<a id="attempt-timeout"></a>\n', "");
   const { root, call } = await runCheckout(context, { ...CONFORMING, [PATHS.glossary]: unanchored });
   const run = await runFor(call, PATHS.glossary);

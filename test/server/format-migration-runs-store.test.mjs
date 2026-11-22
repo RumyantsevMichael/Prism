@@ -5,6 +5,8 @@ import { CONFORMING, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs"
 import { labelOf, storeRead } from "./fixtures/artifact-formats-store.mjs";
 import { AUDIT, AUDIT_SOURCE, LOG_ADR, LOG_ADR_SOURCE, auditProposal, logAdrContent, readRun, runFor, runStore } from "./fixtures/format-migration-runs.mjs";
 
+const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scripts" : false;
+
 // Format migration runs of store artifacts: applied through the store's writes as a commit of their own, keeping recorded statuses,
 // with the migrated text as a decided artifact's accepted version attributed to the run.
 
@@ -13,7 +15,7 @@ const TERMS = "docs/requirements/terms.md";
 const TERMS_TEXT = "# Payment terms\n\nTerms used by the payments team.\n\n| Term | Definition |\n| --- | --- |\n| Backoff | The wait between two attempts. |\n";
 const storeGit = (place, ...args) => execFileSync("git", args, { cwd: place.store, encoding: "utf8" });
 
-test("clauses 1, 3, 16, 17, 19, 21: an applied run writes a store requirement through the store, keeps its recorded status, makes the migrated text its accepted version, and commits it on its own", async (context) => {
+test("clauses 1, 3, 16, 17, 19, 21: an applied run writes a store requirement through the store, keeps its recorded status, makes the migrated text its accepted version, and commits it on its own", { skip: posixOnly }, async (context) => {
   const { place, call } = await runStore(context, { ...CONFORMING, [PATHS.requirements]: UNANCHORED }, { gitStore: true });
   const run = await runFor(call, PATHS.requirements);
   const record = await readRun(call, run);
@@ -36,7 +38,7 @@ test("clauses 1, 3, 16, 17, 19, 21: an applied run writes a store requirement th
   assert.ok(files.length > 0 && files.every((file) => file.includes("retries")), `the run's commit holds only its own artifact's files: ${files.join(", ")}`);
 });
 
-test("clauses 11, 16: a migration of an Accepted ADR that needs values its source never gave asks about each one", async (context) => {
+test("clauses 11, 16: a migration of an Accepted ADR that needs values its source never gave asks about each one", { skip: posixOnly }, async (context) => {
   const { call } = await runStore(context, { ...CONFORMING, [LOG_ADR]: LOG_ADR_SOURCE });
   const run = await runFor(call, LOG_ADR);
   const content = logAdrContent();
@@ -52,7 +54,7 @@ test("clauses 11, 16: a migration of an Accepted ADR that needs values its sourc
   assert.equal((await storeRead(call, LOG_ADR)).content, LOG_ADR_SOURCE, "nothing applies before the answers");
 });
 
-test("clauses 11, 26: an unknown point of an Accepted ADR does not allow unknown, while one of a Draft requirement file does", async (context) => {
+test("clauses 11, 26: an unknown point of an Accepted ADR does not allow unknown, while one of a Draft requirement file does", { skip: posixOnly }, async (context) => {
   const { call } = await runStore(context, { ...CONFORMING, [LOG_ADR]: LOG_ADR_SOURCE, [AUDIT]: AUDIT_SOURCE });
   const run = await runFor(call, LOG_ADR);
   const base = { run, type: "adr", source: LOG_ADR, target: LOG_ADR, content: logAdrContent(), summary: "Brings the decision into the ADR format.", leftovers: [] };
@@ -71,7 +73,7 @@ test("clauses 11, 26: an unknown point of an Accepted ADR does not allow unknown
   assert.ok(draft.value.points.every((point) => point.kind === "unknown" && point.allowsUnknown === true), JSON.stringify(draft.value.points));
 });
 
-test("clauses 11, 12: a separate source's removal is a point the run must ask about", async (context) => {
+test("clauses 11, 12: a separate source's removal is a point the run must ask about", { skip: posixOnly }, async (context) => {
   const { call } = await runStore(context, { ...CONFORMING, [TERMS]: TERMS_TEXT });
   const run = await runFor(call, TERMS);
   const glossary = (await storeRead(call, PATHS.glossary)).content;

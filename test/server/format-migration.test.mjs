@@ -5,6 +5,8 @@ import test from "node:test";
 import { CONFORMING, GLOSSARY, PATHS, checked, entryOf, read, write } from "./fixtures/artifact-formats.mjs";
 import { runCheckout, waitFor } from "./fixtures/format-migration-runs.mjs";
 
+const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scripts" : false;
+
 // A format migration inside its run accounts for every source statement, keeps decisions and the target's entries, settles or asks each point,
 // and applies once the run finishes, with the person's answers to what it asked.
 
@@ -96,7 +98,7 @@ async function answer(root, run, answers) {
 
 const exists = (root, file) => stat(path.join(root, file)).then(() => true, () => false);
 
-test("clauses 9, 14: a proposal that places every statement returns a proposed migration with its diff, leftovers, points, and unknowns, which the run lists", async (context) => {
+test("clauses 9, 14: a proposal that places every statement returns a proposed migration with its diff, leftovers, points, and unknowns, which the run lists", { skip: posixOnly }, async (context) => {
   const { call, run } = await project(context);
   const { migration, text } = await propose(call, glossaryProposal(run));
   assert.ok(migration, text);
@@ -119,7 +121,7 @@ test("clauses 9, 14: a proposal that places every statement returns a proposed m
   assert.deepEqual(again.points.map((point) => point.id), migration.points.map((point) => point.id), "and each point's id");
 });
 
-test("clauses 29, 30: a source statement that is placed nowhere refuses the proposal and is listed", async (context) => {
+test("clauses 29, 30: a source statement that is placed nowhere refuses the proposal and is listed", { skip: posixOnly }, async (context) => {
   const { call, run } = await project(context);
   const refused = await propose(call, glossaryProposal(run, { leftovers: [LEFTOVERS[0]], settled: settledLeftovers([LEFTOVERS[0]]) }));
   assert.equal(refused.value?.code, "migration_unaccounted", refused.text);
@@ -127,14 +129,14 @@ test("clauses 29, 30: a source statement that is placed nowhere refuses the prop
   assert.equal(refused.value.statements[0].line, TERMS_TEXT.split("\n").indexOf("Always write backoff as one word.") + 1);
 });
 
-test("clause 31: a statement that neither the source nor the target holds refuses the proposal as invented", async (context) => {
+test("clause 31: a statement that neither the source nor the target holds refuses the proposal as invented", { skip: posixOnly }, async (context) => {
   const { call, run } = await project(context);
   const refused = await propose(call, glossaryProposal(run, { content: MIGRATED_GLOSSARY.replace("The wait between two attempts.\n", "The wait between two attempts.\nBackoff grows with each attempt.\n") }));
   assert.equal(refused.value?.code, "migration_invented", refused.text);
   assert.deepEqual(refused.value.statements.map((statement) => statement.text), ["Backoff grows with each attempt."]);
 });
 
-test("clause 31: a date from the source's Git history, here its commit on 2026-03-14, is not invented, and another date is", async (context) => {
+test("clause 31: a date from the source's Git history, here its commit on 2026-03-14, is not invented, and another date is", { skip: posixOnly }, async (context) => {
   const undated = AUDIT_SOURCE.replace("Created: 2026-08-01\n", "");
   const { call, run } = await project(context, { [AUDIT]: undated });
   assert.equal((await propose(call, auditProposal(run, auditContent({ created: "2026-03-14" })))).migration?.status, "proposed");
@@ -143,7 +145,7 @@ test("clause 31: a date from the source's Git history, here its commit on 2026-0
   assert.equal(refused.value?.code, "migration_invented", refused.text);
 });
 
-test("clauses 11, 12: unknown values the source never gave are points the proposal must ask about, and settling one is refused", async (context) => {
+test("clauses 11, 12: unknown values the source never gave are points the proposal must ask about, and settling one is refused", { skip: posixOnly }, async (context) => {
   const { call, run } = await project(context);
   const bare = await call("propose_migration", auditProposal(run));
   assert.equal(bare.value?.code, "migration_unsettled", bare.text);
@@ -158,14 +160,14 @@ test("clauses 11, 12: unknown values the source never gave are points the propos
   assert.deepEqual(migration.unknowns.map((item) => item.field).sort(), ["Design questions", "Goals", "Non-goals", "Pattern", "Problem", "Rationale"]);
 });
 
-test("clause 14: content that breaks its format other than through unknown values refuses the proposal and names the target", async (context) => {
+test("clause 14: content that breaks its format other than through unknown values refuses the proposal and names the target", { skip: posixOnly }, async (context) => {
   const { call, run } = await project(context);
   const refused = await propose(call, auditProposal(run, auditContent().replace("## Problem\n\nunknown\n\n", "")));
   assert.equal(refused.value?.code, "artifact_nonconforming", refused.text);
   assert.equal(refused.value.artifacts[0].path, AUDIT);
 });
 
-test("clause 33: migrating an Approved file keeps its status, dates, and identities", async (context) => {
+test("clause 33: migrating an Approved file keeps its status, dates, and identities", { skip: posixOnly }, async (context) => {
   const { call, run } = await project(context, { [AUDIT]: AUDIT_SOURCE.replace("## 1\n", "<a id=\"7\"></a>\n## 7\n") });
   const status = await propose(call, auditProposal(run, auditContent({ status: "Draft", anchor: "7" }).replace("Approved: 2026-08-02", "Approved: n/a")));
   assert.equal(status.value?.code, "migration_changes_decision", status.text);
@@ -176,7 +178,7 @@ test("clause 33: migrating an Approved file keeps its status, dates, and identit
   assert.equal((await propose(call, auditProposal(run, auditContent({ anchor: "7" })))).migration?.status, "proposed");
 });
 
-test("clauses 11, 34: content that rewrites the target's entry is refused, and a listed conflict keeps the target's entry and is a point to ask", async (context) => {
+test("clauses 11, 34: content that rewrites the target's entry is refused, and a listed conflict keeps the target's entry and is a point to ask", { skip: posixOnly }, async (context) => {
   const conflicting = TERMS_TEXT.replace("| Backoff | The wait between two attempts. |", "| Backoff | The wait between two attempts. |\n| Retry deadline | The longest a request may wait. |");
   const { call, run } = await project(context, { [TERMS]: conflicting });
   const theirs = `<a id="retry-deadline"></a>\n## Retry deadline\n\nThe longest a request may wait.\n\nSource: migration\n`;
@@ -194,7 +196,7 @@ test("clauses 11, 34: content that rewrites the target's entry is refused, and a
   assert.match(migration.conflicts[0].source, /The longest a request may wait\./);
 });
 
-test("clause 10: a second source that the same run would migrate into the same target is refused", async (context) => {
+test("clause 10: a second source that the same run would migrate into the same target is refused", { skip: posixOnly }, async (context) => {
   const OTHER = "docs/requirements/more-terms.md";
   const { call, run } = await project(context, { [TERMS]: TERMS_TEXT, [OTHER]: TERMS_TEXT.replace("# Payment terms", "# More payment terms") });
   assert.ok((await propose(call, glossaryProposal(run))).migration);
@@ -202,7 +204,7 @@ test("clause 10: a second source that the same run would migrate into the same t
   assert.equal(refused.value?.code, "migration_pending", refused.text);
 });
 
-test("clause 10: within one run a target that another proposal migrates away, or a source that another proposal writes into, is refused, so no chain loses a statement", async (context) => {
+test("clause 10: within one run a target that another proposal migrates away, or a source that another proposal writes into, is refused, so no chain loses a statement", { skip: posixOnly }, async (context) => {
   const EXTRA = "docs/requirements/extra.md";
   const MOVED = "docs/requirements/audit-new.md";
   const header = "# Audit log\n\nStatus: Draft\nCreated: 2026-08-01\nApproved: n/a\n";
@@ -229,7 +231,7 @@ test("clause 10: within one run a target that another proposal migrates away, or
   }
 });
 
-test("clauses 16, 17, 20, 22: a run that asked applies with the person's answers once it continues: the source is removed, the chosen entry kept, and the migration is a decided source", async (context) => {
+test("clauses 16, 17, 20, 22: a run that asked applies with the person's answers once it continues: the source is removed, the chosen entry kept, and the migration is a decided source", { skip: posixOnly }, async (context) => {
   const conflicting = TERMS_TEXT.replace("| Backoff | The wait between two attempts. |", "| Backoff | The wait between two attempts. |\n| Retry deadline | The longest a request may wait. |");
   const { root, call, run } = await project(context, { [TERMS]: conflicting });
   const theirs = `<a id="retry-deadline"></a>\n## Retry deadline\n\nThe longest a request may wait.\n\nSource: migration\n`;
@@ -251,7 +253,7 @@ test("clauses 16, 17, 20, 22: a run that asked applies with the person's answers
   assert.deepEqual(entry.findings, [], "a migration whose run applied is a decided source");
 });
 
-test("clause 16: a run that asked once and still holds an unanswered point fails when it finishes again", async (context) => {
+test("clause 16: a run that asked once and still holds an unanswered point fails when it finishes again", { skip: posixOnly }, async (context) => {
   const { root, call, run } = await project(context, { [TERMS]: TERMS_TEXT });
   assert.ok((await propose(call, glossaryProposal(run))).migration);
   assert.equal((await call("finish_migration_run", { run })).value.run.status, "asking");
