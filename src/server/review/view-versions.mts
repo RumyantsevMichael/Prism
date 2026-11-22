@@ -79,7 +79,11 @@ export type Targets = { folders: string[]; files: string[]; gitRoots: string[] }
  * while a target has no working watcher and every watchedVerifyMs otherwise, changes it for anything a watcher missed. targetsOf(root) names what to watch, and is asked again at each check, since a configuration change can move the store.
  * Watchers never keep the process alive.
  */
-export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVerifyMs = WATCHED_VERIFY_MS, now = () => Date.now(), watchTree = watch, isEventless = eventless }: { targetsOf: (root: string) => Promise<Targets>; verifyMs?: number; watchedVerifyMs?: number; now?: () => number; watchTree?: typeof watch; isEventless?: (target: string) => Promise<boolean> }) {
+// On Windows a watcher holds its folder open, so neither this process nor another, such as the review app replacing a store's clone or removing a workspace,
+// could delete or rename the folder while it is watched; there the listing check alone notices changes, at the short interval.
+const defaultWatch: typeof watch = process.platform === "win32" ? (() => { throw new Error("Folders are not watched on Windows."); }) as any : watch;
+
+export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVerifyMs = WATCHED_VERIFY_MS, now = () => Date.now(), watchTree = defaultWatch, isEventless = eventless }: { targetsOf: (root: string) => Promise<Targets>; verifyMs?: number; watchedVerifyMs?: number; now?: () => number; watchTree?: typeof watch; isEventless?: (target: string) => Promise<boolean> }) {
   const roots = new Map<string, any>();
 
   function stopWatchers(state: any) {
