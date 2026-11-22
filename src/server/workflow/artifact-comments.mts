@@ -7,6 +7,7 @@ import { ARTIFACT_COMMENTS, artifactAddress, artifactLocation, artifactPathOf, l
 import { ARTIFACT_COMMENT_FILE, COMMENTS_PER_ARTIFACT_MAX, resolveStatusFile } from "./record-store.mjs";
 import { scheduleRecordSync } from "./record-store-sync.mjs";
 import { parseStoreJson } from "./store-json.mjs";
+import { validUntil } from "./view-validity.mjs";
 
 // A person's comments on a store artifact: each comment is one file of its own below artifact-comments/<the artifact's location>/,
 // so comments that two machines write never change the same file and a store sync brings each one as it is.
@@ -42,7 +43,13 @@ export function storedAuthor(by: any) {
 }
 
 /** Whether an entry's time lies more than a few minutes after the reading machine's clock, so Recent changes waits for it. */
-export const aheadOfClock = (at: any, now = Date.now()) => Date.parse(at) > now + FUTURE_SLACK_MS;
+// A view that leaves out an entry dated ahead of the clock holds only until the entry's time comes within the slack.
+export const aheadOfClock = (at: any, now = Date.now()) => {
+  const time = Date.parse(at);
+  if (!(time > now + FUTURE_SLACK_MS)) return false;
+  validUntil(time - FUTURE_SLACK_MS);
+  return true;
+};
 
 /** The store-relative folder of an artifact's comments: artifact-comments/<the artifact's location>. */
 export const commentsFolder = (scope: any, address: any) => path.posix.join(ARTIFACT_COMMENTS, artifactLocation(scope, address));
