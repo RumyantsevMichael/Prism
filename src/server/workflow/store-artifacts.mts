@@ -698,8 +698,10 @@ export async function updateArtifact(input: any) {
     // Each approval gate asked records its asker beside the gate, outside its status record.
     const asked = (result?.artifacts ?? []).map((entry: any) => entry?.gate).filter((gate: any) => typeof gate === "string");
     if (asked.length) {
+      // The operations apply in order and each ask_approval adds one asked gate, so the nth asked gate serves the nth ask's initiative.
+      const named = checked.filter((item: any) => item.operation.op === "ask_approval").map((item: any) => typeof item.operation.initiative === "string" ? item.operation.initiative : null);
       const { recordGateAskers } = await import("./gate-askers.mjs");
-      await recordGateAskers(input.projectRoot, asked.map((gate: string) => ({ gate })));
+      await recordGateAskers(input.projectRoot, asked.map((gate: string, index: number) => ({ gate, named: named[index] ?? null })));
     }
     return result;
   });
