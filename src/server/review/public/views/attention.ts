@@ -143,6 +143,12 @@ function gateWithdraw(item: any) {
   return `<div class="gate-withdraw" data-withdraw="${escapeHtml(item.id)}"${target}><prism-button size="sm" variant="ghost" data-withdraw-submit tip="Closes the question without an answer and removes it from Attention; no session starts."><prism-icon name="close" size="xs"></prism-icon>Withdraw</prism-button><p class="gate-error" role="alert" hidden></p></div>`;
 }
 
+// The latest wake this computer sent to the cloud session that asked: when it was sent, or why Claude Code did not deliver it.
+function wakeLine(wake: any) {
+  if (wake.delivered) return `<p class="gate-asker-note" data-wake="delivered"><prism-icon name="check-circle" size="xs" tone="ok"></prism-icon> Wake sent ${liveTime(wake.at)}</p>`;
+  return `<p class="gate-asker-note" data-wake="not-delivered"><prism-icon name="warning" size="xs" tone="danger"></prism-icon> ${escapeHtml(`Wake not delivered: ${wake.reason ?? "Claude Code gave no reason."}`)}</p>`;
+}
+
 // Who asked the question, where, and whether that session waits, is open, is not running, or is in a state Prism cannot tell, with how to reach an open one.
 function gateAsker(item: any) {
   const asker = item.asker;
@@ -152,7 +158,7 @@ function gateAsker(item: any) {
     : "Asked by an unknown session";
   const look = ASKER_STATES[asker.state] ?? ASKER_STATES.unknown;
   const state = chip(escapeHtml(look.label), { tone: look.tone, tip: asker.reason ?? "" });
-  const wake = asker.wake ? `<p class="gate-asker-note muted">${escapeHtml(asker.wake.delivered ? `Wake sent ${asker.wake.at}` : `Wake not delivered: ${asker.wake.reason ?? ""}`)}</p>` : "";
+  const wake = asker.wake ? wakeLine(asker.wake) : "";
   return `<div class="gate-asker"><p class="gate-asker-line"><span>${escapeHtml(who)}</span>${state}</p>${asker.reach ? `<p class="gate-asker-note">${escapeHtml(asker.reach)}</p>` : ""}${wake}</div>`;
 }
 
@@ -366,8 +372,9 @@ function gateContinue(item: any) {
   </div>`;
 }
 
-// A continuation confirmed in a native dialog can wait on the person for a while, so its apply gets the dialog's time.
-const CONTINUE_DEADLINE_MS = 200000;
+// A continuation confirmed in a native dialog can wait on the person for a while, so its apply gets the dialog's time, and a wake
+// its 120 seconds after it.
+const CONTINUE_DEADLINE_MS = 330000;
 
 // The ways to continue an answered question, read from its Continue action: each option with what it does, or why it does not apply.
 function bindContinues(container: any, ctx: any) {
@@ -415,7 +422,8 @@ function bindContinues(container: any, ctx: any) {
       draft.sending = false;
       if (result.status === 200) {
         delete drafts[id];
-        ctx.showToast("The work continues. The new session acts first on your answer.");
+        const wake = result.json?.wake;
+        ctx.showToast(wake ? (wake.delivered ? "The wake was sent. The cloud session reads your answer from Prism's records." : `The wake was not delivered: ${wake.reason ?? "Claude Code gave no reason."}`) : "The work continues. The new session acts first on your answer.");
         ctx.rerender();
         return;
       }

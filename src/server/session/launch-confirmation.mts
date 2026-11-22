@@ -28,6 +28,8 @@ const COOLDOWN_FILE = "confirmation-cooldown.json";
 const PENDING_FILE = "confirmation-pending.json";
 const UNAVAILABLE_PREFIX = "This computer cannot show a confirmation outside the browser: ";
 const STDERR_MAX = 500;
+// A wake's dialog names the cloud session by its link, which only this form reaches.
+const CLOUD_LINK = /^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]{8,120}$/;
 // The buttons of a dialog: a launch's, and an approval's of a launched session's permission request; the cancelling one is the default.
 const LAUNCH_BUTTONS = Object.freeze({ ok: "Launch", cancel: "Cancel" });
 const APPROVAL_BUTTONS = Object.freeze({ ok: "Allow", cancel: "Refuse" });
@@ -63,6 +65,11 @@ export function confirmationText({ label, initiative, checkout }: { label: strin
 /** The text of a resume's dialog: the host, the question, what it belongs to, and the asker's own checkout. */
 export function resumeConfirmationText({ label, resume, checkout }: { label: string; resume: AskerResume; checkout: string }) {
   return `Resume the ${label} session that asked question ${resume.gate} of ${askerSubject(resume)} in ${checkout}? Further launches in the next 30 minutes will start without asking.`;
+}
+
+/** The text of a wake's dialog: the cloud session's link, the question, what it belongs to, and that only a pointer is sent. */
+export function wakeConfirmationText({ subject, link }: { subject: AskerResume; link: string }) {
+  return `Wake the Claude Code cloud session ${link} about question ${subject.gate} of ${askerSubject(subject)}? Prism sends it only a pointer to your answer in Prism's records, nothing else of the question. Further launches in the next 30 minutes will start without asking.`;
 }
 
 /** The text of an approval's dialog: the initiative, the host, the action, and the reason that the host named. */
@@ -389,14 +396,17 @@ function runDialog(dialog: any) {
  * Confirms a launch outside the page: resolves { asked, windowEndsAt } or rejects with a LaunchError whose code names the refusal.
  * The order is the open window, another open dialog, the cool-down after a refusal, a missing dialog, then the dialog itself.
  */
-export async function confirmLaunch({ initiative, host, checkout, resume = null, env = process.env, platform = process.platform, now = Date.now() }: { initiative: string | null; host: string; checkout: string; resume?: AskerResume | null; env?: NodeJS.ProcessEnv; platform?: any; now?: number }) {
+export async function confirmLaunch({ initiative, host, checkout, resume = null, wake = null, env = process.env, platform = process.platform, now = Date.now() }: { initiative: string | null; host: string; checkout: string; resume?: AskerResume | null; wake?: { subject: AskerResume; link: string } | null; env?: NodeJS.ProcessEnv; platform?: any; now?: number }) {
   const definition = hostDefinition(host);
   if (!definition) throw new LaunchError("unknown_host", `Prism cannot launch the host ${host}.`);
-  // A resume of a gate's asker asks with its own text, within the same launch window, and its gate and subject keep their rules.
+  // A resume of a gate's asker, or a wake of a cloud asker, asks with its own text, within the same launch window, and its gate and subject keep their rules.
   const asker = resume === null ? null : askerResumeOf(resume);
   if (resume !== null && !asker) throw new LaunchError("invalid_gate", "The answered gate is not a gate id that Prism records.");
+  const woken = wake === null ? null : askerResumeOf(wake.subject);
+  if (wake !== null && !woken) throw new LaunchError("invalid_gate", "The answered gate is not a gate id that Prism records.");
+  if (wake !== null && !CLOUD_LINK.test(wake.link)) throw new LaunchError("invalid_session", "The session that asked is not a cloud session that Prism can wake.");
   // The initiative is shown in the dialog, so only a slug reaches it.
-  if (!asker && (typeof initiative !== "string" || !SLUG_PATTERN.test(initiative))) throw new LaunchError("unknown_initiative", `Prism cannot launch the initiative ${String(initiative)}.`);
+  if (!asker && !woken && (typeof initiative !== "string" || !SLUG_PATTERN.test(initiative))) throw new LaunchError("unknown_initiative", `Prism cannot launch the initiative ${String(initiative)}.`);
   await prepareLaunchesDirectory(env);
   const window = await launchWindow({ env, now });
   if (window) return { asked: false, windowEndsAt: window.endsAt };
@@ -405,7 +415,7 @@ export async function confirmLaunch({ initiative, host, checkout, resume = null,
   // Pending answers only while a dialog is actually open; otherwise this request gets the answer any other request would.
   if (await dialogOpen(env)) throw pending();
   if (await coolingDown(env, now)) throw cooldown();
-  const text = asker ? resumeConfirmationText({ label: definition.label, resume: asker, checkout }) : confirmationText({ label: definition.label, initiative: initiative!, checkout });
+  const text = woken ? wakeConfirmationText({ subject: woken, link: wake!.link }) : asker ? resumeConfirmationText({ label: definition.label, resume: asker, checkout }) : confirmationText({ label: definition.label, initiative: initiative!, checkout });
   const dialog = await nativeDialog({ text, env, platform });
   if (dialog instanceof LaunchError) throw dialog;
   const release = await takePendingSlot(env, now);

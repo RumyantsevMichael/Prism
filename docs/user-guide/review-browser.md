@@ -209,7 +209,14 @@ It lists the ways to continue, and names why each one that does not apply cannot
 It applies only on the computer where that session ran, while that session is not running and Prism can tell so, and while no launched session of the question's initiative runs there, and never to a cloud session.
 The confirmation names the session's host, the question, and the checkout, and shares the 30-minute window of **Launch**.
 The resumed session then shows under the agents as a launched session, which **Stop** and **Resume** act on as on any other.
-Nothing starts until you confirm the launch or resume outside the browser, and a declined confirmation starts nothing.
+**Wake the cloud session that asked** posts one turn into the Claude Code on the web session that asked, from your own computer, through `claude -p <pointer> --cloud <session>` run in this checkout.
+The turn is only a pointer, `Prism: question <id> of the initiative <initiative> has an answer in the review app. Read it from Prism's records before you continue.`, so neither your answer nor anything else of the question reaches Claude Code, and the cloud session reads the answer from Prism's records.
+It applies only to a question that a cloud session asked, only when this review app does not itself run in a Claude Code cloud session, since a wake must be sent from your own computer, and only when `claude` is on `PATH`.
+Claude Code delivers the wake only when it is signed in to the account that started the cloud session.
+The confirmation names the cloud session's link, the question, and the initiative, says that Prism sends only a pointer, and shares the 30-minute window of **Launch**.
+Under the asking line the card then shows the latest wake that this computer sent, as `Wake sent <time>` when Claude Code delivered it within 120 seconds, or `Wake not delivered: <reason>` with the last line Claude Code printed, such as a session of another account, or the reason it timed out.
+You can wake the session again from the same card, and the latest wake stays only in this computer's review app folder.
+Nothing starts until you confirm the launch, resume, or wake outside the browser, and a declined confirmation starts or sends nothing.
 Answering a question starts no session by itself, here or when an answer arrives from another machine through the shared records.
 Continue is unavailable while a session waits on the question or the asking session is open, since that session reads your answer itself, and for a session that Prism launched, which resumes from its launched session.
 An answered requirement or ADR approval whose asking session Prism recorded stays under Answered with its answer, so you can continue its work, until a newer approval of the same file is asked or for 7 days.

@@ -20,7 +20,9 @@ import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identi
 import { confirmInstall, confirmLaunch, installText } from "../session/launch-confirmation.mjs";
 import { installAgent, removeAgent, updateAgent } from "../session/agent-installs.mjs";
 import { answerRequest, launchRequests } from "../session/permission-requests.mjs";
-import { HOSTS } from "../session/launch-hosts.mjs";
+import { HOSTS, resolveHost } from "../session/launch-hosts.mjs";
+import { isCloudSessionId, keepGateWake, sendWake, wakePointer } from "../session/cloud-wakes.mjs";
+import { sessionLinkView } from "../session/session-links.mjs";
 import { ACP_ID_PATTERN, agentsFolder, isAcpHost, OWN_INTEGRATION_IDS, OWN_INTEGRATION_REASON, readInstalls } from "../session/acp-agents.mjs";
 import { LAUNCH_ID_PATTERN, launchFolder, readLaunchRecord } from "../session/launch-records.mjs";
 import { AUTOMATIC, AUTOMATIC_LABEL, PrismRunsError, readPrismRunsChoice, writePrismRunsChoice } from "../session/prism-runs.mjs";
@@ -255,7 +257,7 @@ async function askerOf(projectRoot: string, key: { initiative?: string; gate: st
   const target = targetOf(key as any);
   const own = read.known && Object.hasOwn(kept, target) ? kept[target] : null;
   const state = await askerState(read, own, env).catch(() => ({ state: "unknown", reason: "Prism cannot tell whether this session is open." }));
-  return { ...state, known: read.known, harness: read.harness, machine: read.machine, cloud: read.cloud, launched: read.launched, kept: own };
+  return { ...state, known: read.known, harness: read.harness, machine: read.machine, cloud: read.cloud, cloudSession: read.cloudSession, launched: read.launched, kept: own };
 }
 
 // The answered approval gates whose id is the given one; a project without a store has none.
@@ -738,8 +740,6 @@ const NO_INITIATIVE = "The question names no initiative, so a new session has no
 const NOT_LISTED = "The roadmap does not list this initiative, so a new session has nothing to resume from.";
 const SUPERSEDED = "The initiative was superseded, so it is history.";
 const LAUNCHED_ASKER = "Prism launched the session that asked, so answering resumes it from its launched session.";
-// Waking an asker is a later addition, so its option names why it does not apply yet once every other reason passes.
-const WAKE_NOT_YET = "Prism cannot wake the session that asked in this release.";
 
 // What the ways to continue read: the initiative the gate names, its roadmap entry, whether it shipped, the launch a new session runs
 // and why it is unavailable, this machine's hosts, and whether a launched session of the initiative runs here.
@@ -800,7 +800,7 @@ function wakeReason(context: any, c: any) {
   if (c.remote) return "A wake must be sent from your own computer, not from a cloud session.";
   const claude = c.hosts.find((item: any) => item.host === "claude-code");
   if (!claude?.available) return claude?.reason ?? "Claude Code was not found: no claude executable on PATH.";
-  return WAKE_NOT_YET;
+  return null;
 }
 
 function continuationOptions(context: any) {
@@ -844,6 +844,7 @@ const GATE_CONTINUE = {
     const picked = continuationOptions(context).find((item: any) => item.value === values.continuation);
     if (!picked || picked.reason) throw fail("action_unavailable", picked?.reason ?? "No way to continue applies to this question.", { reason: picked?.reason ?? null });
     if (picked.value === "resume") return resumeAsker({ projectRoot, context, env });
+    if (picked.value === "wake") return wakeAsker({ projectRoot, context, env });
     // A new session is the initiative's launch, with its run configuration, confirmation, and one-session rule, whose start names the answered gate.
     const target = context.continuation.launch.context;
     const host = launchHostOf(target);
@@ -870,6 +871,32 @@ async function resumeAsker({ projectRoot, context, env }: { projectRoot: string;
   const { launch }: any = await startAskerResume({ checkout: current.checkout, host: current.host, hostSessionId: current.sessionId, resume, env });
   // The history entry names the launch and its host, never the host session id; a gate that names no initiative has no history to record it in.
   return { launch, after: { continuation: "resume", launch: launch.id, host: current.host }, initiative, started: launch.id, ...(initiative === null ? { record: false } : {}) };
+}
+
+// A wake posts only a pointer to the answer into the asking cloud session, from this checkout, once the person confirmed it outside the
+// page; the confirmation may take minutes, so every reason of the option is checked again after it. A wake that Claude Code refuses is
+// still applied, and its result and the card say why it was not delivered.
+async function wakeAsker({ projectRoot, context, env }: { projectRoot: string; context: any; env: NodeJS.ProcessEnv }) {
+  const initiative = context.continuation.initiative;
+  const subject = { gate: context.gate, initiative, artifact: initiative === null ? context.gateRecord.artifact?.path ?? null : null };
+  const cloud = context.asker.cloudSession;
+  const link = isCloudSessionId(cloud) ? sessionLinkView({ kind: "claude-code-web", id: cloud })?.url ?? null : null;
+  if (!link) throw fail("action_unavailable", "The session that asked is not a cloud session.", { reason: "The session that asked is not a cloud session." });
+  const checkout = await realpath(projectRoot);
+  await confirmLaunch({ initiative, host: "claude-code", checkout, wake: { subject, link }, env });
+  const again = await readTarget(projectRoot, parseTarget(context.reference), null, undefined, env);
+  const reason = continueUnavailable(again) ?? wakeReason(again, again.continuation);
+  if (reason) throw fail("action_unavailable", reason, { reason });
+  const claude = await resolveHost("claude-code", env);
+  if (!claude?.available || !claude.command) {
+    const missing = claude?.reason ?? "Claude Code was not found: no claude executable on PATH.";
+    throw fail("action_unavailable", missing, { reason: missing });
+  }
+  const wake = await sendWake({ command: claude.command, prefix: claude.prefix, cloud, pointer: wakePointer(subject), checkout, env });
+  // The card reads this machine's latest wake of the gate; a wake that cannot be kept was still sent, so its result stands.
+  await keepGateWake(context.reference, wake, env).catch(() => {});
+  // The history entry says that a wake was sent and whether it arrived, never the pointer; a gate that names no initiative has no history.
+  return { launch: null, wake, after: { continuation: "wake", delivered: wake.delivered }, initiative, started: null, ...(initiative === null ? { record: false } : {}) };
 }
 
 const LAUNCH_STOP = {
@@ -1360,7 +1387,8 @@ async function applyLaunchAction({ projectRoot, definition, context, request, en
     throw launchRefusal(error);
   }
   const entry = await entryOf({ ...checked, after: outcome.after }, context);
-  if (outcome.record === false) return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env, checkouts })).actions, launch: outcome.launch };
+  const wake = outcome.wake === undefined ? {} : { wake: outcome.wake };
+  if (outcome.record === false) return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env, checkouts })).actions, launch: outcome.launch, ...wake };
   try {
     await recordPersonAction({ projectRoot, initiative: outcome.initiative, prepare: async () => ({ entry }) });
   } catch (error) {
@@ -1368,5 +1396,5 @@ async function applyLaunchAction({ projectRoot, definition, context, request, en
     if (outcome.started) await stopLaunch({ id: outcome.started, env }).catch(() => {});
     throw error;
   }
-  return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env, checkouts })).actions, launch: outcome.launch };
+  return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env, checkouts })).actions, launch: outcome.launch, ...wake };
 }

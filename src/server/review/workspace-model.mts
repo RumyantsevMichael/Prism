@@ -858,7 +858,10 @@ async function withAskers(projectRoot: string, items: any[]) {
   if (!items.some((item) => item?.type === "gate")) return items;
   const { readGateAsker } = await import("../workflow/gate-askers.mjs");
   const { askerReach, askerState, readAskerSessions } = await import("../session/asker-sessions.mjs");
+  const { readGateWakes } = await import("../session/cloud-wakes.mjs");
   const kept = await readAskerSessions().catch(() => ({} as Record<string, any>));
+  // The latest wake that this machine sent for each gate, which only this machine's review app folder holds.
+  const wakes = await readGateWakes().catch(() => ({} as Record<string, any>));
   return Promise.all(items.map(async (item) => {
     if (item?.type !== "gate") return item;
     const key = item.kind === "approval" ? { gate: item.id } : typeof item.initiative?.id === "string" ? { initiative: item.initiative.id, gate: item.id } : null;
@@ -868,7 +871,7 @@ async function withAskers(projectRoot: string, items: any[]) {
     const own = Object.hasOwn(kept, target) ? kept[target] : null;
     const thisMachine = read.known && own !== null;
     const { state, reason } = await askerState(read, thisMachine ? own : null).catch(() => ({ state: "unknown", reason: "Prism cannot tell whether this session is open." }));
-    const asker = { known: read.known, harness: read.harness, machine: read.machine, checkout: read.checkout, cloud: read.cloud, launched: read.launched, thisMachine, state, reason, reach: askerReach(state, read), wake: null };
+    const asker = { known: read.known, harness: read.harness, machine: read.machine, checkout: read.checkout, cloud: read.cloud, launched: read.launched, thisMachine, state, reason, reach: askerReach(state, read), wake: Object.hasOwn(wakes, target) ? wakes[target] : null };
     return { ...item, asker };
   }));
 }

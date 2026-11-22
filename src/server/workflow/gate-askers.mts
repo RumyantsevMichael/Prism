@@ -64,6 +64,8 @@ export async function readGateAsker(projectRoot: string, key: GateTarget, now = 
     machine: known ? text(record!.machine) : null,
     checkout: known ? text(record!.checkout) : null,
     cloud: known && isRecord(record!.cloud) && typeof record!.cloud.id === "string",
+    // The cloud session's cse id, which a wake names; the shared record keeps it as the only session id it holds.
+    cloudSession: known && isRecord(record!.cloud) && typeof record!.cloud.id === "string" ? record!.cloud.id as string : null,
     launched: known && record!.launched === true,
     askedAt: known ? record!.askedAt as string : null,
     held: Object.values(liveHolds(record, now)).length > 0
