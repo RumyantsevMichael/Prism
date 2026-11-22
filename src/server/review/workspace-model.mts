@@ -100,6 +100,11 @@ export function rememberView<T>(projectRoot: string, name: string, compute: () =
   return remember(projectRoot, `${name}:${projectRoot}`, compute);
 }
 
+/** Check a project's views against a full listing of their files at the next read, for a session that registered or presented the project and may have changed them. */
+export function recheckViews(projectRoot: string) {
+  versions.recheck(projectRoot);
+}
+
 /** Forget every computed view, after a write this process made, so its next read sees the write at once. */
 export function forgetWorkspace() {
   memo.clear();
@@ -902,12 +907,12 @@ async function launchPermissions(projectRoot: string) {
 }
 
 /**
- * Attention as its page shows it, with recentChanges: the shared Attention above, and the applied actions on store artifacts read again at each request,
- * because a store sync changes or removes their files at any time, so a file that a reader now leaves out never lingers in the list for the cache window.
+ * Attention as its page shows it, with recentChanges: the shared Attention above, and the applied actions on store artifacts,
+ * which are reused as the views are, until a file of the store changes, since a store sync changes or removes their files at any time.
  */
 export async function loadAttentionView(projectRoot: string) {
   const { changes, ...attention } = await loadAttention(projectRoot);
-  const recentChanges = [...changes, ...await artifactChanges(projectRoot)].sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
+  const recentChanges = [...changes, ...await remember(projectRoot, `artifact-changes:${projectRoot}`, () => artifactChanges(projectRoot))].sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
   return { ...attention, recentChanges };
 }
 

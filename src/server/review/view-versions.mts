@@ -56,6 +56,31 @@ async function listing(folder: string, lines: string[], relative = "") {
   }
 }
 
+// One line per folder below a folder with its modification time, which changes when a file in it is added, removed, or renamed,
+// as every write Prism and Git make is, since both write a new file and rename it into place; an edit in place leaves it unchanged.
+async function folderListing(folder: string, lines: string[], relative = "") {
+  const info = await lstat(path.join(folder, relative)).catch(() => null);
+  lines.push(`${folder}\0${relative}\0${info ? info.mtimeMs : "gone"}`);
+  let entries;
+  try { entries = await readdir(path.join(folder, relative), { withFileTypes: true }); }
+  catch { return; }
+  entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+  for (const entry of entries) {
+    if (entry.isDirectory() && !SKIPPED.has(entry.name)) await folderListing(folder, lines, relative ? `${relative}/${entry.name}` : entry.name);
+  }
+}
+
+// The folders of the targets and the target files, read where no watcher runs at every version read between full listings, so a write by another process shows at once.
+async function quickSignatureOf(targets: Targets) {
+  const lines: string[] = [];
+  for (const folder of targets.folders) await folderListing(folder, lines);
+  for (const file of targets.files) {
+    const info = await lstat(file).catch(() => null);
+    lines.push(`file\0${file}\0${info ? `${info.size}\0${info.mtimeMs}` : "gone"}`);
+  }
+  return createHash("sha256").update(lines.join("\n")).digest("hex");
+}
+
 async function signatureOf(targets: Targets) {
   const lines: string[] = [];
   for (const folder of targets.folders) {
@@ -80,7 +105,7 @@ export type Targets = { folders: string[]; files: string[]; gitRoots: string[] }
  * Watchers never keep the process alive.
  */
 // On Windows a watcher holds its folder open, so neither this process nor another, such as the review app replacing a store's clone or removing a workspace,
-// could delete or rename the folder while it is watched; there the listing check alone notices changes, at the short interval.
+// could delete or rename the folder while it is watched; there the listings alone notice changes: its folders at every read, and every file at the short interval.
 const defaultWatch: typeof watch = process.platform === "win32" ? (() => { throw new Error("Folders are not watched on Windows."); }) as any : watch;
 
 export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVerifyMs = WATCHED_VERIFY_MS, now = () => Date.now(), watchTree = defaultWatch, isEventless = eventless }: { targetsOf: (root: string) => Promise<Targets>; verifyMs?: number; watchedVerifyMs?: number; now?: () => number; watchTree?: typeof watch; isEventless?: (target: string) => Promise<boolean> }) {
@@ -128,6 +153,7 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
     catch {
       // A root whose targets cannot be named, as one with an unavailable store, gets a new version at every read, so nothing of it is reused.
       state.targetsKey = null;
+      state.targets = null;
       state.signature = null;
       stopWatchers(state);
       state.version += 1;
@@ -143,21 +169,41 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
     const signature = await signatureOf(targets);
     if (state.signature !== null && signature !== state.signature) state.version += 1;
     state.signature = signature;
+    state.targets = targets;
+    state.quickSignature = state.unwatched ? await quickSignatureOf(targets) : null;
     state.checkedAt = now();
+  }
+
+  // Between full listings, a root without a working watcher compares its folders at every read, which costs one look per folder rather than one per file.
+  async function quickCheck(state: any) {
+    const signature = await quickSignatureOf(state.targets);
+    if (signature !== state.quickSignature) {
+      state.quickSignature = signature;
+      state.version += 1;
+    }
   }
 
   /** The current version of a root's views, checked against a listing of its targets when the last check is older than verifyMs. */
   async function current(root: string) {
     let state = roots.get(root);
     if (!state) {
-      state = { version: 0, watchers: [], unwatched: true, targetsKey: null, signature: null, checkedAt: -Infinity, checking: null, targetsOf: () => targetsOf(root) };
+      state = { version: 0, watchers: [], unwatched: true, targetsKey: null, targets: null, signature: null, quickSignature: null, checkedAt: -Infinity, checking: null, targetsOf: () => targetsOf(root) };
       roots.set(root, state);
     }
     if (now() - state.checkedAt >= (state.unwatched ? verifyMs : watchedVerifyMs)) {
       state.checking ??= check(state).finally(() => { state.checking = null; });
       await state.checking;
+    } else if (state.unwatched && state.targets) {
+      state.checking ??= quickCheck(state).finally(() => { state.checking = null; });
+      await state.checking;
     }
     return state.version;
+  }
+
+  /** Check a root against a full listing at its next read, as after a session reported that it may have changed the root's files. */
+  function recheck(root: string) {
+    const state = roots.get(root);
+    if (state) state.checkedAt = -Infinity;
   }
 
   /** Change every root's version, for a write this process made, which its next read must see at once. */
@@ -170,5 +216,5 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
     roots.clear();
   }
 
-  return { current, bump, close };
+  return { current, recheck, bump, close };
 }

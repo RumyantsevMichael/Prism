@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -39,6 +39,19 @@ test("without a watcher, an in-place edit is found by the listing check within t
   assert.equal(await versions.current(root), first, "no check runs before the interval passes");
   clock += 1;
   assert.notEqual(await versions.current(root), first, "the listing check notices the edit");
+});
+
+test("without a watcher, a file that another process adds or replaces by a rename shows at the next read, before any full listing", async (t) => {
+  const root = await folder(t);
+  let clock = 1000;
+  const versions = createViewVersions({ targetsOf: async () => ({ folders: [path.join(root, "store")], files: [], gitRoots: [] }), watchTree: noWatcher, isEventless: async () => false, verifyMs: 5000, now: () => clock });
+  t.after(() => versions.close());
+  const first = await versions.current(root);
+  clock += 1;
+  await writeFile(path.join(root, "store", "initiatives", "new.json.tmp"), "{}\n");
+  await rename(path.join(root, "store", "initiatives", "new.json.tmp"), path.join(root, "store", "initiatives", "new.json"));
+  // A folder's time can have a coarse resolution, so the read is repeated until the change shows, while the clock stays short of a full listing.
+  await settled(() => versions.current(root), (version) => version !== first);
 });
 
 test("a target on a file system that delivers no events is checked at the short interval even while a watcher runs", async (t) => {
