@@ -232,11 +232,13 @@ async function recordLaunch(root: any, id: any, { launch, status = null, reason 
 }
 
 // Fail an open run, applying nothing, unless a later session of the run took over from the one that names launch.
-async function failOpenRun(root: any, id: any, reason: any, { launch = null }: any = {}) {
+async function failOpenRun(root: any, id: any, reason: any, { launch = null, endedAt = null }: any = {}) {
   return withRunLock(root, id, async () => {
     const record = await readRun(root, id);
     if (!record || !OPEN_STATUSES.has(record.status)) return record;
     if (launch !== null && record.launch?.id && record.launch.id !== launch) return record;
+    // A session that ended before the run continued is not the session the continuation runs, so its late report fails nothing.
+    if (typeof endedAt === "string" && typeof record.continuingAt === "string" && Date.parse(record.continuingAt) >= Date.parse(endedAt)) return record;
     const now = new Date().toISOString();
     const next = { ...record, status: "failed", failure: { reason: failureReason(reason), at: now }, endedAt: now, reason: null };
     await writeRun(root, next);
@@ -274,11 +276,11 @@ export const launchRunSession = ({ projectRoot, run }: any) => launchMigrationRu
 
 /**
  * The end of a run's session, by its exit, a host error, or a stop: a run that is still starting, running, or continuing fails with the session's last reason,
- * applying nothing, while a run that asks, waits, or ended keeps its status.
+ * applying nothing, while a run that asks, waits, or ended keeps its status, and so does a run that continued after the session's endedAt.
  */
-export async function sessionEnded(projectRoot: any, id: any, { launch = null, reason }: any) {
+export async function sessionEnded(projectRoot: any, id: any, { launch = null, reason, endedAt = null }: any) {
   const root = await realpath(projectRoot);
-  return failOpenRun(root, id, `${LAUNCH_ENDED}${reason}`, { launch });
+  return failOpenRun(root, id, `${LAUNCH_ENDED}${reason}`, { launch, endedAt });
 }
 
 /**

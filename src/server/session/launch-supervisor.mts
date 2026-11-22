@@ -353,7 +353,7 @@ async function reportRunEnd(folder: any, token: any) {
   // The same reason as launchEndReason gives, read here from the run this supervisor ran.
   const reason = view.reason ?? (view.state === "stopped" ? `${view.hostLabel} was stopped.` : `${view.hostLabel} ended with ${exit}.`);
   const { sessionEnded } = await import("../workflow/migration-runs.mjs");
-  await sessionEnded(record.checkout, record.migrationRun, { launch: record.id, reason });
+  await sessionEnded(record.checkout, record.migrationRun, { launch: record.id, reason, endedAt: run.endedAt });
 }
 
 const [folder, cause, token] = process.argv.slice(2);
