@@ -8,6 +8,7 @@ import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { checkedCoordinator, hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts.mjs";
 import { isAgentModel } from "./agent-models.mjs";
 import { isAcpHost } from "./acp-agents.mjs";
+import { isNoResultGate } from "./run-result.mjs";
 import { sessionHolder } from "../workflow/slice-claims.mjs";
 
 // The record of each launched session lives in <review app folder>/launches/<launch id>/launch.json, private to the user.
@@ -225,7 +226,7 @@ export async function writeGateRecord(folder: string, { marks, answers }: { mark
  * What the coordination state says about the gates a launch marked: { waiting, waitingGate, answerWaits, questionGate }.
  * A gate counts as marked while its mark exists and it is pending; it waits while it has no answer, and an answer whose history entry
  * this machine did not record came through the record store from another machine. waitingGate is the id of the first gate, in the
- * order the launch marked them, that waits, or null. A no-result gate of the launch, named in noResult, never makes it wait:
+ * order the launch marked them, that waits, or null. A no-result gate, named in noResult or read as one, never makes it wait:
  * questionGate is the id of the launch's latest no-result gate while that gate is pending without an answer, or null.
  */
 export function gateFacts(gates: any, pending: any, noResult: string[] = []) {
@@ -241,7 +242,8 @@ export function gateFacts(gates: any, pending: any, noResult: string[] = []) {
     const gate = byId.get(id);
     if (!gate) continue;
     if (!gate.answer) {
-      if (!questions.has(id)) waitingGate ??= id;
+      // The gate that a launch's own supervisor asks is marked as soon as it is written, before its no-result mark names it.
+      if (!questions.has(id) && !isNoResultGate(gate)) waitingGate ??= id;
     } else if (!(typeof gate.answer.entry === "string" && recorded.has(gate.answer.entry))) elsewhere = true;
   }
   const latest = noResult.at(-1) ?? null;
