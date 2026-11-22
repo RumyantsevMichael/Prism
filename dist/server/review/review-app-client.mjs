@@ -5,7 +5,7 @@ import { access } from "node:fs/promises";
 import http from "node:http";
 import { homedir } from "node:os";
 import { pluginPath, pluginVersion as installedVersion } from "../plugin-root.mjs";
-import { REVIEW_APP_PROTOCOL, appAlive, lockPath, olderVersion, readDiscovery, reviewAppDirectory, signRequest, trustedDirectory, verifyResponse } from "./review-app-discovery.mjs";
+import { REVIEW_APP_PROTOCOL, appAlive, lockPath, olderVersion, readDiscovery, reviewAppDirectory, signRequest, tightenDirectory, trustedDirectory, verifyResponse } from "./review-app-discovery.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 const REQUEST_TIMEOUT_MS = 2e3;
 const BUSY_TIMEOUT_MS = 30 * 1e3;
@@ -132,6 +132,7 @@ function createReviewAppClient({ directory = reviewAppDirectory(), launch = laun
     }
   }
   async function connect() {
+    await tightenDirectory(directory);
     if (!await trustedDirectory(directory)) throw failure("The review app state directory is not private to this user.", false);
     const deadline = Date.now() + startTimeoutMs;
     const discovery = await readDiscovery(directory);

@@ -1,12 +1,14 @@
 // Generated from src/server/session/launch-records.mts by scripts/native-build/compile.mjs.
 import { randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { describeRecordStore } from "../workflow/record-store.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { checkedCoordinator, hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts.mjs";
 import { isAgentModel } from "./agent-models.mjs";
+import { isAcpHost } from "./acp-agents.mjs";
 import { sessionHolder } from "../workflow/slice-claims.mjs";
 const LAUNCH_ID_PATTERN = /^launch-[0-9a-f]{16}$/;
 const RECORD_FILE = "launch.json";
@@ -186,8 +188,24 @@ function lastRunStatus(record, now = Date.now()) {
   if (!processAlive(run.supervisorPid) || !(now - heartbeat <= HEARTBEAT_STALE_MS)) return "lost";
   return "running";
 }
+const STARTING_STALE_MS = 10 * 60 * 1e3;
+function launchStarting(record, now = Date.now()) {
+  const mark = record?.starting;
+  if (typeof mark?.token !== "string" || tokenVoided(record, mark.token)) return false;
+  if (record.runs.some((run) => run?.token === mark.token)) return false;
+  return processAlive(mark.supervisorPid) && now - time(mark.at) <= STARTING_STALE_MS;
+}
 function launchRunning(record, now = Date.now()) {
   return lastRunStatus(record, now) === "running";
+}
+const validPid = (pid) => Number.isSafeInteger(pid) && pid > 0;
+function launchRunInUse(record, now = Date.now()) {
+  const run = record?.runs?.at(-1);
+  if (!run || run.endedAt) return false;
+  const signs = [time(run.heartbeatAt), time(run.startedAt)].filter(Number.isFinite);
+  if (signs.length && Math.max(...signs) < now - os.uptime() * 1e3) return false;
+  if (validPid(run.supervisorPid) || validPid(run.hostPid)) return processAlive(run.supervisorPid) || processAlive(run.hostPid);
+  return now - time(run.heartbeatAt) <= HEARTBEAT_STALE_MS;
 }
 function lastErrorLine(text) {
   if (typeof text !== "string") return null;
@@ -201,16 +219,19 @@ function lastEnd(record, status) {
   if (status === "lost") return time(run.heartbeatAt) || time(run.startedAt);
   return null;
 }
-function stateOf(record, status, label, gates) {
+const asksToAllow = (action) => `Asks you to allow: ${action}.`;
+function stateOf(record, status, label, gates, permission) {
   const run = record.runs.at(-1);
+  if (status === "running" && permission) return { state: "waiting", reason: asksToAllow(permission.action) };
   if (status === "running") return { state: gates.waiting ? "waiting" : "running", reason: null };
   if (status === "lost") return { state: "failed", reason: SUPERVISION_LOST };
   if (run.stopRequestedAt) return { state: "stopped", reason: null };
+  if (typeof run.failure === "string") return { state: "failed", reason: run.failure };
   if (typeof run.hostError === "string") return { state: "failed", reason: `${label} reported an error: ${run.hostError}` };
   const stderr = lastErrorLine(run.stderr);
   const tail = stderr ? ` ${stderr}` : "";
   if (run.exit?.signal) return { state: "failed", reason: `${label} ended by signal ${run.exit.signal}.${tail}` };
-  if (run.exit && run.exit.code !== 0) return { state: "failed", reason: `${label} ended with exit code ${run.exit.code}.${tail}` };
+  if (run.exit && (run.exit.code !== 0 || run.settled === false)) return { state: "failed", reason: `${label} ended with exit code ${run.exit.code}.${tail}` };
   if (gates.waiting) return { state: "waiting", reason: null };
   const refusals = Array.isArray(run.refusals) ? run.refusals : [];
   if (refusals.length) {
@@ -221,11 +242,11 @@ function stateOf(record, status, label, gates) {
   }
   return { state: "finished", reason: gates.answerWaits ? ANSWER_WAITS : null };
 }
-function launchView(record, { now = Date.now(), gates = null } = {}) {
+function launchView(record, { now = Date.now(), gates = null, permission = null } = {}) {
   const status = lastRunStatus(record, now);
   const label = hostDefinition(record.host)?.label ?? record.host;
   const facts = { waiting: gates?.waiting === true, answerWaits: status !== "running" && gates?.answerWaits === true };
-  const { state, reason: hostText } = stateOf(record, status, label, facts);
+  const { state, reason: hostText } = stateOf(record, status, label, facts, permission);
   const reason = redactSessionId(hostText, record.hostSessionId);
   const runningMs = record.runs.reduce((sum, run, index) => {
     const start = time(run.startedAt);
@@ -258,8 +279,18 @@ function launchView(record, { now = Date.now(), gates = null } = {}) {
     exit,
     resumeCommand,
     waitingGate: state === "waiting" && typeof gates?.waitingGate === "string" ? gates.waitingGate : null,
-    answerWaits: facts.answerWaits
+    answerWaits: facts.answerWaits,
+    ...isAcpHost(record.host) ? { usage: runUsage(last) } : {}
   };
+}
+const finite = (value) => typeof value === "number" && Number.isFinite(value);
+const USAGE_TOKENS = ["inputTokens", "outputTokens", "cachedReadTokens", "cachedWriteTokens", "thoughtTokens", "totalTokens"];
+function runUsage(run) {
+  const usage = run?.usage && typeof run.usage === "object" ? run.usage : {};
+  const tokens = usage.tokens && typeof usage.tokens === "object" ? Object.fromEntries(USAGE_TOKENS.filter((key) => finite(usage.tokens[key])).map((key) => [key, usage.tokens[key]])) : {};
+  const context = finite(usage.context?.used) && finite(usage.context?.size) ? { used: usage.context.used, size: usage.context.size } : null;
+  const cost = finite(usage.cost?.amount) && typeof usage.cost?.currency === "string" ? { amount: usage.cost.amount, currency: usage.cost.currency } : null;
+  return { tokens: Object.keys(tokens).length ? tokens : null, context, cost };
 }
 function expired(record, now = Date.now()) {
   const status = lastRunStatus(record, now);
@@ -312,6 +343,7 @@ export {
   RETENTION_MS,
   SUPERVISION_LOST,
   archivedNow,
+  asksToAllow,
   createLaunchFolder,
   expired,
   gateFacts,
@@ -319,7 +351,9 @@ export {
   launchCoordinator,
   launchEnded,
   launchFolder,
+  launchRunInUse,
   launchRunning,
+  launchStarting,
   launchView,
   launchesDirectory,
   listLaunchRecords,

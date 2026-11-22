@@ -1,17 +1,23 @@
 // Generated from src/server/repository-intelligence/native-files.mts by scripts/native-build/compile.mjs.
 import path from "node:path";
 import { constants } from "node:fs";
-import { lstat, open } from "node:fs/promises";
+import { lstat, open, realpath } from "node:fs/promises";
 const semanticError = (code, message) => Object.assign(new Error(message), { code });
-async function assertSafeAncestors(target) {
+async function assertSafeAncestors(target, uid = process.getuid?.()) {
   const absolute = path.resolve(target), root = path.parse(absolute).root;
-  let current = root;
-  for (const part of absolute.slice(root.length).split(path.sep).filter(Boolean)) {
+  const parts = absolute.slice(root.length).split(path.sep).filter(Boolean);
+  let current = root, systemOwned = systemFolder(await lstat(root));
+  for (const [index, part] of parts.entries()) {
     current = path.join(current, part);
     const info = await lstat(current);
+    if (info.isSymbolicLink() && systemOwned && info.uid === 0 && uid !== void 0 && uid !== 0) {
+      return assertSafeAncestors(path.join(await realpath(current), ...parts.slice(index + 1)), uid);
+    }
     if (info.isSymbolicLink() || !info.isDirectory()) throw semanticError("invalid_path", "Private storage must not follow a symlink ancestor.");
+    systemOwned &&= systemFolder(info);
   }
 }
+const systemFolder = (info) => info.isDirectory() && info.uid === 0 && (info.mode & 18) === 0;
 async function regularBytes(file, max = 512 * 1024 * 1024) {
   await assertSafeAncestors(path.dirname(file));
   const info = await lstat(file);

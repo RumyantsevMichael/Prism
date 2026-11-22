@@ -43,6 +43,7 @@ import { codeFolder, createCodeClones, registeredRemotes } from "./code-clones.m
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { createViewerHub, isEventStream } from "./viewer-hub.mjs";
 import { createCachedValue } from "./cached-value.mjs";
+import { sweepUnusedVersions } from "../session/agent-installs.mjs";
 const LEASE_MS = 3 * 60 * 1e3;
 const IDLE_MS = 30 * 60 * 1e3;
 const SWEEP_MS = 30 * 1e3;
@@ -883,7 +884,10 @@ Connection: close\r
     if (current?.controlToken !== controlToken) await writeDiscovery(directory, published).catch(() => {
     });
   }
+  const agentEnv = { ...process.env, PRISM_REVIEW_APP_DIR: directory };
+  void sweepUnusedVersions(agentEnv);
   const sweep = setInterval(() => {
+    void sweepUnusedVersions(agentEnv);
     const now = Date.now();
     const busy = viewerCount() > 0 || [...projects.values()].some((project) => live(project, now));
     if (busy) idleSince = now;

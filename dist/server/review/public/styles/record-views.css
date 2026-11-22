@@ -1295,47 +1295,16 @@ body.has-maximized::after {
   text-align: center;
 }
 
-/* ---------- Link previews: a hover card on glass ---------- */
+/* ---------- Link previews: a kit hover card that shows the whole linked section or file and scrolls ---------- */
 
-.link-preview {
-  position: fixed;
-  z-index: var(--prism-layer-popup);
-  width: max-content;
-  max-width: min(var(--prism-preview-width), calc(100vw - var(--prism-space-5) * 2));
-  max-height: min(calc(var(--prism-control-height) * 15), 60vh);
-  overflow: hidden;
-  padding: var(--prism-space-4) var(--prism-space-5);
-  border: var(--prism-stroke) solid var(--prism-color-glass-edge);
-  border-radius: var(--prism-radius-overlay);
-  background: var(--prism-color-glass);
-  box-shadow: var(--prism-shadow-glass);
-  backdrop-filter: blur(var(--prism-blur-glass)) saturate(var(--prism-saturate-glass));
-  color: var(--prism-color-ink);
-  font-size: var(--prism-font-size-sm);
+.link-preview-content > :first-child {
+  margin-top: 0;
 }
 
-.link-preview[hidden] {
-  display: none;
+.link-preview-content > :last-child {
+  margin-bottom: 0;
 }
 
-.link-preview-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: var(--prism-space-2);
-}
-
-.link-preview h3 {
-  margin: var(--prism-space-1) 0 var(--prism-space-2);
-  font-size: var(--prism-font-size-md);
-  overflow-wrap: anywhere;
-}
-
-.link-preview p {
-  margin: var(--prism-space-2) 0;
-  overflow-wrap: anywhere;
-}
-
-.link-preview .eyebrow,
 .preview-source {
   margin: 0;
   overflow: hidden;
@@ -1366,7 +1335,7 @@ body.has-maximized::after {
   margin: calc(-1 * var(--prism-space-2)) 0 var(--prism-space-5);
 }
 
-.link-preview > .shipped-history {
+.link-preview-content > .shipped-history {
   margin-bottom: var(--prism-space-3);
 }
 
@@ -1382,13 +1351,7 @@ body.has-maximized::after {
   font-weight: var(--prism-font-weight-semibold);
 }
 
-.link-preview:has(.preview-lines) {
-  max-width: min(calc(var(--prism-preview-width) * 1.5), calc(100vw - var(--prism-space-5) * 2));
-}
-
 .preview-lines {
-  max-height: calc(var(--prism-control-height) * 11);
-  overflow: hidden;
   margin-top: var(--prism-space-2);
   padding: var(--prism-space-2) var(--prism-space-3) var(--prism-space-2) 0;
   border-radius: var(--prism-radius-sm);
@@ -1413,10 +1376,6 @@ body.has-maximized::after {
   max-width: 100%;
   height: auto;
   margin: 0 auto;
-}
-
-.link-preview:has(.preview-diagram) {
-  max-height: min(calc(var(--prism-control-height) * 21), 80vh);
 }
 
 /* ---------- Narrow windows ---------- */

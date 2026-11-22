@@ -118,7 +118,18 @@ function selectHtml(action, field, input, { disabled, key }) {
   const consequence = !action.context && chosen?.consequence && !chosen.reason ? `<p class="gate-consequence action-consequence">${escapeHtml(chosen.consequence)}</p>` : "";
   return `<div class="action-choice is-wide"><prism-field class="action-field" type="select" label="${escapeHtml(field.label)}" hint="${escapeHtml(field.hint ?? HOST_HINT)}" value="${escapeHtml(picked ?? "")}" data-select data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}`)}"${disabled ? " disabled" : ""}>${options}</prism-field>${consequence}${reasons}</div>`;
 }
+function hostChoiceHtml(action, field, input, { disabled, key, reportReason }) {
+  const picked = normalized(input[field.name]);
+  const options = field.options.map((option) => {
+    const detail = option.reason ?? reportReason(option.value) ?? (action.context ? "" : option.consequence ?? "");
+    const off = disabled || Boolean(option.reason);
+    return `<prism-choice-option value="${escapeHtml(option.value)}" data-focus-key="${escapeHtml(`${key}|${field.name}|${option.value}`)}"${off ? " disabled" : ""}>${escapeHtml(option.label ?? option.value)}${detail ? `<span slot="detail">${escapeHtml(detail)}</span>` : ""}</prism-choice-option>`;
+  }).join("");
+  const hint = `<p class="action-hint">${escapeHtml(field.hint ?? HOST_HINT)}</p>`;
+  return `<div class="action-choice is-wide"><prism-choice class="action-host-choice" aria-label="${escapeHtml(field.label)}" value="${escapeHtml(picked ?? "")}" data-select data-field="${escapeHtml(field.name)}">${options}</prism-choice>${hint}</div>`;
+}
 function fieldHtml(action, field, input, { disabled, key, layout }) {
+  if (layout.choice(field)) return hostChoiceHtml(action, field, input, { disabled, key, reportReason: layout.reportReason });
   if (layout.select(field)) return selectHtml(action, field, input, { disabled, key });
   if (layout.skip(field)) return "";
   if (field.kind === "text") {
@@ -162,9 +173,9 @@ function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLa
   </div>`;
 }
 const panels = /* @__PURE__ */ new Set();
-const ENABLED = "prism-button:not([disabled]), prism-field:not([disabled])";
+const ENABLED = "prism-button:not([disabled]), prism-field:not([disabled]), prism-choice-option:not([disabled])";
 const focusKeyOf = (element) => element?.closest?.("[data-focus-key]")?.dataset.focusKey ?? null;
-const nativeOf = (element) => element?.control ?? element;
+const nativeOf = (element) => element?.control ?? (element?.localName === "prism-choice-option" ? element.querySelector("input.prism-choice-input") : null) ?? element;
 const isEnabled = (element) => Boolean(element) && !element.hasAttribute("disabled");
 function limitFields(root) {
   for (const field of root.querySelectorAll("prism-field[data-max-length]")) if (field.control) field.control.maxLength = Number(field.dataset.maxLength);
@@ -191,7 +202,10 @@ function createActionList({ root, targets, api, drafts = {}, renderMarkdown = nu
   let waitingFocus = null;
   let wanted = [...targets];
   const runChoices = /* @__PURE__ */ new Map();
-  const reader = typeof api.runOptions === "function" ? createRunOptionsReader((query) => api.runOptions(query)) : null;
+  const reader = typeof api.runOptions === "function" ? createRunOptionsReader((query) => api.runOptions(query), () => {
+    if (root.isConnected) render();
+  }) : null;
+  const reportReason = (host) => reader?.reason(host) ?? null;
   function entryOf(target, action) {
     const key = keyOf(target, action);
     let entry = entries.get(key);
@@ -209,7 +223,9 @@ function createActionList({ root, targets, api, drafts = {}, renderMarkdown = nu
     const host = hostFieldOf(action);
     const led = Boolean(host && hostLeader(self, items));
     return {
-      select: (field) => leads && field === action.fields[0] || field === host && !led,
+      choice: (field) => leads && field === action.fields[0],
+      select: (field) => field === host && !led,
+      reportReason,
       skip: (field) => isRunField(field) || field === host && led
     };
   }
@@ -470,7 +486,7 @@ function createActionList({ root, targets, api, drafts = {}, renderMarkdown = nu
     }
   });
   root.addEventListener("change", (event) => {
-    const field = event.target.closest?.("prism-field[data-select]");
+    const field = event.target.closest?.(":is(prism-field, prism-choice)[data-select]");
     const item = field && root.contains(field) ? locate(field) : null;
     if (!item) return;
     item.entry.error = null;

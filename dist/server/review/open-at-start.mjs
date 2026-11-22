@@ -1,5 +1,5 @@
 // Generated from src/server/review/open-at-start.mts by scripts/native-build/compile.mjs.
-import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { readPersonalSettings } from "../workflow/personal-settings.mjs";
 import { openAtStartDisabled } from "./review-app-discovery.mjs";
 function canShowWindow(env, platform) {
   if (env.CLAUDE_CODE_REMOTE === "true" || env.CI) return false;
@@ -8,9 +8,9 @@ function canShowWindow(env, platform) {
 }
 async function opensAtStart(projectRoot, { env = process.env, platform = process.platform } = {}) {
   if (openAtStartDisabled(env) || !canShowWindow(env, platform)) return false;
-  const interaction = await readWorkflowConfig(projectRoot).then((config) => config.sections.Interaction ?? {}, () => ({}));
-  if (/^internal$/i.test(interaction["Review browser"] ?? "")) return false;
-  return !/^off$/i.test(interaction["Review browser on start"] ?? "");
+  const personal = await readPersonalSettings({ projectRoot, env }).catch(() => null);
+  if (!personal) return true;
+  return personal.settings.reviewBrowser !== "internal" && personal.settings.reviewBrowserOnStart === "on";
 }
 export {
   opensAtStart

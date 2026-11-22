@@ -18,7 +18,8 @@ import { DEFAULT_PLACE, PLACES, placeNamed } from "./views/places.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createAgentsMenu } from "./views/agents-menu.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
-import { createActionList, shownActionEntries } from "./views/actions.js";
+import { createActionList, readOnlyNotice, shownActionEntries } from "./views/actions.js";
+import { createCodingAgents } from "./views/coding-agents.js";
 import { artifactChangesView, artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 import { createWorkspaceForms } from "./views/workspace-forms.js";
@@ -354,9 +355,10 @@ const actionApi = {
     if (!response.ok) throw Object.assign(new Error(listing.message ?? "The actions could not be read."), { code: listing.code });
     return listing;
   },
-  async apply(request) {
+  // An action that waits on the person, such as an approval confirmed in a native dialog, passes a longer deadlineMs.
+  async apply(request, { deadlineMs } = {}) {
     if (connection === "stopped") return { status: 0, json: { message: STOPPED_MESSAGE } };
-    const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify(request) }).catch(() => null);
+    const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify(request), deadlineMs }).catch(() => null);
     if (!response) return { status: 0, json: { message: "The review app did not answer, so the change was not applied. Try again in a moment." } };
     return { status: response.status, json: await response.json().catch(() => ({ message: "The server returned an unreadable response." })) };
   },
@@ -1023,14 +1025,33 @@ function showPrismRuns(shown) {
   });
   return prismRunsShown;
 }
+let codingAgents = null;
+const CODING_AGENTS_DEADLINE_MS = 45e3;
+function showCodingAgents(shown) {
+  if (!codingAgents) {
+    codingAgents = createCodingAgents({
+      root: document.getElementById("settings-agents-list"),
+      read: () => appFetch("./api/coding-agents", { cache: "no-store", deadlineMs: CODING_AGENTS_DEADLINE_MS }),
+      api: actionApi,
+      canWrite: () => Boolean(writeSession()),
+      shown: () => queueMicrotask(shown)
+    });
+  }
+  const ready = codingAgents.ready();
+  void codingAgents.refresh();
+  return ready;
+}
 function startSettings() {
   const sections = document.getElementById("settings-sections");
   let current = "appearance";
   const showSection = (name) => {
+    const chosen = current !== name;
     current = name;
-    const ready = name !== "prism-runs" || showPrismRuns(() => {
+    const ready = name === "prism-runs" ? showPrismRuns(() => {
       if (current === "prism-runs") showSection("prism-runs");
-    });
+    }) : name === "agents" ? chosen ? showCodingAgents(() => {
+      if (current === "agents") showSection("agents");
+    }) : codingAgents?.ready() ?? false : true;
     for (const section2 of settingsDialog.querySelectorAll(".settings-section")) section2.hidden = section2.dataset.section !== name || !ready;
     for (const item of sections.querySelectorAll("prism-tree-item")) item.toggleAttribute("selected", item.getAttribute("value") === name);
   };
@@ -1063,6 +1084,9 @@ function startSettings() {
   });
   sidebarChoice.addEventListener("change", (event) => setSidebarCollapsed(event.detail?.value === "hidden"));
   document.getElementById("settings-sidebar-reset").addEventListener("click", () => setSidebarWidth(null, { remember: true }));
+  for (const choice of settingsDialog.querySelectorAll("prism-segmented[data-setting]")) {
+    choice.addEventListener("change", (event) => savePersonalSetting(choice.dataset.setting, event.detail?.value));
+  }
   document.getElementById("settings-store-open").addEventListener("click", () => {
     settingsDialog.close();
     document.getElementById("store-status").click();
@@ -1077,7 +1101,75 @@ function openSettings() {
   document.getElementById("settings-store-name").textContent = store.hidden ? "No record store" : store.getAttribute("data-name") || "Record store";
   document.getElementById("settings-store-state").textContent = store.hidden ? "This workspace keeps no records yet." : (store.getAttribute("tip") ?? "").split("\n")[0];
   document.getElementById("settings-store-open").hidden = store.hidden;
+  if (settingsDialog.querySelector('.settings-section[data-section="agents"]:not([hidden])')) void codingAgents?.refresh();
   settingsDialog.show();
+  showPersonalAccess();
+  loadPersonalSettings();
+}
+function showPersonalAccess() {
+  const writable = Boolean(writeSession());
+  for (const choice of settingsDialog.querySelectorAll("prism-segmented[data-setting]")) choice.toggleAttribute("disabled", !writable);
+  const notice = document.getElementById("settings-personal-read-only");
+  if (!writable && !notice.firstElementChild) notice.innerHTML = readOnlyNotice();
+  notice.hidden = writable;
+}
+const PERSONAL_SETTINGS_ROUTE = "./api/personal-settings";
+const PERSONAL_SOURCES = {
+  chosen: { label: "Your choice", tone: "accent" },
+  adopted: { label: "Adopted from a repository's configuration", tone: "info" },
+  repository: { label: "From this repository's configuration", tone: "neutral" },
+  default: { label: "Default", tone: "neutral" }
+};
+let personalSettings = null;
+let personalReads = 0;
+function showPersonalSettings(answer) {
+  personalSettings = answer;
+  for (const choice of settingsDialog.querySelectorAll("prism-segmented[data-setting]")) {
+    const value = answer?.settings?.[choice.dataset.setting];
+    if (typeof value === "string") choice.setAttribute("value", value);
+  }
+  for (const holder of settingsDialog.querySelectorAll(".settings-source[data-source]")) {
+    const source = PERSONAL_SOURCES[answer?.sources?.[holder.dataset.source]];
+    holder.hidden = !source;
+    if (!source) continue;
+    const badge2 = holder.querySelector("prism-badge");
+    badge2.setAttribute("tone", source.tone);
+    badge2.textContent = source.label;
+  }
+  document.getElementById("settings-personal-problem").hidden = !answer?.problem;
+}
+async function loadPersonalSettings() {
+  const read = ++personalReads;
+  try {
+    const answer = await fetchJson(PERSONAL_SETTINGS_ROUTE);
+    if (read === personalReads) showPersonalSettings(answer);
+  } catch {
+  }
+}
+async function savePersonalSetting(name, value) {
+  if (!name || typeof value !== "string") return;
+  const read = ++personalReads;
+  let message = null;
+  try {
+    const response = await appFetch(PERSONAL_SETTINGS_ROUTE, { method: "PUT", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ [name]: value }) });
+    const text = await response.text();
+    let answer = null;
+    try {
+      answer = JSON.parse(text);
+    } catch {
+    }
+    if (response.ok && answer) {
+      if (read === personalReads) showPersonalSettings(answer);
+      showToast("Saved on this machine. This change reaches no one else.", { tone: "success" });
+      return;
+    }
+    message = answer?.message || text || `the review app answered ${response.status}.`;
+  } catch (error) {
+    message = error?.message || "the review app did not answer.";
+  }
+  showToast(`Prism could not save this change: ${message}`, { tone: "danger" });
+  if (personalSettings) showPersonalSettings(personalSettings);
+  await loadPersonalSettings();
 }
 function openCatalog() {
   window.open(new URL("./kit/catalog", location.href).href, "_blank", "noopener");
@@ -2755,6 +2847,7 @@ async function initialize() {
       openRef(ref, options);
     }
   });
+  const previewArtifact = (ref) => fetchJson(`./api/artifact?${artifactQuery(localTab(ref))}`);
   sidePanel = createSidePanel({
     shell: appShell,
     // A view's clause or contract opens on the contract's page, so the panel closes rather than show the view beside it.
@@ -2767,6 +2860,7 @@ async function initialize() {
     // A page's Side panel button follows the panel, however it opens or closes.
     onChange: (open) => document.dispatchEvent(new CustomEvent("prism:side-panel", { detail: { open } })),
     fetchJson,
+    fetchArtifact: previewArtifact,
     renderMarkdown: (path, content, links) => renderText(path, content, markdownOptions(path, links)),
     // The panel draws a diagram as the same card its page shows, without the name its header already gives, and fitted to the panel's width.
     mountDiagram: async (target, diagram) => {
@@ -2785,6 +2879,7 @@ async function initialize() {
   linkPreview = createLinkPreview({
     root: workspace,
     fetchJson,
+    fetchArtifact: previewArtifact,
     renderMarkdown: (path, content, links) => renderText(path, content, markdownOptions(path, links)),
     kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,
@@ -2795,6 +2890,7 @@ async function initialize() {
   panelPreview = createLinkPreview({
     root: sidePanel.body,
     fetchJson,
+    fetchArtifact: previewArtifact,
     renderMarkdown: (path, content, links) => renderText(path, content, markdownOptions(path, links)),
     kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,

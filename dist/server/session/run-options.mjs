@@ -1,6 +1,7 @@
 // Generated from src/server/session/run-options.mts by scripts/native-build/compile.mjs.
 import { spawn } from "node:child_process";
-import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, HOSTS, hostDefinition, lineSplitter, MODEL_PATTERN, PROVIDER_PATTERN, resolveHost, strippedEnvironment } from "./launch-hosts.mjs";
+import { acpReasons, readAcpOptions } from "./host-adapters/acp.mjs";
+import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, hostDefinition, hostDefinitions, lineSplitter, MODEL_PATTERN, PROVIDER_PATTERN, resolveHost, strippedEnvironment } from "./launch-hosts.mjs";
 const RUN_KINDS = Object.freeze([
   Object.freeze({ kind: "coordinator", label: "Coordinator", purpose: "coordinator" }),
   Object.freeze({ kind: "designImplementation", label: "Design and implementation", purpose: "agents" }),
@@ -53,22 +54,26 @@ class RunOptionsError extends Error {
     this.field = field;
   }
 }
-const supportedHosts = () => {
-  const names = HOSTS.map(({ host }) => host);
-  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names.join("");
+const supportedHosts = (env) => {
+  const names = hostDefinitions(env).map(({ host }) => host);
+  if (names.length < 3) return names.join(" and ");
+  return `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
 };
-function checkedSelection({ host, purpose, provider = null, model = null, effort = null, typed = false }) {
-  const definition = hostDefinition(host);
-  if (!definition) throw new RunOptionsError(400, "unknown_host", `Prism supports no host ${host}; it supports ${supportedHosts()}.`);
+function checkedSelection({ host, purpose, provider = null, model = null, effort = null, typed = false }, env) {
+  const definition = typeof host === "string" ? hostDefinition(host, env) : null;
+  if (!definition) throw new RunOptionsError(400, "unknown_host", `Prism supports no host ${host}; it supports ${supportedHosts(env)}.`);
   if (!PURPOSES.includes(purpose)) throw new RunOptionsError(400, "invalid_request", "for must be coordinator or agents.");
   const breach = nameRuleBreach({ provider, model, effort });
   if (breach) throw new RunOptionsError(400, "invalid_input", breach.message, breach.field);
   return { definition, purpose, provider, model, effort, typed: typed === true && model !== null };
 }
-function runOptionsQuery(searchParams) {
+const LAUNCH_FIELDS = ["command", "args", "env", "prompt", "cwd"];
+function runOptionsQuery(searchParams, env = process.env) {
+  const launchField = LAUNCH_FIELDS.find((name) => searchParams.has(name));
+  if (launchField) throw new RunOptionsError(400, "invalid_input", `${launchField} cannot be set from the review page: a host's command, arguments, environment, prompt, and folder come only from Prism and the agent's declaration or install record.`, launchField);
   const value = (name) => searchParams.has(name) ? searchParams.get(name) : null;
   const selection = { host: value("host") ?? "", purpose: value("for"), provider: value("provider"), model: value("model"), effort: value("effort"), typed: value("typed") === "1" };
-  checkedSelection(selection);
+  checkedSelection(selection, env);
   return selection;
 }
 const REPORT_TTL_MS = 10 * 60 * 1e3;
@@ -103,12 +108,13 @@ const reports = /* @__PURE__ */ new Map();
 function forgetRunOptions() {
   reports.clear();
 }
-function keptReport(resolved, { checkout, env, provider }) {
-  const key = JSON.stringify([resolved.host, resolved.executable, checkout, provider]);
+function keptReport(resolved, { checkout, env, provider, acp = null, model = null }) {
+  const key = JSON.stringify([resolved.host, resolved.executable, checkout, provider, ...acp ? [acp.args, acp.env, model] : []]);
   const kept = reports.get(key);
   if (kept && (kept.expires === null || Date.now() < kept.expires)) return kept.promise;
   const entry = { expires: null, promise: null };
-  entry.promise = readHost(resolved, { checkout, env, provider }).then((raw) => {
+  const read = acp ? readAcpOptions({ label: resolved.label, command: resolved.command, prefix: resolved.prefix, acp }, { checkout, env, model, timeoutMs: readTimeoutMs(env) }) : readHost(resolved, { checkout, env, provider });
+  entry.promise = read.then((raw) => {
     if (reports.get(key) === entry) {
       if (raw.state === "ready" && !raw.modelsError) entry.expires = Date.now() + REPORT_TTL_MS;
       else reports.delete(key);
@@ -428,11 +434,41 @@ function buildReport(definition, { purpose, provider, model, effort, typed }, ra
   const source = { program: label, executable, version: ready ? raw.version ?? null : null };
   return { host, label, state: ready ? "ready" : "failed", reason, source, options };
 }
+function buildAcpReport(definition, { purpose, model, effort, typed }, raw, executable) {
+  const { host, label } = definition;
+  const ready = raw.state === "ready";
+  const coordinator = purpose === "coordinator";
+  const models = ready && coordinator ? raw.model?.values ?? [] : [];
+  const efforts = ready && coordinator ? rankEfforts(raw.effort?.values ?? []).slice(0, MAX_MODEL_LEVELS).map(({ value }) => {
+    const listed2 = raw.effort.values.find((entry) => entry.value === value);
+    return { value, name: listed2?.name || effortName(value), description: listed2?.description ?? "" };
+  }) : [];
+  const childNote = acpReasons.childModels(label);
+  const listed = model === null ? null : models.find((entry) => entry.value === model) ?? null;
+  let modelChoice;
+  if (model === null || listed) modelChoice = offered(model);
+  else if (typed && coordinator) modelChoice = { value: model, state: "typed", reason: choiceReasons.typed(label) };
+  else modelChoice = notOffered(model, choiceReasons.model(label, model));
+  const modelName = listed?.name ?? model ?? (ready ? raw.model?.current : null) ?? "The host's default model";
+  const effortChoice = effort === null || efforts.some((entry) => entry.value === effort) ? offered(effort) : notOffered(effort, choiceReasons.effort(modelName, effort));
+  const options = [
+    { id: "model", name: "Model", kind: "model", values: [hostDefault(coordinator ? ready ? raw.model?.current ?? "" : "" : childNote), ...models], chosen: modelChoice, reportedNone: ready && coordinator && models.length === 0 },
+    { id: "effort", name: "Effort", kind: "effort", values: [hostDefault(coordinator ? ready && raw.effort?.current ? `${raw.effort.current}, the agent's current effort.` : "" : childNote), ...efforts], chosen: effortChoice }
+  ];
+  const reason = ready ? null : raw.reason ?? `${label} did not report its run options: ${hostText(raw.message) || "it gave no reason"}.`;
+  const source = { program: label, executable, version: ready ? versionOf(raw.version) : null };
+  return { host, label, state: ready ? "ready" : raw.state === "sign-in" ? "sign-in" : "failed", reason, source, options };
+}
 async function readRunOptions({ host, purpose, provider = null, model = null, effort = null, typed = false, checkout, env = process.env }) {
-  const selection = checkedSelection({ host, purpose, provider, model, effort, typed });
+  const selection = checkedSelection({ host, purpose, provider, model, effort, typed }, env);
   const { definition } = selection;
   const resolved = await resolveHost(definition.host, env);
-  if (!resolved.available) return { host: definition.host, label: definition.label, state: "unavailable", reason: resolved.reason, source: null, options: [] };
+  if (!resolved?.available) return { host: definition.host, label: definition.label, state: "unavailable", reason: resolved?.reason ?? `${definition.label} was not found.`, source: null, options: [] };
+  if (definition.acp) {
+    const acp = definition.acp;
+    const raw2 = await keptReport(resolved, { checkout, env, provider: null, acp: { args: acp.args, env: acp.env }, model: selection.purpose === "coordinator" ? selection.model : null });
+    return buildAcpReport(definition, selection, raw2, resolved.executable);
+  }
   const raw = await keptReport(resolved, { checkout, env, provider: definition.host === "codex" ? selection.provider : null });
   return buildReport(definition, selection, raw, resolved.executable);
 }

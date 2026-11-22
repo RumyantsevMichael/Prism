@@ -368,6 +368,83 @@ function bindAnswers(container, ctx, gates) {
     }
   }
 }
+function permissionWhere(item) {
+  return [item.initiative?.title ?? item.initiative?.id, item.host?.label ?? item.host?.id].filter(Boolean).join(" \xB7 ");
+}
+function permissionDetail(item, draft = {}) {
+  const host = item.host?.label ?? item.host?.id ?? "The host";
+  const key = escapeHtml(item.id);
+  const busy = draft.sending ? " disabled" : "";
+  return `<article class="gate attention-item gate-permission" aria-label="Permission">
+    <header class="gate-head">
+      <div class="gate-chips">${badge("Permission", "warning")}<span class="attention-where">${escapeHtml(permissionWhere(item))}</span>${when(item.askedAt, "attention-time gate-time")}</div>
+      <h3 class="gate-question">${escapeHtml(host)} asks you to allow: ${escapeHtml(item.action)}</h3>
+    </header>
+    <div class="gate-body">
+      <div class="gate-main">
+        ${keyValues([
+    ["Initiative", escapeHtml(item.initiative?.title ?? item.initiative?.id ?? "")],
+    ["Host", escapeHtml(host)],
+    ["Action", `<code class="permission-action" data-code-subject>${escapeHtml(item.action)}</code>`],
+    ["Reason", `<span class="permission-reason">${escapeHtml(item.reason ?? "")}</span>`]
+  ])}
+        <p class="attention-footnote muted">The session waits until you answer. An allow covers this one request only.</p>
+      </div>
+      <div class="permission-answer" data-permission="${key}" data-launch="${escapeHtml(item.launch)}">
+        <div class="permission-buttons">
+          <prism-button variant="primary" icon="lock" text="Allow" data-permission-decision="approve"${busy}></prism-button>
+          <prism-button text="Refuse" data-permission-decision="refuse"${busy}></prism-button>
+        </div>
+        <p class="permission-hint muted" id="permission-hint-${key}" aria-live="polite">${escapeHtml(draft.sending === "approve" ? "Confirm or refuse in the dialog on this computer." : "You confirm outside the browser.")}</p>
+        <p class="gate-error" id="permission-error-${key}" role="alert"${draft.error ? "" : " hidden"}>${escapeHtml(draft.error ?? "")}</p>
+      </div>
+    </div>
+  </article>`;
+}
+const PERMISSION_DEADLINE_MS = 2e5;
+function permissionError(code, message) {
+  const text = typeof message === "string" && message ? message : "The answer was not applied.";
+  if (code === "unknown_request") return { message: "This request no longer waits: the session answered it, withdrew it, or ended.", rerender: true };
+  if (typeof code === "string" && code.startsWith("confirmation_")) return { message: `The approval was not confirmed, so the request still waits. ${text}`, rerender: false };
+  return { message: text, rerender: false };
+}
+function bindPermissions(container, ctx) {
+  const drafts = ctx.state.permissionDrafts ??= {};
+  for (const form of container.querySelectorAll(".permission-answer")) {
+    const id = form.dataset.permission;
+    const launch = form.dataset.launch;
+    const buttons = [...form.querySelectorAll("[data-permission-decision]")];
+    const hint = form.querySelector(".permission-hint");
+    const failure = form.querySelector(".gate-error");
+    for (const button of buttons) {
+      button.addEventListener("click", async () => {
+        const decision = button.dataset.permissionDecision;
+        const draft = drafts[id] ??= {};
+        if (draft.sending) return;
+        draft.sending = decision;
+        draft.error = null;
+        failure.hidden = true;
+        for (const each of buttons) each.setAttribute("disabled", "");
+        if (decision === "approve") hint.textContent = "Confirm or refuse in the dialog on this computer.";
+        const result = await ctx.actionApi.apply({ action: "launch.permission", target: `launch:${launch}`, input: { request: id, decision }, revision: null }, { deadlineMs: PERMISSION_DEADLINE_MS });
+        draft.sending = null;
+        if (result.status === 200) {
+          delete drafts[id];
+          ctx.showToast(decision === "approve" ? "Allowed. The session goes on with this one request." : "Refused. The session was told that you refused.");
+          ctx.rerender();
+          return;
+        }
+        const refusal = permissionError(result.json?.code, result.json?.reason ?? result.json?.message);
+        draft.error = refusal.message;
+        failure.textContent = refusal.message;
+        failure.hidden = false;
+        hint.textContent = "You confirm outside the browser.";
+        for (const each of buttons) each.removeAttribute("disabled");
+        if (refusal.rerender) ctx.rerender();
+      });
+    }
+  }
+}
 function changeLabel(action) {
   const words = String(action ?? "").split(".").pop().replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
   return words ? `${words[0].toUpperCase()}${words.slice(1)}` : "Change";
@@ -512,6 +589,7 @@ function group(id, label, entries, { count = entries.length, tone = "neutral", n
     <prism-inbox label="${escapeHtml(label)}" data-inbox>${entries.map(({ key, row }) => inboxRow(key, row)).join("")}</prism-inbox>
   </section>`;
 }
+const PHONE_QUERY = "(max-width: 720px)";
 let pendingSelection = null;
 function openQuestion(ctx, gate) {
   if (gate) pendingSelection = `gate:${gate}`;
@@ -590,7 +668,14 @@ function render(container, entity, ctx) {
   const gates = data.needsYou.filter((item) => item.type === "gate");
   const notes = data.needsYou.filter((item) => item.type !== "gate");
   const watched = data.watch.length + claims.length;
+  const permissions = data.permissions ?? [];
+  const permissionDrafts = ctx.state.permissionDrafts ??= {};
   const needs = [
+    ...permissions.map((item) => ({
+      key: `permission:${item.id}`,
+      row: { icon: "lock", tone: "warning", unread: true, title: escapeHtml(item.action), meta: escapeHtml(["Permission", permissionWhere(item)].filter(Boolean).join(" \xB7 ")), end: shortTime(item.askedAt) },
+      detail: permissionDetail(item, permissionDrafts[item.id] ?? {})
+    })),
     ...gates.map((item) => ({
       key: `gate:${item.id}`,
       row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" \xB7 ")), end: shortTime(item.askedAt) },
@@ -624,7 +709,7 @@ function render(container, entity, ctx) {
   }];
   const all = [...needs, ...shippedRows, ...waiting, ...watch, ...closed, ...history];
   if (!all.some((entry) => entry.key === ctx.state.selected)) ctx.state.selected = all[0].key;
-  ctx.state.pane ??= "detail";
+  ctx.state.pane ??= typeof matchMedia === "function" && matchMedia(PHONE_QUERY).matches ? "list" : "detail";
   const selected = ctx.state.selected;
   container.innerHTML = `
     <div class="attention-inbox" data-pane="${ctx.state.pane}">
@@ -649,7 +734,7 @@ function render(container, entity, ctx) {
   if (head) {
     head.querySelector(".attention-stats")?.remove();
     head.insertAdjacentHTML("beforeend", `<div class="attention-stats">
-      ${stat(`${gates.length === 1 ? "question waits" : "questions wait"} on you`, String(gates.length), { tone: gates.length ? "accent" : "success", attributes: ' layout="inline"' })}
+      ${stat(`${gates.length + permissions.length === 1 ? "question waits" : "questions wait"} on you`, String(gates.length + permissions.length), { tone: gates.length + permissions.length ? "accent" : "success", attributes: ' layout="inline"' })}
       ${stat(`other ${notes.length === 1 ? "item needs" : "items need"} you`, String(notes.length), { attributes: ' layout="inline"' })}
       ${stat(`${watched === 1 ? "thing" : "things"} to watch`, String(watched), { attributes: ' layout="inline"' })}
     </div>`);
@@ -680,6 +765,7 @@ function render(container, entity, ctx) {
   });
   bindLinks(container, ctx);
   bindAnswers(container, ctx, gates);
+  bindPermissions(container, ctx);
   const questions = new Map([...gates, ...data.shippedGates ?? [], ...answered, ...earlier].filter((item) => item.initiative?.id).map((item) => [`gate:${item.initiative.id}/${item.id}`, item.question]));
   followChanges(container, ctx, questions);
   container.querySelector("[data-notify]")?.addEventListener("click", () => {
@@ -694,5 +780,7 @@ export {
   gateDetail,
   inspectLabel,
   openQuestion,
+  permissionDetail,
+  permissionError,
   render
 };

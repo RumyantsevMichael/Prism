@@ -50,6 +50,11 @@ function popoverFor(caption, body, { heading }) {
   const trigger = id("catalog-popover-button");
   return `<prism-button id="${trigger}">${caption}</prism-button><prism-popover for="${trigger}" heading="${heading}">${body}</prism-popover>`;
 }
+function hoverCardFor(caption, body, { wide = false } = {}) {
+  const card = id("catalog-hover-card");
+  return `<prism-button data-shows-card="${card}">${caption}</prism-button><prism-hover-card id="${card}"${wide ? " wide" : ""} hidden>${body}</prism-hover-card>`;
+}
+const hoverCardActions = `<prism-button slot="actions" variant="ghost" size="sm">Show in side panel</prism-button>`;
 const PICKER_MODELS = `<prism-list-item value="">Host default<span slot="detail">The model the host uses when none is chosen</span></prism-list-item><prism-list-item value="large">Large model<span slot="detail">Best for everyday, complex tasks</span></prism-list-item><prism-list-item value="small">Small model<span slot="detail">Fastest for quick answers</span></prism-list-item><prism-list-item value="old" disabled>Old model<span slot="detail">No longer offered</span></prism-list-item>`;
 const pickerEffort = `<div slot="extra" role="group" aria-label="Effort"><prism-button size="sm" pressed="false">Low</prism-button> <prism-button size="sm" pressed="true">High</prism-button></div>`;
 function pickerOf({ label = "Model", heading = "Model of the review", value: value2 = "large", display = "Large model", detail = "High effort", hint = "Reviews each finished slice.", caption = "", options = PICKER_MODELS, extra = "", busy = false, invalid = false, error = "", disabled = false } = {}) {
@@ -108,6 +113,7 @@ const SPECIMENS = {
     shrink: `<span class="catalog-narrow"><prism-button variant="chrome" shrink><prism-avatar kind="workspace" name="P" aria-hidden="true"></prism-avatar><span>payments-platform / feature/retry-total-deadline</span><prism-badge variant="count" tone="danger">12</prism-badge><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button></span>`,
     badge: `<prism-button variant="ghost" label="Attention, 5 items"><prism-icon name="bell"></prism-icon><prism-badge slot="badge" solid size="sm">5</prism-badge></prism-button>`,
     text: `<prism-button size="sm" variant="primary" text="Answer"></prism-button><prism-button size="sm" variant="ghost" text="Stop"></prism-button>`,
+    "text-icon": `<prism-button variant="primary" icon="lock" text="Allow"></prism-button><prism-button size="sm" icon="play" text="Launch"></prism-button>`,
     "long-text": `<prism-button>${LONG}</prism-button><prism-button text="${LONG}"></prism-button>`,
     "unbroken-name": `<prism-button variant="primary">${UNBROKEN}</prism-button>`
   },
@@ -270,6 +276,7 @@ const SPECIMENS = {
   "prism-segmented": {
     default: `<prism-segmented label="View"><span value="board">Board</span><span value="list">List</span><span value="graph">Graph</span></prism-segmented>`,
     chosen: `<prism-segmented label="View" value="list"><span value="board">Board</span><span value="list">List</span><span value="graph">Graph</span></prism-segmented>`,
+    disabled: `<prism-segmented label="View" value="list" disabled><span value="board">Board</span><span value="list">List</span><span value="graph">Graph</span></prism-segmented>`,
     wrap: `<div class="catalog-narrow"><prism-segmented label="Show" value="all" wrap><span value="all">All 12</span><span value="needs-you">Needs you 2</span><span value="here">Launched from Prism 4</span><span value="other">Started outside Prism 6</span><span value="expired">Expired ${UNBROKEN}</span></prism-segmented></div>`,
     "long-text": `<div class="catalog-narrow"><prism-segmented label="${LONG}" value="a"><span value="a">${LONG}</span><span value="b">${LONG}</span></prism-segmented></div>`,
     "unbroken-name": `<div class="catalog-narrow"><prism-segmented label="Unbroken" value="u"><span value="u">${UNBROKEN}</span><span value="v">List</span></prism-segmented></div>`
@@ -404,6 +411,14 @@ const SPECIMENS = {
     "long-content": popoverFor("Show many lines", repeat(30, (index) => `<p>Line ${index + 1} of a popover that scrolls inside itself.</p>`), { heading: "Many lines" }),
     "long-text": popoverFor(LONG, `<p>${LONG} ${LONG}</p>`, { heading: LONG }),
     "unbroken-name": popoverFor(UNBROKEN, `<p>${UNBROKEN}</p>`, { heading: UNBROKEN })
+  },
+  "prism-hover-card": {
+    short: hoverCardFor("Show a short card", `<p class="eyebrow">Initiative</p><h3>Shared record store</h3><p>Let every checkout and machine of a workspace share one record store.</p>`),
+    "long-content": hoverCardFor("Show a long section", `${hoverCardActions}<prism-doc class="document-content"><h2>4. Move existing records into the store once</h2>${repeat(24, (index) => `<p>Paragraph ${index + 1} of a linked section that is taller than the room beside its link, so the card's body scrolls while its head stays.</p>`)}</prism-doc>`),
+    wide: hoverCardFor("Show a wide card", `<p class="eyebrow">Document</p><h3>Totals</h3><p>A short document that still takes the card's full width.</p>`, { wide: true }),
+    "with-actions": hoverCardFor("Show a card with actions", `${hoverCardActions}<p class="eyebrow">Document</p><h3>Record store git sync</h3><p>Sync the record store through Git.</p>`),
+    "long-text": hoverCardFor(LONG, `${hoverCardActions}<h3>${LONG}</h3><p>${LONG} ${LONG}</p>`),
+    "unbroken-name": hoverCardFor(UNBROKEN, `<h3>${UNBROKEN}</h3><p>${UNBROKEN}</p>`)
   },
   "prism-picker": {
     default: pickerOf(),
@@ -549,6 +564,7 @@ const third = 3;</code></pre></prism-code>`,
     linked: rowsOf(`<prism-row icon="flask" tone="danger"><a href="#entry-prism-row">Retry dropped connections failed verification</a><span slot="description">Harden request retries \xB7 2 tests failed</span><prism-chip slot="kind" tone="danger">Failed verification</prism-chip><time slot="time" datetime="2026-11-10T08:00:00Z">2 h</time><prism-button slot="action" size="sm">Open</prism-button></prism-row>${rowGate}`),
     "no-action": rowsOf(`<prism-row icon="roadmap" tone="warning">Export activity reports is not on the roadmap<span slot="description">It has an initiative record but no roadmap entry</span><prism-chip slot="kind" tone="warning">Problem</prism-chip></prism-row>${rowGate}`),
     wrap: rowsOf(`<prism-row wrap icon="check-circle" tone="success">Should a report download require a fresh login, or is the session's sign-in enough for a file that holds activity of the whole team?<span slot="description">Export activity reports \xB7 Signed downloads</span><span slot="detail"><prism-badge tone="success">Accept</prism-badge><span>Keep the session's sign-in.</span></span><prism-chip slot="kind" tone="success">Answered</prism-chip><time slot="time" datetime="2026-11-09T08:00:00Z">1 d</time></prism-row><prism-row wrap icon="close" tone="neutral">Retry the import after the outage<span slot="detail"><prism-badge>Closed by the agent</prism-badge><span>The outage ended.</span></span><prism-chip slot="kind">Closed</prism-chip><time slot="time" datetime="2026-11-08T08:00:00Z">2 d</time></prism-row>`),
+    stack: rowsOf(`<prism-row wrap stack icon="agent" tone="accent">OpenCode 2.3.1<span slot="description">SST \xB7 MIT \xB7 github.com/sst/opencode</span><span slot="detail"><span>The open source AI coding agent.</span></span><prism-badge slot="kind" variant="status" tone="success">Installed</prism-badge><prism-badge slot="kind" variant="status" tone="accent">Update 2.3.2</prism-badge><prism-button slot="action" size="sm" variant="primary">Update</prism-button><prism-button slot="action" size="sm">Remove</prism-button></prism-row><prism-row wrap stack icon="agent" tone="neutral">Amp 0.0.17<span slot="description">Sourcegraph \xB7 Proprietary \xB7 ampcode.com</span><span slot="detail"><span>The registry lists no SHA-256 checksum for the linux-x86_64 build of Amp, so Prism cannot check its download.</span></span></prism-row>`),
     "many-items": rowsOf(repeat(12, (index) => `<prism-row icon="eye" tone="warning">${index % 4 ? `Finding ${index + 1} of the slice` : `${UNBROKEN}-${index + 1}`}<span slot="description">Harden request retries</span><prism-chip slot="kind" tone="warning">Finding</prism-chip><time slot="time" datetime="2026-11-10T08:00:00Z">${index + 1} h</time><prism-button slot="action" size="sm">Open</prism-button></prism-row>`)),
     "long-text": rowsOf(`<prism-row icon="question" tone="info"><a href="#entry-prism-row">${LONG}</a><span slot="description">${LONG}</span><prism-chip slot="kind" tone="accent">${LONG}</prism-chip><time slot="time" datetime="2026-11-10T08:00:00Z">2 min</time><prism-button slot="action" size="sm">Answer</prism-button></prism-row><prism-row wrap icon="check-circle" tone="success">${LONG}<span slot="detail">${LONG}</span><prism-chip slot="kind" tone="success">Answered</prism-chip></prism-row>`),
     "unbroken-name": rowsOf(`<prism-row icon="question" tone="info"><a href="#entry-prism-row">${UNBROKEN}</a><span slot="description">${UNBROKEN}</span><prism-chip slot="kind">${UNBROKEN}</prism-chip><prism-button slot="action" size="sm">Open</prism-button></prism-row><prism-row wrap icon="check-circle" tone="success">${UNBROKEN}<span slot="detail">${UNBROKEN}</span><prism-chip slot="kind" tone="success">Answered</prism-chip></prism-row>`)
@@ -750,9 +766,14 @@ paintSwatches(scope);
 await loadPreferences();
 apply();
 scope.addEventListener("click", (event) => {
-  const button = event.target.closest?.("prism-button[data-opens], prism-button[data-toast]");
+  const button = event.target.closest?.("prism-button[data-opens], prism-button[data-toast], prism-button[data-shows-card]");
+  for (const card of document.querySelectorAll("prism-hover-card:not([hidden])")) if (!card.contains(event.target) && card.id !== button?.dataset.showsCard) card.hidden = true;
   if (!button) return;
-  if (button.dataset.opens) document.getElementById(button.dataset.opens)?.show();
+  if (button.dataset.showsCard) {
+    const card = document.getElementById(button.dataset.showsCard);
+    if (card.hidden) card.showAt(button);
+    else card.hidden = true;
+  } else if (button.dataset.opens) document.getElementById(button.dataset.opens)?.show();
   else document.querySelector("prism-toast")?.show(button.dataset.toast, { tone: button.dataset.tone });
 });
 scope.setAttribute("aria-busy", "false");

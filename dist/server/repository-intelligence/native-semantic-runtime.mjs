@@ -69,8 +69,6 @@ async function privateDirectory(directory) {
   if (parent !== directory) {
     try {
       await assertSafeAncestors(parent);
-      const info2 = await lstat(parent);
-      if (info2.isSymbolicLink() || !info2.isDirectory()) throw semanticError("invalid_path", "A private storage parent is not a directory.");
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
       await privateDirectory(parent);
@@ -86,9 +84,8 @@ async function privateDirectory(directory) {
 }
 async function ownRealPath(directory) {
   const real = await realpath(directory);
-  if (process.platform !== "win32") return real === path.resolve(directory);
   const named = path.join(await realpath(path.dirname(path.resolve(directory))), path.basename(directory));
-  return real.toLowerCase() === named.toLowerCase();
+  return process.platform === "win32" ? real.toLowerCase() === named.toLowerCase() : real === named;
 }
 async function readJson(file) {
   return JSON.parse((await regularBytes(file)).toString("utf8"));

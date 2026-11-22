@@ -7,20 +7,21 @@ const SLOTS = ["description", "detail", "kind", "time", "action"];
 class PrismRow extends Base {
   static tag = "prism-row";
   static tooltipBoundary = true;
-  static observedAttributes = ["icon", "tone", "wrap"];
+  static observedAttributes = ["icon", "tone", "wrap", "stack"];
   static catalog = {
     purpose: "One row of a .prism-rows list, whose rows share their columns: a kind tile, its title on one line over a description and an optional detail, then its kind, time, and action, lined up down the list; a phone-width window keeps the tile, the text, and the action.",
     options: [
       { name: "icon", values: ICON_NAMES, default: "", description: "Draws a kind tile with this glyph at the start." },
       { name: "tone", values: TONES, default: "neutral", description: "The kind tile's color." },
       { name: "wrap", values: ["boolean"], default: "false", description: "Lets the title wrap and sets the tile at the top, for a row that shows its detail in full." },
+      { name: "stack", values: ["boolean"], default: "false", description: "In a phone-width window, sets the kind and the action under the text, each wrapping onto lines of their own, instead of leaving out the kind, for a row whose marks and several actions all matter." },
       { name: 'slot="description"', values: ["children"], default: "", description: "The second line, such as where the item belongs and what it is." },
       { name: 'slot="detail"', values: ["children"], default: "", description: "A further line under the description, shown whole, such as the answer that was given." },
       { name: 'slot="kind"', values: ["children"], default: "", description: "The kind column, such as a prism-chip." },
       { name: 'slot="time"', values: ["children"], default: "", description: "The time column, such as a <time> of how long ago." },
       { name: 'slot="action"', values: ["children"], default: "", description: "The action column, such as a small prism-button." }
     ],
-    states: ["default", "linked", "no-action", "wrap"],
+    states: ["default", "linked", "no-action", "wrap", "stack"],
     keyboard: ["A link or button in the row is reached by Tab; a shortened title shows its full text in the tooltip."]
   };
   connectedCallback() {

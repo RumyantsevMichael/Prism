@@ -2,7 +2,7 @@
 import { createActionList, readOnlyNotice } from "./actions.js";
 import { openQuestion } from "./attention.js";
 import { coalesce } from "./poller.js";
-import { badge, bindLinks, emptyState, escapeHtml } from "./util.js";
+import { badge, bindLinks, emptyState, escapeHtml, keyValues } from "./util.js";
 import { agoText, timeLeft } from "../kit/claim-time.js";
 const EMPTY_TEXT = "No agent works on this workspace, and nothing was launched on this computer.";
 const REFRESH_MS = 5e3;
@@ -141,7 +141,28 @@ function actionHtml(entry, writable) {
   if (archivable(entry)) return `${open}<prism-button size="sm" variant="ghost" data-agent-action="archive" text="Archive"${lock}></prism-button>`;
   return open;
 }
+const grouped = (value) => value.toLocaleString("en-US", { maximumFractionDigits: 6 });
+function usageFacts(entry) {
+  const usage = entry.launch?.usage;
+  if (!usage || typeof usage !== "object") return [];
+  const missing = `Not reported by ${entry.harness || "the agent"}`;
+  const finite = (value) => typeof value === "number" && Number.isFinite(value);
+  const tokens = usage.tokens ?? {};
+  const cached = finite(tokens.cachedReadTokens) && tokens.cachedReadTokens > 0 ? ` (${grouped(tokens.cachedReadTokens)} cached)` : "";
+  return [
+    ["Tokens", finite(tokens.totalTokens) ? `${grouped(tokens.totalTokens)}${cached}` : missing],
+    ["Context", finite(usage.context?.used) && finite(usage.context?.size) ? `${grouped(usage.context.used)} of ${grouped(usage.context.size)}` : missing],
+    ["Cost", finite(usage.cost?.amount) && typeof usage.cost?.currency === "string" ? `${grouped(usage.cost.amount)} ${usage.cost.currency}` : missing]
+  ];
+}
+function usageHtml(entry) {
+  const facts = usageFacts(entry);
+  return facts.length ? `<div class="agents-usage">${keyValues(facts.map(([key, value]) => [key, escapeHtml(value)]))}</div>` : "";
+}
 function detailsHtml(entry) {
+  return `${usageHtml(entry)}${commandHtml(entry)}`;
+}
+function commandHtml(entry) {
   const command = entry.launch?.resumeCommand;
   const reason = entry.reason && !workText(entry).includes(entry.reason) ? `<p class="agents-details-reason">${escapeHtml(entry.reason)}</p>` : "";
   if (!command) return `${reason}<p class="agents-details-lead">${ticking(entry) ? "It runs now; the command that continues it in a terminal shows once it stops." : "This session has no terminal command to continue it."}</p>`;
@@ -520,5 +541,6 @@ export {
   runningText,
   stateOf,
   timeText,
+  usageFacts,
   workText
 };

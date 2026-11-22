@@ -30,8 +30,10 @@ import { applyAction, componentIndexingStatus, listActions, listActionTargets, p
 import { archiveEndedLaunches, archiveLaunch, listLaunches, unarchiveLaunch } from "../session/launched-sessions.mjs";
 import { readRunOptions, runOptionsQuery } from "../session/run-options.mjs";
 import { listAgents } from "./agents.mjs";
+import { listCodingAgents } from "../session/coding-agents.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
+import { PersonalSettingsError, readPersonalSettings, updatePersonalSettings } from "../workflow/personal-settings.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
@@ -663,7 +665,17 @@ const ACTION_STATUS = {
   invalid_choice: 409,
   supervision_lost: 409,
   stop_timeout: 409,
-  launch_failed: 500
+  // The refusals of an answer to a launched session's permission request.
+  unknown_request: 404,
+  approval_unavailable: 409,
+  approval_too_long: 409,
+  launch_failed: 500,
+  // The refusals of an install, update, or removal of a registry agent.
+  install_mismatch: 409,
+  install_running: 409,
+  install_refused: 409,
+  install_failed: 500,
+  agent_running: 409
 };
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
 const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
@@ -709,6 +721,33 @@ async function exchangeWriteGrant(request, response, writeSessions) {
     return;
   }
   sendJson(response, 200, { token });
+}
+async function changePersonalSettings(request, response, writable) {
+  if (!fromPage(request)) {
+    sendJson(response, 403, { code: "origin_refused", message: "Personal settings must come from the review page as JSON." });
+    return;
+  }
+  if (!writable) {
+    sendJson(response, 403, { code: "write_forbidden", message: READ_ONLY_NOTICE });
+    return;
+  }
+  let change;
+  try {
+    change = parseStoreJson(await readBody(request));
+  } catch {
+    change = void 0;
+  }
+  if (change === null || typeof change !== "object" || Array.isArray(change)) {
+    sendJson(response, 400, { code: "invalid_setting", message: "The change must be a JSON object that names one or more personal settings and their values.", setting: null });
+    return;
+  }
+  try {
+    sendJson(response, 200, await updatePersonalSettings(change));
+  } catch (error) {
+    if (!(error instanceof PersonalSettingsError)) throw error;
+    if (error.code === "invalid_setting") sendJson(response, 400, { code: error.code, message: error.message, setting: error.setting ?? null });
+    else sendJson(response, 409, { code: error.code, message: error.message });
+  }
 }
 async function servePageRoute(request, response, route) {
   if (route === "/" || route === "/review") {
@@ -1351,13 +1390,19 @@ function createProjectReview({
         return;
       }
       try {
-        sendJson(response, 200, await readRunOptions({ ...runOptionsQuery(url.searchParams), checkout: projectRoot, env: process.env }));
+        sendJson(response, 200, await readRunOptions({ ...runOptionsQuery(url.searchParams, process.env), checkout: projectRoot, env: process.env }));
       } catch (error) {
         if (error?.name !== "RunOptionsError") throw error;
         sendJson(response, error.status, { code: error.code, message: error.message, ...error.field ? { field: error.field } : {} });
       }
+    } else if (route === "/api/coding-agents" && request.method === "GET") {
+      sendJson(response, 200, await listCodingAgents({ env: process.env }));
     } else if (route === "/api/agents" && request.method === "GET") {
       sendJson(response, 200, await listAgents({ projectRoot, env: process.env }));
+    } else if (route === "/api/personal-settings" && request.method === "GET") {
+      sendJson(response, 200, await readPersonalSettings({ projectRoot }));
+    } else if (route === "/api/personal-settings" && request.method === "PUT") {
+      await changePersonalSettings(request, response, writableRequest(request));
     } else if ((route === "/api/agents/archive" || route === "/api/agents/unarchive") && request.method === "POST") {
       await archiveRoute(request, response, route === "/api/agents/archive");
     } else if (route === "/api/actions/targets" && request.method === "GET") {
@@ -1387,7 +1432,7 @@ function createProjectReview({
         if (result.applied) {
           const target = parseTarget(result.applied.target);
           const event = { ...result.applied, initiative: target?.initiative ?? (target?.kind === "launch" ? result.launch?.initiative ?? null : null), ...result.artifact ? { artifact: result.artifact } : {} };
-          if (onAction) await Promise.resolve(onAction(event, { shared: !["index", "machine"].includes(target?.kind), comment: result.comment ?? null })).catch(() => {
+          if (onAction) await Promise.resolve(onAction(event, { shared: !["index", "machine", "agent"].includes(target?.kind), comment: result.comment ?? null })).catch(() => {
           });
           else notify("action", event);
         }

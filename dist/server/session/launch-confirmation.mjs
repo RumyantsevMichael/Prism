@@ -1,9 +1,11 @@
 // Generated from src/server/session/launch-confirmation.mts by scripts/native-build/compile.mjs.
 import { spawn } from "node:child_process";
-import { access, constants, link, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, constants, link, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { hostDefinition } from "./launch-hosts.mjs";
+import { shownForm } from "./permission-requests.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { LaunchError, launchesDirectory, prepareLaunchesDirectory } from "./launch-records.mjs";
 const WINDOW_MS = 30 * 60 * 1e3;
@@ -18,8 +20,11 @@ const COOLDOWN_FILE = "confirmation-cooldown.json";
 const PENDING_FILE = "confirmation-pending.json";
 const UNAVAILABLE_PREFIX = "This computer cannot show a confirmation outside the browser: ";
 const STDERR_MAX = 500;
-const ZENITY_ARGS = Object.freeze(["--question", "--default-cancel", "--title=Prism", "--ok-label=Launch", "--cancel-label=Cancel", "--timeout=120"]);
-const OSASCRIPT_DIALOG = 'display dialog (item 1 of argv) with title "Prism" buttons {"Cancel", "Launch"} default button "Cancel" cancel button "Cancel" with icon caution giving up after 120';
+const LAUNCH_BUTTONS = Object.freeze({ ok: "Launch", cancel: "Cancel" });
+const APPROVAL_BUTTONS = Object.freeze({ ok: "Allow", cancel: "Refuse" });
+const INSTALL_BUTTONS = Object.freeze({ ok: "Install", cancel: "Cancel" });
+const zenityArgs = (buttons) => ["--question", "--default-cancel", "--title=Prism", `--ok-label=${buttons.ok}`, `--cancel-label=${buttons.cancel}`, "--timeout=120"];
+const osascriptDialog = (buttons) => `display dialog (item 1 of argv) with title "Prism" buttons {"${buttons.cancel}", "${buttons.ok}"} default button "${buttons.cancel}" cancel button "${buttons.cancel}" with icon caution giving up after 120`;
 const POWERSHELL_COMMAND = "$r = (New-Object -ComObject WScript.Shell).Popup($env:PRISM_LAUNCH_CONFIRM_TEXT, 120, 'Prism', 4 + 48 + 256); if ($r -eq 6) { exit 10 } elseif ($r -eq 7) { exit 11 } elseif ($r -eq -1) { exit 12 } else { exit 13 }";
 const UNIX_DIALOG_PLATFORMS = /* @__PURE__ */ new Set(["linux", "freebsd", "openbsd"]);
 let openHere = 0;
@@ -35,6 +40,29 @@ function qtText(text) {
 }
 function confirmationText({ label, initiative, checkout }) {
   return `Start a ${label} session on this computer that runs Prism's orchestrate skill for the initiative ${initiative} in ${checkout}? Further launches in the next 30 minutes will start without asking.`;
+}
+function approvalText({ initiative, host, action, reason }) {
+  return `Allow ${host} to do this once, in its session for the initiative ${initiative}?
+
+Action: ${action}
+Reason: ${reason || "none given"}
+
+Prism allows only this one request; anything else the session asks is asked again.`;
+}
+const oneLine = (value) => shownForm(value);
+function installText({ name, id, version, from = null, authors, license, source, download }) {
+  const heading = from === null ? `Install the coding agent ${oneLine(name)} (${oneLine(id)}) version ${oneLine(version)} from the ACP registry?` : `Update the coding agent ${oneLine(name)} (${oneLine(id)}) from version ${oneLine(from)} to version ${oneLine(version)} from the ACP registry?`;
+  return [
+    heading,
+    "",
+    `Authors: ${authors.length ? authors.map(oneLine).join(", ") : "not named"}`,
+    `Version: ${oneLine(version)}`,
+    `License: ${license === null ? "not named" : oneLine(license)}`,
+    `Source: ${source === null ? "not named" : oneLine(source)}`,
+    `Download: ${oneLine(download)}`,
+    "",
+    "Prism checks the download against the registry and runs no install script. It runs with your permissions on this computer."
+  ].join("\n");
 }
 function unavailable(missing, { verbatim = false } = {}) {
   return new LaunchError("confirmation_unavailable", `${UNAVAILABLE_PREFIX}${missing}${verbatim ? "" : "."}`);
@@ -155,16 +183,27 @@ async function executableFile(file) {
     return false;
   }
 }
+const underTestRunner = (env) => Boolean(env.NODE_TEST_CONTEXT || process.env.NODE_TEST_CONTEXT);
+async function testStub(file) {
+  try {
+    const [real, temporary] = await Promise.all([realpath(file), realpath(os.tmpdir())]);
+    const relative = path.relative(temporary, real);
+    return relative !== "" && relative.split(path.sep)[0] !== ".." && !path.isAbsolute(relative);
+  } catch {
+    return false;
+  }
+}
 async function findOnPath(env, name) {
   const value = env.PATH ?? env.Path ?? "";
+  const testing = underTestRunner(env);
   for (const entry of value.split(path.delimiter)) {
     if (!entry || !path.isAbsolute(entry)) continue;
     const file = path.join(entry, name);
-    if (await executableFile(file)) return file;
+    if (await executableFile(file) && (!testing || await testStub(file))) return file;
   }
   return null;
 }
-async function nativeDialog({ text, env = process.env, platform = process.platform }) {
+async function nativeDialog({ text, env = process.env, platform = process.platform, buttons = LAUNCH_BUTTONS }) {
   if (UNIX_DIALOG_PLATFORMS.has(platform)) {
     const display = env.DISPLAY || env.WAYLAND_DISPLAY;
     if (!display) return unavailable("no graphical display (DISPLAY or WAYLAND_DISPLAY) is set for the review app");
@@ -172,7 +211,7 @@ async function nativeDialog({ text, env = process.env, platform = process.platfo
     if (zenity) {
       return {
         command: zenity,
-        args: [...ZENITY_ARGS, `--text=${pangoText(text)}`],
+        args: [...zenityArgs(buttons), `--text=${pangoText(text)}`],
         env,
         killAfterMs: DIALOG_BACKSTOP_MS,
         read: ({ code, stderr, timedOut }) => {
@@ -188,7 +227,7 @@ async function nativeDialog({ text, env = process.env, platform = process.platfo
     if (kdialog) {
       return {
         command: kdialog,
-        args: ["--title", "Prism", "--yes-label", "Launch", "--no-label", "Cancel", "--warningyesno", qtText(text)],
+        args: ["--title", "Prism", "--yes-label", buttons.ok, "--no-label", buttons.cancel, "--warningyesno", qtText(text)],
         env,
         killAfterMs: DIALOG_MS,
         read: ({ code, timedOut }) => {
@@ -206,7 +245,7 @@ async function nativeDialog({ text, env = process.env, platform = process.platfo
     if (!osascript) return unavailable("osascript was not found on PATH");
     return {
       command: osascript,
-      args: ["-e", "on run argv", "-e", OSASCRIPT_DIALOG, "-e", "end run", text],
+      args: ["-e", "on run argv", "-e", osascriptDialog(buttons), "-e", "end run", text],
       env,
       // A start failure is an osascript error: its message stands in for the standard error.
       readsStartFailure: true,
@@ -215,7 +254,7 @@ async function nativeDialog({ text, env = process.env, platform = process.platfo
         if (timedOut) return "unanswered";
         if (code === 0) {
           if (/gave up:\s*true/.test(stdout)) return "unanswered";
-          return /button returned:\s*Launch\b/.test(stdout) && /gave up:\s*false/.test(stdout) ? "confirmed" : "declined";
+          return new RegExp(`button returned:\\s*${buttons.ok}\\b`).test(stdout) && /gave up:\s*false/.test(stdout) ? "confirmed" : "declined";
         }
         if (stderr.includes("(-128)")) return "declined";
         return unavailable(`osascript failed: ${stderr.trim().slice(0, STDERR_MAX)}`, { verbatim: true });
@@ -322,12 +361,56 @@ async function confirmLaunch({ initiative, host, checkout, env = process.env, pl
     await release();
   }
 }
+async function confirmApproval({ text, env = process.env, platform = process.platform }) {
+  await prepareLaunchesDirectory(env);
+  const pending = () => new LaunchError("confirmation_pending", "Another confirmation is waiting for your answer.");
+  if (await dialogOpen(env)) throw pending();
+  const dialog = await nativeDialog({ text, env, platform, buttons: APPROVAL_BUTTONS });
+  if (dialog instanceof LaunchError) throw dialog;
+  const release = await takePendingSlot(env, Date.now());
+  if (!release) throw pending();
+  try {
+    const outcome = await runDialog(dialog);
+    if (outcome.spawnError && !dialog.readsStartFailure) throw unavailable(`${path.basename(dialog.command)} could not be started`);
+    const answer = dialog.read(outcome);
+    if (answer instanceof LaunchError) throw answer;
+    if (answer === "confirmed") return { asked: true };
+    if (answer === "declined") throw new LaunchError("confirmation_declined", "You refused the request in the confirmation, so it still waits.");
+    throw new LaunchError("confirmation_timeout", "Nobody answered the confirmation within 2 minutes, so the request still waits.");
+  } finally {
+    await release();
+  }
+}
+async function confirmInstall({ text, env = process.env, platform = process.platform }) {
+  await prepareLaunchesDirectory(env);
+  const pending = () => new LaunchError("confirmation_pending", "Another confirmation is waiting for your answer.");
+  if (await dialogOpen(env)) throw pending();
+  const dialog = await nativeDialog({ text, env, platform, buttons: INSTALL_BUTTONS });
+  if (dialog instanceof LaunchError) throw dialog;
+  const release = await takePendingSlot(env, Date.now());
+  if (!release) throw pending();
+  try {
+    const outcome = await runDialog(dialog);
+    if (outcome.spawnError && !dialog.readsStartFailure) throw unavailable(`${path.basename(dialog.command)} could not be started`);
+    const answer = dialog.read(outcome);
+    if (answer instanceof LaunchError) throw answer;
+    if (answer === "confirmed") return { asked: true };
+    if (answer === "declined") throw new LaunchError("confirmation_declined", "You cancelled the install in the confirmation, so nothing was installed.");
+    throw new LaunchError("confirmation_timeout", "Nobody answered the confirmation within 2 minutes, so nothing was installed.");
+  } finally {
+    await release();
+  }
+}
 export {
   COOLDOWN_MS,
   DIALOG_MS,
   WINDOW_MS,
+  approvalText,
+  confirmApproval,
+  confirmInstall,
   confirmLaunch,
   confirmationText,
+  installText,
   launchWindow,
   nativeDialog
 };

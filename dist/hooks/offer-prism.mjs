@@ -4,6 +4,7 @@ import { realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { inspectCodexTranscriptMetadata } from "../server/session/host-adapters/codex-transcript.mjs";
 import { readWorkflowConfig } from "../server/workflow/workflow-config.mjs";
+import { readPersonalSettings } from "../server/workflow/personal-settings.mjs";
 import { configureRecordSync } from "../server/workflow/record-store-sync.mjs";
 import { openGates } from "./deliver-gate-answers.mjs";
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
@@ -51,8 +52,9 @@ async function offerPrism({ input = process.stdin, environment = process.env } =
   if (!directory) return null;
   const projectRoot = await realpath(directory);
   if (await isCodexSubagent(hookInput, environment, projectRoot)) return null;
+  const personal = await readPersonalSettings({ projectRoot, env: environment }).catch(() => null);
+  if (personal?.settings.sessionOffer === "off") return null;
   const config = await readWorkflowConfig(projectRoot);
-  if (config.exists && /^off$/i.test(nonempty(config.sections?.Interaction?.["Session offer"]) ?? "")) return null;
   const initiatives = config.exists ? [...new Set((await openGates(projectRoot).catch(() => [])).filter(({ gate }) => !gate.answer).map(({ initiative }) => initiative))] : [];
   return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: offerText({ configured: config.exists, initiatives }) } };
 }

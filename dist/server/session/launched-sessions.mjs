@@ -44,6 +44,7 @@ import {
   writeLaunchRecord,
   writeStopRequest
 } from "./launch-records.mjs";
+import { launchRequests } from "./permission-requests.mjs";
 const SUPERVISOR = fileURLToPath(new URL("./launch-supervisor.mjs", import.meta.url));
 const START_TIMEOUT_MS = 15e3;
 const LOCK_TIMEOUT_MS = 3e4;
@@ -128,8 +129,8 @@ async function startRun({ folder, record, env, cause }) {
 const INVALID_CHOICE = "The coordinator's choice is not one Prism can pass to a host: each of its provider, model, and effort is a name that keeps its rule, or null for the host default.";
 const RECORDED_CHOICE_INVALID = "The session's recorded model choice is not one Prism can pass to a host, so it cannot be resumed.";
 async function startLaunch({ projectRoot, initiative, host, coordinator = null, env = process.env }) {
-  const definition = hostDefinition(host);
-  if (!definition) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code and codex.`);
+  const definition = hostDefinition(host, env);
+  if (!definition) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code, codex, and the ACP agents that this computer offers.`);
   const choice = checkedCoordinator(coordinator);
   if (!choice) throw refuse("invalid_choice", INVALID_CHOICE);
   const checkout = await realpath(projectRoot);
@@ -333,7 +334,7 @@ async function pageViewer(projectRoot, at) {
     }
     return pendingOf.get(initiative);
   };
-  const viewOf = async (folder, record) => launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative)) });
+  const viewOf = async (folder, record) => launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative)), permission: (await launchRequests(folder, record, at))[0] ?? null });
   return { checkout, store, viewOf };
 }
 const byLaunch = (left, right) => (right.launchedAt ?? "").localeCompare(left.launchedAt ?? "") || right.id.localeCompare(left.id);

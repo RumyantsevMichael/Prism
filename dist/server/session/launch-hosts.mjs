@@ -2,7 +2,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { acpHostDefinition, acpHosts, isAcpHost } from "./acp-agents.mjs";
 import { isAgentModel } from "./agent-models.mjs";
+import { acpConversation } from "./host-adapters/acp.mjs";
+import { shownForm } from "./permission-requests.mjs";
 const HOSTS = Object.freeze([
   Object.freeze({
     host: "claude-code",
@@ -35,7 +38,7 @@ const STRIPPED_VARIABLES = Object.freeze([
   "CLAUDE_PLUGIN_DATA",
   "CODEX_THREAD_ID"
 ]);
-const CLAUDE_FLAGS = Object.freeze(["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "none"]);
+const CLAUDE_FLAGS = Object.freeze(["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "host", "--permission-prompt-tool", "stdio"]);
 const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" });
 const CODEX_CLIENT = Object.freeze({ clientInfo: { name: "prism-launch", version: "1" }, capabilities: { experimentalApi: true } });
 const HOST_REQUEST_REFUSAL = Object.freeze({ code: -32601, message: "Prism answers no host requests." });
@@ -45,6 +48,7 @@ const RECORDED_REFUSALS = 20;
 const KEPT_TOOL_RESULTS = 100;
 const TOOL_NAME_MAX = 100;
 const KEPT_EARLY_COMPLETIONS = 8;
+const KEPT_FILE_CHANGES = 64;
 const TRACKED_TASKS = 1e3;
 const HOST_ERROR_FALLBACK = "The turn failed without a message.";
 const HOST_SESSION_ID_PATTERN = /^[0-9A-Za-z_][0-9A-Za-z_-]*$/;
@@ -52,12 +56,19 @@ const SESSION_ID_PLACEHOLDER = "<host session id>";
 function validHostSessionId(value) {
   return typeof value === "string" && HOST_SESSION_ID_PATTERN.test(value);
 }
+const REGEX_SYNTAX = /[.*+?^${}()|[\]\\]/g;
 function redactSessionId(text2, hostSessionId) {
-  if (typeof text2 !== "string" || !validHostSessionId(hostSessionId)) return text2;
-  return text2.replace(new RegExp(hostSessionId, "gi"), SESSION_ID_PLACEHOLDER);
+  if (typeof text2 !== "string" || typeof hostSessionId !== "string" || !hostSessionId) return text2;
+  return text2.replace(new RegExp(hostSessionId.replace(REGEX_SYNTAX, "\\$&"), "gi"), SESSION_ID_PLACEHOLDER);
 }
-function hostDefinition(host) {
+function builtinHost(host) {
   return HOSTS.find((definition) => definition.host === host) ?? null;
+}
+function hostDefinition(host, env = process.env) {
+  return builtinHost(host) ?? (isAcpHost(host) ? acpHostDefinition(host, env) : null);
+}
+function hostDefinitions(env = process.env) {
+  return [...HOSTS, ...acpHosts(env)];
 }
 async function executableFile(file) {
   try {
@@ -86,8 +97,14 @@ async function npmShimScript(file) {
   return await executableFile(script) ? script : null;
 }
 async function resolveHost(host, env = process.env) {
-  const definition = hostDefinition(host);
-  if (!definition) return null;
+  const definition = hostDefinition(host, env);
+  return definition ? resolveDefinition(definition, env) : null;
+}
+async function resolveDefinition(definition, env) {
+  if (path.isAbsolute(definition.executable)) {
+    if (await executableFile(definition.executable)) return { ...definition, available: true, executable: definition.executable, command: definition.executable, prefix: [], reason: null };
+    return { ...definition, available: false, executable: null, command: null, prefix: [], reason: `${definition.label} was not found: no executable file at ${definition.executable}.` };
+  }
   const missing = { ...definition, available: false, executable: null, command: null, prefix: [], reason: `${definition.label} was not found: no ${definition.executable} executable on PATH.` };
   const entries = pathEntries(env);
   if (process.platform !== "win32") {
@@ -109,9 +126,11 @@ async function resolveHost(host, env = process.env) {
   }
   return missing;
 }
-async function hostAvailability({ env = process.env } = {}) {
-  return Promise.all(HOSTS.map(async ({ host }) => {
-    const { label, available, executable, reason } = await resolveHost(host, env);
+async function hostAvailability({ env = process.env, acp = true } = {}) {
+  const definitions = acp ? hostDefinitions(env) : [...HOSTS];
+  return Promise.all(definitions.map(async (definition) => {
+    const { host } = definition;
+    const { label, available, executable, reason } = await resolveDefinition(definition, env);
     return { host, label, available, executable, reason };
   }));
 }
@@ -136,13 +155,14 @@ function coordinatorOf(coordinator) {
   if (!checked) throw new Error("The coordinator's choice is not one Prism can pass to a host.");
   return checked;
 }
-function hostArguments({ host, hostSessionId, resume, coordinator = null }) {
+function hostArguments({ host, hostSessionId, resume, coordinator = null, acp = null }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
     const { model, effort } = coordinatorOf(coordinator);
     return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS, ...model === null ? [] : ["--model", model], ...effort === null ? [] : ["--effort", effort]];
   }
   if (host === "codex") return ["app-server"];
+  if (acp) return [...acp.args];
   throw new Error(`Unknown host ${host}.`);
 }
 function claudePrompt(initiative) {
@@ -159,23 +179,75 @@ function codexTurnRequest({ threadId, initiative, coordinator = null }) {
   const { effort } = coordinatorOf(coordinator);
   return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}` }], ...effort === null ? {} : { effort } } };
 }
+const CODEX_APPROVALS = /* @__PURE__ */ new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"]);
+const isPlainObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const isSet = (value) => value !== void 0 && value !== null;
+const CODEX_UNDESCRIBED_CHANGE = "A file change that Codex did not describe";
+const CODEX_UNNAMED_COMMAND = "A command that Codex did not name";
+const CLAUDE_UNNAMED_TOOL = "A tool that Claude Code did not name";
+const CLAUDE_UNNAMED_TOOL_REASON = "Claude Code did not say which tool this runs, so Prism can only refuse it.";
+const codexUnavailable = {
+  undescribed: "Codex did not say which files this change writes, so Prism can only refuse it.",
+  unnamed: "Codex did not say which command this runs, so Prism can only refuse it.",
+  grantRoot: (root) => `Codex asks to allow writes under ${shownForm(root)} for the rest of the session, so Prism can only refuse it.`,
+  permissions: "Codex asks for these permissions for the rest of its turn, so Prism can only refuse it."
+};
+function codexCommandAction(params) {
+  const given = Array.isArray(params.command) ? params.command.filter((part) => typeof part === "string").join(" ") : text(params.command);
+  const named = given.trim() !== "";
+  const command = named ? given : CODEX_UNNAMED_COMMAND;
+  const network = isPlainObject(params.networkApprovalContext) ? { host: params.networkApprovalContext.host, protocol: params.networkApprovalContext.protocol } : params.networkApprovalContext;
+  const context = {
+    ...isSet(params.cwd) ? { cwd: params.cwd } : {},
+    ...isSet(params.environmentId) ? { environmentId: params.environmentId } : {},
+    ...isSet(params.kind) && params.kind !== "command" ? { kind: params.kind } : {},
+    ...isSet(network) ? { networkApprovalContext: network } : {}
+  };
+  return { named, action: Object.keys(context).length ? `${command} ${JSON.stringify(context)}` : command };
+}
+function codexApproval(method, params, changes) {
+  if (!CODEX_APPROVALS.has(method)) return null;
+  const values = isPlainObject(params) ? params : {};
+  const reason = text(values.reason);
+  const decided = (decision) => ({ decision: decision === "approve" ? "accept" : "decline" });
+  if (method === "item/permissions/requestApproval") {
+    const asked = isSet(values.permissions) ? JSON.stringify(values.permissions) : "{}";
+    return {
+      ask: { action: `Permissions ${asked}`, reason, canAllow: false, unavailable: codexUnavailable.permissions },
+      answer: (_decision) => ({ permissions: {}, scope: "turn" })
+    };
+  }
+  if (method === "item/fileChange/requestApproval") {
+    if (!Array.isArray(changes) || changes.length === 0) return { ask: { action: CODEX_UNDESCRIBED_CHANGE, reason, canAllow: false, unavailable: codexUnavailable.undescribed }, answer: decided };
+    const grantRoot = isSet(values.grantRoot) ? values.grantRoot : void 0;
+    const action = `File change ${JSON.stringify({ changes, ...grantRoot === void 0 ? {} : { grantRoot } })}`;
+    if (grantRoot === void 0) return { ask: { action, reason, canAllow: true }, answer: decided };
+    return { ask: { action, reason, canAllow: false, unavailable: codexUnavailable.grantRoot(typeof grantRoot === "string" ? grantRoot : JSON.stringify(grantRoot)) }, answer: decided };
+  }
+  const command = codexCommandAction(values);
+  if (!command.named) return { ask: { action: command.action, reason, canAllow: false, unavailable: codexUnavailable.unnamed }, answer: decided };
+  return { ask: { action: command.action, reason, canAllow: true }, answer: decided };
+}
 function claudeInterrupt(requestId) {
   return { type: "control_request", request_id: requestId, request: { subtype: "interrupt" } };
 }
 function codexInterruptRequest({ threadId, turnId }) {
   return { method: "turn/interrupt", params: { threadId, turnId } };
 }
-function resumeCommandOf(host, hostSessionId) {
+function resumeCommandOf(host, hostSessionId, env = process.env) {
   if (!validHostSessionId(hostSessionId)) return null;
-  return host === "claude-code" ? `claude --resume ${hostSessionId}` : `codex resume ${hostSessionId}`;
+  if (host === "claude-code") return `claude --resume ${hostSessionId}`;
+  if (host === "codex") return `codex resume ${hostSessionId}`;
+  const template = isAcpHost(host) ? acpHostDefinition(host, env)?.acp.resumeCommand : null;
+  return template ? template.replaceAll("{session}", hostSessionId) : null;
 }
 function strippedEnvironment(env) {
   const result = { ...env };
   for (const name of STRIPPED_VARIABLES) delete result[name];
   return result;
 }
-function hostEnvironment(env, launchId) {
-  return { ...strippedEnvironment(env), PRISM_LAUNCH: launchId };
+function hostEnvironment(env, launchId, acp = null) {
+  return { ...strippedEnvironment(env), ...acp ? acp.env : {}, PRISM_LAUNCH: launchId };
 }
 function lineSplitter(onLine, maxBytes = MAX_LINE_BYTES) {
   let pending = [];
@@ -234,10 +306,11 @@ const text = (value) => typeof value === "string" ? value : "";
 const claudeErrorText = (event) => text(event.result) || (Array.isArray(event.errors) ? event.errors.filter((entry) => typeof entry === "string").join("; ") : "");
 const detached = (text2) => Buffer.from(text2, "utf16le").toString("utf16le");
 const digestKey = (id) => createHash("sha256").update(Buffer.from(id, "utf16le")).digest("base64");
+const REFUSED_ON_ATTENTION = "The person refused this on Attention.";
 function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {
 }, onModel = () => {
-} }) {
-  const facts = { hostSessionId: null, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null };
+}, acp = null, permissions = null }) {
+  const facts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null };
   let modelSeen = false;
   const named = (value) => {
     if (modelSeen) return;
@@ -247,25 +320,77 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
     onModel(facts.model);
   };
   let inputOpen = true;
-  const redact = (value) => redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId);
+  const redact = (value) => redactSessionId(redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId), facts.agentSessionId);
   const cut = (value) => detached(redact(value).slice(0, REFUSAL_REASON_MAX));
   const hostError = (value) => cut(value || HOST_ERROR_FALLBACK);
   const toolName = (value, fallback) => typeof value === "string" && value ? detached(redact(value).slice(0, TOOL_NAME_MAX)) : fallback;
   const write = (message) => {
     if (inputOpen) send(message);
   };
+  const asks = /* @__PURE__ */ new Set();
+  const ask = ({ action, reason, canAllow, unavailable }, answer) => {
+    if (!inputOpen) return null;
+    let withdraw = () => {
+    };
+    let done = false;
+    const respond = (decision) => {
+      if (done) return;
+      done = true;
+      asks.delete(respond);
+      withdraw();
+      write(answer(decision === "approve" && canAllow ? "approve" : "refuse"));
+    };
+    const dismiss = () => {
+      if (done) return;
+      done = true;
+      asks.delete(respond);
+      withdraw();
+    };
+    asks.add(respond);
+    if (!permissions) {
+      respond("refuse");
+      return null;
+    }
+    withdraw = permissions.ask({ action: detached(redact(action)), reason: detached(redact(reason)), canAllow, ...unavailable ? { unavailable: detached(redact(unavailable)) } : {} }, respond);
+    return { respond, dismiss };
+  };
+  const refuseAsks = () => {
+    for (const respond of [...asks]) respond("refuse");
+  };
   const close = () => {
     if (!inputOpen) return;
+    refuseAsks();
     inputOpen = false;
     closeInput();
   };
-  const handle = host === "claude-code" ? claudeHandler() : codexHandler();
+  if (host !== "claude-code" && host !== "codex" && !acp) throw new Error(`Unknown host ${host}.`);
+  const handle = host === "claude-code" ? claudeHandler() : host === "codex" ? codexHandler() : acpConversation({
+    label: acp.label,
+    autoMode: acp.autoMode,
+    initiative,
+    checkout,
+    hostSessionId,
+    resume,
+    coordinator: coordinatorOf(coordinator),
+    env: acp.env,
+    launch: acp.launch,
+    agentPid: acp.agentPid,
+    facts,
+    write,
+    close,
+    inputOpen: () => inputOpen,
+    cut,
+    named,
+    onSessionId,
+    ask
+  });
   function claudeHandler() {
     const toolResults = /* @__PURE__ */ new Map();
     const tasks = /* @__PURE__ */ new Set();
     let untrackedTasks = 0;
     const taskKey = digestKey;
     let interruptId = null;
+    const waitingTools = /* @__PURE__ */ new Map();
     return {
       start: () => write(claudePrompt(initiative)),
       interrupt() {
@@ -274,6 +399,28 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
         write(claudeInterrupt(interruptId));
       },
       event(event) {
+        if (event.type === "control_request" && event.request?.subtype === "can_use_tool" && typeof event.request_id === "string") {
+          const request = event.request;
+          const named2 = text(request.tool_name).trim() !== "";
+          const tool = named2 ? text(request.tool_name) : CLAUDE_UNNAMED_TOOL;
+          const input = request.input !== null && typeof request.input === "object" && !Array.isArray(request.input) ? request.input : null;
+          const requestId = event.request_id;
+          const waiting = ask({ action: `${tool} ${JSON.stringify(request.input ?? null)}`, reason: text(request.decision_reason), canAllow: named2 && input !== null, ...named2 ? {} : { unavailable: CLAUDE_UNNAMED_TOOL_REASON } }, (decision) => {
+            waitingTools.delete(requestId);
+            return {
+              type: "control_response",
+              response: { subtype: "success", request_id: requestId, response: decision === "approve" ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: REFUSED_ON_ATTENTION } }
+            };
+          });
+          if (waiting) waitingTools.set(requestId, waiting);
+          return;
+        }
+        if (event.type === "control_cancel_request" && typeof event.request_id === "string") {
+          const waiting = waitingTools.get(event.request_id);
+          waitingTools.delete(event.request_id);
+          waiting?.dismiss();
+          return;
+        }
         if (event.type === "control_response") {
           if (interruptId !== null && event.response?.request_id === interruptId) close();
           return;
@@ -318,6 +465,17 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
   function codexHandler() {
     const pending = /* @__PURE__ */ new Map();
     const completed = /* @__PURE__ */ new Map();
+    const fileChanges = /* @__PURE__ */ new Map();
+    const waitingChanges = /* @__PURE__ */ new Map();
+    const waitingApprovals = /* @__PURE__ */ new Map();
+    const requestKey = (id) => `${typeof id}:${String(id)}`;
+    const described = (itemId, changes) => {
+      if (typeof itemId !== "string" || !itemId) return;
+      const key = digestKey(itemId);
+      fileChanges.delete(key);
+      fileChanges.set(key, Array.isArray(changes) ? changes : []);
+      if (fileChanges.size > KEPT_FILE_CHANGES) fileChanges.delete(fileChanges.keys().next().value);
+    };
     let nextId = 1;
     let threadId = null;
     let turnRequested = false;
@@ -385,6 +543,33 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
       event(message) {
         const hasId = typeof message.id === "string" || typeof message.id === "number";
         if (hasId && typeof message.method === "string") {
+          const itemId = message.method === "item/fileChange/requestApproval" && typeof message.params?.itemId === "string" && message.params.itemId ? message.params.itemId : null;
+          const approval = codexApproval(message.method, message.params, itemId === null ? void 0 : fileChanges.get(digestKey(itemId)));
+          if (approval) {
+            const { id } = message;
+            let waiting = null;
+            let answered2 = false;
+            const forget = () => {
+              if (waiting === null) return;
+              if (itemId !== null && waitingChanges.get(digestKey(itemId)) === waiting) waitingChanges.delete(digestKey(itemId));
+              if (waitingApprovals.get(requestKey(id)) === waiting) waitingApprovals.delete(requestKey(id));
+            };
+            waiting = ask(approval.ask, (decision) => {
+              answered2 = true;
+              forget();
+              return { jsonrpc: "2.0", id, result: approval.answer(decision) };
+            });
+            if (waiting !== null && !answered2) {
+              if (itemId !== null) waitingChanges.set(digestKey(itemId), waiting);
+              waitingApprovals.set(requestKey(id), waiting);
+              const { dismiss } = waiting;
+              waiting.dismiss = () => {
+                forget();
+                dismiss();
+              };
+            }
+            return;
+          }
           write({ jsonrpc: "2.0", id: message.id, error: { ...HOST_REQUEST_REFUSAL } });
           return;
         }
@@ -405,6 +590,19 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
           return;
         }
         const params = message.params ?? {};
+        if (message.method === "item/started" && params.item?.type === "fileChange") {
+          described(params.item.id, params.item.changes);
+          return;
+        }
+        if (message.method === "item/fileChange/patchUpdated") {
+          described(params.itemId, params.changes);
+          if (typeof params.itemId === "string" && params.itemId) waitingChanges.get(digestKey(params.itemId))?.respond("refuse");
+          return;
+        }
+        if (message.method === "serverRequest/resolved" && (typeof params.requestId === "string" || typeof params.requestId === "number")) {
+          waitingApprovals.get(requestKey(params.requestId))?.dismiss();
+          return;
+        }
         if (message.method === "item/completed" && params.item?.status === "declined") {
           const tool = toolName(params.item.type, "an action");
           facts.refusalCount += 1;
@@ -448,11 +646,17 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
     closeInput: close,
     /** Sends the host's interrupt for a stop; a run whose input is already closed gets none. */
     interrupt: () => {
-      if (inputOpen) handle.interrupt();
+      if (!inputOpen) return;
+      refuseAsks();
+      handle.interrupt();
     }
   };
 }
 export {
+  CLAUDE_UNNAMED_TOOL,
+  CLAUDE_UNNAMED_TOOL_REASON,
+  CODEX_UNDESCRIBED_CHANGE,
+  CODEX_UNNAMED_COMMAND,
   EFFORT_PATTERN,
   HOSTS,
   HOST_DEFAULT_COORDINATOR,
@@ -460,27 +664,34 @@ export {
   HOST_REQUEST_REFUSAL,
   HOST_SESSION_ID_PATTERN,
   KEPT_EARLY_COMPLETIONS,
+  KEPT_FILE_CHANGES,
   MAX_LINE_BYTES,
   MODEL_PATTERN,
   PROVIDER_PATTERN,
   RECORDED_REFUSALS,
+  REFUSED_ON_ATTENTION,
   SESSION_ID_PLACEHOLDER,
   STRIPPED_VARIABLES,
   TOOL_NAME_MAX,
   TRACKED_TASKS,
+  builtinHost,
   checkedCoordinator,
   claudeInterrupt,
   claudePrompt,
+  codexApproval,
   codexInterruptRequest,
   codexThreadRequest,
   codexTurnRequest,
+  codexUnavailable,
   hostArguments,
   hostAvailability,
   hostConversation,
   hostDefinition,
+  hostDefinitions,
   hostEnvironment,
   lineSplitter,
   redactSessionId,
+  resolveDefinition,
   resolveHost,
   resumeCommandOf,
   strippedEnvironment,

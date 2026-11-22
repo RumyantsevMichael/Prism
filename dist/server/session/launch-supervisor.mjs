@@ -1,10 +1,19 @@
 #!/usr/bin/env node
 // Generated from src/server/session/launch-supervisor.mts by scripts/native-build/compile.mjs.
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { launchCoordinator, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
-import { hostArguments, hostConversation, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { isAcpHost } from "./acp-agents.mjs";
+import { hostArguments, hostConversation, hostEnvironment, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { approvalText, confirmApproval } from "./launch-confirmation.mjs";
+import { permissionBroker, shownForm } from "./permission-requests.mjs";
 const STDERR_KEEP = 64 * 1024;
+const STDERR_LINE_MAX = 300;
+const STDERR_HELD = 2 * STDERR_KEEP;
+const STACK_FRAME = /^\s*at(\s|$)/;
 const OUTPUT_DRAIN_MS = 2e3;
 const STOP_DRAIN_MS = 500;
 const STOP_POLL_MS = 100;
@@ -15,9 +24,25 @@ function forceEndHost(child) {
   } catch {
   }
 }
+function keptStderr(held, trimmed, ids) {
+  const named = ids.filter((id) => typeof id === "string" && id.length > 0);
+  let text = named.reduce((value, id) => redactSessionId(value, id), held.toString("utf8"));
+  if (trimmed) text = text.slice(Math.max(0, ...named.map((id) => id.length)) + 3);
+  const bytes = Buffer.from(text, "utf8");
+  return bytes.length > STDERR_KEEP ? bytes.subarray(bytes.length - STDERR_KEEP).toString("utf8") : text;
+}
+function lastReasonLine(text) {
+  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !STACK_FRAME.test(line)).at(-1) ?? null;
+}
 function requestTime(request) {
   const at = Date.parse(request?.requestedAt ?? "");
   return Number.isFinite(at) ? Math.min(at, Date.now()) : Date.now();
+}
+async function initiativeTitle(checkout, initiative) {
+  const { readRoadmap } = await import("../workflow/roadmap.mjs");
+  const roadmap = await readRoadmap(checkout).catch(() => null);
+  const title = roadmap?.loaded?.record?.initiatives?.find((item) => item?.id === initiative)?.title;
+  return typeof title === "string" && title ? shownForm(title) : initiative;
 }
 async function superviseRun({ folder: folder2, cause: cause2, token: token2, env = process.env }) {
   let queue = Promise.resolve();
@@ -33,10 +58,16 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
   };
   const failStart = (message) => update((record2) => {
     record2.startFailure = { token: token2, message, at: (/* @__PURE__ */ new Date()).toISOString() };
+    if (record2.starting?.token === token2) delete record2.starting;
   });
   const record = await readLaunchRecord(folder2);
   if (!record) return;
   const resume = record.runs.length > 0;
+  if (isAcpHost(record.host)) {
+    await update((current) => {
+      current.starting = { token: token2, supervisorPid: process.pid, at: (/* @__PURE__ */ new Date()).toISOString() };
+    });
+  }
   const resolved = await resolveHost(record.host, env);
   if (!resolved?.available) {
     await failStart(resolved?.reason ?? `Unknown host ${record.host}.`);
@@ -51,14 +82,27 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
     await failStart("The session's recorded model choice is not one Prism can pass to a host.");
     return;
   }
-  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator });
+  const acp = resolved.acp ?? null;
+  const agentVersion = acp?.install ? path.basename(acp.install.folder) : null;
+  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator, acp });
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
+  let stderrTrimmed = false;
   const watch = (child) => {
     child.stdin.on("error", () => {
     });
+    const permissions = permissionBroker({
+      folder: folder2,
+      launch: record.id,
+      run: token2,
+      host: record.host,
+      hostLabel: resolved.label,
+      confirm: async ({ action, reason }) => confirmApproval({ text: approvalText({ initiative: await initiativeTitle(record.checkout, record.initiative), host: resolved.label, action, reason }), env })
+    });
     const conversation = hostConversation(record.host, {
+      permissions,
+      acp: acp && { label: resolved.label, autoMode: acp.autoMode ?? null, env, launch: record.id, agentPid: () => child.pid ?? null },
       initiative: record.initiative,
       checkout: record.checkout,
       hostSessionId: record.hostSessionId,
@@ -105,7 +149,8 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
         const at = (/* @__PURE__ */ new Date()).toISOString();
         update((current) => {
           delete current.startFailure;
-          current.runs.push({ number, cause: cause2, token: token2, supervisorPid: process.pid, hostPid: child.pid, startedAt: at, heartbeatAt: at, outputAt: null, model: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: graceMs, stopRequestedAt: null });
+          if (current.starting?.token === token2) delete current.starting;
+          current.runs.push({ number, cause: cause2, token: token2, supervisorPid: process.pid, hostPid: child.pid, ...acp ? { agentVersion } : {}, startedAt: at, heartbeatAt: at, outputAt: null, model: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: graceMs, stopRequestedAt: null });
         }).then(() => markSpawned(true));
         heartbeat = setInterval(() => update((current) => {
           const run = current.runs.find((entry) => entry.token === token2);
@@ -113,6 +158,7 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
         }), HEARTBEAT_MS);
         let checking = false;
         stopPoll = setInterval(async () => {
+          void permissions.poll();
           if (checking || stopping || exited) return;
           checking = true;
           try {
@@ -151,7 +197,10 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
       });
       child.stderr.on("data", (chunk) => {
         stderr = Buffer.concat([stderr, chunk]);
-        if (stderr.length > STDERR_KEEP) stderr = stderr.subarray(stderr.length - STDERR_KEEP);
+        if (stderr.length > STDERR_HELD) {
+          stderr = stderr.subarray(stderr.length - STDERR_HELD);
+          stderrTrimmed = true;
+        }
       });
       const drained = new Promise((done) => {
         let open = 2;
@@ -178,15 +227,18 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
         const read = stopping ? null : await readStopRequest(folder2);
         const request = read?.token === token2 && requestTime(read) <= Date.parse(endedAt) ? read : null;
         conversation.end();
+        await permissions.close();
         clearInterval(heartbeat);
         const { facts } = conversation;
-        const lines = stderr.toString("utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        const kept = keptStderr(stderr, stderrTrimmed, [record.hostSessionId, facts.hostSessionId, facts.agentSessionId]);
+        await writeAtomically(path.join(folder2, `run-${number}.stderr`), kept, { mode: 384 }).catch(() => {
+        });
         await update((current) => {
           if (!current.hostSessionId && facts.hostSessionId) current.hostSessionId = facts.hostSessionId;
           const run = current.runs.find((entry) => entry.token === token2);
           if (!run) return;
-          const last = redactSessionId(lines.at(-1) ?? null, current.hostSessionId);
-          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, stderr: last?.slice(0, 300) ?? null });
+          const last = lastReasonLine(redactSessionId(kept, current.hostSessionId));
+          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, failure: facts.failure, stderr: last?.slice(0, STDERR_LINE_MAX) ?? null, ...acp ? { usage: facts.usage, settled: facts.settled } : {} });
           if (!run.stopRequestedAt && request) run.stopRequestedAt = new Date(requestTime(request)).toISOString();
         });
         resolve();
@@ -197,9 +249,13 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
   const started = await withRunStartLock(folder2, async () => {
     const current = await readLaunchRecord(folder2);
     if (!current || tokenVoided(current, token2)) return null;
+    if (acp?.install && !existsSync(acp.install.folder)) {
+      await failStart(`${resolved.label} could not be started: its version ${agentVersion} is no longer installed.`);
+      return null;
+    }
     let child;
     try {
-      child = spawn(resolved.command, [...resolved.prefix, ...args], { cwd: record.checkout, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      child = spawn(resolved.command, [...resolved.prefix, ...args], { cwd: record.checkout, env: acp ? hostEnvironment(env, record.id, acp) : env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     } catch (error) {
       await failStart(`${resolved.label} could not be started: ${error.message}`);
       return null;
@@ -208,8 +264,15 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
     await watched.spawned;
     return { ended: watched.ended };
   });
+  if (!started) await update((current) => {
+    if (current.starting?.token === token2) delete current.starting;
+  });
   if (started) await started.ended;
   await queue;
+  if (started && agentVersion !== null) {
+    const { sweepUnusedVersions } = await import("./agent-installs.mjs");
+    await sweepUnusedVersions(env, [acp.id]);
+  }
   if (started) {
     const { resumeForAnswers } = await import("./launched-sessions.mjs");
     await resumeForAnswers({ id: record.id, token: token2, env }).catch(() => {
@@ -222,5 +285,7 @@ if (folder && process.argv[1] && import.meta.url === pathToFileURL(process.argv[
   }).finally(() => process.exit(0));
 }
 export {
+  keptStderr,
+  lastReasonLine,
   superviseRun
 };

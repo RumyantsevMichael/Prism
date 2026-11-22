@@ -21,6 +21,8 @@ async function contentTree(projectRoot, config, { commit = null, timeoutMs = 0 }
   try {
     const index = path.join(temporary, "index");
     const env = { ...process.env, GIT_INDEX_FILE: index, GIT_OPTIONAL_LOCKS: "0" };
+    const roadmap = roadmapPaths(config);
+    const excluded = [RECORD_DIRECTORY, config.paths.plans, roadmap?.record, roadmap?.projection].filter(Boolean);
     if (commit) await git(root, ["read-tree", commit], env, timeoutMs);
     else {
       const source = path.resolve(root, await git(root, ["rev-parse", "--git-path", "index"]));
@@ -29,11 +31,9 @@ async function contentTree(projectRoot, config, { commit = null, timeoutMs = 0 }
         await utimes(index, atime, mtime);
       }).catch(() => {
       });
-      await git(root, ["add", "-A", "--", "."], env);
+      await git(root, ["add", "-A", "--", ".", ...excluded.map((excludedPath) => `:(exclude)${excludedPath}`)], env);
     }
-    const roadmap = roadmapPaths(config);
-    const excluded = [RECORD_DIRECTORY, config.paths.plans, roadmap?.record, roadmap?.projection].filter(Boolean);
-    await git(root, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ...excluded], env, timeoutMs);
+    await git(root, ["rm", "-r", "-q", "-f", "--cached", "--ignore-unmatch", "--", ...excluded], env, timeoutMs);
     return await git(root, ["write-tree"], env, timeoutMs);
   } catch (error) {
     throw new SliceDesignError("verification_unavailable", `Verification needs a git work tree to identify what it tested: ${error.stderr?.trim() || error.message}`);

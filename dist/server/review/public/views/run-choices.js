@@ -41,8 +41,9 @@ function sourceText(report) {
   if (report.state !== "ready") return `Prism asked ${program} at ${source.executable}.`;
   return typeof source.version === "string" && source.version ? `Listed by ${program} ${source.version} at ${source.executable}.` : `Listed by ${program} at ${source.executable}, which did not report its version.`;
 }
-function createRunOptionsReader(fetchOptions) {
+function createRunOptionsReader(fetchOptions, settled = null) {
   const kept = /* @__PURE__ */ new Map();
+  const reasons = /* @__PURE__ */ new Map();
   const queue = [];
   let running = 0;
   const next = () => {
@@ -66,12 +67,20 @@ function createRunOptionsReader(fetchOptions) {
         kept.set(key, answer);
         void answer.then((result) => {
           if (result.status === 0 && kept.get(key) === answer) kept.delete(key);
+          if (kept.get(key) !== answer) return;
+          const report = result.status === 200 && isRecord(result.json) ? result.json : null;
+          if (report) reasons.set(query.host, (report.state === "failed" || report.state === "sign-in") && report.reason ? String(report.reason) : null);
+          settled?.();
         });
       }
       return kept.get(key);
     },
+    reason(host) {
+      return reasons.get(host) ?? null;
+    },
     forget() {
       kept.clear();
+      reasons.clear();
     }
   };
 }

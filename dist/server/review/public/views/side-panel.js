@@ -38,7 +38,7 @@ function fileBody(data, { renderMarkdown }) {
   return `${note}<prism-code language="${escapeHtml(languageOf(data.path) ?? "")}"><pre><code>${highlight(data.content, languageOf(data.path))}</code></pre></prism-code>`;
 }
 const NARROW = "(max-width: 720px)";
-function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mountDiagram = null, onOpenTab, onOpenClause = null, onChange, describe = (path) => ({ label: path.split("/").pop() || path, kind: "File", code: true }) }) {
+function createSidePanel({ shell, sheet = null, fetchJson, fetchArtifact = (path) => fetchJson(`./api/artifact?path=${encodeURIComponent(path)}`), renderMarkdown, mountDiagram = null, onOpenTab, onOpenClause = null, onChange, describe = (path) => ({ label: path.split("/").pop() || path, kind: "File", code: true }) }) {
   const root = document.getElementById("side-panel");
   const home = { parent: root.parentElement, next: root.nextSibling };
   const source = document.getElementById("side-panel-source");
@@ -136,7 +136,7 @@ function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mount
     const ticket = ++request;
     const source2 = url ?? `./api/artifact?path=${encodeURIComponent(path)}`;
     const same = current?.ref === path && current?.url === source2;
-    current = { ref: path, url: source2, tab, anchor, content: same ? current.content : null, diagrams: same ? current.diagrams : null, folds: same ? current.folds : /* @__PURE__ */ new Set() };
+    current = { ref: path, url: source2, fromUrl: Boolean(url), tab, anchor, content: same ? current.content : null, diagrams: same ? current.diagrams : null, folds: same ? current.folds : /* @__PURE__ */ new Set() };
     const named = describe(path);
     const range = anchor ? anchor.match(LINE_RANGE) : null;
     const where = anchor ? range ? range[2] ? `lines ${anchor.slice(1).replace("-", "\u2013")}` : `line ${range[1]}` : `#${anchor}` : "";
@@ -148,7 +148,7 @@ function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mount
     }
     body.innerHTML = '<p class="muted side-panel-loading">Loading\u2026</p>';
     try {
-      const data = await fetchJson(source2);
+      const data = await (url ? fetchJson(url) : fetchArtifact(path));
       if (ticket !== request) return;
       current.content = data.content;
       current.diagrams = JSON.stringify(data.diagrams ?? []);
@@ -181,7 +181,7 @@ function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mount
     if (!current?.ref || current.custom || current.content === null) return;
     const ticket = request;
     try {
-      const data = await fetchJson(current.url ?? `./api/artifact?path=${encodeURIComponent(current.ref)}`);
+      const data = await (current.fromUrl ? fetchJson(current.url) : fetchArtifact(current.ref));
       const diagrams = JSON.stringify(data.diagrams ?? []);
       if (ticket !== request || !current || data.content === current.content && diagrams === current.diagrams) return;
       current.content = data.content;

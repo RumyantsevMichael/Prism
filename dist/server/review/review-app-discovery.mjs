@@ -1,6 +1,7 @@
 // Generated from src/server/review/review-app-discovery.mts by scripts/native-build/compile.mjs.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { appendFile, lstat, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { appendFile, lstat, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
+import { constants } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
@@ -74,8 +75,26 @@ async function trustedDirectory(directory) {
     return false;
   }
 }
+async function tightenDirectory(directory) {
+  if (process.platform === "win32") return false;
+  const handle = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW).catch(() => null);
+  if (!handle) return false;
+  try {
+    const info = await handle.stat();
+    if (!info.isDirectory() || info.uid !== process.getuid() || (info.mode & 63) === 0 || (info.mode & 18) !== 0) return false;
+    await handle.chmod(448);
+    process.stderr.write(`Prism made its app folder ${directory} private to this user, because an earlier release had created it readable by others.
+`);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await handle.close();
+  }
+}
 async function prepareDirectory(directory) {
   await mkdir(directory, { recursive: true, mode: 448 });
+  await tightenDirectory(directory);
   if (!await trustedDirectory(directory)) {
     throw new Error("The review app state directory is not private to this user.");
   }
@@ -203,6 +222,7 @@ export {
   reviewAppDirectory,
   reviewAppDisabled,
   signRequest,
+  tightenDirectory,
   trustedDirectory,
   verifyRequest,
   verifyResponse,

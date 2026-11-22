@@ -13,6 +13,7 @@ import { refuseShipped } from "./shipped-history.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { HOSTS } from "../session/launch-hosts.mjs";
+import { isAcpHost } from "../session/acp-agents.mjs";
 import { NAME_RULE_MESSAGES, RUN_KINDS, validEffort, validModel, validProvider } from "../session/run-options.mjs";
 const SCHEMA_VERSION = 1;
 const TOP_LEVEL_KEYS = /* @__PURE__ */ new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence", "closed", "history", "personSettings"]);
@@ -20,6 +21,8 @@ const REGISTRY_KEYS = /* @__PURE__ */ new Set(["history", "personSettings"]);
 const INITIATIVE_SETTINGS = Object.freeze(["host", "autonomy", "commit", "push", "continuation", "review", "models"]);
 const SETTING_KEYS = new Set(INITIATIVE_SETTINGS);
 const RUN_HOSTS = HOSTS.map(({ host }) => host);
+const runHost = (host) => typeof host === "string" && RUN_HOSTS.includes(host) || isAcpHost(host);
+const HOST_NAMES = `${RUN_HOSTS.join(", ")}, or acp-<id>`;
 const KIND_NAMES = RUN_KINDS.map(({ kind }) => kind);
 const AGENT_KINDS = RUN_KINDS.filter(({ purpose }) => purpose === "agents").map(({ kind }) => kind);
 const EARLIER_ROLES = Object.freeze({ delivery: "designImplementation", review: "codeReview", securityReview: "securityReview", examples: "gateSummary" });
@@ -94,7 +97,6 @@ const REASON_LIMIT = 1e3;
 const REVIEW_CHOICES = /* @__PURE__ */ new Set(["approve", "request-changes"]);
 const STATE_MAX_BYTES = 1024 * 1024;
 const SETTING_VALUES = {
-  host: new Set(RUN_HOSTS),
   autonomy: /* @__PURE__ */ new Set(["conservative", "broad", "full"]),
   commit: /* @__PURE__ */ new Set(["on", "off"]),
   push: /* @__PURE__ */ new Set(["on", "off"]),
@@ -230,8 +232,8 @@ function validateModels(value, errors) {
   if (earlierAssignment(value)) return;
   for (const [host, entry] of Object.entries(value)) {
     const at = `settings.models.${host}`;
-    if (!RUN_HOSTS.includes(host)) {
-      addError(errors, at, `is not a supported host; the hosts are ${RUN_HOSTS.join(", ")}`);
+    if (!runHost(host)) {
+      addError(errors, at, `is not a supported host; the hosts are ${HOST_NAMES}`);
       continue;
     }
     if (!isRecord(entry)) {
@@ -279,6 +281,10 @@ function validateSettings(value, errors, warnings) {
     }
     if (key === "models") {
       validateModels(setting, errors);
+      continue;
+    }
+    if (key === "host") {
+      if (!runHost(setting)) addError(errors, "settings.host", `must be one of ${HOST_NAMES}`);
       continue;
     }
     if (typeof setting !== "string" || !SETTING_VALUES[key].has(setting)) {

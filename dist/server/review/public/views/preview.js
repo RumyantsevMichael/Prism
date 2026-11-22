@@ -9,19 +9,18 @@ import { viewKind } from "./design-views.js";
 const SHOW_DELAY_MS = 400;
 const HIDE_DELAY_MS = 200;
 const CACHE_MS = 1e4;
-const BLOCK_LIMIT = 8;
-const SOURCE_LINES = 14;
-const RANGE_LINES = 40;
+const SOURCE_LINES = 400;
 const DIAGRAM_WIDTH = 560;
 const DIAGRAM_HEIGHT = 400;
+const isHeading = (node) => /^H[1-6]$/.test(node.tagName);
 function sectionOf(container, anchor) {
-  const target = anchorTarget(container, anchor);
-  const heading = target && /^H[1-6]$/.test(target.tagName) ? target : null;
+  const target = anchor ? anchorTarget(container, anchor) : null;
+  const heading = target && isHeading(target) ? target : null;
   const start = target ?? container.firstElementChild;
   const blocks = [];
-  const level = heading ? Number(heading.tagName[1]) : 0;
-  for (let node = start; node && blocks.length < BLOCK_LIMIT; node = node.nextElementSibling) {
-    if (heading && node !== heading && /^H[1-6]$/.test(node.tagName) && Number(node.tagName[1]) <= level) break;
+  const level = heading ? Number(heading.tagName[1]) : 7;
+  for (let node = start; node; node = node.nextElementSibling) {
+    if (target && node !== target && isHeading(node) && Number(node.tagName[1]) <= level) break;
     const copy = node.cloneNode(true);
     copy.removeAttribute("id");
     copy.querySelectorAll("[id]").forEach((element) => element.removeAttribute("id"));
@@ -53,7 +52,7 @@ function entitySummary(entity) {
 }
 function sourceRange(data, start, end) {
   const all = highlightLines(data.content.replace(/\r\n/g, "\n"), languageOf(data.path));
-  const last = Math.min(end, all.length, start + RANGE_LINES - 1);
+  const last = Math.min(end, all.length, start + SOURCE_LINES - 1);
   const lines = all.slice(start - 1, last).map((line, index) => `<li data-line="${start + index}"><code>${line || " "}</code></li>`).join("");
   const more = end > last ? `<p class="muted">${end - last} more lines; open the file to see them all.</p>` : "";
   return `<p class="preview-source" data-code-subject>${escapeHtml(data.path)} \xB7 lines ${start}\u2013${end}</p><ol class="source-lines preview-lines" data-code-subject>${lines}</ol>${more}`;
@@ -90,9 +89,10 @@ async function fileSummary(data, anchor, { renderMarkdown, kindLabel, drawDiagra
   if (data.kind === "source") {
     const range = anchor?.match(LINE_RANGE);
     if (range) return sourceRange(data, Number(range[1]), Number(range[2] ?? range[1]));
-    const lines = data.content.split(/\r?\n/).slice(0, SOURCE_LINES).join("\n");
+    const all = data.content.split(/\r?\n/);
     const language = languageOf(data.path);
-    return `${head}<prism-code${language ? ` language="${language}"` : ""}><pre><code>${highlight(lines, language)}</code></pre></prism-code>`;
+    const more = all.length > SOURCE_LINES ? `<p class="muted">${all.length - SOURCE_LINES} more lines; open the file to see them all.</p>` : "";
+    return `${head}<prism-code${language ? ` language="${language}"` : ""}><pre><code>${highlight(all.slice(0, SOURCE_LINES).join("\n"), language)}</code></pre></prism-code>${more}`;
   }
   if (data.kind) return `${head}<h3>${escapeHtml(kindLabel(data.kind))}</h3>`;
   if (data.path.toLowerCase().endsWith(".puml")) return diagramSummary(head, data.content, drawDiagram);
@@ -106,13 +106,13 @@ async function documentHistory(ref, fetchJson) {
   const context = await fetchJson(`./api/context?ref=${encodeURIComponent(ref)}`).catch(() => null);
   return context?.shippedHistory ?? null;
 }
-async function previewHtml({ ref, anchor = null }, { fetchJson, renderMarkdown, kindLabel, drawDiagram = null, describe = null }) {
+async function previewHtml({ ref, anchor = null }, { fetchJson, fetchArtifact, renderMarkdown, kindLabel, drawDiagram = null, describe = null }) {
   if (parseEntityRef(ref)) return entitySummary(await fetchJson(`./api/entity?ref=${encodeURIComponent(ref)}`));
-  const [data, history] = await Promise.all([fetchJson(`./api/artifact?path=${encodeURIComponent(ref)}`), documentHistory(ref, fetchJson)]);
+  const [data, history] = await Promise.all([fetchArtifact(ref), documentHistory(ref, fetchJson)]);
   return `${shippedHistoryHtml(history)}${await fileSummary(data, anchor, { renderMarkdown, kindLabel, drawDiagram, describe })}`;
 }
-function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, currentPath, drawDiagram = null, onShowInPanel = null, describe = null }) {
-  const popover = document.createElement("div");
+function createLinkPreview({ root, fetchJson, fetchArtifact, renderMarkdown, kindLabel, currentPath, drawDiagram = null, onShowInPanel = null, describe = null }) {
+  const popover = document.createElement("prism-hover-card");
   popover.className = "link-preview";
   popover.hidden = true;
   document.body.appendChild(popover);
@@ -132,19 +132,9 @@ function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, current
     const key = `${ref}#${anchor ?? ""}`;
     const cached = cache.get(key);
     if (cached && Date.now() - cached.at < CACHE_MS) return cached.html;
-    const html = await previewHtml({ ref, anchor }, { fetchJson, renderMarkdown, kindLabel, drawDiagram, describe });
+    const html = await previewHtml({ ref, anchor }, { fetchJson, fetchArtifact, renderMarkdown, kindLabel, drawDiagram, describe });
     cache.set(key, { at: Date.now(), html });
     return html;
-  }
-  function place() {
-    const rect = anchorElement.getBoundingClientRect();
-    const width = popover.offsetWidth;
-    const height = popover.offsetHeight;
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
-    const below = rect.bottom + 8;
-    const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - height - 8) : below;
-    popover.style.left = `${left}px`;
-    popover.style.top = `${top}px`;
   }
   async function show(element) {
     const target = targetOf(element);
@@ -153,11 +143,13 @@ function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, current
     try {
       const html = await load(target);
       if (current !== request || anchorElement !== element || !element.isConnected) return;
-      popover.innerHTML = html;
+      const content = document.createElement("div");
+      content.className = "link-preview-content";
+      content.innerHTML = html;
+      const parts = [content];
       if (onShowInPanel && !parseEntityRef(target.ref)) {
-        const bar = document.createElement("div");
-        bar.className = "link-preview-actions";
         const button = document.createElement("prism-button");
+        button.setAttribute("slot", "actions");
         button.setAttribute("variant", "ghost");
         button.setAttribute("size", "sm");
         button.textContent = "Show in side panel";
@@ -166,13 +158,13 @@ function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, current
           hide();
           onShowInPanel(target.ref, target.anchor);
         });
-        bar.append(button);
-        popover.prepend(bar);
+        parts.unshift(button);
       }
-      popover.hidden = false;
+      popover.replaceContent(...parts);
+      popover.toggleAttribute("wide", Boolean(content.querySelector("prism-doc, prism-code, .preview-lines, .preview-diagram")));
       const sheet = popover.querySelector("[data-diagram-sheet]");
       if (sheet) themeDiagram(sheet.querySelector("svg"));
-      place();
+      popover.showAt(element);
     } catch {
       if (current === request) hide();
     }
@@ -247,6 +239,14 @@ function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, current
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !popover.hidden) hide();
   });
+  const follow = (event) => {
+    if (popover.hidden || !anchorElement || popover.contains(event.target)) return;
+    const rect = anchorElement.getBoundingClientRect();
+    if (!anchorElement.isConnected || rect.bottom < 0 || rect.top > window.innerHeight) hide();
+    else popover.place(anchorElement);
+  };
+  document.addEventListener("scroll", follow, { capture: true, passive: true });
+  window.addEventListener("resize", follow);
   return { hide };
 }
 export {

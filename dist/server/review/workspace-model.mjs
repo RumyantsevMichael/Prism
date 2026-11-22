@@ -1,8 +1,10 @@
 // Generated from src/server/review/workspace-model.mts by scripts/native-build/compile.mjs.
 import { AsyncLocalStorage } from "node:async_hooks";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { readInitiativeRecordRunTotals } from "../session/run-totals.mjs";
+import { storeLocation } from "../session/launch-records.mjs";
+import { pendingRequests } from "../session/permission-requests.mjs";
 import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workflow/initiative.mjs";
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
@@ -699,8 +701,18 @@ function newestFirst(left, right) {
 function gateOrder(left, right) {
   return newestFirst(left.askedAt, right.askedAt);
 }
-function loadAttention(projectRoot) {
-  return remember(`attention:${projectRoot}`, () => computeAttention(projectRoot));
+async function loadAttention(projectRoot) {
+  const [attention, permissions] = await Promise.all([remember(`attention:${projectRoot}`, () => computeAttention(projectRoot)), launchPermissions(projectRoot)]);
+  return { ...attention, permissions, gateCount: attention.gateCount + permissions.length };
+}
+async function launchPermissions(projectRoot) {
+  const store = await storeLocation(await realpath(projectRoot)).catch(() => null);
+  if (store === null) return [];
+  const requests = await pendingRequests({ store }).catch(() => []);
+  if (!requests.length) return [];
+  const roadmap = await loadRoadmapView(projectRoot).catch(() => ({ items: [] }));
+  const titles = new Map(roadmap.items.map((item) => [item.id, item.title]));
+  return requests.map((request) => ({ ...request, initiative: { id: request.initiative, title: titles.get(request.initiative) ?? request.initiative } }));
 }
 async function loadAttentionView(projectRoot) {
   const { changes, ...attention } = await loadAttention(projectRoot);
