@@ -1382,3 +1382,21 @@ test("a session that fell back returns to the shared app once it answers", async
   assert.equal(JSON.parse((await request(new URL("api/index", shared))).body).projectRoot, root);
   assert.equal((await request(new URL("api/index", fallback))).status, 200, "tabs on the session's own server keep working");
 });
+
+test("a connected tab gets a records event when a record file changes, and none while nothing changes", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "records");
+  await mkdir(path.join(root, "docs", "plans", "work"), { recursive: true });
+  const review = await pool(context, { app: { directory, openBrowser: () => true } }).get(root, "task");
+  const { url } = await review.open([]);
+  const events = await viewerEvents(context, url);
+  await eventually(() => events.some((event) => event.name === "session"));
+  await pause(2500, "the server checks the records every second, and an unchanged project must send nothing, which leaves nothing to wait for");
+  assert.ok(!events.some((event) => event.name === "records"), "nothing changed, so no records event");
+  // The server takes its first version once the tab connects, so the change is written until an event follows it.
+  let edits = 0;
+  await eventually(async () => {
+    await writeFile(path.join(root, "docs", "plans", "work", "state.json"), JSON.stringify({ edit: (edits += 1) }));
+    return events.some((event) => event.name === "records");
+  });
+});

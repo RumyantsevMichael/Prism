@@ -100,6 +100,11 @@ export function rememberView<T>(projectRoot: string, name: string, compute: () =
   return remember(projectRoot, `${name}:${projectRoot}`, compute);
 }
 
+/** The version of a project's views, which changes whenever a file they read may have changed. */
+export function viewVersion(projectRoot: string) {
+  return versions.current(projectRoot);
+}
+
 /** Check a project's views against a full listing of their files at the next read, for a session that registered or presented the project and may have changed them. */
 export function recheckViews(projectRoot: string) {
   versions.recheck(projectRoot);
