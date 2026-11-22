@@ -216,7 +216,9 @@ export const acpReasons = Object.freeze({
   version: (label: string, version: unknown) => `${label} speaks ACP version ${String(version)}, and Prism speaks version ${ACP_PROTOCOL_VERSION}.`,
   signIn: (label: string, methods: unknown) => `${label} needs you to sign in before it can run: ${signInMethods(methods)}.`,
   noTools: (label: string) => `${label} did not start Prism's tools, so it cannot run Prism's workflow.`,
-  childModels: (label: string) => `${label} chooses the models of its own child agents.`
+  childModels: (label: string) => `${label} chooses the models of its own child agents.`,
+  childModel: (label: string, model: string) => `${label} chooses the models of its own child agents, so Prism cannot give them ${model}.`,
+  childEffort: (label: string, effort: string) => `${label} chooses the effort of its own child agents, so Prism cannot give them ${effort}.`
 });
 
 // The names of the sign-in methods an agent answered, or its own command without any. A method's description follows its name in

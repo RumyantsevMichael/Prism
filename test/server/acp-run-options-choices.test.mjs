@@ -29,3 +29,17 @@ test("a models change for an ACP agent takes a model it reports and refuses one 
   const taken = await apply(s.base, { action: "initiative.models", target: TARGET(INITIATIVE), input: input("fake-small"), revision: action.revision }, s.headers);
   assert.equal(taken.status, 200, JSON.stringify(taken.json));
 });
+
+test("a model or effort chosen for an ACP agent's child agents is refused because the agent chooses them, not as a model it lacks", { skip: posixOnly }, async (t) => {
+  const s = await acpFixture(t);
+  await s.declare([fakeEntry(s, "gemini")]);
+  const input = (choice) => ({ host: "acp-gemini", provider: null, ...Object.fromEntries(KINDS.map((kind) => [kind, null])), coordinator: { model: null, effort: null, typed: false }, codeReview: choice });
+  const action = actionOf(await listing(s.base, TARGET(INITIATIVE), s.headers), "initiative.models");
+  const model = await apply(s.base, { action: "initiative.models", target: TARGET(INITIATIVE), input: input({ model: "fake-small", effort: null, typed: false }), revision: action.revision }, s.headers);
+  assert.equal(model.status >= 400, true, JSON.stringify(model.json));
+  assert.match(model.json.message, /Gemini agent chooses the models of its own child agents, so Prism cannot give them fake-small\./);
+  assert.doesNotMatch(model.json.message, /does not offer/);
+  const effort = await apply(s.base, { action: "initiative.models", target: TARGET(INITIATIVE), input: input({ model: null, effort: "high", typed: false }), revision: action.revision }, s.headers);
+  assert.equal(effort.status >= 400, true, JSON.stringify(effort.json));
+  assert.match(effort.json.message, /Gemini agent chooses the effort of its own child agents, so Prism cannot give them high\./);
+});
