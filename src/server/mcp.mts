@@ -57,7 +57,7 @@ import { callAgent, callAgentRole, currentCallAgent, withCallAgent } from "./wor
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { ACP_HOST_PATTERN } from "./session/acp-agents.mjs";
-import { markToolsListed, unmarkToolsListed } from "./session/options-read-marker.mjs";
+import { acpToken, markToolsListed, unmarkToolsListed } from "./session/options-read-marker.mjs";
 import { GET_SKILL_TOOL, getSkill, SkillFileError } from "./workflow/skill-files.mjs";
 import { HOSTS } from "./session/launch-hosts.mjs";
 import { EFFORT_PATTERN, MODEL_PATTERN, PROVIDER_PATTERN, RUN_KINDS } from "./session/run-options.mjs";
@@ -1737,9 +1737,9 @@ if (process.env.CLAUDE_PROJECT_DIR) {
     void recordStoreOf(root).catch(() => {});
     reviewServers.register(root, { open: await opensAtStart(root) });
   }, () => {});
-} else if (process.env.PRISM_OPTIONS_READ !== "1" && !process.env.PRISM_LAUNCH) {
+} else if (process.env.PRISM_OPTIONS_READ !== "1" && !process.env.PRISM_LAUNCH && !acpToken()) {
   // A read of an ACP agent's run options only needs this server to list its tools, and a launched session runs under the review app
-  // that launched it, so neither starts a review app here.
+  // that launched it, so neither starts a review app here; an ACP agent may drop the variables that name them, never the token argument.
   reviewServers.startApp();
 }
 
