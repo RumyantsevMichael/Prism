@@ -183,3 +183,33 @@ test("§18 Answer opens the waited question in Attention, and Open shows the fai
   await details.waitFor({ state: "visible" });
   assert.match(await visibleText(details), new RegExp(`claude --resume ${s.runs("claude")[0].argv[3]}`));
 });
+
+test("headless-run-questions §15 the button marks a session that ended without a result with an info badge between failed and waiting, and its menu Answer opens the no-result gate", { skip: skipHere, timeout: 120000 }, async (t) => {
+  const { archiveProject, pageOpener } = await import("./fixtures/archived-launches.mjs");
+  const s = await archiveProject(t);
+  const waiting = await s.launch("waiting");
+  const unresolved = await s.launch("ended-without-result", { host: "codex", label: "Codex", message: null });
+  const failed = await s.launch("failed");
+  const page = await (await pageOpener(t, s))("roadmap");
+  const button = agentsButton(page);
+  await settled(() => button.getAttribute("aria-label").catch(() => null), (name) => name === "Agents: 0 working, 1 failed, 1 ended without a result, 1 waits");
+  const badges = await button.locator("prism-badge").evaluateAll((items) => items.filter((item) => item.getClientRects().length).map((item) => [item.innerText.replace(/\s+/g, " ").trim(), item.getAttribute("tone")]));
+  assert.deepEqual(badges, [["1 failed", "danger"], ["1 ended without a result", "info"], ["1 waits", "warning"]]);
+  await page.setViewportSize({ width: 820, height: 900 });
+  await settled(() => button.locator("prism-badge.no-result").evaluate((item) => item.innerText.replace(/\s+/g, " ").trim()), "1 no result");
+  assert.equal(await button.locator("prism-badge.no-result").evaluate((item) => item.innerText.replace(/\s+/g, " ").trim()), "1 no result", "a tablet's top bar shortens the badge");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await button.click();
+  const rows = await menu(page).locator("[data-menu-agent]").evaluateAll((items) => items.map((item) => item.dataset.menuAgent));
+  assert.deepEqual(rows, [`launch:${failed}`, `launch:${unresolved}`, `launch:${waiting}`]);
+  const row = menu(page).locator(`[data-menu-agent="launch:${unresolved}"]`);
+  assert.match(await visibleText(row), /Ended without a result/);
+  await row.getByRole("button", { name: "Answer", exact: true }).click();
+  await settled(() => shownRef(page), "attention");
+  await waitForView(page);
+  const card = page.locator(".gate-no-result:visible");
+  await card.waitFor();
+  assert.match(await visibleText(card), /The run left no message\./);
+  assert.equal(await visibleText(card.locator(".attention-where")), "Export reports · Codex");
+  assert.deepEqual(page.errors, []);
+});

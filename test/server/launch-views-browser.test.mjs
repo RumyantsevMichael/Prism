@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { INITIATIVE, TARGET, acpFixture, apply, fakeEntry, get, launches, setSettings } from "./fixtures/acp-agents.mjs";
+import { post } from "./fixtures/review-actions.mjs";
 import { launch as launchBrowser, openPage, reviewUrl, skip, waitForView } from "./fixtures/kit-browser.mjs";
 import { startActionReview } from "./fixtures/review-actions.mjs";
 import { settled } from "./fixtures/wait.mjs";
@@ -35,6 +36,17 @@ async function setup(t, plan) {
 const pending = (s) => settled(async () => (await get(s.base, "api/entity?ref=attention")).json.data.permissions ?? [], (list) => list.length > 0);
 const answered = (s) => settled(() => s.entries().find((entry) => entry.kind === "permission-answer"), Boolean);
 const item = (page) => page.locator("prism-inbox-item").filter({ hasText: "Write probe.txt" });
+
+// A run of the fake agent ends without a result, whose row offers Answer and Archive, so the person archives it and opens its details under Archived.
+async function usageDetails(s) {
+  await settled(async () => (await launches(s)).find((entry) => entry.id === s.id), (entry) => entry?.state === "ended-without-result");
+  assert.equal((await post(s.base, "api/agents/archive", { launch: s.id }, s.headers)).status, 200);
+  const page = await s.open("agents:archived");
+  const row = page.locator(`[data-agent="launch:${s.id}"]`);
+  await row.waitFor();
+  await row.getByRole("button", { name: "Open" }).click();
+  return row;
+}
 
 test("clause 59: Attention lists the request as a Permission under Needs you with its initiative, host, action, and age", { skip: skipHere, timeout: 120000 }, async (t) => {
   const s = await setup(t, { permission: { title: "Write probe.txt" } });
@@ -94,12 +106,7 @@ test("clause 59: a declined dialog keeps the item on Attention and says the appr
 
 test("clause 60: the Agents page shows an ACP run's tokens, context, and cost, and what the agent did not report", { skip: skipHere, timeout: 120000 }, async (t) => {
   const s = await setup(t, { usage: { inputTokens: 10, outputTokens: 2, totalTokens: 1200 }, usageUpdate: { used: 500, size: 1000, cost: { amount: 0.25, currency: "USD" } } });
-  await settled(async () => (await launches(s)).find((entry) => entry.id === s.id), (entry) => entry?.state === "ended-without-result");
-  const page = await s.open("agents");
-  const row = page.locator(`[data-agent="launch:${s.id}"]`);
-  await row.waitFor();
-  await row.getByRole("button", { name: "Open" }).click();
-  const details = await text(row.locator("[data-agent-details]"));
+  const details = await text((await usageDetails(s)).locator("[data-agent-details]"));
   assert.match(details, /Tokens 1,200/);
   assert.match(details, /Context 500 of 1,000/);
   assert.match(details, /Cost 0\.25 USD/);
@@ -107,12 +114,7 @@ test("clause 60: the Agents page shows an ACP run's tokens, context, and cost, a
 
 test("clause 60: usage an agent does not report reads Not reported by <label>", { skip: skipHere, timeout: 120000 }, async (t) => {
   const s = await setup(t, { usage: null, usageUpdate: null });
-  await settled(async () => (await launches(s)).find((entry) => entry.id === s.id), (entry) => entry?.state === "ended-without-result");
-  const page = await s.open("agents");
-  const row = page.locator(`[data-agent="launch:${s.id}"]`);
-  await row.waitFor();
-  await row.getByRole("button", { name: "Open" }).click();
-  const details = await text(row.locator("[data-agent-details]"));
+  const details = await text((await usageDetails(s)).locator("[data-agent-details]"));
   for (const fact of ["Tokens", "Context", "Cost"]) assert.match(details, new RegExp(`${fact} Not reported by Gemini CLI`));
 });
 
@@ -126,4 +128,27 @@ test("clause 59: at phone width the permission sheet keeps Allow and Refuse in v
     const box = await sheet.getByRole("button", { name }).boundingBox();
     assert.ok(box && box.x >= 0 && box.x + box.width <= 390, `${name} lies inside the window`);
   }
+});
+
+test("headless-run-questions §13 an ACP run that ended without a result is one Attention card named as a permission request is, and Archive session archives it", { skip: skipHere, timeout: 120000 }, async (t) => {
+  const s = await setup(t, {});
+  await settled(async () => (await launches(s)).find((entry) => entry.id === s.id), (entry) => entry?.state === "ended-without-result" && entry.questionGate);
+  const page = await s.open("attention");
+  const row = page.locator('.attention-group[aria-labelledby="attention-group-needs"] prism-inbox-item').filter({ hasText: "ended without a result" });
+  await row.waitFor();
+  assert.equal(await row.getAttribute("icon"), "question");
+  assert.match(await text(row), /Run ended without a result · Export reports · Gemini CLI/);
+  await row.click();
+  const sheet = page.locator(".attention-sheet:not([hidden])");
+  const card = sheet.locator(".gate-no-result");
+  await card.waitFor();
+  assert.equal(await text(card.locator(".attention-where")), "Export reports · Gemini CLI");
+  const shown = await text(card);
+  for (const part of ["Run ended without a result", "Initiative", "Host", "Launched", "Ended", "Last message", "Your answer"]) assert.ok(shown.toLowerCase().includes(part.toLowerCase()), `the card shows ${part}`);
+  assert.equal(shown.includes("What happened"), false);
+  for (const name of ["Answer and resume", "Archive session"]) assert.equal(await card.getByRole("button", { name }).count(), 1, `the card offers ${name}`);
+  await card.getByRole("button", { name: "Archive session" }).click();
+  await settled(() => row.count(), (count) => count === 0);
+  assert.equal((await launches(s)).find((entry) => entry.id === s.id).questionGate, null, "archiving closed the no-result gate");
+  assert.deepEqual(page.errors ?? [], []);
 });

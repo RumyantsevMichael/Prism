@@ -59,6 +59,8 @@ function choiceLabel(item: any, choice: any) {
   return choices(item).find(([id]: any) => id === choice)?.[1] ?? (choice ? choice : "Free answer");
 }
 
+const NO_RESULT_PLACEHOLDER = "Answer the run's question, or say what it should do next";
+
 // The form follows the server's answer rules, so Send is enabled only for an answer the server accepts, and the hint names what is missing.
 // Nothing is guessed from the note: a review gate needs an explicit choice, and the note is kept whatever the person picks.
 export function answerState(item: any, draft: any = {}) {
@@ -73,6 +75,7 @@ export function answerState(item: any, draft: any = {}) {
     if (choice === "approve") return { choice, ready: true, ...optional, submitLabel: "Approve", hint: "" };
     return { choice, ready: false, ...optional, notePlaceholder: "Anything the agent should know; required if you request changes", submitLabel: "Send answer", hint: hasNote ? "Pick Approve or Request changes to send your note." : "Pick Approve or Request changes." };
   }
+  if (item.kind === "assistance" && item.launch) return { choice, ready: true, ...optional, noteLabel: "Your answer", notePlaceholder: NO_RESULT_PLACEHOLDER, submitLabel: "Answer and resume", hint: "" };
   if (item.kind === "assistance") return { choice, ready: true, ...optional, submitLabel: "Mark as done", hint: "" };
   if (options.length) {
     return { choice, ready: Boolean(choice) || hasNote, ...optional, notePlaceholder: "Add a note, or answer in your own words without picking an option", submitLabel: "Send answer", hint: choice || hasNote ? "" : "Pick an option or write your answer." };
@@ -211,7 +214,7 @@ function evidence(item: any) {
   return tiles.length ? `<div class="gate-evidence" role="list" aria-label="Evidence">${tiles.map((tile) => `<span role="listitem">${tile}</span>`).join("")}</div>` : "";
 }
 
-function answerForm(item: any, draft: any) {
+function answerForm(item: any, draft: any, extra = "") {
   const options = choices(item);
   const state = answerState(item, draft);
   const key = escapeHtml(item.id);
@@ -227,7 +230,7 @@ function answerForm(item: any, draft: any) {
   return `<div class="gate-answer" data-gate="${key}"${target}>
     ${choice}
     <prism-field class="gate-note" type="textarea" data-note label="${escapeHtml(noteLabel(state))}" placeholder="${escapeHtml(state.notePlaceholder)}"${state.noteRequired ? " required" : ""} value="${escapeHtml(draft.note ?? "")}"></prism-field>
-    <div class="gate-actions"><p class="gate-hint${state.ready && !state.hint ? " is-ready" : ""}" id="gate-hint-${key}" aria-live="polite"><prism-icon name="check-circle" size="sm"${state.ready && !state.hint ? "" : " hidden"}></prism-icon><span class="gate-hint-text">${escapeHtml(ready)}</span></p><prism-button variant="${state.choice === "request-changes" ? "danger" : "primary"}" data-submit${state.ready ? "" : " disabled"}>${escapeHtml(state.submitLabel)}</prism-button></div>
+    <div class="gate-actions"><p class="gate-hint${state.ready && !state.hint ? " is-ready" : ""}" id="gate-hint-${key}" aria-live="polite"><prism-icon name="check-circle" size="sm"${state.ready && !state.hint ? "" : " hidden"}></prism-icon><span class="gate-hint-text">${escapeHtml(ready)}</span></p><prism-button variant="${state.choice === "request-changes" ? "danger" : "primary"}" data-submit${state.ready ? "" : " disabled"}>${escapeHtml(state.submitLabel)}</prism-button>${extra}</div>
     <p class="gate-error" id="gate-error-${key}" role="alert"${draft.error ? "" : " hidden"}>${escapeHtml(draft.error ?? "")}</p>
   </div>`;
 }
@@ -268,6 +271,7 @@ function unavailableAnswer(item: any) {
 }
 
 export function gateDetail(item: any, ctx: any, draft: any) {
+  if (item.kind === "assistance" && item.launch) return noResultDetail(item, ctx, draft);
   if (item.kind === "approval") {
     return `<article class="gate attention-item gate-approval" aria-label="${escapeHtml(GATE_LABELS.approval)}">
     <header class="gate-head">
@@ -297,6 +301,54 @@ export function gateDetail(item: any, ctx: any, draft: any) {
         ${item.stale ? `<p class="notice">Every file this question refers to is gone, so it may no longer apply. The agent that asked it withdraws it when it does not.</p>` : ""}
       </div>
       ${item.unavailable ? unavailableAnswer(item) : answerForm(item, draft)}
+    </div>
+  </article>`;
+}
+
+export const NO_RESULT_CHIP = "Run ended without a result";
+const NO_MESSAGE = "The run left no message.";
+const LAST_MESSAGE = "\n\nIts last message:\n\n";
+
+/** The last message a launched run left, as its no-result gate's context holds it, or null when the run left none. */
+export function lastMessage(context: any) {
+  const text = typeof context === "string" ? context : "";
+  const at = text.indexOf(LAST_MESSAGE);
+  return at === -1 ? null : text.slice(at + LAST_MESSAGE.length);
+}
+
+// A time as its day and time of day, such as 21 Nov 14:02.
+function dayTime(at: any) {
+  const time = Date.parse(at ?? "");
+  if (!Number.isFinite(time)) return "";
+  const date = new Date(time);
+  const day = date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const clock = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return `<time datetime="${escapeHtml(at)}">${escapeHtml(`${day} ${clock}`)}</time>`;
+}
+
+// A launched run that ended without a result: one card with its session, its last message, one answer that resumes it, and Archive session.
+function noResultDetail(item: any, ctx: any, draft: any) {
+  const launch = item.launch;
+  const host = launch.host?.label ?? launch.host?.id ?? "";
+  const message = lastMessage(item.context);
+  const body = message === null ? `<p class="gate-last-message-none muted">${NO_MESSAGE}</p>` : `<div class="gate-last-message gate-context">${ctx.renderMarkdown ? ctx.renderMarkdown(message) : `<p class="gate-context-plain">${escapeHtml(message)}</p>`}</div>`;
+  const archive = `<prism-button variant="ghost" data-archive-session data-launch="${escapeHtml(launch.id)}" text="Archive session"></prism-button>`;
+  return `<article class="gate attention-item gate-assistance gate-no-result" aria-label="${NO_RESULT_CHIP}">
+    <header class="gate-head">
+      <div class="gate-chips">${badge(NO_RESULT_CHIP, "info")}<span class="attention-where">${escapeHtml(sessionPlace(item.initiative, launch.host))}</span>${when(item.askedAt, "attention-time gate-time")}</div>
+      <h3 class="gate-question">${escapeHtml(item.question)}</h3>
+    </header>
+    <div class="gate-body">
+      <div class="gate-main">
+        ${keyValues([
+          ["Initiative", escapeHtml(item.initiative?.title ?? item.initiative?.id ?? "")],
+          ["Host", escapeHtml(host)],
+          ["Launched", dayTime(launch.launchedAt)],
+          ["Ended", dayTime(launch.endedAt)]
+        ])}
+        <div class="gate-block"><p class="label-caps">Last message</p>${body}</div>
+      </div>
+      ${item.unavailable ? unavailableAnswer(item) : answerForm(item, draft, archive)}
     </div>
   </article>`;
 }
@@ -416,7 +468,7 @@ function bindAnswers(container: any, ctx: any, gates: any) {
         await ctx.answerGate({ ...target, id, choice: state.choice, note: draft.note });
         delete drafts[id];
         ctx.state.focus = null;
-        ctx.showToast("Answer recorded. An agent that is waiting resumes on its own; any other agent sees it with your next message.");
+        ctx.showToast(item.launch ? "Answer recorded. The launched session resumes with it." : "Answer recorded. An agent that is waiting resumes on its own; any other agent sees it with your next message.");
         ctx.rerender();
       } catch (error) {
         // The server stays the backstop: its refusal shows beside the form, and the draft keeps the note through a re-render.
@@ -440,8 +492,9 @@ function bindAnswers(container: any, ctx: any, gates: any) {
 
 // A host's permission request: the session waits until the person allows it, after a native confirmation, or refuses it.
 // The action and reason arrive as the server's shown text, one line in which every character the host sent shows, so they are written as plain text.
-function permissionWhere(item: any) {
-  return [item.initiative?.title ?? item.initiative?.id, item.host?.label ?? item.host?.id].filter(Boolean).join(" · ");
+/** The place line of a card about a launched session: its initiative's title and its host's label, the same for every host. */
+export function sessionPlace(initiative: any, host: any) {
+  return [initiative?.title ?? initiative?.id, host?.label ?? host?.id].filter(Boolean).join(" · ");
 }
 
 export function permissionDetail(item: any, draft: any = {}) {
@@ -450,7 +503,7 @@ export function permissionDetail(item: any, draft: any = {}) {
   const busy = draft.sending ? " disabled" : "";
   return `<article class="gate attention-item gate-permission" aria-label="Permission">
     <header class="gate-head">
-      <div class="gate-chips">${badge("Permission", "warning")}<span class="attention-where">${escapeHtml(permissionWhere(item))}</span>${when(item.askedAt, "attention-time gate-time")}</div>
+      <div class="gate-chips">${badge("Permission", "warning")}<span class="attention-where">${escapeHtml(sessionPlace(item.initiative, item.host))}</span>${when(item.askedAt, "attention-time gate-time")}</div>
       <h3 class="gate-question">${escapeHtml(host)} asks you to allow: ${escapeHtml(item.action)}</h3>
     </header>
     <div class="gate-body">
@@ -484,6 +537,26 @@ export function permissionError(code: any, message: any) {
   if (code === "unknown_request") return { message: "This request no longer waits: the session answered it, withdrew it, or ended.", rerender: true };
   if (typeof code === "string" && code.startsWith("confirmation_")) return { message: `The approval was not confirmed, so the request still waits. ${text}`, rerender: false };
   return { message: text, rerender: false };
+}
+
+// Archive session archives the launched session, which closes its no-result gate and starts no run.
+function bindArchiveSession(container: any, ctx: any) {
+  for (const button of container.querySelectorAll("[data-archive-session]")) {
+    button.addEventListener("click", async () => {
+      if (button.hasAttribute("disabled")) return;
+      button.setAttribute("disabled", "");
+      const headers = { "Content-Type": "application/json", ...(typeof ctx.writeHeaders === "function" ? ctx.writeHeaders() : {}) };
+      const response = await fetch("./api/agents/archive", { method: "POST", headers, body: JSON.stringify({ launch: button.dataset.launch }) }).catch(() => null);
+      const json = response ? await response.json().catch(() => ({})) : { message: "The review app did not answer, so nothing changed. Try again in a moment." };
+      if (response?.status === 200) {
+        ctx.showToast("Archived. The Agents page keeps it under Archived.");
+        ctx.rerender();
+        return;
+      }
+      button.removeAttribute("disabled");
+      ctx.showToast(json?.message ?? "The session could not be archived.");
+    });
+  }
 }
 
 function bindPermissions(container: any, ctx: any) {
@@ -804,12 +877,12 @@ export function render(container: any, entity: any, ctx: any) {
   const needs = [
     ...permissions.map((item: any) => ({
       key: `permission:${item.id}`,
-      row: { icon: "lock", tone: "warning", unread: true, title: escapeHtml(item.action), meta: escapeHtml(["Permission", permissionWhere(item)].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
+      row: { icon: "lock", tone: "warning", unread: true, title: escapeHtml(item.action), meta: escapeHtml(["Permission", sessionPlace(item.initiative, item.host)].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
       detail: permissionDetail(item, permissionDrafts[item.id] ?? {})
     })),
     ...gates.map((item: any) => ({
       key: `gate:${item.id}`,
-      row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
+      row: item.launch && item.kind === "assistance" ? { icon: "question", tone: "info", unread: true, title: escapeHtml(item.question), meta: escapeHtml([NO_RESULT_CHIP, sessionPlace(item.initiative, item.launch.host)].join(" · ")), end: shortTime(item.askedAt) } : { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
       detail: gateDetail(item, ctx, drafts[item.id] ?? { choice: null, note: "" })
     })),
     ...notes.map((item: any, index: number) => ({ key: `note:${index}`, ...noteEntry(item, ctx) }))
@@ -904,6 +977,7 @@ export function render(container: any, entity: any, ctx: any) {
   bindLinks(container, ctx);
   bindAnswers(container, ctx, gates);
   bindPermissions(container, ctx);
+  bindArchiveSession(container, ctx);
   // A change applied while the page is open names its question from the questions the page shows.
   const questions = new Map([...gates, ...(data.shippedGates ?? []), ...answered, ...earlier].filter((item) => item.initiative?.id).map((item) => [`gate:${item.initiative.id}/${item.id}`, item.question]));
   followChanges(container, ctx, questions);

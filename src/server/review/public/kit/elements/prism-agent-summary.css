@@ -45,6 +45,23 @@
   flex: none;
 }
 
+/* In a window 1100 pixels wide or less, the ended without a result badge says `<n> no result`, and the stack keeps two avatars and no +<n>,
+   and while a badge shows the count drops its word, so three badges fit a tablet's top bar; the accessible name keeps every word. */
+@media (min-width: 1101px) {
+  .words-short {
+    display: none;
+  }
+}
+
+@media (max-width: 1100px) {
+  .marked .count-words,
+  .words-long,
+  .more,
+  .stack > prism-avatar:nth-child(n + 3) {
+    display: none;
+  }
+}
+
 /* The corner count stands on the button's top end corner, as a count on an icon button does. */
 .corner {
   position: absolute;

@@ -95,7 +95,7 @@ test("§13 the counts sum each group, count a launch once with its claim, and co
     const body = await listed(s);
     return body.agents.length === 6 ? body : null;
   }, { what: "six agents" });
-  assert.deepEqual(counts, { all: 6, needsYou: 2, failed: 1, waiting: 1, thisComputer: 3, other: 2, expired: 1, working: 4 },
+  assert.deepEqual(counts, { all: 6, needsYou: 2, failed: 1, waiting: 1, endedWithoutResult: 0, thisComputer: 3, other: 2, expired: 1, working: 4 },
     "working: the waiting and the running launch, and the two live claims no launch holds");
 });
 
@@ -103,5 +103,5 @@ test("§10 §13 with nothing launched and no claims the list is empty, and it ne
   const s = await agentsProject(t, {});
   const answer = await get(s.base, "api/agents");
   assert.equal(answer.status, 200, answer.text);
-  assert.deepEqual(answer.json, { agents: [], counts: { all: 0, needsYou: 0, failed: 0, waiting: 0, thisComputer: 0, other: 0, expired: 0, working: 0 } });
+  assert.deepEqual(answer.json, { agents: [], counts: { all: 0, needsYou: 0, failed: 0, waiting: 0, endedWithoutResult: 0, thisComputer: 0, other: 0, expired: 0, working: 0 } });
 });

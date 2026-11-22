@@ -125,11 +125,14 @@ The tab and its page return to normal on their own when the target comes back, f
 When Prism moves a record from its legacy location into `.prism/`, a tab on that record follows it to the new path.
 
 The **Agents** button shows up to three avatars of the agents at work and how many work, such as `4 working`, counting the launched sessions that run or wait for you and the live claims that no launched session holds.
-While launched sessions failed or wait for you, it adds a red badge such as `1 failed` and an amber badge such as `1 waits`, and a screen reader also hears how many claims expired.
-In a window 600 pixels wide or less the button shows two avatars and one small count of the launched sessions that need you on its corner, red while one failed and amber otherwise, and no words.
+While launched sessions failed, ended without a result, or wait for you, it adds a red badge such as `1 failed`, a blue badge such as `1 ended without a result`, and an amber badge such as `1 waits`, in that order, and a screen reader also hears how many claims expired.
+In a window 1100 pixels wide or less the blue badge says `1 no result`, the button shows two avatars, and while a badge shows the count drops the word `working`, so the top bar keeps its width.
+A screen reader still hears every word.
+In a window 600 pixels wide or less the button shows two avatars and one small count of the launched sessions that need you on its corner, sessions that ended without a result included, red while one failed and amber otherwise, and no words.
 Opening it shows the **Agents** menu.
-Its **Needs you** group, left out while nothing needs you, lists each launched session that failed or waits for you with its initiative, its harness, its model, what it works on, its state, and how long it ran.
+Its **Needs you** group, left out while nothing needs you, lists each launched session that failed, ended without a result, or waits for you, in that order, with its initiative, its harness, its model, what it works on, its state, and how long it ran.
 A waiting session offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown, and a failed one offers **Open**, which opens [the Agents page](#the-agents-page) with its details shown.
+A session that ended without a result offers **Answer**, which opens its card on Attention.
 Below that, **Launched from Prism** counts the launched sessions that are not archived, **Started outside Prism** the live claims, and **Expired claims** the claims that expired less than a day ago, also at 0, and each opens the Agents page showing only those; **Open Agents** opens the whole page.
 The menu lists no claim, so every claim shows on the Agents page.
 Wherever the browser shows a claim, on a slice, an initiative, the roadmap, the sidebar, or the Agents page, it names the harness the agent runs in and the model of the session's main agent as `<harness> · <model>`, such as `Codex · gpt-5.5`, when the claim records them, and `Agent` and no model otherwise.
@@ -543,7 +546,7 @@ Its groups come in this order, each with the count of what the Show choice shows
 
 | Group | What it lists |
 | --- | --- |
-| Needs you | Launched sessions that failed, then those that wait for your answer, the latest launched first. |
+| Needs you | Launched sessions that failed, then those that ended without a result, then those that wait for your answer, the latest launched first. |
 | Launched from Prism | Every other launched session that is not archived, the latest launched first. |
 | Started outside Prism | Agents that hold a live claim, the claim that lapses first first. |
 | Claims that expired | Claims whose lease passed, the latest to lapse first. |
@@ -556,6 +559,7 @@ A claim's name is the claim's label, such as `Dana on studio-mac`, which opens t
 **Time** is how long a launched session has run, which counts every second while it runs, `<n> min left` for a live claim, and `expired <time> ago` for an expired one.
 A session that waits offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown; a running session offers **Stop**; any other session offers **Open**, which unfolds its details under its row.
 A finished, failed, stopped, or blocked session that is not archived also offers **Archive** beside **Open**, and an archived one offers **Unarchive** there.
+A session that ended without a result offers **Answer**, which opens its card on Attention, and **Archive**, while its question is open, and otherwise **Open** and **Archive**.
 A claim offers no action.
 
 The details of a session on an ACP agent start with the usage the agent reported for its last run: **Tokens** with the total and the cached tokens, such as `182,400 (12,000 cached)`, **Context** as the used and whole context, such as `61,200 of 200,000`, and **Cost** with its currency, such as `0.42 USD`, each `Not reported by <agent>` when the agent gave none.
@@ -588,6 +592,15 @@ The reminder tells the run that no person reads its reply, and that it must ask 
 The run gets no reminder while a background task of the run runs, or directly after an earlier reminder, so the second stop always ends the turn.
 Codex and ACP agent runs get no reminder.
 This question never makes the session wait for you.
+
+On this computer, Attention lists the question under **Needs you** as one card, on every host: Claude Code, Codex, and any ACP agent by its label.
+The list row shows the question as its title, and `Run ended without a result · <initiative> · <host>` under it, such as `Run ended without a result · Export reports · Gemini CLI`.
+The card shows the chip `Run ended without a result` and the same place line `<initiative> · <host>` that a [permission request](#permission-requests) card shows.
+The card lists **Initiative**, **Host**, **Launched**, and **Ended**, and shows the run's last message under **Last message**, or `The run left no message.`.
+Write your answer under **Your answer**, then press **Answer and resume**.
+**Archive session** archives the session, closes its question, and starts no run.
+The review app shows no transcript of the run, only its last message.
+On another computer the question shows as any other assistance question, with **Mark as done**.
 When Prism cannot record the question, the session still shows as ended without a result, with the reason `Prism could not record a question for this run: <message>`.
 
 When you answer this question on this computer, Prism resumes the session as for any question that the session asked.
@@ -601,9 +614,9 @@ An ACP session that you continue in a terminal runs no Prism hook, so its questi
 ### Archive a session
 
 Archive a session that ended so that it stops asking for you: an archived failed session leaves **Needs you**, the agents menu, and the mark on the top bar's **Agents** button.
-**Archive** on a finished, failed, stopped, or blocked session's row archives it, and the row leaves its group and every count at once while the toast says `Archived. The Archived filter keeps it.`.
+**Archive** on a finished, failed, stopped, blocked, or ended without a result session's row archives it, and the row leaves its group and every count at once while the toast says `Archived. The Archived filter keeps it.`.
 When the session ran again before you pressed it, the row stays and the toast says why, such as `Only a finished, failed, stopped, or blocked session can be archived.`.
-**Archive all ended** beside **Show** archives every finished, failed, stopped, and blocked session at once, without asking, and the toast counts them, such as `Archived 3 sessions. The Archived filter keeps them.`.
+**Archive all ended** beside **Show** archives every finished, failed, stopped, blocked, and ended without a result session at once, without asking, and the toast counts them, such as `Archived 3 sessions. The Archived filter keeps them.`.
 It shows while the Show choice includes **Needs you** or **Launched from Prism** and one of the sessions it shows can be archived.
 
 **Show** **Archived** lists the archived sessions, each with its state, **Open**, which unfolds its terminal command, **Copy**, and **Resume** as for any launched session, and **Unarchive**, which brings it back to its group with the toast `Unarchived.`.

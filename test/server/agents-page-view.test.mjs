@@ -22,8 +22,8 @@ test("the exit status names the exit code or the signal, and nothing before a ru
 });
 
 test("each state reads as the page names it", () => {
-  const words = ["running", "waiting", "blocked", "finished", "failed", "stopped", "working", "expired"].map((state) => stateOf({ state })[0]);
-  assert.deepEqual(words, ["Running", "Waiting for you", "Blocked", "Finished", "Failed", "Stopped", "Working", "Expired"]);
+  const words = ["running", "waiting", "blocked", "finished", "failed", "ended-without-result", "stopped", "working", "expired"].map((state) => stateOf({ state })[0]);
+  assert.deepEqual(words, ["Running", "Waiting for you", "Blocked", "Finished", "Failed", "Ended without a result", "Stopped", "Working", "Expired"]);
 });
 
 test("the harness and model read as one text, any harness by its own name, and Agent without either", () => {
