@@ -55,3 +55,25 @@ test("clause 24: a sent wake whose history entry cannot be recorded still answer
   const shown = await settled(async () => (await card(review, id))?.asker?.wake, Boolean);
   assert.equal(shown.delivered, true);
 });
+
+test("clause 24: a sent wake answers with no history entry when none was recorded", { skip: posixOnly }, async (t) => {
+  const { s, id, review } = await answered(t);
+  const stateFile = await findFile(s.root, "state.json");
+  const original = await readFile(stateFile, "utf8");
+  await s.setWake({ code: 0, hold: 1500 });
+  const pending = wake(review, id);
+  await settled(() => s.wakes(), (list) => list.length === 1);
+  await writeFile(stateFile, "{ not json");
+  const sent = await pending;
+  assert.equal(sent.status, 200, sent.text);
+  assert.equal(sent.json.applied, null, sent.text);
+  await writeFile(stateFile, original);
+});
+
+test("clause 24: a sent wake's history warning names no credential from the store's error", async () => {
+  const { wakeHistoryWarning } = await import("../../dist/server/workflow/actions.mjs");
+  const warning = wakeHistoryWarning(new Error("Git could not push to https://user:token@host/repo.git: rejected."));
+  assert.ok(warning.startsWith("The wake was sent"), warning);
+  assert.match(warning, /https:\/\/host\/repo\.git/);
+  assert.doesNotMatch(warning, /user|token/);
+});

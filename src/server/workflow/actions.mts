@@ -10,6 +10,7 @@ import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { isStoreWithoutCheckout, recordStoreOf } from "./record-store.mjs";
 import { runGit } from "./record-store-sync.mjs";
 import { REPOSITORY_NAME } from "./repository-names.mjs";
+import { withoutCredentials } from "./remote-url.mjs";
 import { readRoadmap } from "./roadmap.mjs";
 import { roadmapEntry, shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction, validEarlierName } from "./state.mjs";
@@ -1376,6 +1377,11 @@ export async function applyAction({ projectRoot, target, action, input, revision
 // A launched session's refusal answers as an action refusal with its own code and message.
 const launchRefusal = (error: any) => (error instanceof LaunchError ? fail(error.code, error.message) : error);
 
+/** The warning a sent wake answers with when its history entry cannot be recorded, without any credential a store's remote URL carries. */
+export function wakeHistoryWarning(error: any): string {
+  return withoutCredentials(`The wake was sent, but Prism could not record it in the initiative's history: ${String(error?.message ?? error)}`);
+}
+
 // Applies a launch, stop, or resume: the common checks, then the action's own step, which confirms outside the page where it starts a
 // session, and only once that took effect the history entry, which names the launch id and never the host session id.
 async function applyLaunchAction({ projectRoot, definition, context, request, entryOf, env, target, indexer, checkouts = null }: { projectRoot: string; definition: any; context: any; request: any; entryOf: any; env: NodeJS.ProcessEnv; target: string; indexer: any; checkouts?: any }) {
@@ -1396,7 +1402,8 @@ async function applyLaunchAction({ projectRoot, definition, context, request, en
     // answering with an error would invite the person to wake the session again and post a second turn.
     if (outcome.wake !== undefined) {
       const actions = await listActions({ projectRoot, target, indexer, env, checkouts }).then((listed) => listed.actions, () => []);
-      return { applied: entry, actions, launch: outcome.launch, ...wake, warnings: [`The wake was sent, but Prism could not record it in the initiative's history: ${String(error?.message ?? error)}`] };
+      // No entry was written, so none is named.
+      return { applied: null, actions, launch: outcome.launch, ...wake, warnings: [wakeHistoryWarning(error)] };
     }
     // A launch or resume that cannot be recorded does not stay started.
     if (outcome.started) await stopLaunch({ id: outcome.started, env }).catch(() => {});
