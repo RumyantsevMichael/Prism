@@ -265,9 +265,21 @@ export function askerResumeText(resume: AskerResume) {
   return `Prism: the person answered your question ${resume.gate} of ${askerSubject(resume)} in the review app. Read the answer from Prism's records and continue.`;
 }
 
+/**
+ * The start of a later run of a resumed asker, which no longer claims that its gate was just answered: the orchestrate start that any
+ * launched session's resume gets, or for an approval gate that names no initiative a plain continuation of its artifact.
+ */
+export function askerLaterText(resume: AskerResume, prefix: string) {
+  return resume.initiative !== null ? `${prefix}prism:orchestrate ${resume.initiative}` : `Prism: continue your work on ${resume.artifact}.`;
+}
+
+// A resumed asker's first run gets the message that its gate has an answer, and each later run the start of any other resume.
+const startText = (prefix: string, initiative: string, answeredGate: string | null, asker: AskerResume | null, askerAnswered: boolean) =>
+  asker ? (askerAnswered ? askerResumeText(asker) : askerLaterText(asker, prefix)) : `${prefix}prism:orchestrate ${initiative}${answeredSuffix(answeredGate)}`;
+
 /** The stream-json user message that gives a Claude Code run its prompt, naming the answered gate a continuation starts from, or the resumed asker's message. */
-export function claudePrompt(initiative: string, answeredGate: string | null = null, asker: AskerResume | null = null) {
-  return { type: "user", message: { role: "user", content: asker ? askerResumeText(asker) : `/prism:orchestrate ${initiative}${answeredSuffix(answeredGate)}` } };
+export function claudePrompt(initiative: string, answeredGate: string | null = null, asker: AskerResume | null = null, askerAnswered = true) {
+  return { type: "user", message: { role: "user", content: startText("/", initiative, answeredGate, asker, askerAnswered) } };
 }
 
 /**
@@ -283,9 +295,9 @@ export function codexThreadRequest({ checkout, hostSessionId, resume, coordinato
 }
 
 /** The Codex request that starts the run's one orchestrate turn, with the effort of the coordinator's choice, left out for the host default. */
-export function codexTurnRequest({ threadId, initiative, coordinator = null, answeredGate = null, asker = null }: { threadId: string; initiative: string; coordinator?: unknown; answeredGate?: string | null; asker?: AskerResume | null }) {
+export function codexTurnRequest({ threadId, initiative, coordinator = null, answeredGate = null, asker = null, askerAnswered = true }: { threadId: string; initiative: string; coordinator?: unknown; answeredGate?: string | null; asker?: AskerResume | null; askerAnswered?: boolean }) {
   const { effort } = coordinatorOf(coordinator);
-  const text = asker ? askerResumeText(asker) : `$prism:orchestrate ${initiative}${answeredSuffix(answeredGate)}`;
+  const text = startText("$", initiative, answeredGate, asker, askerAnswered);
   return { method: "turn/start", params: { threadId, input: [{ type: "text", text }], ...(effort === null ? {} : { effort }) } };
 }
 
@@ -482,6 +494,8 @@ export interface HostConversationOptions {
   answeredGate?: string | null;
   /** The asker that this run resumes, whose message replaces the orchestrate start, or null. */
   asker?: AskerResume | null;
+  /** Whether this run is the asker's first, which alone tells the session that its gate has an answer. */
+  askerAnswered?: boolean;
   send: (message: unknown) => void;
   closeInput: () => void;
   onSessionId?: (id: string) => void;
@@ -507,7 +521,7 @@ export interface WaitingAsk { respond: (decision: PermissionDecision) => void; d
 export type PermissionAnswer = (decision: PermissionDecision) => unknown;
 export const REFUSED_ON_ATTENTION = "The person refused this on Attention.";
 
-export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, answeredGate = null, asker = null, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null, permissions = null }: HostConversationOptions) {
+export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, answeredGate = null, asker = null, askerAnswered = true, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null, permissions = null }: HostConversationOptions) {
   const facts: HostFacts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
@@ -602,7 +616,7 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     // Each can_use_tool request that waits, by its request id, so that a control_cancel_request withdraws it.
     const waitingTools = new Map<string, WaitingAsk>();
     return {
-      start: () => write(claudePrompt(initiative, answeredGate, asker)),
+      start: () => write(claudePrompt(initiative, answeredGate, asker, askerAnswered)),
       interrupt() {
         if (interruptId !== null) return;
         interruptId = randomUUID();
@@ -740,7 +754,7 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
           close();
           return;
         }
-        const { method: turn, params } = codexTurnRequest({ threadId, initiative, coordinator, answeredGate, asker });
+        const { method: turn, params } = codexTurnRequest({ threadId, initiative, coordinator, answeredGate, asker, askerAnswered });
         turnRequested = true;
         request(turn, params);
         return;

@@ -96,7 +96,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
 
   const record = await readLaunchRecord(folder);
   if (!record) return;
-  // A resumed asker of a gate continues its own session from its first run, under the id it kept, with the message that its gate has an answer.
+  // A resumed asker of a gate continues its own session from its first run, under the id it kept; that first run says its gate has an answer.
   const asker = askerResumeOf(record.askerResume);
   const resume = record.runs.length > 0 || asker !== null;
   // A start on an ACP agent is marked before the agent's current version is read, so that no sweep or update of any process removes a
@@ -152,6 +152,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
       coordinator,
       // Only the first run starts from the answered gate; a resume continues the conversation that already acted on it.
       asker,
+      askerAnswered: record.runs.length === 0,
       answeredGate: !resume && typeof record.answeredGate === "string" && ANSWERED_GATE_PATTERN.test(record.answeredGate) ? record.answeredGate : null,
       send: (message) => child.stdin.write(`${JSON.stringify(message)}\n`),
       closeInput: () => child.stdin.end(),
