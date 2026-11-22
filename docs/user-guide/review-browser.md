@@ -583,6 +583,10 @@ The question is `The launched <host> run of <initiative> ended without a result.
 Its context shows the run's last message, or says `The run left no message.`.
 Prism replaces the host session id in the last message with `<host session id>` and keeps at most 6000 characters of it.
 When the same session ends without a result again, the new question replaces the earlier unanswered one.
+A launched Claude Code run gets one reminder before its turn ends without a result.
+The reminder tells the run that no person reads its reply, and that it must ask through a gate, record a pause, or continue the work.
+The run gets no reminder while a background task of the run runs, or directly after an earlier reminder, so the second stop always ends the turn.
+Codex and ACP agent runs get no reminder.
 This question never makes the session wait for you.
 When Prism cannot record the question, the session still shows as ended without a result, with the reason `Prism could not record a question for this run: <message>`.
 
