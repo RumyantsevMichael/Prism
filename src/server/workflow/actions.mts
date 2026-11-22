@@ -191,11 +191,14 @@ async function readTarget(projectRoot: string, parsed: any, indexer: any, state 
     const status = await launchRunStatus({ id: parsed.launch, env });
     const resumeReason = status === "running" ? "The session is running." : await resumeRefusal({ id: parsed.launch, env });
     // A shipped initiative's state is history, so its sessions cannot resume; they stay stoppable, since orchestrate ships while its host runs.
-    const shipped = await shippedDecision(projectRoot, view.initiative).catch(() => null);
+    const shipped = view.initiative === null ? null : await shippedDecision(projectRoot, view.initiative).catch(() => null);
     // The permission requests that wait in the session's running run on this machine, read from its private launch folder alone.
     const folder = launchFolder(env, parsed.launch);
-    const permissions = await launchRequests(folder, await readLaunchRecord(folder)).catch(() => []);
-    return { ...parsed, view, initiative: view.initiative, running: status === "running", resumeReason, shipped, permissions };
+    const record = await readLaunchRecord(folder);
+    const permissions = await launchRequests(folder, record).catch(() => []);
+    // A resumed asker keeps its gate in its record, which confirms its resume when it names no initiative.
+    const askerResume = record?.askerResume ?? null;
+    return { ...parsed, view, initiative: view.initiative, running: status === "running", resumeReason, shipped, permissions, askerResume };
   }
   if (parsed.kind === "agent") {
     // A registry agent of this computer: its install as the review app folder holds it, read without the registry, so a removal reads none.
@@ -883,6 +886,8 @@ const LAUNCH_STOP = {
   async launch({ projectRoot, context, env }: { projectRoot: string; context: any; env: NodeJS.ProcessEnv }) {
     const launch = await stopLaunch({ id: context.launch, env });
     // After the initiative shipped, its state is history: the stop request in the launch folder is the stop's only record.
+    // A resumed asker of a gate that names no initiative has no initiative history to record the stop in.
+    if (context.initiative === null) return { launch, after: "stopped", initiative: null, started: null, record: false };
     const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
     return { launch, after: "stopped", initiative: context.initiative, started: null, record: !shipped };
   }
@@ -902,12 +907,14 @@ const LAUNCH_RESUME = {
   },
   after: () => null,
   async launch({ projectRoot, context, env }: { projectRoot: string; context: any; env: NodeJS.ProcessEnv }) {
-    await confirmLaunch({ initiative: context.view.initiative, host: context.view.host, checkout: context.view.checkout, env });
+    // A resumed asker of a gate that names no initiative confirms with its gate's resume text, as its first start did.
+    const named = context.view.initiative !== null;
+    await confirmLaunch({ initiative: context.view.initiative, host: context.view.host, checkout: context.view.checkout, resume: named ? null : context.askerResume, env });
     // The initiative may have shipped while the dialog was open; then nothing starts.
-    const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
+    const shipped = named ? await shippedDecision(projectRoot, context.initiative).catch(() => null) : null;
     if (shipped) throw fail("action_unavailable", shippedActionReason(shipped), { reason: shippedActionReason(shipped) });
     const launch: any = await resumeLaunch({ id: context.launch, env, cause: "person" });
-    return { launch, after: { launch: launch.id, run: launch.runs }, initiative: context.initiative, started: launch.id };
+    return { launch, after: { launch: launch.id, run: launch.runs }, initiative: context.initiative, started: launch.id, ...(named ? {} : { record: false }) };
   }
 };
 
@@ -935,8 +942,8 @@ const LAUNCH_PERMISSION = {
   async launch({ projectRoot, context, env, values }: { projectRoot: string; context: any; env: NodeJS.ProcessEnv; values: any }) {
     // An approval only asks the run's supervisor to show the request's dialog, and answers with that dialog's outcome.
     const request = await answerRequest({ env, launch: context.launch, request: values.request, decision: values.decision });
-    const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
-    return { launch: null, after: { decision: values.decision, action: request.action }, initiative: context.initiative, started: null, record: !shipped };
+    const shipped = context.initiative === null ? null : await shippedDecision(projectRoot, context.initiative).catch(() => null);
+    return { launch: null, after: { decision: values.decision, action: request.action }, initiative: context.initiative, started: null, record: context.initiative !== null && !shipped };
   }
 };
 
