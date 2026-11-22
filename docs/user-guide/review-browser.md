@@ -28,8 +28,9 @@ When the selected browser is unavailable, Prism presents the URL and source arti
 
 The review app keeps each page it has built until a file that the page reads changes, so an open tab that nothing changes costs almost nothing.
 It watches the record store, the checkout's `.prism` folder, and the artifact paths in `.prism/workflow.md`, and a change that an agent, a store sync, or an edit by hand makes there shows in an open tab within about a second.
-On Windows, where a watched folder could not be deleted or renamed, and on a file system that reports no changes, such as a network drive or a Windows folder opened from WSL, the review app compares the folders' times at each read instead, so a file that is added, removed, or replaced shows at once, and an edit made in place shows within 5 seconds.
+On Windows, where a watched folder could not be deleted or renamed, and on a file system that reports no changes made elsewhere, such as a network drive on macOS or Linux or a Windows folder opened from WSL, the review app compares the folders' times at each read instead, so a file that is added, removed, or replaced shows at once, and an edit made in place shows within 5 seconds.
 Anywhere else it also checks every 30 seconds for a change that a watcher missed.
+The store's details, which the store button in the status bar opens, say under **Outside changes** whether such changes show at once, and list each folder that Prism checks instead of watching, with the reason.
 A tab connected to the review app reads the checkout's other files and the store's sync status every 5 seconds, and every 1.5 seconds while its connection is down.
 
 ## Layout

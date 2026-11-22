@@ -107,6 +107,20 @@ test("a missing target leaves the watched ones unlisted between full listings, a
   assert.notEqual(await versions.current(root), created, "the full listing finds a change no watcher reported");
 });
 
+test("a root reports which targets no watcher covers and why", async (t) => {
+  const root = await folder(t);
+  const network = path.join(root, "store");
+  const local = path.join(root, "local");
+  await mkdir(local);
+  const fake = () => ({ on() {}, close() {}, unref() {} });
+  const versions = createViewVersions({ targetsOf: async () => ({ folders: [local, network, path.join(root, "missing")], files: [], gitRoots: [] }), watchTree: fake, isEventless: async (target) => (target === network ? "smbfs" : null) });
+  t.after(() => versions.close());
+  assert.deepEqual(await versions.watching(root), { unwatched: [{ path: network, reason: "network" }], targets: 3 }, "a missing target watched through its parent counts as watched");
+  const failing = createViewVersions({ targetsOf: async () => ({ folders: [local], files: [], gitRoots: [] }), watchTree: noWatcher, isEventless: async () => null });
+  t.after(() => failing.close());
+  assert.deepEqual((await failing.watching(root)).unwatched, [{ path: local, reason: process.platform === "win32" ? "windows" : "unwatchable" }]);
+});
+
 test("changes inside Git's data and the store's sync state never change the version", async (t) => {
   const root = await folder(t);
   let clock = 1000;

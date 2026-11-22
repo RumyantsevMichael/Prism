@@ -103,6 +103,11 @@ export function rememberView<T>(projectRoot: string, name: string, compute: () =
 }
 
 /** The version of a project's views, which changes whenever a file they read may have changed. */
+/** Which of a project's record folders and files no watcher covers, and why, so the store's details can say that changes made elsewhere show with a delay. */
+export function viewWatching(projectRoot: string) {
+  return versions.watching(projectRoot);
+}
+
 export function viewVersion(projectRoot: string) {
   return versions.current(projectRoot);
 }
