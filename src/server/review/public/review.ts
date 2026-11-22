@@ -82,6 +82,12 @@ let appVersion: any = null;
 let sessionConnected = false;
 // The origin's shared event stream, which one tab holds for every tab of the review app.
 let relay: any = null;
+// Reads the project's index again at once, set once the page has drawn its first index.
+let refreshIndex: (() => unknown) | null = null;
+// How often a page whose event stream is joined reads its index for what no record holds, how often it reads it while the stream is down, and how often shown action lists check their listing.
+const INDEX_CHECK_MS = 5000;
+const INDEX_UNJOINED_MS = 1500;
+const ACTION_CHECK_MS = 4500;
 let saveQueue = Promise.resolve();
 // A workspace's page names each store artifact by its store location, store:<location>, in its tabs, links, and URLs, never by a checkout's path:
 // a checkout path that a record view or an older link names opens as the store artifact it names.
@@ -1145,6 +1151,9 @@ function onStreamEvent(name: string, data: any) {
     // and a comment on the open file shows at once rather than at the next check.
     document.dispatchEvent(new CustomEvent("prism:action", { detail: data }));
     if (data?.artifact?.path && data.artifact.path === selectedPath) void showArtifact(selectedPath);
+  } else if (name === "records") {
+    // The project's records changed, so the index and the open view are read again now rather than at the next check.
+    refreshIndex?.();
   } else if (name === "session") {
     sessionConnected = true;
     try {
@@ -3614,11 +3623,14 @@ async function initialize() {
     renderTabs();
     await showArtifact(selectedPath);
   }
-  let polls = 0;
-  // The page checks its project every 1.5 s, one check at a time, and only while the tab is shown; a check without an answer within its deadline counts as failed.
-  const indexPoller = createPoller({ interval: 1500, run: async () => {
-    // Shown action lists check their listing every few seconds, so a change an agent made shows without a reload.
-    if (++polls % 3 === 0 && connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
+  // Shown action lists check their listing every few seconds, so a change an agent made shows without a reload.
+  void createPoller({ interval: ACTION_CHECK_MS, run: () => {
+    if (connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
+  } }).start();
+  // The page reads its project's index again when the server says the project's records changed, one read at a time and only while the tab is shown;
+  // it also reads it every few seconds while the event stream is joined, for what no record holds, such as the checkout's files and the store's sync,
+  // and every 1.5 s while the stream is down. A read without an answer within its deadline counts as failed.
+  const indexPoller = createPoller({ interval: () => sessionConnected ? INDEX_CHECK_MS : INDEX_UNJOINED_MS, run: async () => {
     try {
       const refreshed = await appFetch("./api/index", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);
       const answered = refreshed?.ok ? await refreshed.json().catch(() => null) : null;
@@ -3656,7 +3668,8 @@ async function initialize() {
     }
   } });
   // The first check waits one interval, since the page has just drawn from a fresh index.
-  setTimeout(() => void indexPoller.start(), 1500);
+  setTimeout(() => void indexPoller.start(), INDEX_UNJOINED_MS);
+  refreshIndex = () => indexPoller.now();
   // A hidden tab makes none of the checks above, so it reads the count of waiting questions alone, which raises the desktop notification the Attention page offers.
   void createPoller({ interval: ATTENTION_WATCH_MS, whileHidden: true, run: async () => {
     const response = await appFetch("./api/attention", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);
