@@ -23,7 +23,7 @@ const readMounts = (): Promise<{ point: string; type: string }[]> => {
       .map(([, point, type]) => ({ point: point.replace(/\\040/g, " "), type })), () => []);
   }
   // macOS lists each mount as "<device> on <point> (<type>, <options>)".
-  return new Promise((resolve) => execFile("mount", [], { timeout: 10000 }, (error, stdout) => resolve(error ? [] : stdout.split("\n")
+  return new Promise((resolve) => execFile("mount", [], { timeout: 10000, windowsHide: true }, (error, stdout) => resolve(error ? [] : stdout.split("\n")
     .map((line) => /^.* on (.+) \(([^,)]+)/.exec(line)).filter((match): match is RegExpExecArray => match !== null).map((match) => ({ point: match[1], type: match[2] })))));
 };
 
