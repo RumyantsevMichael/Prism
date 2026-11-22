@@ -830,7 +830,8 @@ body {
 .store-message.is-warn { border-inline-start-color: var(--prism-color-warning); }
 .store-message.is-danger { border-inline-start-color: var(--prism-color-danger); }
 
-.store-conflicts h3 {
+.store-conflicts h3,
+.store-unwatched h3 {
   margin: var(--prism-space-6) 0 var(--prism-space-2);
   font-size: var(--prism-font-size-md);
 }

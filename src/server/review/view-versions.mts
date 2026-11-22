@@ -11,21 +11,40 @@ const SKIPPED = new Set([".git", ".prism-sync"]);
 // and every target at most every WATCHED_VERIFY_MS, which bounds how long a dropped event can go unnoticed.
 export const VERIFY_MS = 5000;
 export const WATCHED_VERIFY_MS = 30000;
-// Linux file systems whose changes made elsewhere, as by Windows under WSL or by another machine, reach no watcher here.
-const EVENTLESS_TYPES = new Set(["9p", "drvfs", "cifs", "smb3", "smbfs", "nfs", "nfs4", "fuse.sshfs", "afs", "ncpfs", "virtiofs"]);
+// File systems whose changes made elsewhere, as by Windows under WSL or by another machine, reach no watcher here: Linux's names, then macOS's.
+const EVENTLESS_TYPES = new Set(["9p", "drvfs", "cifs", "smb3", "smbfs", "nfs", "nfs4", "fuse.sshfs", "afs", "ncpfs", "virtiofs", "afpfs", "webdav", "macfuse", "osxfuse"]);
+// The mount table is read again after this long, so a drive mounted while the app runs is counted.
+const MOUNTS_MS = 60000;
 
-let mounts: Promise<{ point: string; type: string }[]> | null = null;
-// Whether a path lies on a file system whose watcher would miss changes made elsewhere, from the longest matching mount point Linux lists.
+let mounts: { at: number; list: Promise<{ point: string; type: string }[]> } | null = null;
+const readMounts = (): Promise<{ point: string; type: string }[]> => {
+  if (process.platform === "linux") {
+    return readFile("/proc/self/mounts", "utf8").then((text) => text.split("\n").map((line) => line.split(" ")).filter((fields) => fields.length > 2)
+      .map(([, point, type]) => ({ point: point.replace(/\\040/g, " "), type })), () => []);
+  }
+  // macOS lists each mount as "<device> on <point> (<type>, <options>)".
+  return new Promise((resolve) => execFile("mount", [], { timeout: 10000, windowsHide: true }, (error, stdout) => resolve(error ? [] : stdout.split("\n")
+    .map((line) => /^.* on (.+) \(([^,)]+)/.exec(line)).filter((match): match is RegExpExecArray => match !== null).map((match) => ({ point: match[1], type: match[2] })))));
+};
+
+// The type of the file system a path lies on when a watcher there would miss changes made elsewhere, from the longest matching mount point, or null.
 async function eventless(target: string) {
-  if (process.platform !== "linux") return false;
-  mounts ??= readFile("/proc/self/mounts", "utf8").then((text) => text.split("\n").map((line) => line.split(" ")).filter((fields) => fields.length > 2)
-    .map(([, point, type]) => ({ point: point.replace(/\\040/g, " "), type })), () => []);
+  if (process.platform !== "linux" && process.platform !== "darwin") return null;
+  if (!mounts || Date.now() - mounts.at >= MOUNTS_MS) mounts = { at: Date.now(), list: readMounts() };
   let found: { point: string; type: string } | null = null;
-  for (const mount of await mounts) {
+  for (const mount of await mounts.list) {
     const inside = mount.point === "/" || target === mount.point || target.startsWith(`${mount.point}/`);
     if (inside && (!found || mount.point.length > found.point.length)) found = mount;
   }
-  return found ? EVENTLESS_TYPES.has(found.type) : false;
+  return found && EVENTLESS_TYPES.has(found.type) ? found.type : null;
+}
+
+/** Why a target is checked rather than watched: a Windows drive seen from WSL, a virtual machine's shared folder, a network drive, Windows itself, or a watcher that failed. */
+export type UnwatchedReason = "wsl" | "virtual" | "network" | "windows" | "unwatchable";
+function reasonOf(type: string | true, target: string): UnwatchedReason {
+  if (type === "drvfs" || (type === "9p" && /^\/mnt\/[a-z]\//i.test(`${target}/`))) return "wsl";
+  if (type === "9p" || type === "virtiofs") return "virtual";
+  return "network";
 }
 
 const skipped = (relative: string) => relative.split(/[\\/]/).some((segment) => SKIPPED.has(segment));
@@ -123,7 +142,7 @@ async function nearestExisting(target: string) {
 
 const none = (): Targets => ({ folders: [], files: [], gitRoots: [] });
 
-export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVerifyMs = WATCHED_VERIFY_MS, now = () => Date.now(), watchTree = defaultWatch, isEventless = eventless }: { targetsOf: (root: string) => Promise<Targets>; verifyMs?: number; watchedVerifyMs?: number; now?: () => number; watchTree?: typeof watch; isEventless?: (target: string) => Promise<boolean> }) {
+export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVerifyMs = WATCHED_VERIFY_MS, now = () => Date.now(), watchTree = defaultWatch, isEventless = eventless }: { targetsOf: (root: string) => Promise<Targets>; verifyMs?: number; watchedVerifyMs?: number; now?: () => number; watchTree?: typeof watch; isEventless?: (target: string) => Promise<string | boolean | null> }) {
   const roots = new Map<string, any>();
 
   function stopWatchers(state: any) {
@@ -140,6 +159,8 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
   async function startWatchers(state: any, targets: Targets) {
     stopWatchers(state);
     state.watched = new Set<string>();
+    state.reasons = new Map<string, UnwatchedReason>();
+    const unwatchable = (target: string) => state.reasons.set(target, process.platform === "win32" ? "windows" : "unwatchable");
     // A watched change makes the next listings the new baseline, so the change is counted once.
     const changed = () => { state.version += 1; state.signature = null; state.partialSignature = null; state.quickSignature = null; };
     const open = (target: string, watchedPath: string, recursive: boolean, relevant: (name: string) => boolean, onEvent = changed) => {
@@ -151,6 +172,7 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
         try { watcher.close(); } catch {}
         state.watchers = state.watchers.filter((item: any) => item !== watcher);
         state.watched.delete(target);
+        state.reasons.set(target, "unwatchable");
         changed();
       });
       watcher.unref?.();
@@ -158,7 +180,9 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
     };
     const add = async (target: string, recursive: boolean, relevant: (name: string) => boolean) => {
       // A target on a file system that delivers no events for changes made elsewhere keeps a watcher for this computer's own changes, but counts as unwatched.
-      if (await isEventless(target).catch(() => true)) {
+      const type = await isEventless(target).catch(() => true);
+      if (type) {
+        state.reasons.set(target, reasonOf(type, target));
         try { open(target, target, recursive, relevant); } catch {}
         return;
       }
@@ -167,6 +191,7 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
         state.watched.add(target);
         return;
       } catch {}
+      unwatchable(target);
       // A target that does not exist yet is watched through the nearest folder that does; its creation restarts the watchers at the next read, so the new target gets its own.
       if (await lstat(target).then(() => true, () => false)) return;
       const above = await nearestExisting(target);
@@ -174,6 +199,7 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
       try {
         open(target, above.folder, false, (name) => name === above.name, () => { changed(); state.targetsKey = null; state.checkedAt = -Infinity; });
         state.watched.add(target);
+        state.reasons.delete(target);
       } catch {
         // A target that cannot be watched is covered by the listing checks alone.
       }
@@ -234,7 +260,7 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
   async function current(root: string) {
     let state = roots.get(root);
     if (!state) {
-      state = { version: 0, watchers: [], watched: new Set(), targetsKey: null, targets: null, signature: null, partialSignature: null, quickSignature: null, checkedAt: -Infinity, partialAt: -Infinity, checking: null, targetsOf: () => targetsOf(root) };
+      state = { version: 0, watchers: [], watched: new Set(), reasons: new Map(), targetsKey: null, targets: null, signature: null, partialSignature: null, quickSignature: null, checkedAt: -Infinity, partialAt: -Infinity, checking: null, targetsOf: () => targetsOf(root) };
       roots.set(root, state);
     }
     if (now() - state.checkedAt >= watchedVerifyMs || !state.targets) {
@@ -245,6 +271,18 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
       await state.checking;
     }
     return state.version;
+  }
+
+  /**
+   * Which of a root's targets no watcher covers and why, as of its last check: an empty list when every target is watched.
+   * A target that does not exist and is watched through a folder above it counts as watched.
+   */
+  async function watching(root: string) {
+    await current(root);
+    const state = roots.get(root);
+    if (!state?.targets) return null;
+    const unwatched = unwatchedOf(state);
+    return { unwatched: [...unwatched.folders, ...unwatched.files].map((target) => ({ path: target, reason: (state.reasons.get(target) ?? "unwatchable") as UnwatchedReason })), targets: state.targets.folders.length + state.targets.files.length };
   }
 
   /** Check a root against a full listing at its next read, as after a session reported that it may have changed the root's files. */
@@ -263,5 +301,5 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
     roots.clear();
   }
 
-  return { current, recheck, bump, close };
+  return { current, watching, recheck, bump, close };
 }
