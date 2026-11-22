@@ -466,14 +466,14 @@ export function expired(record: any, now = Date.now()) {
 // The archive mark of a launched session, kept beside its record on this machine only and written only under the launch lock:
 // { archivedAt, runs }, the time of the archive and the record's run count then.
 const ARCHIVE_FILE = "archive.json";
-const ENDED_STATES = new Set(["finished", "failed", "stopped", "blocked"]);
+const ENDED_STATES = new Set(["finished", "ended-without-result", "failed", "stopped", "blocked"]);
 
 export interface ArchiveMark {
   archivedAt: string;
   runs: number;
 }
 
-/** Whether a launch view's state is one that can be archived: finished, failed, stopped, or blocked. */
+/** Whether a launch view's state is one that can be archived: finished, ended without a result, failed, stopped, or blocked. */
 export function launchEnded(state: unknown): boolean {
   return typeof state === "string" && ENDED_STATES.has(state);
 }

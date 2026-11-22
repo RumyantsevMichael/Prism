@@ -74,6 +74,9 @@ test("packages compatible capacity and trace hooks at the default plugin path", 
   for (const event of ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PreCompact", "SubagentStart", "SubagentStop", "SessionEnd"]) {
     assert.ok(commands(event).includes(traceCommand));
   }
+  // A launched Claude Code or Codex session that starts again in a terminal closes its unanswered no-result gate.
+  const withdrawHook = hookManifest.hooks.SessionStart.flatMap((group) => group.hooks).find((hook) => hook.command === "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/withdraw-launch-questions.mjs\"");
+  assert.deepEqual([withdrawHook?.timeout, withdrawHook?.additionalContextLimit], [5, undefined]);
   const offerHook = hookManifest.hooks.SessionStart.flatMap((group) => group.hooks).find((hook) => hook.command === "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/offer-prism.mjs\"");
   assert.deepEqual([offerHook.timeout, offerHook.additionalContextLimit], [5, 1500]);
   const roleCommand = "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-orchestrator-role.mjs\"";

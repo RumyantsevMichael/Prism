@@ -590,6 +590,14 @@ Codex and ACP agent runs get no reminder.
 This question never makes the session wait for you.
 When Prism cannot record the question, the session still shows as ended without a result, with the reason `Prism could not record a question for this run: <message>`.
 
+When you answer this question on this computer, Prism resumes the session as for any question that the session asked.
+A resumed Claude Code or Codex session receives your answer as its next prompt, and a resumed ACP session gets its launch prompt again, whose orchestrate step reads your answer first.
+An answer from another computer starts nothing here, and the session stays ended without a result until you resume it.
+When you archive the session, Prism closes its unanswered question and starts no run, and unarchiving the session does not open the question again.
+When the session runs again, whether you resume it here or continue a Claude Code or Codex session in a terminal, Prism closes its unanswered question with the reason `The launched session runs again.`.
+An answered question stays open for the run to act on.
+An ACP session that you continue in a terminal runs no Prism hook, so its question stays until you answer it or archive the session.
+
 ### Archive a session
 
 Archive a session that ended so that it stops asking for you: an archived failed session leaves **Needs you**, the agents menu, and the mark on the top bar's **Agents** button.

@@ -334,6 +334,43 @@ async function askNoResultGate(record: any, earlier: string[], lastMessage: stri
   return typeof gate === "string" && GATE_ID_PATTERN.test(gate) ? { gate } : { failure: "The coordination state named no new gate." };
 }
 
+const ARCHIVED = "The person archived the launched session.";
+const RUNS_AGAIN = "The launched session runs again.";
+
+// Resolves every no-result gate of the launch in this folder that is pending without an answer, with the reason; an answered one stays
+// for the run to act on. It changes the coordination state only when such a gate exists, and never takes the launch lock.
+async function withdrawNoResultGates(folder: string, record: any, reason: string) {
+  const gates = new Set(noResultGates(await readResultMarks(folder)));
+  if (!gates.size) return;
+  const unanswered = (pending: any[]) => pending.filter((gate: any) => gate && gates.has(gate.id) && !gate.answer);
+  const read: any = await readCoordinationState({ projectRoot: record.checkout, initiative: record.initiative }).catch(() => null);
+  if (!unanswered(read?.valid && Array.isArray(read.state?.pending) ? read.state.pending : []).length) return;
+  await changeGates(record, (pending) => unanswered(pending).map((gate: any) => ({ op: "resolve", id: gate.id, reason })));
+}
+
+/** Resolves the unanswered no-result gate of the launch whose new run started, with the reason that the session runs again. */
+export async function withdrawRunQuestions({ id, env = process.env }: { id: string; env?: NodeJS.ProcessEnv }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return;
+  const folder = launchFolder(env, id);
+  const record = await readLaunchRecord(folder);
+  if (record) await withdrawNoResultGates(folder, record, RUNS_AGAIN);
+}
+
+/**
+ * Resolves the unanswered no-result gate of each Claude Code or Codex launch on this machine whose host session id is sessionId, as
+ * when that session starts again in a terminal; it changes nothing for any other session. Answers whether such a launch exists.
+ */
+export async function withdrawSessionQuestions({ sessionId, env = process.env }: { sessionId: string; env?: NodeJS.ProcessEnv }) {
+  if (!validHostSessionId(sessionId)) return false;
+  let found = false;
+  for (const { folder, record } of await listLaunchRecords(env)) {
+    if (!record || (record.host !== "claude-code" && record.host !== "codex") || record.hostSessionId !== sessionId) continue;
+    found = true;
+    await withdrawNoResultGates(folder, record, RUNS_AGAIN);
+  }
+  return found;
+}
+
 // Whether the run with this token is still the launch's last run and nobody asked to stop it; the caller holds the launch lock.
 async function stillLastRun(folder: string, token: string) {
   const record = await readLaunchRecord(folder);
@@ -615,16 +652,23 @@ async function archiveLocked(found: PageLaunch, at: number) {
   return true;
 }
 
-/** Archives a launched session that the page lists and that ended: { archived: [id] }, or { archived: [] } when it is already archived. */
+/**
+ * Archives a launched session that the page lists and that ended, ended without a result included: { archived: [id] }, or
+ * { archived: [] } when it is already archived. It resolves the session's unanswered no-result gate and starts no run.
+ */
 export async function archiveLaunch({ projectRoot, id, env = process.env }: { projectRoot: string; id: string; env?: NodeJS.ProcessEnv }) {
   const viewer = await pageViewer(projectRoot, Date.now());
-  return withLaunchLock(env, async () => {
+  const archived = await withLaunchLock(env, async () => {
     const at = Date.now();
     const found = await pageLaunch(env, id, viewer, at);
     if (!found) throw unknownLaunch(id);
     if (!launchEnded(found.view.state)) throw notEnded();
-    return { archived: (await archiveLocked(found, at)) ? [id] : [] };
+    return (await archiveLocked(found, at)) ? found : null;
   });
+  // Archiving starts no run and closes the session's unanswered no-result gate, after the lock, since a gate change may take it.
+  if (!archived) return { archived: [] };
+  await withdrawNoResultGates(archived.folder, archived.record, ARCHIVED).catch(() => {});
+  return { archived: [id] };
 }
 
 /** Removes the archive mark of a launched session that the page lists: { unarchived: [id] }, or { unarchived: [] } when it was not archived. */
@@ -642,11 +686,11 @@ export async function unarchiveLaunch({ projectRoot, id, env = process.env }: { 
 
 /**
  * Archives every launched session that the page lists, that ended, and that is not archived: { archived: [ids] }, failed ones first and
- * then the latest launched first, the order the agents list gives them.
+ * then the latest launched first, the order the agents list gives them. Each one's unanswered no-result gate is resolved.
  */
 export async function archiveEndedLaunches({ projectRoot, env = process.env }: { projectRoot: string; env?: NodeJS.ProcessEnv }) {
   const viewer = await pageViewer(projectRoot, Date.now());
-  return withLaunchLock(env, async () => {
+  const archived = await withLaunchLock(env, async () => {
     const at = Date.now();
     const found: PageLaunch[] = [];
     for (const { record } of await listLaunchRecords(env)) {
@@ -654,10 +698,12 @@ export async function archiveEndedLaunches({ projectRoot, env = process.env }: {
       if (launch && launchEnded(launch.view.state)) found.push(launch);
     }
     found.sort((left, right) => (left.view.state === "failed" ? 0 : 1) - (right.view.state === "failed" ? 0 : 1) || byLaunch(left.view, right.view));
-    const archived: string[] = [];
-    for (const launch of found) if (await archiveLocked(launch, at)) archived.push(launch.record.id);
-    return { archived };
+    const archived: PageLaunch[] = [];
+    for (const launch of found) if (await archiveLocked(launch, at)) archived.push(launch);
+    return archived;
   });
+  for (const launch of archived) await withdrawNoResultGates(launch.folder, launch.record, ARCHIVED).catch(() => {});
+  return { archived: archived.map((launch) => launch.record.id) };
 }
 
 /**

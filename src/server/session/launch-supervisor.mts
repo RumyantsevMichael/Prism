@@ -12,7 +12,8 @@
 // answered to the host; an approval only asks this process to show the request's native dialog, and the host is allowed only the
 // request whose dialog the person confirmed. When the run ends or is stopped, every request still waiting is refused and removed.
 // After a run that exited 0, it resumes the session once when the person answered here, during the run, a gate that is still pending,
-// and otherwise records a no-result gate for a run that ended normally without a result.
+// and otherwise records a no-result gate for a run that ended normally without a result. Once its host started, it resolves the
+// launch's unanswered no-result gate, since the session runs again.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -305,7 +306,12 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     return { ended: watched.ended };
   });
   if (!started) await update((current: any) => { if (current.starting?.token === token) delete current.starting; });
-  if (started) await started.ended;
+  // A new run of the launch, for any cause, closes the launch's unanswered no-result gate once its host started.
+  if (started) {
+    const { withdrawRunQuestions } = await import("./launched-sessions.mjs");
+    await withdrawRunQuestions({ id: record.id, env }).catch(() => {});
+    await started.ended;
+  }
   await queue;
   // Once this run ended, the earlier versions of its registry agent that no other session runs on are removed, whichever process updated it.
   if (started && agentVersion !== null) {
