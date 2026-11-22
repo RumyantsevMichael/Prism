@@ -189,9 +189,9 @@ export async function startLaunch({ projectRoot, initiative, host, coordinator =
 const ASKER_RUNNING = "The session is open, so a resume would run beside it.";
 
 /** Whether a run of a launched session that continues this host session id runs on this machine, such as a resumed asker. */
-export async function hostSessionRunning(env: NodeJS.ProcessEnv, hostSessionId: string) {
+export async function hostSessionRunning(env: NodeJS.ProcessEnv, hostSessionId: string, except: string | null = null) {
   const now = Date.now();
-  return (await listLaunchRecords(env)).some(({ record }) => record?.hostSessionId === hostSessionId && launchRunning(record, now));
+  return (await listLaunchRecords(env)).some(({ record }) => record && record.id !== except && record.hostSessionId === hostSessionId && launchRunning(record, now));
 }
 
 /**
@@ -223,7 +223,7 @@ export async function startAskerResume({ checkout: kept, host, hostSessionId, re
       createdAt: new Date().toISOString(),
       hostSessionId,
       coordinator: checkedCoordinator(null),
-      // Every run of a resumed asker continues its own session under the kept id, with the message that its gate has an answer.
+      // Every run of a resumed asker continues its own session under the kept id; only its first tells it that its gate has an answer.
       askerResume: asker,
       runs: []
     };
@@ -246,6 +246,8 @@ async function resumeLocked(env: NodeJS.ProcessEnv, folder: string, id: string, 
   if (launchRunning(record)) throw refuse("launch_running", "The session is running.");
   if (await otherRunning(env, { initiative: record.initiative, store: record.store, except: id })) throw refuse("launch_running", runningMessage(record.initiative));
   if (!validHostSessionId(record.hostSessionId)) throw refuse("no_host_session", "The session never reported its host session id, so it cannot be resumed.");
+  // Another launched session that continues the same host session, such as a second resume of one asker, would run beside this one.
+  if (await hostSessionRunning(env, record.hostSessionId, id)) throw refuse("launch_running", ASKER_RUNNING);
   if (!launchCoordinator(record)) throw refuse("invalid_choice", RECORDED_CHOICE_INVALID);
   const resolved = await resolveHost(record.host, env);
   if (!resolved?.available) throw refuse("host_unavailable", resolved?.reason ?? `Unknown host ${record.host}.`);
@@ -271,6 +273,7 @@ export async function resumeRefusal({ id, env = process.env }: { id: string; env
   if (launchRunning(record)) return "The session is running.";
   if (await otherRunning(env, { initiative: record.initiative, store: record.store, except: id })) return runningMessage(record.initiative);
   if (!validHostSessionId(record.hostSessionId)) return "The session never reported its host session id, so it cannot be resumed.";
+  if (await hostSessionRunning(env, record.hostSessionId, id)) return ASKER_RUNNING;
   if (!launchCoordinator(record)) return RECORDED_CHOICE_INVALID;
   const resolved = await resolveHost(record.host, env);
   return resolved?.available ? null : resolved?.reason ?? `Unknown host ${record.host}.`;
