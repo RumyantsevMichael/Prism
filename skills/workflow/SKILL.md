@@ -119,6 +119,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Child status | The short fixed result a child session returns: result, last commit, a one-sentence summary, and questions written as blockers. |
 | Fresh context | A session that starts without the conversation that authored its inputs. |
 | Decision autonomy | A run setting that selects which gates wait for the user. |
+| Undoable step | A step that a run under `full` autonomy decides by itself and records through a `gateOperations` `decide` operation as a closed `decision` gate with its choice and reason: a roadmap entry's band or park change, a removal or change of a Draft requirement or Proposed ADR in the record store, or a tracker issue that the run files; a commit follows the `commit` setting, and a push, a ship, an approval, or a removal outside the record store is never one. |
 | Slice continuation | A run setting that controls whether the next slice starts without the user. |
 | `recovery.md` | A slice note that preserves unfinished work when a run pauses. |
 | Pause checkpoint | An orchestrator action that writes `recovery.md` and updates coordination state together. |
