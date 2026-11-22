@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.31.0](https://github.com/RumyantsevMichael/Prism/compare/v0.30.0...v0.31.0) (2026-11-21)
+
+
+### Added
+
+* **personal-settings:** keep each person's own settings on their machine ([#401](https://github.com/RumyantsevMichael/Prism/issues/401)) ([bf6b472](https://github.com/RumyantsevMichael/Prism/commit/bf6b472971182cedaaf4615f8c5d22ed1665ee60))
+* **review:** reach any coding agent through the Agent Client Protocol ([#407](https://github.com/RumyantsevMichael/Prism/issues/407)) ([296f568](https://github.com/RumyantsevMichael/Prism/commit/296f568d3b8836e8af85dc2e53922688badb7c16))
+* **review:** show the whole linked section in a wider, scrolling preview ([#399](https://github.com/RumyantsevMichael/Prism/issues/399)) ([338e826](https://github.com/RumyantsevMichael/Prism/commit/338e826e586d0c7727acd45b057d1ff03e562758)), closes [#376](https://github.com/RumyantsevMichael/Prism/issues/376) [#380](https://github.com/RumyantsevMichael/Prism/issues/380)
+
+
+### Fixed
+
+* **review:** tighten an old app folder that others can read ([#409](https://github.com/RumyantsevMichael/Prism/issues/409)) ([2497fbe](https://github.com/RumyantsevMichael/Prism/commit/2497fbee84eaa5801e38c19bc46433f2e5802df8)), closes [#139](https://github.com/RumyantsevMichael/Prism/issues/139)
+* **server:** keep record writes during hashing from failing verification ([#408](https://github.com/RumyantsevMichael/Prism/issues/408)) ([0a31d2a](https://github.com/RumyantsevMichael/Prism/commit/0a31d2a27e27cfbf60bebb96df7af0e6a49121a7)), closes [#118](https://github.com/RumyantsevMichael/Prism/issues/118)
+* **server:** let gate waits outlast the cloud session tool timeout ([#405](https://github.com/RumyantsevMichael/Prism/issues/405)) ([d351a01](https://github.com/RumyantsevMichael/Prism/commit/d351a0105e17451c54b2d3e69963262949a430ed))
+* **storage:** trust operating-system links on the way to private storage ([#410](https://github.com/RumyantsevMichael/Prism/issues/410)) ([c8202e0](https://github.com/RumyantsevMichael/Prism/commit/c8202e09879aec5c4cfaf637daf4343e72139fa5)), closes [#142](https://github.com/RumyantsevMichael/Prism/issues/142)
+
 ## [0.30.0](https://github.com/RumyantsevMichael/Prism/compare/v0.29.0...v0.30.0) (2026-11-21)
 
 
