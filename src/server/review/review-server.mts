@@ -21,7 +21,7 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, loadAttention, loadClaims, loadDeclaredView, loadFormatMark, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, viewWatching, loadAttention, loadClaims, loadDeclaredView, loadFormatMark, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { frozenTestFile, verificationLog } from "./verification-view.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
@@ -1643,7 +1643,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const checkout = workspace && await isStoreWithoutCheckout(projectRoot) ? null : await readWorkspaceIdentity(projectRoot);
       const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null, repositories: await codeRepositories() } : { workspace: checkout };
       const scoped = storeIndex ? { artifactScopes: storeIndex.artifactScopes, scopes: storeIndex.scopes, ...(storeIndex.scopeFilter ? { scopeFilter: storeIndex.scopeFilter, unknownScopes: storeIndex.unknownScopes } : {}), notes: storeIndex.notes } : { artifactScopes: await listArtifactScopes(projectRoot) };
-      send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, version: appVersion ?? pluginVersion(), ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store), watching: await viewWatching(projectRoot).catch(() => null) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, version: appVersion ?? pluginVersion(), ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
     } else if (["/api/code/tree", "/api/code/compare", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
       await serveCode(response, route, url);
     } else if (route === "/api/slice-files" && request.method === "GET") {
