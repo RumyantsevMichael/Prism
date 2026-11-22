@@ -260,12 +260,17 @@ export async function markLaunchGates({ projectRoot, initiative, gates, env = pr
   if (!found) return false;
   return withLaunchLock(env, async () => {
     if (!(await readLaunchRecord(found.folder))) return false;
-    const current = await readGateRecord(found.folder);
-    const at = new Date().toISOString();
-    const known = new Set(current.marks.map((mark) => mark.gate));
-    await writeGateRecord(found.folder, { ...current, marks: [...current.marks, ...ids.filter((gate) => !known.has(gate)).map((gate) => ({ gate, at }))] });
+    await addGateMarks(found.folder, ids);
     return true;
   });
+}
+
+// Adds the gates that the launch folder does not mark yet to its gate record; the caller holds the launch lock.
+async function addGateMarks(folder: string, ids: string[]) {
+  const current = await readGateRecord(folder);
+  const at = new Date().toISOString();
+  const known = new Set(current.marks.map((mark) => mark.gate));
+  await writeGateRecord(folder, { ...current, marks: [...current.marks, ...ids.filter((gate) => !known.has(gate)).map((gate) => ({ gate, at }))] });
 }
 
 /**
@@ -294,22 +299,19 @@ export async function markResultCheck({ id, token, env = process.env }: { id: st
 }
 
 const NEWER_RUN = "A newer run of this launched session ended without a result.";
+const SUPERSEDED = "A newer run of this launched session started before Prism recorded this question.";
 
-// Records the no-result gate of a run in the initiative's coordination state, first resolving the launch's earlier unanswered one:
-// { gate } with the new gate's id, or { failure } with why it could not be recorded.
-async function askNoResultGate(record: any, earlier: string[], lastMessage: string | null, env: NodeJS.ProcessEnv) {
+// Applies the gate operations that operationsOf gives for the pending gates to the initiative's coordination state, again after a revision
+// conflict: { opened } with the gates it opened, or { failure } with why it could not apply them.
+async function changeGates(record: any, operationsOf: (pending: any[]) => any[]) {
   const { readCoordinationState: read, updateCoordinationState } = await import("../workflow/state.mjs");
-  const label = hostDefinition(record.host, env)?.label ?? record.host;
-  const ask = { op: "ask", kind: "assistance", question: noResultQuestion(label, record.initiative), context: noResultContext(lastMessage), artifacts: [] };
   let failure = "The coordination state kept changing.";
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
       const current: any = await read({ projectRoot: record.checkout, initiative: record.initiative });
       const pending = current.valid && Array.isArray(current.state?.pending) ? current.state.pending : [];
-      const resolve = pending.filter((gate: any) => gate && earlier.includes(gate.id) && !gate.answer && isNoResultGate(gate)).map((gate: any) => ({ op: "resolve", id: gate.id, reason: NEWER_RUN }));
-      const result: any = await updateCoordinationState({ projectRoot: record.checkout, initiative: record.initiative, expectedRevision: current.revision ?? null, changes: { gateOperations: [...resolve, ask] } });
-      const gate = result.openedGates?.at(-1)?.id;
-      return typeof gate === "string" && GATE_ID_PATTERN.test(gate) ? { gate } : { failure: "The coordination state named no new gate." };
+      const result: any = await updateCoordinationState({ projectRoot: record.checkout, initiative: record.initiative, expectedRevision: current.revision ?? null, changes: { gateOperations: operationsOf(pending) } });
+      return { opened: Array.isArray(result.openedGates) ? result.openedGates : [] };
     } catch (error: any) {
       failure = typeof error?.message === "string" && error.message ? error.message : String(error);
       if (error?.code !== "revision_conflict") break;
@@ -318,16 +320,40 @@ async function askNoResultGate(record: any, earlier: string[], lastMessage: stri
   return { failure };
 }
 
+// Records the no-result gate of a run in the initiative's coordination state, first resolving the launch's earlier unanswered one:
+// { gate } with the new gate's id, or { failure } with why it could not be recorded.
+async function askNoResultGate(record: any, earlier: string[], lastMessage: string | null, env: NodeJS.ProcessEnv) {
+  const label = hostDefinition(record.host, env)?.label ?? record.host;
+  const ask = { op: "ask", kind: "assistance", question: noResultQuestion(label, record.initiative), context: noResultContext(lastMessage), artifacts: [] };
+  const changed = await changeGates(record, (pending) => [
+    ...pending.filter((gate: any) => gate && earlier.includes(gate.id) && !gate.answer && isNoResultGate(gate)).map((gate: any) => ({ op: "resolve", id: gate.id, reason: NEWER_RUN })),
+    ask
+  ]);
+  if ("failure" in changed) return { failure: changed.failure };
+  const gate = changed.opened.at(-1)?.id;
+  return typeof gate === "string" && GATE_ID_PATTERN.test(gate) ? { gate } : { failure: "The coordination state named no new gate." };
+}
+
+// Whether the run with this token is still the launch's last run and nobody asked to stop it; the caller holds the launch lock.
+async function stillLastRun(folder: string, token: string) {
+  const record = await readLaunchRecord(folder);
+  const last = record?.runs.at(-1);
+  return Boolean(last && last.token === token && !last.stopRequestedAt) && (await readStopRequest(folder))?.token !== token;
+}
+
 /**
  * After a run of a launched session ended, checks whether it ended with a result, then removes this process's check mark. A run that ended
  * normally, that no answer resumed, and that has no result gets one no-result gate, marked as asked by the launch and, for Claude Code
  * and Codex, by its host session, and a no-result mark that names the gate, or why Prism could not record it.
+ * Once the gate is recorded, the run is checked again under the launch lock: a gate of a run that another run followed, or that a stop
+ * request names, is resolved and gets no mark. Otherwise the no-result mark, then the gate mark, are written under that same lock.
  * normal says whether the host ended normally by its own facts, such as an ACP agent's stop reason; the record decides the rest.
  */
 export async function settleRunResult({ id, token, normal, resumed, lastMessage, env = process.env }: { id: string; token: string; normal: boolean; resumed: boolean; lastMessage: string | null; env?: NodeJS.ProcessEnv }) {
   if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return;
   const folder = launchFolder(env, id);
   let mark: { run: string; gate: string | null; failure: string | null; at: string } | null = null;
+  let settled = false;
   try {
     const record = await readLaunchRecord(folder);
     const run = record?.runs.find((entry: any) => entry.token === token);
@@ -337,20 +363,41 @@ export async function settleRunResult({ id, token, normal, resumed, lastMessage,
     const marks = await readResultMarks(folder);
     if (await runHasResult({ checkout: record.checkout, initiative: record.initiative, since: run.startedAt, pauses: marks.pauses })) return;
     const asked = await askNoResultGate(record, noResultGates(marks), lastMessage, env);
-    if ("gate" in asked) {
-      await markLaunchGates({ projectRoot: record.checkout, initiative: record.initiative, gates: [asked.gate], env: { ...env, PRISM_LAUNCH: id } }).catch(() => false);
-      if ((record.host === "claude-code" || record.host === "codex") && validHostSessionId(record.hostSessionId)) {
-        const { noticeDirectory, rememberAskedGates } = await import("../workflow/change-notices.mjs");
-        const { holderOf } = await import("../workflow/slice-claims.mjs");
-        await rememberAskedGates({ projectRoot: record.checkout, initiative: record.initiative, gateIds: [asked.gate], session: holderOf(record.hostSessionId), directory: noticeDirectory(env) }).catch(() => {});
-      }
+    if (!("gate" in asked)) {
+      mark = { run: token, gate: null, failure: asked.failure!, at: new Date().toISOString() };
+      return;
     }
-    mark = { run: token, gate: "gate" in asked ? asked.gate! : null, failure: "failure" in asked ? asked.failure! : null, at: new Date().toISOString() };
+    const gate = asked.gate!;
+    // A view reads the gate record before the result marks, so no view counts the gate as marked before its no-result mark exists.
+    const current = await withLaunchLock(env, async () => {
+      const latest = await readResultMarks(folder);
+      const checks = latest.checks.filter((check) => check.run !== token);
+      if (!(await stillLastRun(folder, token))) {
+        await writeResultMarks(folder, { ...latest, checks });
+        return false;
+      }
+      const noResult = [...latest.noResult.filter((item) => item.run !== token), { run: token, gate, failure: null, at: new Date().toISOString() }];
+      await writeResultMarks(folder, { ...latest, checks, noResult });
+      await addGateMarks(folder, [gate]);
+      return true;
+    });
+    settled = true;
+    if (!current) {
+      await changeGates(record, (pending) => (pending.some((item: any) => item?.id === gate && !item.answer) ? [{ op: "resolve", id: gate, reason: SUPERSEDED }] : []));
+      return;
+    }
+    if ((record.host === "claude-code" || record.host === "codex") && validHostSessionId(record.hostSessionId)) {
+      const { noticeDirectory, rememberAskedGates } = await import("../workflow/change-notices.mjs");
+      const { holderOf } = await import("../workflow/slice-claims.mjs");
+      await rememberAskedGates({ projectRoot: record.checkout, initiative: record.initiative, gateIds: [gate], session: holderOf(record.hostSessionId), directory: noticeDirectory(env) }).catch(() => {});
+    }
   } finally {
-    await withLaunchLock(env, async () => {
-      const marks = await readResultMarks(folder);
-      await writeResultMarks(folder, { ...marks, checks: marks.checks.filter((check) => check.run !== token), noResult: mark ? [...marks.noResult.filter((item) => item.run !== token), mark] : marks.noResult });
-    }).catch(() => {});
+    if (!settled) {
+      await withLaunchLock(env, async () => {
+        const marks = await readResultMarks(folder);
+        await writeResultMarks(folder, { ...marks, checks: marks.checks.filter((check) => check.run !== token), noResult: mark ? [...marks.noResult.filter((item) => item.run !== token), mark] : marks.noResult });
+      }).catch(() => {});
+    }
   }
 }
 
@@ -493,8 +540,10 @@ async function pageViewer(projectRoot: string, at: number) {
     return pendingOf.get(initiative);
   };
   const viewOf = async (folder: string, record: any) => {
+    // The gate record is read before the result marks, which settleRunResult writes first, so a marked no-result gate always has its mark here.
+    const gates = await readGateRecord(folder);
     const results = await readResultMarks(folder);
-    return launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative), noResultGates(results)), permission: (await launchRequests(folder, record, at))[0] ?? null, results });
+    return launchView(record, { now: at, gates: gateFacts(gates, await pending(record.initiative), noResultGates(results)), permission: (await launchRequests(folder, record, at))[0] ?? null, results });
   };
   return { checkout, store, viewOf };
 }
