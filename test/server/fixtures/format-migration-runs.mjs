@@ -113,7 +113,7 @@ export async function stubHosts(context, { hosts = ["claude"], plans = { claude:
   let ending = null;
   context.after(() => ending?.());
   const scratch = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-run-hosts-")));
-  defer(context, () => rm(scratch, { recursive: true, force: true }));
+  defer(context, () => rm(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const app = path.join(scratch, "app");
   await mkdir(app, { recursive: true });
   const bin = hosts.length ? await stubBin(context, hosts) : path.join(scratch, "empty-bin");
