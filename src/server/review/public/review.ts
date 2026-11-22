@@ -2579,8 +2579,12 @@ function swapIn(memory: any) {
   if (memory.focusKey && !artifact!.contains(document.activeElement)) {
     const found = keyed(memory.focusKey) ?? (comment ? keyed("more-comments") : null);
     if ((found as any)?.dataset.commentId !== undefined) (found as any).tabIndex = -1;
-    if (found) (found as any).focus({ preventScroll: true });
-    else if (more) {
+    // A kit field takes focus on its own control, with the cursor where it was.
+    if (found) {
+      const control = (found as any).control ?? found;
+      control.focus({ preventScroll: true });
+      if (memory.selection && "setSelectionRange" in control) try { control.setSelectionRange(...memory.selection); } catch {}
+    } else if (more) {
       const list = artifact!.querySelector("[data-comment-list]");
       const listed = [...(list?.querySelectorAll("[data-comment-id]") ?? [])];
       // Without a press under way, focus goes to the last listed comment, the place in the list where the button stood.
@@ -3010,31 +3014,6 @@ function viewContext(path: any, state: any) {
       }
       // A diagram mounted after the page drew, such as on a slice's Diagram tab, gets its Maximize control too.
       if (path === selectedPath) decorateMaximize(path);
-    },
-    // A gate answer is the gate's answer action, applied against the revision its listing shows.
-    // An approval gate of a requirement or ADR is the target approval:<id>, since the artifact's status record in the store holds it, and its revision is the artifact's version.
-    async answerGate({ initiative, approval, id, choice, note }: { initiative: string; approval: any; id: string; choice: any; note: any }) {
-      if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
-      const target = approval ? `approval:${id}` : `gate:${initiative}/${id}`;
-      const unanswered = () => {
-        throw new Error("The review app did not answer, so the answer was not recorded. Try again in a moment.");
-      };
-      const listed = await appFetch(`./api/actions?target=${encodeURIComponent(target)}`, { headers: writeHeaders() }).catch(unanswered);
-      const listing = await listed.json().catch(() => ({}));
-      if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The answer was not recorded."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
-      const action = (listing.actions ?? []).find((item: any) => item.id === "gate.answer");
-      // A question the server no longer takes an answer to, such as one of a shipped initiative, is refused with the server's own reason.
-      if (action && !action.available) throw Object.assign(new Error(action.reason ?? "The answer was not recorded."), { code: "action_unavailable" });
-      const names = new Set((action?.fields ?? []).map((field: any) => field.name));
-      const input = Object.fromEntries([["choice", choice], ["note", note]].filter(([name, value]) => names.has(name) && value !== null && value !== undefined && value !== ""));
-      const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
-      const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
-      if (!response.ok) {
-        // A withdrawn question reads as one, and any other refusal carries the server's reason.
-        const code = result.code === "unknown_target" ? "unknown_gate" : result.code;
-        throw Object.assign(new Error(result.reason ?? result.message ?? "The answer was not recorded."), { code });
-      }
-      return result;
     },
     rerender() {
       lastSnapshot = "";
