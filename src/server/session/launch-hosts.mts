@@ -236,9 +236,12 @@ export function hostArguments({ host, hostSessionId, resume, coordinator = null,
   throw new Error(`Unknown host ${host}.`);
 }
 
-/** The stream-json user message that gives a Claude Code run its prompt. */
-export function claudePrompt(initiative: string) {
-  return { type: "user", message: { role: "user", content: `/prism:orchestrate ${initiative}` } };
+// A start that continues an answered gate names it after the initiative, so the orchestrate skill acts on that answer first.
+const answeredSuffix = (answeredGate: string | null) => (answeredGate === null ? "" : ` answered-gate ${answeredGate}`);
+
+/** The stream-json user message that gives a Claude Code run its prompt, naming the answered gate a continuation starts from. */
+export function claudePrompt(initiative: string, answeredGate: string | null = null) {
+  return { type: "user", message: { role: "user", content: `/prism:orchestrate ${initiative}${answeredSuffix(answeredGate)}` } };
 }
 
 /**
@@ -254,9 +257,9 @@ export function codexThreadRequest({ checkout, hostSessionId, resume, coordinato
 }
 
 /** The Codex request that starts the run's one orchestrate turn, with the effort of the coordinator's choice, left out for the host default. */
-export function codexTurnRequest({ threadId, initiative, coordinator = null }: { threadId: string; initiative: string; coordinator?: unknown }) {
+export function codexTurnRequest({ threadId, initiative, coordinator = null, answeredGate = null }: { threadId: string; initiative: string; coordinator?: unknown; answeredGate?: string | null }) {
   const { effort } = coordinatorOf(coordinator);
-  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}` }], ...(effort === null ? {} : { effort }) } };
+  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}${answeredSuffix(answeredGate)}` }], ...(effort === null ? {} : { effort }) } };
 }
 
 const CODEX_APPROVALS: ReadonlySet<string> = new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"]);
@@ -448,6 +451,8 @@ export interface HostConversationOptions {
   hostSessionId?: string | null;
   resume?: boolean;
   coordinator?: unknown;
+  /** The answered gate that this run's start names, for a launch that continues it, or null. */
+  answeredGate?: string | null;
   send: (message: unknown) => void;
   closeInput: () => void;
   onSessionId?: (id: string) => void;
@@ -473,7 +478,7 @@ export interface WaitingAsk { respond: (decision: PermissionDecision) => void; d
 export type PermissionAnswer = (decision: PermissionDecision) => unknown;
 export const REFUSED_ON_ATTENTION = "The person refused this on Attention.";
 
-export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null, permissions = null }: HostConversationOptions) {
+export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, answeredGate = null, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null, permissions = null }: HostConversationOptions) {
   const facts: HostFacts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
@@ -541,6 +546,7 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     hostSessionId,
     resume,
     coordinator: coordinatorOf(coordinator),
+    answeredGate,
     env: acp!.env,
     launch: acp!.launch,
     agentPid: acp!.agentPid,
@@ -567,7 +573,7 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     // Each can_use_tool request that waits, by its request id, so that a control_cancel_request withdraws it.
     const waitingTools = new Map<string, WaitingAsk>();
     return {
-      start: () => write(claudePrompt(initiative)),
+      start: () => write(claudePrompt(initiative, answeredGate)),
       interrupt() {
         if (interruptId !== null) return;
         interruptId = randomUUID();
@@ -705,7 +711,7 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
           close();
           return;
         }
-        const { method: turn, params } = codexTurnRequest({ threadId, initiative, coordinator });
+        const { method: turn, params } = codexTurnRequest({ threadId, initiative, coordinator, answeredGate });
         turnRequested = true;
         request(turn, params);
         return;

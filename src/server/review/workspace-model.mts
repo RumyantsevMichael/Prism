@@ -16,7 +16,7 @@ import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
 import { declaredView, governingContract, readViews, VIEW_KINDS } from "../workflow/view-declarations.mjs";
-import { appliedArtifactActions, pendingApprovalGates, readStoreArtifactAt, storeArtifactStatuses, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
+import { answeredApprovalGates, appliedArtifactActions, pendingApprovalGates, readStoreArtifactAt, storeArtifactStatuses, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
 import { servedWorkItem } from "../workflow/artifact-status.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
@@ -979,6 +979,7 @@ async function computeAttention(projectRoot: string) {
     if (item?.readyToShip && item.state !== "shipped") watch.push({ type: "ready-to-ship", initiative });
   }
   needsYou.push(...await approvalGates(projectRoot));
+  answered.push(...await answeredApprovals(projectRoot));
   needsYou.sort((left, right) => (left.type === "gate") === (right.type === "gate") ? gateOrder(left, right) : left.type === "gate" ? -1 : 1);
   if (roadmap.error) needsYou.push({ type: "roadmap-problem", path: config.paths.roadmap, message: roadmap.error });
   else if (!roadmap.exists && config.paths.roadmap) needsYou.push({ type: "roadmap-missing", path: roadmap.recordPath });
@@ -1019,6 +1020,28 @@ async function approvalGates(projectRoot: string) {
     workItem: await workItem(servedWorkItem(gate)),
     ...(holders.get(gate.id) > 1 ? { ambiguous: true } : {})
   })));
+}
+
+/**
+ * The answered approval gates whose asker Prism recorded, as Attention items of kind approval with their answer { choice, note, answeredAt },
+ * kept until a newer approval of the same artifact is asked or 7 days after the answer, so the person can continue the work from the card.
+ */
+async function answeredApprovals(projectRoot: string) {
+  const config = await readWorkflowConfig(projectRoot);
+  if ((config.workspace?.store ?? null) === null) return [];
+  const gates = await answeredApprovalGates(projectRoot).catch(() => []);
+  if (!gates.length) return [];
+  const { readGateAsker } = await import("../workflow/gate-askers.mjs");
+  const workItem = servedWorkItems(projectRoot);
+  const items = await Promise.all(gates.map(async (gate: any) => {
+    if (!(await readGateAsker(projectRoot, { gate: gate.id })).known) return null;
+    return {
+      type: "gate", id: gate.id, kind: "approval", status: gate.status, recorded: gate.recorded, question: gate.question, context: gate.context ?? null, options: null, recommended: null,
+      askedAt: gate.askedAt, answer: { choice: gate.answer.choice, note: gate.answer.note ?? null, answeredAt: gate.answer.answeredAt }, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope },
+      workItem: await workItem(servedWorkItem(gate))
+    };
+  }));
+  return items.filter(Boolean);
 }
 
 /**

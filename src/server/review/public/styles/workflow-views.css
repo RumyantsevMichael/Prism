@@ -620,6 +620,19 @@
   margin: 0;
 }
 
+/* Continue on an answered question: the ways to continue, then the button that starts the picked one. */
+.gate-continue {
+  display: grid;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.gate-continue .label-caps,
+.gate-continue .gate-error,
+.gate-continue-options p {
+  margin: 0;
+}
+
 /* The lifecycle keeps its six steps on one row, and takes two rows of three in a narrow sheet. */
 .gate-steps {
   grid-template-columns: repeat(6, minmax(0, 1fr));

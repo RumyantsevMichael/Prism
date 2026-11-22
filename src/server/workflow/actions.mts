@@ -11,9 +11,9 @@ import { isStoreWithoutCheckout, recordStoreOf } from "./record-store.mjs";
 import { runGit } from "./record-store-sync.mjs";
 import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { readRoadmap } from "./roadmap.mjs";
-import { shippedActionReason, shippedDecision } from "./shipped-history.mjs";
+import { roadmapEntry, shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction, validEarlierName } from "./state.mjs";
-import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget, withdrawArtifactApproval } from "./store-artifacts.mjs";
+import { ambiguousApprovalMessage, answerArtifactApproval, answeredApprovalGates, commentOnArtifact, pendingApprovalGates, storeArtifactTarget, withdrawArtifactApproval } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { WITHDRAWN_REASON } from "./gate-wait.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
@@ -173,9 +173,14 @@ async function readTarget(projectRoot: string, parsed: any, indexer: any, state 
   }
   if (parsed.kind === "approval") {
     // An approval gate lives in its artifact's status record in the store, so an answered or replaced one is no target.
-    const gates = await pendingApprovals(projectRoot, parsed.gate);
+    // An answered one whose asker Prism recorded stays a target while Attention lists it, so the person can continue the work from it.
+    const pending = await pendingApprovals(projectRoot, parsed.gate);
+    const asker = await askerOf(projectRoot, { gate: parsed.gate }, env);
+    const gates = pending.length ? pending : asker.known ? await answeredApprovals(projectRoot, parsed.gate) : [];
     if (!gates.length) throw unknownTarget(parsed.reference);
-    return { ...parsed, gateRecord: gates[0], ambiguous: gates.length > 1 ? ambiguousApprovalMessage(parsed.gate, gates) : null, asker: await askerOf(projectRoot, { gate: parsed.gate }, env) };
+    const context: any = { ...parsed, gateRecord: gates[0], ambiguous: gates.length > 1 ? ambiguousApprovalMessage(parsed.gate, gates) : null, asker };
+    if (state === undefined) context.continuation = await continuationOf(projectRoot, context, env, readOptions);
+    return context;
   }
   if (parsed.kind === "launch") {
     // A launched session is a target while this machine lists it for the page's checkout.
@@ -231,6 +236,8 @@ async function readTarget(projectRoot: string, parsed: any, indexer: any, state 
     if (!gate) throw unknownTarget(parsed.reference);
     context.gateRecord = gate;
     context.asker = await askerOf(projectRoot, { initiative: parsed.initiative, gate: parsed.gate }, env);
+    // The ways to continue read the initiative's launch and this machine's hosts, which only a listing or a continuation needs, never an answer under the state lock.
+    if (state === undefined) context.continuation = await continuationOf(projectRoot, context, env, readOptions);
   }
   return context;
 }
@@ -242,7 +249,19 @@ async function askerOf(projectRoot: string, key: { initiative?: string; gate: st
   const kept: Record<string, any> = await readAskerSessions(env).catch(() => ({}));
   const target = targetOf(key as any);
   const own = read.known && Object.hasOwn(kept, target) ? kept[target] : null;
-  return askerState(read, own, env).catch(() => ({ state: "unknown", reason: "Prism cannot tell whether this session is open." }));
+  const state = await askerState(read, own, env).catch(() => ({ state: "unknown", reason: "Prism cannot tell whether this session is open." }));
+  return { ...state, known: read.known, harness: read.harness, machine: read.machine, cloud: read.cloud, launched: read.launched, kept: own };
+}
+
+// The answered approval gates whose id is the given one; a project without a store has none.
+async function answeredApprovals(projectRoot: string, id: string) {
+  const config = await readWorkflowConfig(projectRoot);
+  if ((config.workspace?.store ?? null) === null) return [];
+  const gates = await answeredApprovalGates(projectRoot).catch((error) => {
+    if (error?.code === "store_not_configured") return [];
+    throw storeRefused(error) ? storeRefusal(error) : error;
+  });
+  return gates.filter((gate: any) => gate.id === id);
 }
 
 // ---- Definitions ----
@@ -539,8 +558,8 @@ const APPROVAL_ANSWER = {
   recommended: () => null,
   // An id that several pending gates hold names no version to answer against.
   revision: (context: any) => context.ambiguous ? null : context.gateRecord.current,
-  unavailable: (context: any) => context.ambiguous ?? (context.gateRecord.changed ? APPROVAL_CHANGED : null),
-  unavailableCode: (context: any) => context.ambiguous ? "approval_ambiguous" : "artifact_changed",
+  unavailable: (context: any) => context.ambiguous ?? (context.gateRecord.answer ? "The question already has an answer." : context.gateRecord.changed ? APPROVAL_CHANGED : null),
+  unavailableCode: (context: any) => context.ambiguous ? "approval_ambiguous" : context.gateRecord.answer ? "action_unavailable" : "artifact_changed",
   change: undefined
 };
 
@@ -703,6 +722,128 @@ const LAUNCH_RUN = {
     const { launch }: any = await startLaunch({ projectRoot: checkout, initiative: context.initiative, host, coordinator, env });
     const { provider, model, effort } = coordinator;
     return { launch, after: { launch: launch.id, host, coordinator: { provider, model, effort } }, initiative: context.initiative, started: launch.id };
+  }
+};
+
+// ---- Continuing an answered gate ----
+
+// Once an answer cannot reach the session that asked, the person picks how the work continues; every way starts a session or sends a
+// turn only after the confirmation outside the page, and an answer alone starts nothing.
+const NO_INITIATIVE = "The question names no initiative, so a new session has nothing to resume from.";
+const NOT_LISTED = "The roadmap does not list this initiative, so a new session has nothing to resume from.";
+const SUPERSEDED = "The initiative was superseded, so it is history.";
+const LAUNCHED_ASKER = "Prism launched the session that asked, so answering resumes it from its launched session.";
+// Resuming and waking an asker are later additions, so their options name why they do not apply yet once every other reason passes.
+const RESUME_NOT_YET = "Prism cannot resume the session that asked in this release.";
+const WAKE_NOT_YET = "Prism cannot wake the session that asked in this release.";
+
+// What the ways to continue read: the initiative the gate names, its roadmap entry, whether it shipped, the launch a new session runs
+// and why it is unavailable, this machine's hosts, and whether a launched session of the initiative runs here.
+async function continuationOf(projectRoot: string, context: any, env: NodeJS.ProcessEnv, readOptions: any) {
+  const named = context.kind === "gate" ? context.initiative : typeof context.gateRecord.initiative === "string" ? context.gateRecord.initiative : null;
+  const hosts = await hostAvailability({ env });
+  // A review app that runs in a Claude Code cloud session cannot send a wake.
+  const remote = env.CLAUDE_CODE_REMOTE === "true" || Boolean(env.CLAUDE_CODE_REMOTE_SESSION_ID);
+  if (named === null) return { initiative: null, listed: false, superseded: false, shipped: null, launch: null, hosts, running: false, remote };
+  const [{ entry }, shipped, running] = await Promise.all([
+    roadmapEntry(projectRoot, named).catch(() => ({ entry: undefined })),
+    context.kind === "gate" ? context.shipped : shippedDecision(projectRoot, named).catch(() => null),
+    initiativeRunning({ projectRoot, initiative: named, env }).catch(() => false)
+  ]);
+  const superseded = entry?.decision?.kind === "superseded";
+  let launch = null;
+  if (entry && !superseded && !shipped) {
+    const initiative = parseTarget(`initiative:${named}`);
+    const target = initiative ? await readTarget(projectRoot, initiative, null, undefined, env, null, readOptions ?? runOptionsReader(projectRoot, env)).catch(() => null) : null;
+    launch = target ? { context: target, reason: LAUNCH_RUN.unavailable(target) } : null;
+  }
+  return { initiative: named, listed: Boolean(entry) && launch !== null, superseded, shipped, launch, hosts, running, remote };
+}
+
+function newSessionReason(c: any) {
+  if (c.initiative === null) return NO_INITIATIVE;
+  if (c.superseded) return SUPERSEDED;
+  if (c.shipped) return shippedActionReason(c.shipped);
+  if (!c.listed) return NOT_LISTED;
+  return c.launch.reason;
+}
+
+// A resume continues the asker itself, so it applies only to a Claude Code or Codex session of this machine that Prism kept an id for and that is not running.
+function resumeReason(context: any, c: any) {
+  const asker = context.asker;
+  if (asker.cloud) return "This is a cloud session; wake it instead.";
+  if (!asker.kept) return asker.known ? `The session ran on ${asker.machine ?? "another machine"}; resume it there.` : "Prism kept no session id for it.";
+  const host = asker.kept.host;
+  if (host !== "claude-code" && host !== "codex") return `${asker.harness ?? "This harness"} does not let Prism resume a session by its id.`;
+  if (!asker.kept.sessionId) return "Prism kept no session id for it.";
+  if (asker.launched) return LAUNCHED_ASKER;
+  if (asker.state === "unknown") return `Prism cannot tell whether the session is open: ${asker.reason}`;
+  if (asker.state === "waiting") return "A session waits on this question, so it reads your answer.";
+  if (asker.state === "open") return "The session is open, so a resume would run beside it.";
+  if (c.running) return `A launched session of ${c.initiative} is running on this machine.`;
+  const found = c.hosts.find((item: any) => item.host === host);
+  if (!found?.available) return found?.reason ?? `${hostLabel(c, host)} was not found.`;
+  return RESUME_NOT_YET;
+}
+
+// A wake posts a pointer into the asking cloud session, which only a computer of the person's own can send.
+function wakeReason(context: any, c: any) {
+  if (!context.asker.cloud) return "The session that asked is not a cloud session.";
+  if (c.remote) return "A wake must be sent from your own computer, not from a cloud session.";
+  const claude = c.hosts.find((item: any) => item.host === "claude-code");
+  if (!claude?.available) return claude?.reason ?? "Claude Code was not found: no claude executable on PATH.";
+  return WAKE_NOT_YET;
+}
+
+function continuationOptions(context: any) {
+  const c = context.continuation;
+  if (!c) return [];
+  return [
+    { value: "new-session", label: "New orchestration session", consequence: "Starts a new orchestration session of the initiative on this computer that acts first on your answer; you confirm it outside the browser.", reason: newSessionReason(c) },
+    { value: "resume", label: "Resume the session that asked", consequence: "Resumes the session that asked, headless on this computer, with a message that your answer is in Prism's records; you confirm it outside the browser.", reason: resumeReason(context, c) },
+    { value: "wake", label: "Wake the cloud session that asked", consequence: "Sends the cloud session that asked a pointer to your answer from this computer; you confirm it outside the browser.", reason: wakeReason(context, c) }
+  ];
+}
+
+// A session that waits on the question, or an open asker, reads the answer itself, and a launched asker resumes from its launched session.
+function continueUnavailable(context: any) {
+  const c = context.continuation;
+  if (c?.shipped && context.kind === "approval") return shippedActionReason(c.shipped);
+  if (context.ambiguous) return context.ambiguous;
+  if (context.asker?.state === "waiting") return "A session waits on this question, so it reads your answer.";
+  if (context.asker?.state === "open") return "The session that asked is open, so it reads your answer when it gets a message.";
+  if (!context.gateRecord.answer) return "Answer the question first.";
+  if (context.asker?.launched) return LAUNCHED_ASKER;
+  if (continuationOptions(context).every((item: any) => item.reason)) return "No way to continue applies to this question.";
+  return null;
+}
+
+const GATE_CONTINUE = {
+  ...launchBase,
+  id: "gate.continue",
+  kinds: ["gate", "approval"],
+  label: "Continue",
+  group: "Question",
+  effect: "Continues the work with your answer in the way you pick; nothing starts until you confirm outside the browser.",
+  target: (context: any) => context.reference,
+  fields: (context: any) => [choice("continuation", "Continue with", continuationOptions(context), { required: true })],
+  recommended: (context: any) => context.continuation && newSessionReason(context.continuation) === null ? { value: "new-session", reason: "A new session reads your answer from the records and needs no live session." } : null,
+  revision: (context: any) => context.kind === "approval" ? (context.ambiguous ? null : context.gateRecord.current) : context.coordination.revision,
+  unavailable: continueUnavailable,
+  unavailableCode: (context: any) => context.ambiguous ? "approval_ambiguous" : "action_unavailable",
+  after: (values: any) => ({ continuation: values.continuation }),
+  async launch({ projectRoot, context, env, values }: { projectRoot: string; context: any; env: NodeJS.ProcessEnv; values: any }) {
+    const picked = continuationOptions(context).find((item: any) => item.value === values.continuation);
+    if (!picked || picked.reason) throw fail("action_unavailable", picked?.reason ?? "No way to continue applies to this question.", { reason: picked?.reason ?? null });
+    // A new session is the initiative's launch, with its run configuration, confirmation, and one-session rule, whose start names the answered gate.
+    const target = context.continuation.launch.context;
+    const host = launchHostOf(target);
+    const coordinator = await checkedLaunchChoices(target, host);
+    const checkout = await realpath(projectRoot);
+    await confirmLaunch({ initiative: target.initiative, host, checkout, env });
+    const { launch }: any = await startLaunch({ projectRoot: checkout, initiative: target.initiative, host, coordinator, answeredGate: context.gate, env });
+    const { provider, model, effort } = coordinator;
+    return { launch, after: { continuation: "new-session", launch: launch.id, host, coordinator: { provider, model, effort } }, initiative: target.initiative, started: launch.id };
   }
 };
 
@@ -883,7 +1024,7 @@ const MACHINE_PRISM_RUNS = {
 };
 
 /** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, GATE_WITHDRAW, APPROVAL_WITHDRAW, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, AGENT_INSTALL, AGENT_UPDATE, AGENT_REMOVE, MACHINE_PRISM_RUNS];
+const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, GATE_WITHDRAW, APPROVAL_WITHDRAW, GATE_CONTINUE, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, AGENT_INSTALL, AGENT_UPDATE, AGENT_REMOVE, MACHINE_PRISM_RUNS];
 
 /** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
 export const actionEffect = (id: string) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;

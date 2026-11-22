@@ -1583,6 +1583,32 @@ export async function pendingApprovalGates(projectRoot: string) {
   });
 }
 
+// An answered approval gate stays a target and an Attention item for its continuation this long after its answer.
+export const ANSWERED_APPROVAL_KEPT_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Every answered approval gate of the requirements and ADRs that the checkout sees whose answer is at most 7 days old and after which
+ * no newer approval of the same artifact was asked, newest answer first, in the shape pendingApprovalGates gives with the gate's answer.
+ */
+export async function answeredApprovalGates(projectRoot: string, now = Date.now()) {
+  return refusing(async () => {
+    await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    const gates = [];
+    const resolve = manyReads(seen);
+    for (const entry of await statusHoldings(seen)) {
+      const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path), resolve);
+      const asked = (gate: any) => Date.parse(gate?.askedAt ?? "") || 0;
+      const latest = Math.max(0, ...[...record.pending, ...record.closed].map(asked));
+      const current = record.closed.filter((gate: any) => gate.answer && asked(gate) === latest && now - (Date.parse(gate.answer.answeredAt ?? "") || 0) <= ANSWERED_APPROVAL_KEPT_MS);
+      if (!current.length) continue;
+      const stored = await readStored(entry.target).catch(() => null);
+      for (const gate of current) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope }, recorded: record.status, current: stored?.version ?? null, changed: stored?.version !== gate.version });
+    }
+    return gates.sort((left: any, right: any) => (Date.parse(right.answer.answeredAt) || 0) - (Date.parse(left.answer.answeredAt) || 0));
+  });
+}
+
 async function seenPendingGates(seen: any) {
   const gates = [];
   const resolve = manyReads(seen);

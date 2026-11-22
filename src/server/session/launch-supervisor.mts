@@ -17,7 +17,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
-import { launchCoordinator, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
+import { ANSWERED_GATE_PATTERN, launchCoordinator, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
 import { isAcpHost } from "./acp-agents.mjs";
 import { hostArguments, hostConversation, hostEnvironment, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 import { approvalText, confirmApproval } from "./launch-confirmation.mjs";
@@ -148,6 +148,8 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
       hostSessionId: record.hostSessionId,
       resume,
       coordinator,
+      // Only the first run starts from the answered gate; a resume continues the conversation that already acted on it.
+      answeredGate: !resume && typeof record.answeredGate === "string" && ANSWERED_GATE_PATTERN.test(record.answeredGate) ? record.answeredGate : null,
       send: (message) => child.stdin.write(`${JSON.stringify(message)}\n`),
       closeInput: () => child.stdin.end(),
       onSessionId: (id) => update((current: any) => { if (!current.hostSessionId) current.hostSessionId = id; }),

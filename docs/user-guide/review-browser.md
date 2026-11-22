@@ -202,6 +202,13 @@ Withdraw closes the question without an answer and removes it from Attention, re
 It is unavailable while a session waits on the question, while the asking session is open, and once the question has an answer.
 Withdrawing a requirement's or ADR's approval leaves the file's recorded status and accepted version as they were.
 A session that later waits on a withdrawn question learns at once that you withdrew it, and does not act on it as answered.
+An answered question whose answer cannot reach its asking session, because no wait holds it and that session is not open, has **Continue the work** on its card.
+It lists the ways to continue, and names why each one that does not apply cannot, such as a question that names no initiative or an initiative that the roadmap does not list, was superseded, or shipped.
+**New orchestration session** is the default: it launches the question's initiative as **Launch** does, with the initiative's host and models, and its start names the answered question, so the new session acts on your answer first.
+Nothing starts until you confirm the launch outside the browser, and a declined confirmation starts nothing.
+Answering a question starts no session by itself, here or when an answer arrives from another machine through the shared records.
+Continue is unavailable while a session waits on the question or the asking session is open, since that session reads your answer itself, and for a session that Prism launched, which resumes from its launched session.
+An answered requirement or ADR approval whose asking session Prism recorded stays under Answered with its answer, so you can continue its work, until a newer approval of the same file is asked or for 7 days.
 Attention also lists blocked slices, open findings, failed verifications, and active work.
 In a window as narrow as a phone, Attention opens on its list, and picking an item shows its card in place of the list, with **All items** to go back.
 A slice that is not done is a failed verification while its latest verification run failed, with the reason in words, such as `The tests failed, 2 tests failed`, until a later run passes or the slice is done.

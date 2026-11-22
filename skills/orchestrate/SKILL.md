@@ -1,7 +1,7 @@
 ---
 name: orchestrate
 description: "Run or resume an initiative: design one contract per scope, gate it, start each planned slice, implement and verify it in a fresh session, review it only when marked, and keep the user's gates. Use when the user asks, or agrees when offered, to run or resume an initiative, issue, or idea through Prism, or when a coordinating agent asks."
-argument-hint: '[initiative]'
+argument-hint: '[initiative] [answered-gate <id>]'
 sdm: "0.3"
 ---
 
@@ -39,7 +39,7 @@ When a Prism result carries a [person change notice](../workflow/SKILL.md#common
 
 ## 2. Start
 
-1. Read `.prism/workflow.md`, the settings, and the pending user gates, and act on every recorded answer; when `.prism/workflow.md` is missing, or a Prism tool or child reports a setting or record that `setup` owns, run `setup` in a fresh child agent while no slice is `in-progress`, asking its blockers as gates.
+1. Read `.prism/workflow.md`, the settings, and the pending user gates, and act on every recorded answer, first on the gate that a start naming `answered-gate <id>` names, whose answer for an approval gate is `latestAnswer` of its artifact through `get_artifact`; when `.prism/workflow.md` is missing, or a Prism tool or child reports a setting or record that `setup` owns, run `setup` in a fresh child agent while no slice is `in-progress`, asking its blockers as gates.
 2. When the initiative has no Approved requirements or no roadmap entry, run `triage` in a fresh child agent for a reported defect, and `ideate` for new intent or when triage returns `NOT_A_DEFECT`.
 3. Read the initiative record with `get_initiative`.
 4. When the record does not exist, call `update_initiative` with `expectedRevision: null` and a `create` operation for the root slice with its slug, title, outcome, and every Approved requirement of the initiative.

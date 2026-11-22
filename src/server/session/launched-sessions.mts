@@ -27,6 +27,7 @@ import {
   launchCoordinator,
   launchFolder,
   launchRunning,
+  ANSWERED_GATE_PATTERN,
   launchView,
   launchesDirectory,
   listLaunchRecords,
@@ -145,7 +146,8 @@ const RECORDED_CHOICE_INVALID = "The session's recorded model choice is not one 
  * Starts a launched session's first run with the coordinator's choice { provider, model, effort, typed }, each part null for the
  * host default: { launch }, its view in state running. The launch record keeps the choice, and every resume runs with it.
  */
-export async function startLaunch({ projectRoot, initiative, host, coordinator = null, env = process.env }: { projectRoot: string; initiative: string; host: string; coordinator?: unknown; env?: NodeJS.ProcessEnv }) {
+export async function startLaunch({ projectRoot, initiative, host, coordinator = null, answeredGate = null, env = process.env }: { projectRoot: string; initiative: string; host: string; coordinator?: unknown; answeredGate?: string | null; env?: NodeJS.ProcessEnv }) {
+  if (answeredGate !== null && !ANSWERED_GATE_PATTERN.test(answeredGate)) throw refuse("invalid_gate", "The answered gate is not a gate id that Prism records.");
   const definition = hostDefinition(host, env);
   if (!definition) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code, codex, and the ACP agents that this computer offers.`);
   const choice = checkedCoordinator(coordinator);
@@ -168,6 +170,8 @@ export async function startLaunch({ projectRoot, initiative, host, coordinator =
       createdAt: new Date().toISOString(),
       hostSessionId: host === "claude-code" ? randomUUID() : null,
       coordinator: choice,
+      // A launch that continues an answered gate names it in its first run's start, so the orchestrate skill acts on that answer first.
+      ...(answeredGate === null ? {} : { answeredGate }),
       runs: []
     };
     await writeLaunchRecord(folder, record);

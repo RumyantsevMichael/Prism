@@ -349,8 +349,80 @@ function answeredDetail(item: any, ctx: any) {
     className: `is-answered gate-${escapeHtml(item.kind)}`,
     head: `${kindChip(item)}<span class="attention-where">${location(item, ctx)}</span>${when(item.answer.answeredAt, "attention-time gate-time")}`,
     title: escapeHtml(item.question),
-    body: `${gateAsker(item)}<p class="gate-given">${given(item)}</p><p class="attention-footnote muted">An agent that is waiting for these answers resumes on its own shortly after your last answer. Any other agent receives them with your next message in its conversation, even a short one such as “go”.</p>`
+    body: `${gateAsker(item)}<p class="gate-given">${given(item)}</p>${gateContinue(item)}<p class="attention-footnote muted">An agent that is waiting for these answers resumes on its own shortly after your last answer. Any other agent receives them with your next message in its conversation, even a short one such as “go”.</p>`
   });
+}
+
+// An answered question whose asker cannot read the answer offers to continue the work; which ways apply, and why the others do not, come from the server's listing.
+function gateContinue(item: any) {
+  const asker = item.asker;
+  if (!asker || item.unavailable || asker.state === "waiting" || asker.state === "open" || asker.launched) return "";
+  const target = item.kind === "approval" ? " data-approval" : ` data-initiative="${escapeHtml(item.initiative?.id ?? "")}"`;
+  return `<div class="gate-continue" data-continue="${escapeHtml(item.id)}"${target}>
+    <p class="label-caps">Continue the work</p>
+    <div class="gate-continue-options" data-continue-options><p class="muted">Reading how the work can continue…</p></div>
+    <div class="gate-actions"><p class="gate-hint muted">Nothing starts until you confirm outside the browser.</p><prism-button variant="primary" data-continue-submit disabled>Continue</prism-button></div>
+    <p class="gate-error" role="alert" hidden></p>
+  </div>`;
+}
+
+// A continuation confirmed in a native dialog can wait on the person for a while, so its apply gets the dialog's time.
+const CONTINUE_DEADLINE_MS = 200000;
+
+// The ways to continue an answered question, read from its Continue action: each option with what it does, or why it does not apply.
+function bindContinues(container: any, ctx: any) {
+  const drafts = (ctx.state.continueDrafts ??= {});
+  for (const row of container.querySelectorAll(".gate-continue")) {
+    const id = row.dataset.continue;
+    const target = row.hasAttribute("data-approval") ? `approval:${id}` : `gate:${row.dataset.initiative}/${id}`;
+    const slot = row.querySelector("[data-continue-options]");
+    const button = row.querySelector("[data-continue-submit]");
+    const failure = row.querySelector(".gate-error");
+    const draft = (drafts[id] ??= { choice: null, sending: false });
+    let action: any = null;
+    const showFailure = (message: string) => {
+      failure.textContent = message;
+      failure.hidden = false;
+    };
+    ctx.actionApi.list(target).then((listing: any) => {
+      action = (listing.actions ?? []).find((item: any) => item.id === "gate.continue") ?? null;
+      if (!action) {
+        row.hidden = true;
+        return;
+      }
+      const options = action.fields?.[0]?.options ?? [];
+      const usable = (value: any) => options.some((option: any) => option.value === value && !option.reason);
+      draft.choice = usable(draft.choice) ? draft.choice : usable(action.recommended?.value) ? action.recommended.value : options.find((option: any) => !option.reason)?.value ?? null;
+      const choices = options.map((option: any) => `<prism-choice-option value="${escapeHtml(option.value)}"${option.reason ? " disabled" : ""}>${escapeHtml(option.label)}${option.value === action.recommended?.value ? ` ${badge("Recommended", "accent")}` : ""}<span slot="detail">${escapeHtml(option.reason ?? option.consequence ?? "")}</span></prism-choice-option>`).join("");
+      slot.innerHTML = `<prism-choice aria-label="How the work continues"${draft.choice ? ` value="${escapeHtml(draft.choice)}"` : ""}>${choices}</prism-choice>${action.available ? "" : `<p class="muted">${escapeHtml(action.reason ?? "")}</p>`}`;
+      const choice = slot.querySelector("prism-choice");
+      choice.addEventListener("change", () => {
+        draft.choice = choice.value || null;
+        failure.hidden = true;
+        button.toggleAttribute("disabled", draft.sending || !action.available || !draft.choice);
+      });
+      button.toggleAttribute("disabled", draft.sending || !action.available || !draft.choice);
+    }, (error: any) => {
+      slot.innerHTML = "";
+      showFailure(error?.message ?? "The ways to continue could not be read.");
+    });
+    button.addEventListener("click", async () => {
+      if (!action?.available || !draft.choice || draft.sending) return;
+      draft.sending = true;
+      failure.hidden = true;
+      button.toggleAttribute("disabled", true);
+      const result = await ctx.actionApi.apply({ action: "gate.continue", target, input: { continuation: draft.choice }, revision: action.revision }, { deadlineMs: CONTINUE_DEADLINE_MS });
+      draft.sending = false;
+      if (result.status === 200) {
+        delete drafts[id];
+        ctx.showToast("The work continues. The new session acts first on your answer.");
+        ctx.rerender();
+        return;
+      }
+      showFailure(result.json?.reason ?? result.json?.message ?? "Nothing started.");
+      button.toggleAttribute("disabled", false);
+    });
+  }
 }
 
 // A closed question shows the browser answer, the person's withdrawal, or the reason the agent gave when it resolved the question without one.
@@ -962,6 +1034,7 @@ export function render(container: any, entity: any, ctx: any) {
   bindLinks(container, ctx);
   bindAnswers(container, ctx, gates);
   bindWithdraws(container, ctx);
+  bindContinues(container, ctx);
   bindPermissions(container, ctx);
   // A change applied while the page is open names its question from the questions the page shows.
   const questions = new Map([...gates, ...(data.shippedGates ?? []), ...answered, ...earlier].filter((item) => item.initiative?.id).map((item) => [`gate:${item.initiative.id}/${item.id}`, item.question]));

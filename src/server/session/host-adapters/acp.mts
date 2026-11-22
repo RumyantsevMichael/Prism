@@ -305,7 +305,7 @@ const BYPASS_WORDS = /bypass|full[\s_-]*access|(accept|allow|approve)s?\s+(all|e
 export const SKILL_URI = "prism://skills/orchestrate/SKILL.md";
 
 /** The instruction that follows the orchestrate skill's text in a launched run's prompt. */
-export const launchInstruction = (initiative: string) => `Run the Prism skill orchestrate in the attached resource for the initiative ${initiative}. Prism's skills are not installed in this agent: read every other Prism skill or reference file that a skill names with Prism's get_skill tool.`;
+export const launchInstruction = (initiative: string, answeredGate: string | null = null) => `Run the Prism skill orchestrate in the attached resource for the initiative ${initiative}. Prism's skills are not installed in this agent: read every other Prism skill or reference file that a skill names with Prism's get_skill tool.${answeredGate === null ? "" : ` Act first on the answer of the gate ${answeredGate}.`}`;
 
 /** The run reasons of a launched ACP run that are its own sentences. */
 export const acpRunReasons = Object.freeze({
@@ -353,6 +353,8 @@ export interface AcpConversationOptions {
   hostSessionId: string | null;
   resume: boolean;
   coordinator: { model: string | null; effort: string | null };
+  /** The answered gate that the prompt names, for a launch that continues it, or null. */
+  answeredGate?: string | null;
   env: NodeJS.ProcessEnv;
   launch: string | null;
   /** The process id of the agent that the supervisor started. */
@@ -412,7 +414,7 @@ export function acpPermission(label: string, params: unknown, known: KnownToolCa
  * runs and closes the input when it answers, or closes the input at once before the prompt. It answers { start, interrupt, event }.
  */
 export function acpConversation(options: AcpConversationOptions) {
-  const { label, initiative, checkout, hostSessionId, resume, coordinator, env, launch, facts, write, close, cut } = options;
+  const { label, initiative, checkout, hostSessionId, resume, coordinator, answeredGate = null, env, launch, facts, write, close, cut } = options;
   const pending = new Map<number, string>();
   const toolCalls = new Map<string, KnownToolCall>();
   // Each permission request that waits, by its JSON-RPC id, so that $/cancel_request withdraws it.
@@ -498,7 +500,7 @@ export function acpConversation(options: AcpConversationOptions) {
     }
     const first = embedded ? { type: "resource", resource: { uri: SKILL_URI, mimeType: "text/markdown", text: skill } } : { type: "text", text: skill };
     prompting = true;
-    request("session/prompt", { sessionId, prompt: [first, { type: "text", text: launchInstruction(initiative) }] });
+    request("session/prompt", { sessionId, prompt: [first, { type: "text", text: launchInstruction(initiative, answeredGate) }] });
   };
   const opened = (method: string, result: any) => {
     const id = method === "session/new" ? result?.sessionId : hostSessionId;
