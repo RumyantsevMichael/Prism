@@ -21,7 +21,7 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadAttention, loadClaims, loadDeclaredView, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, loadAttention, loadClaims, loadDeclaredView, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { frozenTestFile, verificationLog } from "./verification-view.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
@@ -191,7 +191,7 @@ function reviewListing(projectRoot: string) {
 
 // A wanted file whose presence on disk disagrees with the kept listing, such as one an agent has just written, moved, or deleted, lists the project again,
 // so a few checked files keep the listing honest without listing the whole project on every request.
-// The listing keeps only what the checkout holds; a store's artifacts, which another process's tool call can change at any time, are listed on every request.
+// The listing keeps only what the checkout holds; a store's artifacts, which another process's tool call can change at any time, are reused only until a file of the store changes.
 async function listedFiles(projectRoot: string, wanted: any[] = []) {
   const listing = reviewListing(projectRoot);
   let value = await listing.get();
@@ -209,10 +209,10 @@ async function listedFiles(projectRoot: string, wanted: any[] = []) {
 // With a record store, the descriptive artifacts the checkout sees come from the store, by path, while the checkout's own files under those paths are not artifacts.
 // An unavailable store or a refused repository name lists no artifact, and never the checkout's files in their place; null means the project names no store.
 async function storeArtifactEntries(projectRoot: string) {
-  return listStoreArtifacts(projectRoot).catch((error) => {
+  return rememberView(projectRoot, "store-artifacts", () => listStoreArtifacts(projectRoot).catch((error) => {
     if (recordsUnavailable(error) || error?.name === "ArtifactError") return [];
     throw error;
-  });
+  }));
 }
 
 /** Why the record store cannot serve the checkout's artifacts, as describeRecordStore reports it with the store named as configured, or null when it can or the project names no store. */
@@ -235,6 +235,10 @@ async function listReviewSources(projectRoot: string) {
 
 /** The store ref, store:<location>, of each store artifact the checkout sees, by path; a path that several scopes hold names the first by label. */
 async function storeArtifactRefs(projectRoot: string) {
+  return rememberView(projectRoot, "store-artifact-refs", () => computeStoreArtifactRefs(projectRoot));
+}
+
+async function computeStoreArtifactRefs(projectRoot: string) {
   const refs: Record<string, any> = {};
   for (const entry of await storeArtifactEntries(projectRoot) ?? []) {
     if (Object.hasOwn(refs, entry.path)) continue;
@@ -284,10 +288,10 @@ const storeRefOf = (location: any) => `${STORE_REF}${location}`;
 
 // Every scope's artifacts in the store that a workspace's page reads through, or null when the page reads no store or its store cannot serve them.
 async function workspaceStoreArtifacts(projectRoot: string) {
-  return workspaceArtifacts(projectRoot).catch((error) => {
+  return rememberView(projectRoot, "workspace-store-artifacts", () => workspaceArtifacts(projectRoot).catch((error) => {
     if (recordsUnavailable(error) || error?.name === "ArtifactError") return null;
     throw error;
-  });
+  }));
 }
 
 // Scopes listed workspace first and then by label.
