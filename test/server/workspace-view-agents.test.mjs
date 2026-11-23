@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { checkout, isolateGit, ok, refused, server, version, writeArtifact } from "./fixtures/workspace-view.mjs";
+import { adrFile, checkout, isolateGit, ok, refused, requirementFile, server, version, writeArtifact } from "./fixtures/workspace-view.mjs";
 import { workspace } from "./fixtures/workspace-artifacts.mjs";
 
 // Contract clauses 26-33 of the workspace-view design: agents list and read every scope's artifacts, by label or location, and change only their own.
@@ -16,12 +16,12 @@ async function twoRepositories(context) {
   const where = await workspace(context);
   const api = await server(context, where, await checkout(where, "api", { components: ["- billing: packages/billing"] }));
   const web = await server(context, where, await checkout(where, "web", { paths: ["- Plans: docs/plans", "- Requirements: specs", "- ADRs: n/a"] }));
-  await writeArtifact(api, "docs/requirements/shared.md", "# Shared\n");
+  await writeArtifact(api, "docs/requirements/shared.md", requirementFile("Shared"));
   await writeArtifact(api, "docs/plans/reports/slice.md", "# API reports\n", { scope: "repository" });
-  await writeArtifact(api, "docs/ADRs/ledger.md", "# Ledger\n", { scope: "repository" });
-  await writeArtifact(api, "docs/requirements/totals.md", "# Totals\n", { scope: "component", component: "billing" });
+  await writeArtifact(api, "docs/ADRs/ledger.md", adrFile("Ledger"), { scope: "repository" });
+  await writeArtifact(api, "docs/requirements/totals.md", requirementFile("Totals"), { scope: "component", component: "billing" });
   await writeArtifact(web, "docs/plans/reports/slice.md", "# Web reports\n", { scope: "repository" });
-  await writeArtifact(web, "specs/pages.md", "# Pages\n", { scope: "repository" });
+  await writeArtifact(web, "specs/pages.md", requirementFile("Pages"), { scope: "repository" });
   return { where, api, web };
 }
 
@@ -62,7 +62,7 @@ test("clause 28: a read with a scope label returns that scope's artifact, and an
 test("clause 29: a read by location needs no configured folder, and does not combine with a path", async (context) => {
   const { web } = await twoRepositories(context);
   const read = ok(await web.call("get_artifact", { location: "repositories/api/adrs/ledger.md" }));
-  assert.equal(read.content, "# Ledger\n");
+  assert.equal(read.content, adrFile("Ledger"));
   assert.equal(read.location, "repositories/api/adrs/ledger.md");
   assert.equal(read.path, null);
   refused(await web.call("get_artifact", { location: "repositories/api/adrs/ledger.md", path: "docs/plans/reports/slice.md" }), "scope_invalid");
@@ -90,7 +90,7 @@ test("clause 32: an agent cannot change an artifact that only another repository
   const pages = ok(await api.call("get_artifact", { path: "docs/requirements/pages.md", label: "web" }));
   for (const operation of [
     { op: "edit", path: "docs/requirements/pages.md", expectedVersion: pages.version, edits: [{ oldText: "Pages", newText: "Screens" }] },
-    { op: "write", path: "docs/requirements/pages.md", content: "# Screens\n", expectedVersion: pages.version },
+    { op: "write", path: "docs/requirements/pages.md", content: requirementFile("Screens"), expectedVersion: pages.version },
     { op: "remove", path: "docs/requirements/pages.md", expectedVersion: pages.version },
     { op: "move_scope", path: "docs/requirements/pages.md", expectedVersion: pages.version, scope: "workspace" },
     { op: "ask_approval", path: "docs/requirements/pages.md", context: "Pages are ready." }
@@ -107,14 +107,14 @@ test("clause 33: listings answer from an index that a write refreshes, and 20,00
   const api = await server(context, where, await checkout(where, "api"));
   const first = ok(await api.call("get_artifact", {}));
   assert.ok(!Number.isNaN(Date.parse(first.indexedAt)), "the listing names the time of its index");
-  await writeArtifact(api, "docs/requirements/new.md", "# New\n");
+  await writeArtifact(api, "docs/requirements/new.md", requirementFile("New"));
   assert.ok(ok(await api.call("get_artifact", {})).artifacts.some((entry) => entry.path === "docs/requirements/new.md"), "a write is listed by the next listing");
   const folder = path.join(where.store, "artifacts", "requirements", "bulk");
   for (let group = 0; group < 100; group += 1) {
     await mkdir(path.join(folder, `g${group}`), { recursive: true });
     await Promise.all(Array.from({ length: 200 }, (_, index) => writeFile(path.join(folder, `g${group}`, `r${index}.md`), `# R ${group} ${index}\n`)));
   }
-  await writeArtifact(api, "docs/requirements/trigger.md", "# Trigger\n");
+  await writeArtifact(api, "docs/requirements/trigger.md", requirementFile("Trigger"));
   const built = ok(await api.call("get_artifact", {}));
   assert.equal(built.truncated, true);
   const started = Date.now();

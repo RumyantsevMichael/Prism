@@ -129,7 +129,7 @@ Workspace example:
 ## 4. Create missing documentation
 
 1. Create missing configured documentation directories, including parent directories for configured files, except the requirements, ADR, plans, glossary, and roadmap paths of a project with a store, which hold store artifacts.
-2. If the glossary is absent, create its title and one-line purpose, through `update_artifact` in a project with a store.
+2. If the glossary is absent, create it as the title and purpose of the [glossary format](../workflow/references/glossary-format.md), through `update_artifact` in a project with a store.
 3. If the roadmap record is absent and no legacy roadmap exists, create it by calling `update_roadmap` with `expectedRevision: null` and the product purpose as what the roadmap serves.
 4. If a legacy roadmap or sibling `roadmap.puml` exists without a roadmap record:
    1. Map each legacy initiative to an identifier that matches its plans folder, its band, its required initiatives, its rationale, and its open questions.

@@ -5,7 +5,7 @@ import { eventually, open, placesDemo, settledOn } from "./fixtures/places-brows
 
 // Requirements: docs/requirements/review-app-places.md §46, as the approved mockup shows Requirements, Decisions, and Diagrams as one library table each,
 // with a filter and a Group by choice above it that the person's preferences keep.
-// The demo holds four requirements files, three Approved and one Draft, three decisions in two areas, and one diagram of a slice.
+// The demo holds five requirements files, three Approved, one Draft, and one old note without a status that breaks its format, three decisions in two areas, and one diagram of a slice.
 
 const table = (page) => page.locator("#artifact prism-lib-table.library-table");
 // A group's name with its count; a status group is named by its status.
@@ -20,9 +20,9 @@ test("Requirements groups its files by status, says what each holds, and shows e
   const { base, browser } = await placesDemo(context);
   const page = await open(browser, base, "requirements");
   await table(page).waitFor({ timeout: 10000 });
-  assert.equal(await page.locator("#artifact .artifact-header prism-page-sub").innerText(), "4 requirements files: what the product must do, and which slices build each requirement.");
+  assert.equal(await page.locator("#artifact .artifact-header prism-page-sub").innerText(), "5 requirements files: what the product must do, and which slices build each requirement. · 1 of 5 breaks its format");
   assert.deepEqual(await columns(page), ["Requirements file", "Status", "Date", "Assigned to"]);
-  assert.deepEqual(await groups(page), ["Approved 3", "Draft 1"], "Approved files come before drafts");
+  assert.deepEqual(await groups(page), ["Approved 3", "Draft 1", "No status 1"], "Approved files come before drafts, and a file without a status comes last");
   const reports = rowOf(page, "Activity reports");
   assert.equal(await reports.locator(".prism-lib-cell.is-detail").innerText(), "2 requirements");
   assert.deepEqual((await reports.locator("prism-chip").allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()), ["Authorize report access req 2", "Download signed reports req 1"]);
@@ -44,7 +44,7 @@ test("Group by and the filter change only the table, the grouping stays a prefer
   assert.deepEqual(await eventually(() => titles(page), ["Audit log"]), ["Audit log"]);
   assert.equal(await page.evaluate(() => document.activeElement?.closest("[data-library-filter]") !== null), true, "the field keeps its focus while the rows change");
   await filter.press("Escape");
-  assert.equal((await eventually(() => titles(page).then((names) => names.length), 4)), 4);
+  assert.equal((await eventually(() => titles(page).then((names) => names.length), 5)), 5);
   await filter.fill("no such record");
   assert.equal(await table(page).locator(".prism-lib-nothing").innerText(), "No record matches the filter.");
   await groupBy(page, "None").click();

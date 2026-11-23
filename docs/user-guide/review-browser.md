@@ -51,7 +51,7 @@ When Prism cannot read `personal-settings.json` in its application folder, the s
 **Record store** says where the project's records live and opens the store's details.
 **Prism's own runs** chooses, once for this computer, the host and model of the runs that Prism starts on its own, such as a run that moves records to a new format.
 Its **Host** select offers **Any available host** and every host Prism supports, a host this computer lacks shown as unavailable with its reason, and its **Model** picker offers the models, efforts, and provider that the chosen host reports, as the models of an initiative's **Settings** do, or a model name typed as written.
-**Any available host** starts each run on the first host Prism finds with that host's default model, so its **Model** picker takes no choice.
+**Any available host**, like no stored choice, starts each run with Codex and its GPT-6 Luna model where Codex lists it, and otherwise on the first host Prism finds on this computer with a small model, Claude Code's `haiku` or Codex's first listed model whose name ends in `-luna` or `-mini`, so its **Model** picker takes no choice.
 **Apply** stores the choice in `prism-runs.json` in the review app folder, readable only by you, and only a tab that Prism opened can apply it; a run already started keeps its own host and model.
 When the chosen host is no longer found, or the stored choice cannot be read, a run starts on the first host Prism finds with its default model and says why, and with no host found it does not start.
 **Coding agents** lists the [ACP agents](#acp-agents) that Prism can launch or install, as [Coding agents in Settings](#coding-agents-in-settings) describes.
@@ -63,7 +63,7 @@ The status bar at the bottom starts with **Settings**, then shows where the proj
 Times in words, such as when a question was asked, how long ago the records synced, or how long a claim has left, count on while the page is open, and hovering one shows the exact date and time.
 The rail at the left edge switches between five places, and the sidebar beside it shows only the current place, under its title and a line that says what it holds.
 **Attention** shows what waits on you, and the rail's Attention button carries the number of recorded questions that wait for an answer.
-Its sidebar lists **Everything**, then under **By kind** **Questions**, **Review findings**, **Failed verifications**, **Blocked work**, **Ready to ship**, and **Problems**, each with its count, also at 0, then under **By work** the three initiatives with the most items and a row such as `2 more` that shows the rest below it, and under **Answered** **Answered in the last 7 days**.
+Its sidebar lists **Everything**, then under **By kind** **Questions**, **Review findings**, **Failed verifications**, **Blocked work**, **Ready to ship**, **Problems**, and **Format findings**, each with its count, also at 0, then under **By work** the three initiatives with the most items and a row such as `2 more` that shows the rest below it, and under **Answered** **Answered in the last 7 days**.
 **Work** lists each initiative that has an initiative record and is neither shipped nor superseded, with its slices, under the groups **In progress**, **Blocked**, **Designed, not started**, and **Not on the roadmap**, each with its count, and leaves out an empty group.
 An initiative is **Blocked** when one of its slices is blocked and none is in progress or claimed, and it keeps the roadmap's order inside its group; initiatives that are not on the roadmap go by title.
 **Roadmap** starts with **Whole roadmap**, which opens the Roadmap page, and lists **Now**, **Next**, **Later**, and **Parked** under **Lanes**, each with its count of open initiatives; choosing it on the rail also opens the Roadmap page.
@@ -87,6 +87,11 @@ In a workspace whose store holds more than one scope, each of these pages also g
 **Diagrams** groups by **Belongs to**, **Kind**, or **None**.
 **Glossary** lists each term with its meaning, one glossary per scope in a workspace, and a term that another scope's glossary also defines shows that scope in a chip with `also defines it`; it groups by **Scope** or **None**.
 The filter keeps the rows whose title, status, or links hold every word you type, and Escape clears it.
+On **Requirements** and **Decisions**, the line under the page's title also says how many of the listed files break their format, such as `3 of 9 break their format`.
+A requirements file, ADR, or glossary that breaks its Prism format, as `check_artifacts` reports it, carries a `Breaks its format` badge on each row that names it: in the Knowledge lists and search, in **Touched by my work** and **Changed this week**, among a slice's requirements, in the Jump palette, and on the format findings page.
+Hovering the badge names the rules the file breaks, such as `requirements.header, requirements.sections`.
+The file's own page shows **This file breaks its format** above the document, with each broken rule, its message, and its line.
+A file that keeps its format shows neither.
 Typing two or more characters in the search replaces the groups with the matching requirements, decisions, glossary terms, and diagrams, grouped by kind and at most 20 of each, titles that hold the text first.
 A record matches when every word you type occurs in its title or its text, ignoring case, and a glossary term opens the Glossary.
 Clearing the field or pressing Esc in it brings the groups back.
@@ -194,9 +199,12 @@ Agents in other checkouts or on other machines are not told, but any agent that 
 Attention also lists blocked slices, open findings, failed verifications, and active work.
 In a window as narrow as a phone, Attention opens on its list, and picking an item shows its card in place of the list, with **All items** to go back.
 A slice that is not done is a failed verification while its latest verification run failed, with the reason in words, such as `The tests failed, 2 tests failed`, until a later run passes or the slice is done.
-Choosing a kind or an initiative in the sidebar opens Attention filtered to it, at an address such as `attention:failed` or `attention:work/<initiative>`, which shows only those items, says above them the filter and its count, such as `Failed verifications · 1 of 13 items`, and offers **Show everything**.
+Choosing a kind or an initiative in the sidebar opens Attention filtered to it, at an address such as `attention:failed` or `attention:work/<initiative>`, which shows only those items, says above them the filter and its count, such as `Failed verifications · 1 of 14 items`, and offers **Show everything**.
 Each filtered item opens where it is handled: a question opens Attention with that question picked so you can answer it, and a failed verification opens its slice.
 Questions are the recorded questions that wait for an answer and the notes left for you; problems are unreadable or invalid records, a missing or invalid roadmap, initiatives with a record that the roadmap does not list, the roadmap's open questions, and workflow settings warnings.
+Format findings are the requirement files, ADRs, glossaries, and feature files that break their Prism format, one item per kind of file, as `check_artifacts` reports them, in the checkout and in every record store scope the checkout sees.
+The page `attention:formats`, which an agent can also open with `present_review`, shows each kind with its count, its files that keep an earlier Prism format under **Earlier Prism format** apart from the others under **No Prism format**, each file's path and the scope that holds it, and each broken rule with its message and line.
+Every file that breaks its format counts, and nothing hides one; a changed file shows its new findings the next time the page loads, and a file that comes to keep its format leaves the count.
 **Answered in the last 7 days** lists the questions answered or closed in the last 7 days, newest first, each with its initiative and slice and your answer or the reason the agent closed it.
 Under Earlier questions it shows the 20 most recently closed questions with your answer, or with the reason the agent gave when it closed a question you had not answered in the browser.
 Under Recent changes it shows the 20 newest actions applied from the review app, newest first: setting changes and answers of every initiative in the project's records, answers to the approvals of the requirements and ADRs this checkout sees, each with the file and its scope, comments on the files this checkout sees, each with the file, its scope, the line, and the start of the comment, and index rebuilds of this checkout.
@@ -207,6 +215,25 @@ A change that a record store sync brings from another machine appears the next t
 
 Only a tab that Prism opened can answer; see [Which tabs can make changes](#which-tabs-can-make-changes).
 See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-the-browser) for the tool timeout that the Claude Code wait needs.
+
+### Format migration runs
+
+A [format migration run](workflow.md#format-migrations) that waits for your answers is a question on Attention, which counts its asked points.
+A run that failed is a failed verification with its reason until a later run of its files follows it, and a run that waits for a host is a problem with the reason.
+Each opens the run's page, at the address `migration-run:<run id>`, which an agent can also open with `present_review`.
+The page is titled `Format migration` with the kind of file, and for a record store scope its scope label, and shows the run's status, why Prism started it, when, and each file of the run with its path and scope.
+For each file it shows the summary of what changes and why, and in place of a line diff its statement map: each statement of the source, word for word in source order with its line, and where it landed, followed under **Added by the format** by each line the format added that holds no source statement.
+Text that an agent wrote, such as a summary, a recommendation, or a path inside it, is shown as plain text and never becomes a link.
+
+While the run asks, the page is its one question.
+It numbers every point across the run, says what each asks, such as `Which value is missing?` or `Do these entries mean the same?`, and shows Prism's recommendation.
+Each answer already holds that recommendation, so you change only what you disagree with and press **Send answers** once for the whole run.
+Prism then applies every file of the run together, or none of them.
+A value may be `unknown` only for a Draft requirement file or a Proposed ADR, and a value takes no line break.
+When a run moves a separate source into another file, the page says that Prism removes the source once every statement has a home, and offers no choice to keep it.
+After the run applied, the page shows each statement map, each point Prism settled with its reason, and each point you answered with your answer and who answered when.
+After the run failed, the page shows the reason and offers **Run again**, which starts a new run of the files that still break their format.
+A file in a record store that a run migrated says on its page `Prism migrated this file into its format`, with the date and a link to the run's page.
 
 ## Changes you make in the page
 
@@ -424,6 +451,7 @@ It works on the initiative as an agent you started in a terminal would, and you 
 At the start of each launch and each resume, Prism tells the run that no person reads its messages.
 The run then asks you only through a gate that the review page shows, or it decides by itself where its autonomy lets it.
 Claude Code gets this note as an appended system prompt, Codex as the instructions of its thread, and an ACP agent as the last text block of its prompt.
+Prism also launches a session of its own for each [format migration run](workflow.md#format-migrations), without asking and without the dialog, which runs Prism's `migrate-artifact` skill for that run alone, gets no such note, and asks you only on the run's own page.
 
 ### Launch an initiative
 
@@ -478,8 +506,15 @@ Prism waits up to 60 seconds for its tools to start in the agent's session, and 
 Prism's skills are not installed in an ACP agent, so the prompt carries the text of the orchestrate skill, as an attached resource where the agent takes one, and the instruction to run it for the initiative and to read every other skill file it names with Prism's `get_skill` tool.
 Prism answers no other request of the agent's, and a permission request it asks waits on Attention as described in [Permission requests](#permission-requests).
 A run on an ACP agent fails with `<label> stopped: <reason>.` when the agent stops for a refusal, its token limit, or its turn limit.
-Each runs in the checkout's folder with the review app's environment, without the variables of an agent session that the review app may have inherited, and with `PRISM_LAUNCH` set to the launch's id.
-The host's own permission handling and the project's own host settings apply first: Claude Code decides what it can in its auto mode and Codex under its automatic reviewer, and each asks Prism only the rest, so how often a session asks depends on your host settings.
+A format migration run's session reads only.
+It runs in an empty folder of its own, `launch-work/<launch id>` in the review app folder, outside the checkout, and that folder is removed with its launch.
+Claude Code runs with `--tools ""`, so it has no built-in tool and reads no file, `--mcp-config` naming only Prism's own server, `prism-run`, scoped to the run, with `--strict-mcp-config`, so no MCP server of your own configuration or of another plugin loads, `--settings` with `disableClaudeAiConnectors` and `ENABLE_CLAUDEAI_MCP_SERVERS=false`, so no claude.ai connector loads, an `--allowedTools` list of that server's five tools alone, a `--disallowedTools` list that denies `Read` of the checkout and everything below it, which wins over any allow rule or added folder in your own Claude Code settings, naming a Windows checkout as Claude Code matches it, such as `//c/Users/me/api`, no `--add-dir`, and `--permission-mode dontAsk` in place of the automatic permission mode, so no shell command runs, and the prompt is `/prism:migrate-artifact <run id>`.
+Codex runs with the approval policy `never` and the `read-only` sandbox, readable only in its folder, Prism's own folder, Codex's plugin cache, and the platform's own, and with a thread configuration whose `mcp_servers` names only Prism's scoped server, with the prompt `$prism:migrate-artifact <run id>`.
+Whether Codex replaces your own `mcp_servers` with that configuration or adds it to them is not confirmed, and an MCP server that Codex loads runs outside its sandbox, so keep MCP servers that read your files out of the Codex configuration of a computer that runs Prism's own runs on Codex.
+The session's environment holds `PRISM_MIGRATION_RUN` with the run's id and `PRISM_MIGRATION_PROJECT` with the checkout's real path, and a Prism server started with them lists and takes only `get_migration_run`, `get_artifact`, `propose_migration`, `finish_migration_run`, and `fail_migration_run`, each for that run and that project only, so a call may leave `projectRoot` out.
+There `get_migration_run` also gives the configured paths, whether a record store is configured, each source's Git history, and `format`, the set type's current format with the path and exact text of its reference in the Prism that serves the run, which the session takes in place of reading the reference file, and `get_artifact` reads the run's artifacts and the files of their type under its configured path, by that type's extension and name rules, in the checkout too and without a store, and refuses every other path, every dot-file, and everything in a dot-folder, such as `.env`, `.prism`, or `.git/config`, and every other call with `migration_scope`.
+An initiative's session runs in the checkout's folder; each runs with the review app's environment, without the variables of an agent session that the review app may have inherited, and with `PRISM_LAUNCH` set to the launch's id.
+In an initiative's session, the host's own permission handling and the project's own host settings apply first: Claude Code decides what it can in its auto mode and Codex under its automatic reviewer, and each asks Prism only the rest, so how often a session asks depends on your host settings.
 Prism answers no question of the host itself, and an action that the host's automatic handling refuses ends as a refusal that the session shows.
 A session keeps running when the review app exits, idles out, restarts, or is replaced by a newer release, because a supervisor process of its own starts and watches the host.
 Each launched session keeps its record in `launches/<launch id>/` in the review app folder, readable only by you, and Prism removes it 14 days after the session's last run ended.
@@ -563,7 +598,7 @@ Its groups come in this order, each with the count of what the Show choice shows
 | Claims that expired | Claims whose lease passed, the latest to lapse first. |
 | Archived | Archived launched sessions, the latest launched first, shown only under **Archived**. |
 
-A launched session's name is its initiative's title, which opens the initiative page, and under it the row says when it started, how its last run ended, and how many runs it had when more than one.
+A launched session's name is its initiative's title, which opens the initiative page, or for a format migration run's session `Format migration` with the type's label, such as `Format migration · Requirements`, which opens the run's page, and under it the row says when it started, how its last run ended, and how many runs it had when more than one.
 A claim's name is the claim's label, such as `Dana on studio-mac`, which opens the slice it works on.
 **Host · model** names the harness and the model as `<harness> · <model>`, the harness alone without a model, and `Agent` when nothing names them.
 **Working on** says `Ended <time> ago: <reason>` for a failed session, and otherwise the activity and the slice, such as `design · Retention policy`, or the session's reason.

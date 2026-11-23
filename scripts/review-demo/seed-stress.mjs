@@ -15,7 +15,9 @@ const requirementFiles = Array.from({ length: 14 }, (_, i) => `docs/requirements
 
 await write(".prism/workflow.md", "# Workflow config\n\n## Paths\n- Requirements: docs/requirements/\n- ADRs: docs/ADRs/\n- Plans (scratch): docs/plans/\n- Roadmap: docs/roadmap.md\n- Glossary: docs/Glossary.md\n");
 for (const [i, file] of requirementFiles.entries()) {
-  await write(file, `# ${i === 0 ? LONG : `Requirement area number ${i} with a fairly long descriptive title`}\n\nStatus: ${i % 3 ? "Approved" : "Draft"}\nCreated: 2026-09-0${(i % 9) + 1}\n${i % 3 ? "Approved: 2026-09-10\n" : ""}\n<a id="1"></a>\n## 1. First requirement\n\n${PARA.repeat(3)}\n\n<a id="2"></a>\n## 2. ${LONG}\n\nWhen \`${LONG}\` happens, the system shall respond.\n`);
+  // Initiatives cite these files, and work that cites a file breaking its format is refused, so each keeps the requirements format with long values.
+  const section = (number, title, pattern, requirement) => `<a id="${number}"></a>\n## ${number}. ${title}\n\nPattern: ${pattern}\n\nDisposition: Active\n\nRequirement: ${requirement}\n\nRationale: ${PARA}\n\nRelated: n/a\n`;
+  await write(file, `# ${i === 0 ? LONG : `Requirement area number ${i} with a fairly long descriptive title`}\n\nStatus: ${i % 3 ? "Approved" : "Draft"}\nCreated: 2026-09-0${(i % 9) + 1}\nApproved: ${i % 3 ? "2026-09-10" : "n/a"}\n\n## Problem\n\n${PARA}\n\n## Goals\n\n- ${PARA}\n\n## Non-goals\n\n- n/a\n\n## Design questions\n\n- n/a\n\n${section(1, "First requirement", "Ubiquitous", `The system shall keep working. ${PARA.repeat(3)}`)}\n${section(2, LONG, "Event-driven", `When \`${LONG}\` happens, the system shall respond.`)}`);
 }
 for (let i = 0; i < 12; i += 1) {
   await write(`docs/ADRs/topic-${i % 4}${i % 4 === 3 ? `-${LONG.toLowerCase()}` : ""}/decision-${i}.md`, `# Decision ${i}: ${i === 2 ? LONG : "choose a reasonably long and descriptive decision title"}\n\nStatus: ${["Proposed", "Accepted", "Superseded", "Deprecated"][i % 4]}\nCreated: 2026-08-1${i % 10}\n\n## Decision\n\n${PARA.repeat(2)}\n`);

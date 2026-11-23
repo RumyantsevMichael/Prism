@@ -167,7 +167,7 @@ const KIND_ICONS = { launch: "play", claim: "agent", expired: "clock" };
 
 function titleHtml(entry: any, ctx: any) {
   const icon = entry.kind === "launch" ? KIND_ICONS.launch : entry.group === "expired" ? KIND_ICONS.expired : KIND_ICONS.claim;
-  const ref = entry.kind === "launch" ? `initiative:${entry.initiative?.id}` : entry.slice?.ref ?? `initiative:${entry.initiative?.id}`;
+  const ref = entry.kind === "launch" ? (entry.launch?.migrationRun ? `migration-run:${entry.launch.migrationRun}` : `initiative:${entry.initiative?.id}`) : entry.slice?.ref ?? `initiative:${entry.initiative?.id}`;
   const facts = entry.kind === "launch" ? launchFacts(entry.launch) : "";
   const link = ref && ctx.hasArtifact(ref) ? `<a href="./review?artifact=${encodeURIComponent(ref)}" data-artifact="${escapeHtml(ref)}">${escapeHtml(entry.name ?? "")}</a>` : `<span>${escapeHtml(entry.name ?? "")}</span>`;
   return `<prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${link}${facts ? `<span class="prism-lib-cell is-detail">${escapeHtml(facts)}</span>` : ""}</span>`;

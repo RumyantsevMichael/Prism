@@ -1,4 +1,5 @@
-// prism-choice: a named radio group of prism-choice-option elements, each a native radio input, reporting the chosen value.
+// prism-choice: a named radio group of prism-choice-option elements, each a native radio input, reporting the chosen value;
+// with multiple, a group of native checkboxes that reports every chosen value.
 import { Base, setAttribute, uniqueId } from "./base.js";
 
 export class PrismChoice extends Base {
@@ -6,17 +7,18 @@ export class PrismChoice extends Base {
   declare heading: any;
   declare touched: any;
   static tag = "prism-choice";
-  static observedAttributes = ["label", "value"];
+  static observedAttributes = ["label", "value", "multiple"];
   static catalog = {
-    purpose: "A radio group of options with titles and descriptions; the native radios move with the arrow keys and report change after the value updates.",
+    purpose: "A radio group of options with titles and descriptions; the native radios move with the arrow keys and report change after the value updates. With multiple it is a group of checkboxes, each toggled with Space, whose values property lists every chosen value.",
     options: [
       { name: "label", values: ["text"], default: "", description: "The group's visible name and accessible name." },
       { name: "name", values: ["text"], default: "", description: "The radios' name in their form." },
-      { name: "value", values: ["text"], default: "", description: "The chosen option's value; the value property reads and writes it." },
+      { name: "value", values: ["text"], default: "", description: "The chosen option's value; the value property reads and writes it. With multiple, the values property reads and writes the list of chosen values." },
+      { name: "multiple", values: ["boolean"], default: "false", description: "Lets the person choose several options, each a native checkbox." },
       { name: "clearable", values: ["boolean"], default: "false", description: "Choosing the chosen option again, by click or Space, leaves nothing chosen and sends change, as clear() does, so an answer can go back to none." }
     ],
-    states: ["unchosen", "chosen", "with-detail", "clearable"],
-    keyboard: ["Tab reaches the chosen option, or the first one when none is chosen.", "The arrow keys move the choice to the next or previous enabled option and send change.", "In a clearable choice, Space on the chosen option leaves nothing chosen and sends change."]
+    states: ["unchosen", "chosen", "with-detail", "clearable", "multiple"],
+    keyboard: ["Tab reaches the chosen option, or the first one when none is chosen; with multiple, Tab reaches every enabled option in turn.", "The arrow keys move the choice to the next or previous enabled option and send change; with multiple, Space chooses or clears the focused option and sends change.", "In a clearable choice, Space on the chosen option leaves nothing chosen and sends change."]
   };
 
   constructor() {
@@ -57,7 +59,7 @@ export class PrismChoice extends Base {
   }
 
   connectedCallback() {
-    setAttribute(this, "role", "radiogroup");
+    setAttribute(this, "role", this.multiple ? "group" : "radiogroup");
     if (!this.heading) {
       this.heading = this.ownerDocument.createElement("div");
       this.heading.className = "prism-choice-label";
@@ -70,6 +72,11 @@ export class PrismChoice extends Base {
 
   attributeChangedCallback(name: string, previous?: any, next?: any) {
     if (!this.heading) return;
+    if (name === "multiple") {
+      setAttribute(this, "role", this.multiple ? "group" : "radiogroup");
+      for (const option of this.querySelectorAll("prism-choice-option")) (option as any).sync?.();
+      return;
+    }
     if (name === "value" && next !== null) {
       this.value = next;
       return;
@@ -84,11 +91,25 @@ export class PrismChoice extends Base {
     return [...this.querySelectorAll("input.prism-choice-input")];
   }
 
+  get multiple() {
+    return this.hasAttribute("multiple");
+  }
+
   get value() {
     return (this.inputs.find((input) => (input as any).checked) as any)?.value ?? "";
   }
 
   set value(value) {
     for (const input of this.inputs) (input as any).checked = (input as any).value === String(value);
+  }
+
+  /** Every chosen value in option order, for a choice of several options. */
+  get values(): string[] {
+    return this.inputs.filter((input) => (input as any).checked).map((input) => (input as any).value);
+  }
+
+  set values(values: Iterable<unknown> | null | undefined) {
+    const chosen = new Set([...(values ?? [])].map(String));
+    for (const input of this.inputs) (input as any).checked = chosen.has((input as any).value);
   }
 }

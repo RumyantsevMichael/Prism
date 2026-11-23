@@ -22,20 +22,7 @@ Existing code and tests do not authorize new behavior.
 ## 2. Write the feature
 
 1. Create or update `F-<capability>.feature` in the configured feature directory, defaulting to `docs/Features/`, so that a new file name is a [portable name](../workflow/SKILL.md#common-terms).
-2. Use this shape for each invariant:
-
-   ```gherkin
-   Feature: <observable capability>
-
-     Rule: <one behavioral invariant>
-       # Requirement: [requirement title](../requirements/example.md#anchor)
-
-       Example: <observable result>
-         Given <world state>
-         When <one action or event>
-         Then <observable outcome>
-   ```
-
+2. Write each invariant as a Rule in the [feature format](references/feature-format.md), which states the rules that `check_artifacts` checks and a complete example.
 3. Link each Rule to its Approved requirements and any ADR that constrains its behavior.
 4. Select the fewest examples covering normal behavior and meaningful failure or boundary cases.
 5. Name examples by their observable result.

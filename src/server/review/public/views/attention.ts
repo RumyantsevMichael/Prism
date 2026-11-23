@@ -5,6 +5,8 @@ import { isExpired } from "./claim-index.js";
 import { notifyControl } from "./attention-signal.js";
 import { currentPhase } from "./slice.js";
 import { timeLeft } from "../kit/claim-time.js";
+import { findingsList, formatBadge } from "./format-marks.js";
+import { POINT_KINDS, rerunRun, scopeWords, whereChip } from "./format-migration.js";
 import { createActionList } from "./actions.js";
 
 const GATE_LABELS: Record<string, any> = {
@@ -638,12 +640,49 @@ function noteEntry(item: any, ctx: any) {
     "open-question": () => ({ kind: "Roadmap question", icon: "roadmap", tone: "neutral", title: escapeHtml(item.text), text: "", where: roadmapLink, meta: "Open question on the roadmap" }),
     "roadmap-missing": () => ({ kind: "No roadmap", icon: "warning", tone: "warning", title: "No roadmap", text: "No roadmap record exists yet. Ask the agent to run <code>setup</code>.", where: "", meta: "Roadmap" }),
     "roadmap-problem": () => ({ kind: "Roadmap problem", icon: "warning", tone: "danger", title: "The roadmap has a problem", text: messageHtml(item.message), where: roadmapLink, meta: "Roadmap problem" }),
-    config: () => ({ kind: "Workflow settings", icon: "warning", tone: "warning", title: "Check the workflow settings", text: messageHtml(item.message), where: "", meta: "Workflow settings" })
+    config: () => ({ kind: "Workflow settings", icon: "warning", tone: "warning", title: "Check the workflow settings", text: messageHtml(item.message), where: "", meta: "Workflow settings" }),
+    "format-findings": () => ({ kind: "Format findings", icon: "document", tone: "warning", title: formatTitle(item), text: `${escapeHtml(formatSummary(item))} ${artifactLink("attention:formats", ctx, "See the findings")}`, where: "", meta: "Format findings" })
   } as Record<string, any>)[item.type];
+  if (item.type === "migration-question" || item.type === "migration-failed") return runEntry(item, ctx);
   const content = describe ? describe() : { kind: item.type, icon: "info", tone: "neutral", title: escapeHtml(item.type), text: "", where: "", meta: "" };
   return {
     row: { icon: content.icon, tone: content.tone, title: content.title, meta: escapeHtml(content.meta) },
     detail: detailSheet({ className: `note-${escapeHtml(item.type)}`, head: `${badge(content.kind)}<span class="attention-where">${content.where}</span>`, title: content.title, body: content.text ? `<p class="attention-note">${content.text}</p>` : "" })
+  };
+}
+
+// A format migration run on Attention: its question, which one answer on the run's page settles, its failure with the rerun, or its wait for a host.
+const runRef = (item: any) => `migration-run:${item.run}`;
+const runTitle = (item: any) => `Format migration · ${item.label} ${scopeWords(item.scope)}`;
+const runCode = (path: any) => `<span class="run-code" data-code-subject>${escapeHtml(path)}</span>`;
+const openRun = (item: any, label: string, variant = "") => `<prism-button${variant ? ` variant="${variant}"` : ""} data-artifact="${escapeHtml(runRef(item))}">${escapeHtml(label)}</prism-button>`;
+
+function runEntry(item: any, ctx: any) {
+  const where = `<span class="attention-where">${whereChip(item.scope)}</span>`;
+  if (item.type === "migration-question") {
+    const files = item.asking ?? [];
+    const title = escapeHtml(runTitle(item));
+    const rows = `<div class="prism-rows" role="list" aria-label="Files that ask you">${files.map((file: any) => `<prism-row icon="document" tone="accent">${runCode(file.path)}<span slot="description">${escapeHtml(file.kinds.map((kind: any) => POINT_KINDS[kind] ?? kind).join(", "))}</span><prism-badge slot="kind" tone="accent">${file.points}</prism-badge></prism-row>`).join("")}</div>`;
+    const note = `Prism could not settle ${plural(item.points, "point")} in ${files.length} of the run's ${plural(item.files, "file")}. One answer on the run's page settles all of them, each prefilled with Prism's recommendation.`;
+    return {
+      row: { icon: "layers", tone: "accent", unread: true, title, meta: escapeHtml(`${plural(item.points, "point")} in ${files.length} of ${plural(item.files, "file")} · Format migration`), end: shortTime(item.askedAt) },
+      detail: detailSheet({ className: "note-migration-question", head: `${badge("Format migration asks you", "accent")}${where}${when(item.askedAt, "attention-time gate-time")}`, title, body: `<p class="attention-note">${escapeHtml(note)}</p>${rows}<div class="gate-actions"><span></span>${openRun(item, "Answer on the run's page", "primary")}</div>` })
+    };
+  }
+  const title = escapeHtml(`${runTitle(item)} failed`);
+  const files = item.artifacts ?? [];
+  const rows = `<div class="prism-rows" role="list" aria-label="Files in the run">${files.map((file: any) => `<prism-row icon="document" tone="neutral">${runCode(file.path)}</prism-row>`).join("")}</div>`;
+  return {
+    row: { icon: "warning", tone: "danger", unread: true, title, meta: escapeHtml(`${item.reason ?? "The run failed"} · Failed`), end: shortTime(item.at) },
+    detail: detailSheet({ className: "note-migration-failed", head: `${badge("Format migration failed", "danger")}${where}${when(item.at, "attention-time gate-time")}`, title, body: `<p class="attention-note run-reason">${escapeHtml(item.reason ?? "The run failed without a reason.")}</p><p class="muted">Nothing of the run was applied. Its ${plural(files.length, "file")} still ${files.length === 1 ? "breaks" : "break"} the format.</p>${rows}<div class="gate-actions">${openRun(item, "Open the run")}<prism-button variant="primary" data-migration-rerun="${escapeHtml(item.run)}">Run again</prism-button></div>` })
+  };
+}
+
+function waitingRunEntry(item: any) {
+  const title = escapeHtml(`${runTitle(item)} waits for a host`);
+  return {
+    row: { icon: "clock", tone: "warning", title, meta: escapeHtml(`${item.reason ?? "No host is available on this machine"} · Problem`) },
+    detail: detailSheet({ className: "watch-migration-waiting", head: `${badge("Waits for a host", "warning")}<span class="attention-where">${whereChip(item.scope)}</span>`, title, body: `<p class="watch-detail run-reason">${escapeHtml(item.reason ?? "No host is available on this machine.")}</p><div class="gate-actions"><span></span>${openRun(item, "Open the run")}</div>` })
   };
 }
 
@@ -654,6 +693,7 @@ function recordName(path: any, ctx: any) {
 
 // Agent-side state in Watch: its row and its detail.
 function watchEntry(item: any, ctx: any) {
+  if (item.type === "migration-waiting") return waitingRunEntry(item);
   const where = location(item, ctx);
   const slice = item.slice?.title ?? item.initiative?.title ?? "";
   const describe = ({
@@ -751,7 +791,11 @@ function filteredItem({ kind, item }: { kind: any; item: any }, ctx: any) {
     "open-question": () => ({ icon: "roadmap", tone: "neutral", title: escapeHtml(item.text), ref: "roadmap", sub: "Open question on the roadmap", chip: ["Problem", "warning"] }),
     "roadmap-missing": () => ({ icon: "warning", tone: "warning", title: "No roadmap", ref: null, sub: "No roadmap record exists yet; ask the agent to run setup", chip: ["Problem", "warning"] }),
     "roadmap-problem": () => ({ icon: "warning", tone: "danger", title: "The roadmap has a problem", ref: "roadmap", sub: messageHtml(item.message ?? ""), chip: ["Problem", "danger"] }),
-    config: () => ({ icon: "warning", tone: "warning", title: "Check the workflow settings", ref: null, sub: messageHtml(item.message ?? ""), chip: ["Problem", "warning"] })
+    config: () => ({ icon: "warning", tone: "warning", title: "Check the workflow settings", ref: null, sub: messageHtml(item.message ?? ""), chip: ["Problem", "warning"] }),
+    "format-findings": () => ({ icon: "document", tone: "warning", title: formatTitle(item), ref: "attention:formats", sub: escapeHtml(formatSummary(item)), chip: ["Format findings", "warning"] }),
+    "migration-question": () => ({ icon: "layers", tone: "accent", title: escapeHtml(runTitle(item)), ref: runRef(item), sub: escapeHtml(`${plural(item.points, "point")} to answer · Format migration`), chip: ["Question", "accent"], at: item.askedAt, action: "Answer" }),
+    "migration-failed": () => ({ icon: "warning", tone: "danger", title: escapeHtml(`${runTitle(item)} failed`), ref: runRef(item), sub: escapeHtml(item.reason ?? "The run failed"), chip: ["Failed", "danger"], at: item.at }),
+    "migration-waiting": () => ({ icon: "clock", tone: "warning", title: escapeHtml(`${runTitle(item)} waits for a host`), ref: runRef(item), sub: escapeHtml(item.reason ?? "No host is available on this machine"), chip: ["Problem", "warning"] })
   } as Record<string, any>)[item.type]?.() ?? { icon: "info", tone: "neutral", title: escapeHtml(item.type), ref: null, sub: "", chip: [kind, "neutral"] };
   const linked = look.ref && ctx.hasArtifact(look.ref);
   const select = look.select ? ` data-attention-select="${escapeHtml(look.select)}"` : "";
@@ -794,7 +838,45 @@ function renderAnswered(container: any, answered: any, ctx: any) {
   bindLinks(container, ctx);
 }
 
+// A format item's title and the line that says how many of its files keep an earlier Prism format.
+const formatTitle = (item: any) => `${escapeHtml(item.label)} · ${escapeHtml(plural(item.count, "file"))} ${item.count === 1 ? "breaks" : "break"} the format`;
+const formatSummary = (item: any) => item.earlier ? `${item.earlier} of them ${item.earlier === 1 ? "keeps" : "keep"} an earlier Prism format.` : "None of them keeps a Prism format.";
+
+// One nonconforming artifact: its path with its format mark, the scope that holds it, and each broken rule with its message and line.
+function formatArtifact(artifact: any) {
+  const scope = artifact.scope?.label ?? null;
+  const mark = formatBadge({ rules: [...new Set((artifact.findings ?? []).map((finding: any) => finding.rule))].sort() });
+  const earlier = artifact.earlierFormat ? `Keeps format version ${artifact.earlierFormat.version}` : "Keeps no Prism format";
+  return `<prism-row wrap icon="document" tone="warning"><span data-code-subject>${escapeHtml(artifact.path)}</span> ${mark}<span slot="description">${escapeHtml(earlier)} · ${plural((artifact.findings ?? []).length, "finding")}</span><span slot="detail">${findingsList(artifact.findings)}</span><prism-chip slot="kind"${scope ? ' tip="The record store scope that holds this file"' : ' tip="A file in this checkout"'}>${escapeHtml(scope ? `Scope ${scope}` : "Checkout")}</prism-chip></prism-row>`;
+}
+
+function formatGroup(label: string, note: string, artifacts: any[]) {
+  if (!artifacts.length) return "";
+  return `<section class="format-group"><h4 class="format-group-label label-caps"><span>${escapeHtml(label)}</span> <prism-badge tone="warning">${artifacts.length}</prism-badge></h4><p class="format-group-note muted">${escapeHtml(note)}</p><div class="prism-rows" role="list" aria-label="${escapeHtml(label)}">${artifacts.map(formatArtifact).join("")}</div></section>`;
+}
+
+// A format's panel: its count and its artifacts by kind of break.
+function formatPanel(entry: any) {
+  const earlier = entry.artifacts.filter((artifact: any) => artifact.earlierFormat);
+  const foreign = entry.artifacts.filter((artifact: any) => !artifact.earlierFormat);
+  return `<prism-panel class="view-section format-panel" heading="${escapeHtml(entry.label)}" level="3" eyebrow="${escapeHtml(`Format version ${entry.version} · ${plural(entry.count, "file")} to look at`)}">
+    ${formatGroup("Earlier Prism format", `These files keep an earlier version of the format; a format migration brings them to version ${entry.version}.`, earlier)}
+    ${formatGroup("No Prism format", "These files keep no version of the format; a format migration rewrites them into it, keeping every statement.", foreign)}
+  </prism-panel>`;
+}
+
+// The format findings page: every format whose files break it.
+function renderFormats(container: any, data: any, ctx: any) {
+  const filter = data.filter;
+  filterLine(container, `${filter.label} · ${filter.items.length} of ${filter.total} ${filter.total === 1 ? "item" : "items"}`, ctx);
+  const shown = (data.formats ?? []).filter((entry: any) => entry.count);
+  container.innerHTML = shown.length
+    ? `<div class="format-panels">${shown.map(formatPanel).join("")}</div>`
+    : `<div class="attention-nothing">${emptyState("Every file keeps its format", "No requirement, decision, glossary, or feature file breaks its Prism format.")}</div>`;
+}
+
 export function render(container: any, entity: any, ctx: any) {
+  if (entity.ref === "attention:formats" && entity.data.filter) return renderFormats(container, entity.data, ctx);
   if (entity.data.filter) return renderFiltered(container, entity.data.filter, ctx);
   if (entity.ref === "attention:answered") return renderAnswered(container, entity.data.answered ?? [], ctx);
   const data = entity.data;
@@ -915,6 +997,14 @@ export function render(container: any, entity: any, ctx: any) {
   });
   bindLinks(container, ctx);
   mountAnswers(container, ctx, gates);
+  // A failed format migration run runs again from its sheet, after the person confirms it.
+  for (const button of container.querySelectorAll("[data-migration-rerun]")) {
+    button.addEventListener("click", async () => {
+      button.toggleAttribute("disabled", true);
+      if (await rerunRun(ctx, button.dataset.migrationRerun)) ctx.rerender();
+      else button.toggleAttribute("disabled", false);
+    });
+  }
   bindPermissions(container, ctx);
   bindArchiveSession(container, ctx);
   // A change applied while the page is open names its question from the questions the page shows.

@@ -1,3 +1,5 @@
+// A real Claude Code or Codex stays off PATH, since Prism launches a session by itself for each format migration run of a demo project.
+import "../hostless-path.mjs";
 // Shared setup for the review demo seeds: a fresh project directory, its private data directory, and the real Prism MCP tools.
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";

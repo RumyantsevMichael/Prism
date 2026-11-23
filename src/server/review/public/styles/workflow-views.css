@@ -447,6 +447,66 @@
   padding: var(--prism-space-4);
 }
 
+/* The format findings page: one panel per format, its files by kind of break, and each finding's rule and message. */
+.format-panels {
+  display: grid;
+  gap: var(--prism-space-6);
+  min-width: 0;
+}
+
+.format-group {
+  display: grid;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.format-group + .format-group {
+  margin-top: var(--prism-space-5);
+}
+
+.format-group-label {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+  margin: 0;
+}
+
+.format-group-note {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.format-findings {
+  display: grid;
+  gap: var(--prism-space-2);
+  margin: var(--prism-space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.format-finding {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+/* A document that breaks its format shows its findings in a notice between its header and the document. */
+.document-notice {
+  margin-bottom: var(--prism-space-5);
+}
+
+.document-notice .format-findings {
+  margin: var(--prism-space-2) 0 0;
+}
+
+.format-finding-message {
+  flex: 1 1 16rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .attention-list-foot {
   display: grid;
   gap: var(--prism-space-3);
@@ -1845,4 +1905,241 @@ a.inspect-tile:focus-visible {
   .change-where {
     margin-left: 0;
   }
+}
+
+/* A format migration run's page: its figures, its files, each asked point with its prefilled answer, the statement map, and the one answer of the run. */
+.run-view {
+  display: grid;
+  gap: var(--prism-space-6);
+  min-width: 0;
+}
+
+.run-figures {
+  margin: 0;
+}
+
+.run-code {
+  font-family: var(--prism-font-code);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.run-section,
+.run-files,
+.run-points {
+  display: grid;
+  gap: var(--prism-space-5);
+  min-width: 0;
+}
+
+.run-section-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3);
+  margin: 0;
+  font-size: var(--prism-font-size-lg);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+/* One file of the run: a bordered block with its path, what changed and why, its points, and its map and settled points below. */
+.run-file {
+  display: grid;
+  gap: var(--prism-space-4);
+  min-width: 0;
+  padding: var(--prism-space-5);
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-md);
+  background: var(--prism-color-surface);
+}
+
+.run-file-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--prism-space-2) var(--prism-space-4);
+  min-width: 0;
+}
+
+.run-file-path {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.run-file-path .run-code {
+  font-size: inherit;
+}
+
+.run-file-summary,
+.run-reason {
+  margin: 0;
+  max-width: var(--prism-measure);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.run-answered {
+  display: grid;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.run-answered > .label-caps {
+  margin: 0;
+}
+
+/* An asked point: its number and kind, the question, Prism's recommendation, and the control that holds it. */
+.run-point {
+  display: grid;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  padding: var(--prism-space-4);
+  border-left: var(--prism-stroke-strong) solid var(--prism-color-accent);
+  border-radius: 0 var(--prism-radius-sm) var(--prism-radius-sm) 0;
+  background: var(--prism-color-sunken);
+  scroll-margin-top: var(--prism-space-6);
+}
+
+.run-point-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+}
+
+.run-point-head [data-changed][hidden] {
+  display: none;
+}
+
+.run-point-question {
+  margin: 0;
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.run-point-subject {
+  font-weight: var(--prism-font-weight-regular);
+  color: var(--prism-color-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.run-recommendation {
+  display: flex;
+  gap: var(--prism-space-2);
+  align-items: start;
+  margin: 0;
+  max-width: var(--prism-measure);
+  overflow-wrap: anywhere;
+}
+
+.run-quote {
+  display: grid;
+  gap: var(--prism-space-1);
+  margin: 0;
+  padding-left: var(--prism-space-4);
+  border-left: var(--prism-stroke) solid var(--prism-color-line-strong);
+  overflow-wrap: anywhere;
+}
+
+.run-sides {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--prism-sidebar-width) / 1.5)), 1fr));
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.run-side {
+  min-width: 0;
+}
+
+.run-entry-label {
+  display: block;
+  margin-bottom: var(--prism-space-1);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+.run-entry {
+  display: block;
+  padding: var(--prism-space-3);
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+  font-family: var(--prism-font-code);
+  font-size: var(--prism-font-size-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The statement map: a kit library table of line, statement, and where it landed. */
+.run-map {
+  --prism-lib-columns: calc(var(--prism-space-8) * 1.75) minmax(0, 3fr) minmax(0, 2fr);
+}
+
+.run-map .run-line {
+  font-family: var(--prism-font-code);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-map .run-statement {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.run-landed {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.run-point-link {
+  text-decoration: none;
+}
+
+.run-quiet-note {
+  margin: var(--prism-space-2) 0 var(--prism-space-4);
+}
+
+.run-rerun {
+  justify-content: space-between;
+}
+
+.run-rerun-note {
+  margin: 0;
+}
+
+/* The one answer of the run stays in view at the foot of the page while the person reads the points above it. */
+.run-answer-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--prism-layer-sticky);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3);
+  margin: 0;
+  padding: var(--prism-space-4);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+  background: var(--prism-color-surface);
+}
+
+.run-answer-bar .gate-hint {
+  flex: 1 1 calc(var(--prism-sidebar-width) / 1.2);
+  min-width: 0;
+  margin: 0;
+}
+
+.run-error {
+  flex: 1 1 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
 }

@@ -201,6 +201,8 @@ Run a local human review from the repository root:
 ```
 
 To try the entity-first review browser, run `node scripts/review-demo/seed.mjs` and start the review command it prints.
+That command starts the review app with a `PATH` from `scripts/hostless-path.mjs`, which holds no real Claude Code or Codex, because Prism launches a headless session by itself for each format migration run, and the demo holds a nonconforming file.
+The review demo scripts and the test command use the same `PATH`.
 The seed builds a temporary project whose roadmap, initiative records, change map, review ledger, coordination state, recorded user gates, and evidence come from the real MCP tools.
 The project is a Git repository, so the browser also lists its source files.
 The browser opens on Attention, which lists the recorded user gates, and the rail's Work place groups the initiatives being worked on by state, lists a few unfinished slices of each, and expands an initiative whose page or slice is open or that has a slice in progress or claimed.

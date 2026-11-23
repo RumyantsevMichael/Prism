@@ -23,13 +23,14 @@ const VIEWS: Record<string, any> = {
   agents: () => import("./agents.js"),
   diagrams: () => import("./library.js"),
   touched: () => import("./knowledge.js"),
-  changed: () => import("./knowledge.js")
+  changed: () => import("./knowledge.js"),
+  "migration-run": () => import("./format-migration.js")
 };
 
 // Knowledge's own pages by the part of their address after `knowledge:`.
 export const KNOWLEDGE_PAGES: Readonly<Record<string, any>> = Object.freeze({ diagrams: "Diagrams", touched: "Touched by my work", changed: "Changed this week" });
 
-// Mirrors the server's entity references: sections, Attention's filtered pages, Knowledge's pages, initiative:<id>, and slice:<id>/<slug>.
+// Mirrors the server's entity references: sections, Attention's filtered pages, Knowledge's pages, initiative:<id>, slice:<id>/<slug>, and migration-run:<run id>.
 export function parseEntityRef(ref: any) {
   if (SECTIONS.includes(ref)) return { kind: ref };
   // The Launched sessions address, as a restored tab or an old link, opens the Agents page that replaced it; agents:<group> opens it with that Show choice made.
@@ -37,7 +38,7 @@ export function parseEntityRef(ref: any) {
   const group = /^agents:(needs-you|this-computer|other|expired|archived)$/.exec(ref ?? "");
   if (group) return { kind: "agents", page: group[1] };
   // Attention's filtered pages: one kind, one initiative's items, the roadmap's open questions, or the questions answered this week.
-  let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  let match = /^attention:(questions|findings|failed|blocked|ready|problems|formats|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "attention", page: match[1] };
   // Knowledge's own pages: the diagrams, the records behind the open slice, and this week's record changes.
   match = /^knowledge:(diagrams|touched|changed)$/.exec(ref ?? "");
@@ -46,6 +47,9 @@ export function parseEntityRef(ref: any) {
   if (match) return { kind: "initiative", id: match[1] };
   match = /^slice:([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "slice", id: match[1], slug: match[2] };
+  // A format migration run's page.
+  match = /^migration-run:(run-[0-9a-f]{16})$/.exec(ref ?? "");
+  if (match) return { kind: "migration-run", id: match[1] };
   return null;
 }
 
@@ -109,6 +113,7 @@ export function entityLabel(entity: any) {
   if (entity.kind === "roadmap") return { eyebrow: "Roadmap", title: "Roadmap", lead: data.serves || null, subtitle: data.recordPath ?? null };
   if (entity.kind === "initiative") return { eyebrow: "Initiative", title: data.roadmapItem?.title ?? data.id, subtitle: data.recordPath };
   if (entity.kind === "slice") return { eyebrow: `Slice · ${data.initiativeTitle}`, title: data.slice.title, subtitle: data.artifacts?.folder ?? null };
+  if (entity.kind === "migration-run") return { eyebrow: "Format migration", title: `${data.title} ${data.scope?.label ? `in scope ${data.scope.label}` : "in this checkout"}`, lead: null, subtitle: null };
   if (entity.kind === "agents") return { title: ENTITY_LABELS.agents, lead: "Every agent working on this workspace, and every session launched on this computer.", subtitle: null };
   if (entity.kind === "glossary") return { eyebrow: "Library", title: "Glossary", subtitle: data.path };
   if (entity.kind === "code") return { eyebrow: "Library", title: "Code", subtitle: null };

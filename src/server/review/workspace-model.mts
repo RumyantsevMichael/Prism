@@ -22,6 +22,10 @@ import { appliedArtifactActions, pendingApprovalGates, readStoreArtifactAt, stor
 import { servedWorkItem } from "../workflow/artifact-status.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
+import { checkArtifacts } from "../workflow/artifact-check.mjs";
+import { ARTIFACT_FORMATS } from "../workflow/artifact-formats.mjs";
+import { entriesFor, recommendedChoice, statementMap } from "../workflow/format-migrations.mjs";
+import { RUN_ID, allRuns, followedRun, followingRun, readRun, shownRun } from "../workflow/migration-runs.mjs";
 import { recordChanges } from "./record-changes.mjs";
 import { relativeLinkTargets } from "./artifact-links.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
@@ -97,6 +101,12 @@ async function remember(projectRoot: string, raw: any, compute: any) {
   return value;
 }
 
+// Keeps a value computed beside another view as that view's entry would, so a later read of the same request reuses it.
+async function prime(projectRoot: string, raw: any, value: any) {
+  const key = `${inWorkspaceView() ? "workspace" : "checkout"}|${raw}`;
+  memo.set(key, { version: await versions.current(projectRoot), until: Date.now() + MAX_AGE_MS, value: Promise.resolve(value) });
+}
+
 /** A value that a page computes from a project's records, reused as the views are, until a file it reads may have changed. */
 export function rememberView<T>(projectRoot: string, name: string, compute: () => Promise<T>): Promise<T> {
   return remember(projectRoot, `${name}:${projectRoot}`, compute);
@@ -121,6 +131,41 @@ export function recheckViews(projectRoot: string) {
 export function forgetWorkspace() {
   memo.clear();
   versions.bump();
+}
+
+/** The format mark of a checked artifact: null while it conforms, else { rules, findings } with its sorted rule ids and its findings as check_artifacts reports them. */
+export const formatMark = (artifact: any) => !artifact || artifact.conforms ? null : { rules: [...new Set(artifact.findings.map((finding: any) => finding.rule))].sort(), findings: artifact.findings };
+
+const scopeKey = (scope: any): string => scope === null || scope === undefined ? "" : typeof scope === "string" ? scope : scope.label ?? "";
+
+// A lookup of the format mark of each checked artifact by path and scope: markOf(path, scope) is its mark, or null for a conforming or unchecked file.
+function markLookup(artifacts: any[]) {
+  const marks = new Map(artifacts.map((artifact: any) => [`${scopeKey(artifact.scope)}\0${artifact.path}`, formatMark(artifact)]));
+  return (file: string, scope: any = null) => marks.get(`${scopeKey(scope)}\0${file}`) ?? null;
+}
+
+const marksKey = (projectRoot: string) => `format-marks:${projectRoot}`;
+
+/**
+ * The format marks of the project's artifacts, shared for the cache window, so the lists of one request check each artifact once;
+ * a project whose artifacts cannot be checked marks nothing.
+ */
+export function loadFormatMarks(projectRoot: string): Promise<(file: string, scope?: any) => any> {
+  return remember(projectRoot, marksKey(projectRoot), async () => {
+    try { return markLookup((await checkArtifacts({ projectRoot, startRuns: false })).artifacts); }
+    catch { return () => null; }
+  });
+}
+
+/** The format mark of one artifact by path and, for a store artifact, its scope, checked afresh: null while it conforms or is no artifact that check_artifacts lists. */
+export async function loadFormatMark(projectRoot: string, file: string, scope: any = null) {
+  try {
+    const label = scopeKey(scope);
+    const [artifact] = (await checkArtifacts({ projectRoot, paths: [label ? { path: file, scope: label } : file], startRuns: false })).artifacts;
+    return formatMark(artifact);
+  } catch {
+    return null;
+  }
 }
 
 export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "code", "agents"]);
@@ -750,6 +795,8 @@ async function computeLibrary(projectRoot: string, kind: any) {
   await walk(projectRoot, directory, 4, (name: string) => name.endsWith(".md") && name.toLowerCase() !== "readme.md", files, LIBRARY_LIMIT);
   const { references, decisions } = await initiativeReferences(projectRoot, config);
   const recorded = await recordedStatuses(projectRoot, directory);
+  const scopes = await storeScopes(projectRoot, directory);
+  const markOf = await loadFormatMarks(projectRoot);
   const entries = [];
   for (const file of files) {
     const source = await readText(projectRoot, file);
@@ -762,7 +809,8 @@ async function computeLibrary(projectRoot: string, kind: any) {
       status: recorded?.has(file) ? recorded.get(file) : fields.status,
       created: fields.created,
       approved: fields.approved,
-      topic: relative.includes("/") ? relative.split("/")[0] : null
+      topic: relative.includes("/") ? relative.split("/")[0] : null,
+      format: markOf(file, scopes?.get(file) ?? null)
     };
     if (kind === "requirements") {
       // Each numbered section of a requirements file holds one requirement.
@@ -783,6 +831,15 @@ async function computeLibrary(projectRoot: string, kind: any) {
   return { kind, directory, entries };
 }
 
+// The scope that holds each store artifact below a folder, the first by label where several do, or null when the project names no store or the store cannot be read.
+async function storeScopes(projectRoot: string, directory: any) {
+  const stored = await listStoreArtifacts(projectRoot, directory).catch(() => null);
+  if (!stored) return null;
+  const byPath = new Map();
+  for (const entry of stored) if (!byPath.has(entry.path)) byPath.set(entry.path, entry.scope);
+  return byPath;
+}
+
 /**
  * A workspace's library of every scope's requirements or decisions, each entry named by its store ref with its scope's label, and its links named by store refs:
  * an initiative's reference to a checkout path, and a decision's link to one, names the copy in the linking artifact's own scope, else the checkout's own scopes', else the workspace's.
@@ -791,6 +848,7 @@ async function scopedLibrary(projectRoot: string, kind: any, directory: any, con
   const { references, decisions } = await initiativeReferences(projectRoot, config);
   const requirements = kind === "decisions" ? (await scopedArtifacts(projectRoot, "requirements", (name: string) => name.endsWith(".md")))?.entries ?? [] : [];
   // An initiative names a checkout path, so of several scopes holding that path only the one a read of the path from this checkout finds takes its references.
+  const markOf = await loadFormatMarks(projectRoot);
   const takes = (entry: any) => entry.path !== null && refAt(listed, own, entry.path) === entry.ref;
   const entries = [];
   for (const item of listed) {
@@ -803,7 +861,9 @@ async function scopedLibrary(projectRoot: string, kind: any, directory: any, con
       status: item.status ?? fields.status,
       created: fields.created,
       approved: fields.approved,
-      topic: item.rest?.includes("/") ? item.rest.split("/")[0] : null
+      topic: item.rest?.includes("/") ? item.rest.split("/")[0] : null,
+      // A file that breaks its format carries its mark, by its checkout path and its scope.
+      format: item.path ? markOf(item.path, item.label) : null
     };
     if (kind === "requirements") {
       entry.requirements = (source ?? "").match(/^## \d+\b/gm)?.length ?? 0;
@@ -851,7 +911,8 @@ export async function loadGlossary(projectRoot: string) {
     return { path: glossaryPath, exists: glossaries.length > 0, content: mine, glossaries };
   }
   const content = glossaryPath ? await readText(projectRoot, glossaryPath) : null;
-  return { path: glossaryPath, exists: content !== null, content };
+  const format = content === null || !glossaryPath ? null : (await loadFormatMarks(projectRoot))(glossaryPath, (await storeScopes(projectRoot, path.posix.dirname(glossaryPath)))?.get(glossaryPath) ?? null);
+  return { path: glossaryPath, exists: content !== null, content, format };
 }
 
 
@@ -898,14 +959,19 @@ function gateOrder(left: any, right: any) {
 }
 
 /**
- * Attention: the shared part, kept for the cache window, with permissions, the permission requests that wait in this machine's running
- * launched sessions of the checkout's record store, read again at each request from their private launch folders and never from a
- * shared record; gateCount counts them beside the waiting questions.
+ * Attention: the records' items, shared for the cache window; the format findings, read at each request,
+ * since the check of each artifact is kept until its content changes, so a changed file shows its new findings at once; and permissions,
+ * the permission requests that wait in this machine's running launched sessions of the checkout's record store, read again at each
+ * request from their private launch folders and never from a shared record. gateCount counts the waiting questions, each format
+ * migration run's question, and each permission request.
  */
 export async function loadAttention(projectRoot: string) {
-  const [attention, permissions] = await Promise.all([remember(projectRoot, `attention:${projectRoot}`, () => computeAttention(projectRoot)), launchPermissions(projectRoot)]);
-  const needsYou = await withLaunchQuestions(projectRoot, attention.needsYou);
-  return { ...attention, needsYou, permissions, gateCount: attention.gateCount + permissions.length };
+  const [attention, formats, runs, permissions] = await Promise.all([remember(projectRoot, `attention:${projectRoot}`, () => computeAttention(projectRoot)), loadFormats(projectRoot), runItems(projectRoot), launchPermissions(projectRoot)]);
+  const items = formats.filter((entry: any) => entry.count > 0).map((entry: any) => ({ type: "format-findings", artifactType: entry.type, label: entry.label, count: entry.count, earlier: entry.earlier, artifacts: entry.artifacts }));
+  // A run's question waits on the person as a gate does, so it counts among the questions that the rail and a background tab's notification count.
+  const questions = runs.needsYou.filter((item: any) => item.type === "migration-question").length;
+  const launched = await withLaunchQuestions(projectRoot, attention.needsYou);
+  return { ...attention, needsYou: [...runs.needsYou, ...launched, ...items], watch: [...attention.watch, ...runs.watch], formats, permissions, gateCount: attention.gateCount + questions + permissions.length };
 }
 
 /**
@@ -926,6 +992,146 @@ async function withLaunchQuestions(projectRoot: string, needsYou: any[]) {
   return needsYou.map((item: any) => {
     const launch = item.type === "gate" && item.kind === "assistance" ? asked.get(`${item.initiative?.id}/${item.id}`) : undefined;
     return launch ? { ...item, launch } : item;
+  });
+}
+
+/**
+ * The format migration runs that Attention lists, read at each request since a run moves on its own: each run that asks its question and each failed run
+ * that no later run follows need the person, and each run that waits for a host is a problem to watch. A project whose runs cannot be read lists none.
+ */
+async function runItems(projectRoot: string) {
+  const runs = await allRuns(projectRoot).catch((): any[] => []);
+  const needsYou: any[] = [];
+  const watch: any[] = [];
+  for (const run of [...runs].reverse()) {
+    const base = { run: run.id, artifactType: run.set.type, label: FORMAT_LABELS[run.set.type] ?? run.set.type, scope: run.set.scope ?? null, files: run.set.artifacts.length };
+    if (run.status === "asking") {
+      const points = (run.question?.points ?? []).filter((point: any) => isRecord(point));
+      const byFile = new Map();
+      for (const point of points) {
+        const key = JSON.stringify([point.artifact?.path, point.artifact?.scope?.label ?? null]);
+        const entry = byFile.get(key) ?? { path: point.artifact?.path ?? null, scope: point.artifact?.scope ?? null, points: 0, kinds: [] };
+        entry.points += 1;
+        if (!entry.kinds.includes(point.kind)) entry.kinds.push(point.kind);
+        byFile.set(key, entry);
+      }
+      needsYou.push({ type: "migration-question", ...base, points: points.length, asking: [...byFile.values()], askedAt: run.question?.askedAt ?? null });
+    } else if (run.status === "failed" && !followedRun(runs, run)) {
+      needsYou.push({ type: "migration-failed", ...base, reason: run.failure?.reason ?? null, at: run.failure?.at ?? run.endedAt ?? null, artifacts: run.set.artifacts.map(({ path: file, scope }: any) => ({ path: file, scope: scope ?? null })) });
+    } else if (run.status === "waiting-for-host") {
+      watch.push({ type: "migration-waiting", ...base, reason: typeof run.reason === "string" ? run.reason : null, at: run.startedAt ?? null });
+    }
+  }
+  return { needsYou, watch };
+}
+
+// The format labels as Attention names each format.
+const FORMAT_LABELS: Readonly<Record<string, string>> = Object.freeze({ requirements: "Requirements", adr: "Decisions", glossary: "Glossary", feature: "Feature files" });
+const isRecord = (value: any) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+// ---- Format migration runs ----
+
+// The Attention page that lists a run in its state, which the run's trail passes through.
+const RUN_ATTENTION_PAGES: Readonly<Record<string, string>> = Object.freeze({ asking: "questions", failed: "failed", "waiting-for-host": "problems" });
+
+/** A run's name as its page, its tab, its Attention item, and its launched session read it: Format migration with the type's label. */
+export const migrationRunTitle = (record: any) => `Format migration · ${FORMAT_LABELS[record.set.type] ?? record.set.type}`;
+
+async function migrationRunContext(projectRoot: string, ref: string, id: string) {
+  const record = await readRun(projectRoot, id).catch(() => null);
+  const page = record ? RUN_ATTENTION_PAGES[record.status] : null;
+  const trail = [placeCrumb("attention", "attention"), ...(page ? [{ ref: `attention:${page}`, label: PLACE_PAGE_LABELS.attention[page] }] : []), { ref, label: record ? migrationRunTitle(record) : "Format migration" }];
+  return { trail, scope: { kind: "global" }, place: "attention" };
+}
+
+// A point as the run's page shows it: its kind and detail, its place in the question counted across the run, Prism's recommendation, the option it recommends, and how it was settled or answered.
+function runPoint(point: any, { number, answers, conflicts, sourceEntries, contentEntries, sourceLines }: any) {
+  const { id, kind, settled, asked, ...detail } = point;
+  const recommendation = asked?.recommendation ?? null;
+  const extra: any = {};
+  if (kind === "leftover") extra.sourceLine = sourceLines?.get(id) ?? null;
+  if (kind === "entry") {
+    extra.sourceText = sourceEntries.find((entry: any) => entry.id === point.entry)?.text ?? null;
+    extra.targetText = contentEntries.find((entry: any) => entry.id === point.entry)?.text ?? null;
+  }
+  if (kind === "conflict") {
+    const conflict = conflicts.find((entry: any) => entry.entry === point.entry);
+    extra.sourceText = conflict?.source ?? null;
+    extra.targetText = conflict?.target ?? null;
+  }
+  return {
+    id, kind, ...detail, ...extra, number: number ?? null,
+    settled: settled ? { reason: settled.reason } : null,
+    asked: asked ? { recommendation, recommended: recommendedChoice(kind, recommendation) } : null,
+    answer: answers?.[id] ?? null
+  };
+}
+
+/**
+ * A format migration run as its page shows it: its status, cause, and times, each artifact of its set with its current findings, and for each migration
+ * its source and target, its summary, its statement map, and its points numbered across the run, with each answer and whether a later run follows a failed one.
+ * An id that names no run is refused as a missing item.
+ */
+async function loadMigrationRunView(projectRoot: string, id: string) {
+  const record = await readRun(projectRoot, id);
+  if (!record) throw Object.assign(new Error("The format migration run no longer exists in this project."), { code: "ENOENT" });
+  const shown = await shownRun(projectRoot, record);
+  const answers = record.answers ?? null;
+  const asked = record.migrations.flatMap((migration: any) => (migration.points ?? []).filter((point: any) => point.asked));
+  const numbers = new Map(asked.map((point: any, index: number) => [point.id, index + 1]));
+  const migrations = record.migrations.map((migration: any) => {
+    const sourceEntries = typeof migration.sourceText === "string" ? entriesFor(migration.type, migration.sourceText) : [];
+    const contentEntries = typeof migration.content === "string" ? entriesFor(migration.type, migration.content) : [];
+    const map = statementMap(migration, { answers: answers ?? {} });
+    // A leftover point names its statement only, so its source line comes from the same split of the source that the statement map shows.
+    const sourceLines = new Map((map?.statements ?? []).filter((statement: any) => statement.landed?.kind === "leftover" && statement.landed.point).map((statement: any) => [statement.landed.point, statement.line]));
+    return {
+      id: migration.id, type: migration.type, source: migration.source, target: migration.target, separateSource: migration.separateSource, summary: migration.summary,
+      status: headerStatus(migration.content), proposedAt: migration.proposedAt ?? null,
+      map,
+      points: (migration.points ?? []).map((point: any) => runPoint(point, { number: numbers.get(point.id), answers, conflicts: migration.conflicts ?? [], sourceEntries, contentEntries, sourceLines }))
+    };
+  });
+  const runs = record.status === "failed" ? await allRuns(projectRoot).catch((): any[] => []) : [];
+  const answered = answers ? Object.values<any>(answers).find((answer) => answer?.by) ?? null : null;
+  return {
+    id: record.id, title: migrationRunTitle(record), type: record.set.type, typeLabel: FORMAT_LABELS[record.set.type] ?? record.set.type, scope: record.set.scope ?? null, formatVersion: record.set.formatVersion ?? null,
+    cause: record.cause, status: record.status, startedAt: record.startedAt ?? null, endedAt: record.endedAt ?? null, reason: typeof record.reason === "string" ? record.reason : null,
+    failure: record.failure ?? null, launch: record.launch ?? null, rerunOf: record.rerunOf ?? null, by: record.by ?? null,
+    followedBy: record.status === "failed" ? followingRun(runs, record)?.id ?? null : null,
+    artifacts: shown.set.artifacts.map(({ path: file, scope, version, findings }: any) => ({ path: file, scope: scope ?? null, version, findings })),
+    askedAt: record.question?.askedAt ?? null, points: asked.length, answeredBy: answered ? { ...answered.by, at: answered.at ?? null } : null,
+    migrations
+  };
+}
+
+// The Status: line of a migrated file, or null.
+const headerStatus = (text: any) => typeof text === "string" ? /^Status:\s*(\S.*?)\s*$/m.exec(text.split(/\n## /)[0] ?? "")?.[1] ?? null : null;
+
+/**
+ * Attention's format entries, one per format: every artifact that breaks it, and how many of them conform to an earlier format;
+ * a project whose artifacts cannot be checked shows no findings.
+ */
+async function loadFormats(projectRoot: string) {
+  let artifacts: any[] = [];
+  try {
+    artifacts = (await checkArtifacts({ projectRoot })).artifacts;
+    // The lists of the same request mark artifacts from this check rather than checking them again.
+    await prime(projectRoot, marksKey(projectRoot), markLookup(artifacts));
+  } catch {
+    artifacts = [];
+  }
+  return ARTIFACT_FORMATS.map((format: any) => {
+    const broken = artifacts.filter((artifact: any) => artifact.type === format.type && !artifact.conforms);
+    return {
+      type: format.type,
+      label: FORMAT_LABELS[format.type],
+      version: format.version,
+      reference: format.reference,
+      count: broken.length,
+      earlier: broken.filter((artifact: any) => artifact.earlierFormat !== null).length,
+      artifacts: broken.map((artifact: any) => ({ path: artifact.path, scope: artifact.scope, findings: artifact.findings, earlierFormat: artifact.earlierFormat, migration: artifact.migration ?? null }))
+    };
   });
 }
 
@@ -1129,11 +1335,13 @@ function recentlyAnswered(answered: any, closed: any) {
 }
 
 // Attention's kinds in the sidebar's order, each item of the page under one kind; a claim, an agent at work, and an answered question are none of them.
-export const ATTENTION_KINDS = Object.freeze(["questions", "findings", "failed", "blocked", "ready", "problems"]);
+export const ATTENTION_KINDS = Object.freeze(["questions", "findings", "failed", "blocked", "ready", "problems", "formats"]);
 const ATTENTION_KIND_OF: Readonly<Record<string, any>> = Object.freeze({
   gate: "questions", "pending-note": "questions",
   findings: "findings", "failed-verification": "failed", blocked: "blocked", "ready-to-ship": "ready",
-  "record-problem": "problems", "roadmap-problem": "problems", "roadmap-missing": "problems", unlisted: "problems", "open-question": "problems", config: "problems"
+  "record-problem": "problems", "roadmap-problem": "problems", "roadmap-missing": "problems", unlisted: "problems", "open-question": "problems", config: "problems",
+  "format-findings": "formats",
+  "migration-question": "questions", "migration-failed": "failed", "migration-waiting": "problems"
 });
 // Attention's work entries listed before the row that shows the rest.
 const ATTENTION_WORK_SHOWN = 3;
@@ -1170,7 +1378,8 @@ async function attentionPage(projectRoot: string, page: any) {
     : page === "roadmap-questions" ? items.filter(({ item }) => item.type === "open-question") : items.filter((entry) => entry.kind === page);
   let label = PLACE_PAGE_LABELS.attention[page];
   if (work) label = shown[0]?.item.initiative.title ?? (await loadRoadmapView(projectRoot).catch(() => ({ items: [] }))).items.find((item: any) => item.id === work[1])?.title ?? work[1];
-  return { filter: { key: page, label, total: items.length, items: shown } };
+  // The format findings page also carries every format's entry, with its artifacts.
+  return { filter: { key: page, label, total: items.length, items: shown }, ...(page === "formats" ? { formats: attention.formats } : {}) };
 }
 
 // What a gate's attached record is, so the page names it by title and kind with the counts that matter for the answer.
@@ -1221,7 +1430,8 @@ export function glossaryEntries(content: any) {
       const entry = entries.get(term) ?? { term, text: "" };
       entry.text += ` ${row[2].replace(/\|/g, " ")}`;
       entries.set(term, entry);
-    } else if (open) open.text += ` ${line}`;
+    // A term's meaning is its definition: the fields of the glossary format after it and the anchor of the next term are not.
+    } else if (open && !/^(Source|Aliases|Not to be confused with):/.test(line) && !/^\s*<a id="[^"]*"><\/a>\s*$/.test(line)) open.text += ` ${line}`;
   }
   return [...entries.values()].slice(0, LIBRARY_LIMIT);
 }
@@ -1401,7 +1611,7 @@ async function searchIndex(projectRoot: string, config: any, roadmap: any, gloss
   for (const kind of ["requirements", "decisions"]) {
     const library = libraries[kind];
     if (library?.error) throw library.error;
-    for (const entry of (library ? library.value : await loadLibrary(projectRoot, kind)).entries) entries.push({ ref: entry.path, label: entry.title, kind: kind === "requirements" ? "requirement" : "decision", detail: entry.status ?? entry.path });
+    for (const entry of (library ? library.value : await loadLibrary(projectRoot, kind)).entries) entries.push({ ref: entry.path, label: entry.title, kind: kind === "requirements" ? "requirement" : "decision", detail: entry.status ?? entry.path, format: entry.format ?? null });
   }
   for (const term of glossaryTerms(glossary.content)) entries.push({ ref: "glossary", label: term, kind: "term", detail: "Glossary" });
   return entries;
@@ -1478,7 +1688,8 @@ async function computeNavigation(projectRoot: string) {
     roadmap: { exists: roadmap.exists ?? false, error: roadmap.error ?? null, valid: roadmap.valid ?? false },
     attention: { needsYou: attention.needsYou.length, gates: attention.gateCount, answered: attention.answered.length, watch: attention.watch.length },
     initiatives: listedInitiatives,
-    glossary: { path: glossary.path, exists: glossary.exists },
+    // The glossary's entry carries its format mark, as each requirement and decision of the index does, so every list marks a record by its ref.
+    glossary: { path: glossary.path, exists: glossary.exists, format: glossary.format ?? null },
     library: {
       ...Object.fromEntries(Object.entries<any>(readable).map(([kind, library]) => [kind, library.entries.length])),
       terms: glossary.glossaries ? glossary.glossaries.reduce((sum, one) => sum + one.terms.length, 0) : glossaryTerms(glossary.content).length,
@@ -1594,7 +1805,7 @@ async function libraryScope(projectRoot: string, section: string) {
 const PLACE_LABELS: Readonly<Record<string, any>> = Object.freeze({ attention: "Attention", work: "Work", roadmap: "Roadmap", knowledge: "Knowledge", history: "History" });
 // The pages of Attention's and Knowledge's own addresses, by the part after their place's prefix.
 const PLACE_PAGE_LABELS: Readonly<Record<string, any>> = Object.freeze({
-  attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", answered: "Answered in the last 7 days", "roadmap-questions": "Roadmap questions" },
+  attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", formats: "Format findings", answered: "Answered in the last 7 days", "roadmap-questions": "Roadmap questions" },
   knowledge: { touched: "Touched by my work", changed: "Changed this week", diagrams: "Diagrams" }
 });
 
@@ -1650,12 +1861,13 @@ export async function entityContext(projectRoot: string, ref: any) {
   // The Agents page belongs to no place of the rail, so its trail is its own name, whichever group its address shows.
   if (parsed?.kind === "agents") return { trail: [{ ref, label: SECTION_LABELS.agents }], scope: { kind: "global" }, place: null };
   if (parsed?.kind === "initiative" || parsed?.kind === "slice") return initiativeContext(projectRoot, parsed.id, { slug: parsed.kind === "slice" ? parsed.slug : null });
+  if (parsed?.kind === "migration-run") return migrationRunContext(projectRoot, ref, parsed.id);
   if (typeof ref !== "string" || !ref) throw new Error("A tab reference is required.");
   const prefixed = /^(attention|knowledge):(.+)$/.exec(ref);
   if (prefixed) {
     const [, place, page] = prefixed;
     const entry = place === "attention" ? placeCrumb("attention", "attention") : placeCrumb("knowledge");
-    const label = place === "attention" && page.startsWith("work/") ? (await attentionPage(projectRoot, page)).filter!.label : PLACE_PAGE_LABELS[place][page] ?? page;
+    const label = place === "attention" && page.startsWith("work/") ? (await attentionPage(projectRoot, page) as any).filter!.label : PLACE_PAGE_LABELS[place][page] ?? page;
     return { trail: [entry, { ref, label }], scope: { kind: "global" }, place };
   }
   const config = await readWorkflowConfig(projectRoot);
@@ -1715,7 +1927,7 @@ export function parseEntityRef(ref: any): any {
   const group = /^agents:([a-z-]+)$/.exec(ref ?? "");
   if (group && AGENT_GROUP_PAGES.includes(group[1])) return { kind: "agents", page: group[1] };
   // Attention's filtered pages: one kind, one initiative's items, the roadmap's open questions, or the questions answered this week.
-  let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  let match = /^attention:(questions|findings|failed|blocked|ready|problems|formats|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "attention", page: match[1] };
   // Knowledge's own pages: the diagrams, the records behind the open slice, and this week's record changes.
   match = /^knowledge:(diagrams|touched|changed)$/.exec(ref ?? "");
@@ -1724,6 +1936,9 @@ export function parseEntityRef(ref: any): any {
   if (match) return { kind: "initiative", id: match[1] };
   match = /^slice:([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "slice", id: match[1], slug: match[2] };
+  // A format migration run's page, which Attention, the Agents page, and a migrated document's note open.
+  match = /^migration-run:(.+)$/.exec(ref ?? "");
+  if (match && RUN_ID.test(match[1])) return { kind: "migration-run", id: match[1] };
   return null;
 }
 
@@ -1731,6 +1946,7 @@ export async function entityExists(projectRoot: string, ref: any) {
   const parsed = parseEntityRef(ref);
   if (!parsed) return false;
   if (SECTION_REFS.includes(parsed.kind) || parsed.kind === "knowledge") return true;
+  if (parsed.kind === "migration-run") return (await readRun(projectRoot, parsed.id).catch(() => null)) !== null;
   if (parsed.kind === "initiative") {
     const roadmap = await loadRoadmapView(projectRoot);
     if (roadmap.items.some((item: any) => item.id === parsed.id) || roadmap.unlisted.includes(parsed.id)) return true;
@@ -1753,6 +1969,7 @@ async function initiativeCode(projectRoot: string, view: any) {
 export async function loadEntity(projectRoot: string, ref: any, options: any = {}) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
+  if (parsed.kind === "migration-run") return { ref, kind: "migration-run", data: await loadMigrationRunView(projectRoot, parsed.id) };
   if (parsed.kind === "attention") return { ref, kind: "attention", data: parsed.page ? await attentionPage(projectRoot, parsed.page) : await loadAttentionView(projectRoot) };
   if (parsed.kind === "roadmap") return { ref, kind: "roadmap", data: await loadRoadmapView(projectRoot) };
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };

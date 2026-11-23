@@ -11,7 +11,7 @@ Refactoring derives a better conceptual structure from existing artifacts and cu
 It preserves observable behavior by default, including contracts, skill behavior, policy meaning, and configuration semantics.
 Humans, orchestrators, design, implementation, and other capabilities can call this skill.
 Analysis and transformation share the same reasoning procedure.
-The [workflow terms](../workflow/SKILL.md#common-terms) define semantic concepts, candidate relationships, desired conceptual models, resynthesis, and complexity deltas.
+The [workflow terms](../workflow/SKILL.md#common-terms) define semantic units, candidate relationships, desired models, resynthesis, and complexity deltas.
 
 ## 1. Establish scope and authority
 

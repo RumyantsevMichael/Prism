@@ -1,5 +1,6 @@
 import { preference, setPreference } from "../kit/preferences.js";
 import { artifactChip, artifactLink, bindLinks, card, documentTitle, emptyState, escapeHtml, pageSub, plural, recordStatus, setPageSub, shortDate } from "./util.js";
+import { formatBadge, formatBanner } from "./format-marks.js";
 
 // Knowledge's libraries of requirements, decisions, and diagrams: one kit library table each, with a filter and a Group by choice above it.
 // Each row is a record's title with a detail line, then its status, date, and what it is linked to; the grouping is the person's preference.
@@ -34,8 +35,9 @@ const cell = (html: any, className = "") => `<span class="prism-lib-cell${classN
 const quiet = (text: string) => cell(escapeHtml(text), "muted");
 
 // A record's title links to its page, after its kind's glyph, with a detail line below it when there is one; no line names a file, since the page names records by title.
-function titleCell(path: any, ctx: any, title: string, icon: any, detail = "", scope = null) {
-  return `<span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${artifactLink(path, ctx, title)}${scopeChip(path, ctx, scope)}${detail ? `<span class="prism-lib-cell is-detail">${escapeHtml(detail)}</span>` : ""}</span></span>`;
+// A file that breaks its format carries its mark after the title.
+function titleCell(path: any, ctx: any, title: string, icon: any, detail = "", scope = null, format: any = null) {
+  return `<span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${artifactLink(path, ctx, title)}${scopeChip(path, ctx, scope)}${detail ? `<span class="prism-lib-cell is-detail">${escapeHtml(detail)}</span>` : ""}</span>${formatBadge(format)}</span>`;
 }
 
 // A link chip with quieter meta text, such as a slice with the requirements it builds.
@@ -65,7 +67,7 @@ function assigned(entry: any, ctx: any) {
 }
 
 function requirementRow(entry: any, ctx: any) {
-  return `<div class="prism-lib-row" data-library-row>${titleCell(entry.path, ctx, entry.title, "list", entry.requirements ? plural(entry.requirements, "requirement") : "", entry.scope)}${cell(recordStatus(entry.status ?? ""))}${cell(escapeHtml(dated(entry, false)))}${assigned(entry, ctx)}</div>`;
+  return `<div class="prism-lib-row" data-library-row>${titleCell(entry.path, ctx, entry.title, "list", entry.requirements ? plural(entry.requirements, "requirement") : "", entry.scope, entry.format ?? null)}${cell(recordStatus(entry.status ?? ""))}${cell(escapeHtml(dated(entry, false)))}${assigned(entry, ctx)}</div>`;
 }
 
 function decisionRow(entry: any, ctx: any, titles: any) {
@@ -75,7 +77,7 @@ function decisionRow(entry: any, ctx: any, titles: any) {
     ...(entry.requirementLinks ?? []).map((link: any) => linkChip(link.path, ctx, documentTitle(link.path, ctx), link.anchors.length ? `req ${link.anchors.join(", ")}` : "")),
     ...(entry.initiatives ?? []).map((use: any) => linkChip(`initiative:${use.initiative}`, ctx, use.title, "initiative"))
   ];
-  return `<div class="prism-lib-row" data-library-row>${titleCell(entry.path, ctx, entry.title, "scale", detail, entry.scope)}${cell(recordStatus(entry.status ?? ""))}${cell(escapeHtml(dated(entry, true)))}${applies.length ? cell(applies.join(""), "chip-row") : quiet("Nothing linked")}</div>`;
+  return `<div class="prism-lib-row" data-library-row>${titleCell(entry.path, ctx, entry.title, "scale", detail, entry.scope, entry.format ?? null)}${cell(recordStatus(entry.status ?? ""))}${cell(escapeHtml(dated(entry, true)))}${applies.length ? cell(applies.join(""), "chip-row") : quiet("Nothing linked")}</div>`;
 }
 
 function diagramRow(diagram: any, about: any, ctx: any) {
@@ -211,7 +213,9 @@ function renderLibrary(container: any, kind: any, data: any, ctx: any) {
   const all = narrowed ? every.filter((entry: any) => !entry.scope || ctx.scopeShown(entry.scope)) : every;
   const count = narrowed ? `${all.length} of ${plural(every.length, NOUNS[kind])}` : `${plural(every.length, NOUNS[kind])}${scopes.length > 1 ? ` in ${plural(scopes.length, "scope")}` : ""}`;
   const note = narrowed ? `<p class="library-narrowed muted" data-library-narrowed>Narrowed to ${escapeHtml(andList(narrowed))}. <a href="#" data-show-all-scopes>Show all scopes</a></p>` : "";
-  const sub = pageSub(escapeHtml(library.sub(count)));
+  // The line under the title also counts the shown files that break their format.
+  const broken = all.filter((entry: any) => entry.format).length;
+  const sub = pageSub(`${escapeHtml(library.sub(count))}${broken ? ` · <b>${broken} of ${all.length}</b> ${broken === 1 ? "breaks its" : "break their"} format` : ""}`);
   const bindNarrowed = () => container.querySelector("[data-show-all-scopes]")?.addEventListener("click", (event: any) => {
     event.preventDefault();
     ctx.showAllScopes?.();
@@ -271,7 +275,7 @@ export function render(container: any, entity: any, ctx: any) {
   }
   if (entity.kind === "glossary") {
     container.innerHTML = data.exists
-      ? `<section class="view-section document-sheet"><prism-doc class="document-content">${ctx.renderMarkdown(data.content, data.path)}</prism-doc></section>`
+      ? `${formatBanner(data.format)}<section class="view-section document-sheet"><prism-doc class="document-content">${ctx.renderMarkdown(data.content, data.path)}</prism-doc></section>`
       : card("No glossary yet", data.path ? `<p>The configured glossary does not exist yet.</p><p class="muted">Run <code>setup</code> or <code>ideate</code> to create it.</p>` : "<p>The workflow settings turn the glossary off.</p>", { eyebrow: "Glossary" });
     return;
   }

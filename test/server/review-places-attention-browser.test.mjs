@@ -16,10 +16,10 @@ test("clauses 36, 38: the Attention sidebar lists Everything, each kind with its
   const scope = sidebar(page);
   assert.deepEqual(await groupHeadings(scope), ["By kind", "By work", "Answered"]);
   const names = await itemNames(scope);
-  assert.deepEqual(names.slice(0, 7).map((name) => name.replace(/\s+/g, " ")), [
-    "Everything 13", "Questions 2", "Review findings 1", "Failed verifications 1", "Blocked work 4", "Ready to ship 0", "Problems 5"
+  assert.deepEqual(names.slice(0, 8).map((name) => name.replace(/\s+/g, " ")), [
+    "Everything 14", "Questions 2", "Review findings 1", "Failed verifications 1", "Blocked work 4", "Ready to ship 0", "Problems 5", "Format findings 1"
   ]);
-  assert.deepEqual(names.slice(7, 11), ["Harden request retries 4", "Alpha search 2", "Beta billing 2", "2 more 3"]);
+  assert.deepEqual(names.slice(8, 12), ["Harden request retries 4", "Alpha search 2", "Beta billing 2", "2 more 3"]);
   assert.equal(names.at(-1), "Answered in the last 7 days 3");
   await item(scope, "2 more").click();
   const expanded = await settled(() => itemNames(scope), (shown) => shown.includes("Show fewer"));
@@ -30,7 +30,7 @@ test("clauses 36, 38: the Attention sidebar lists Everything, each kind with its
   assert.equal(expanded.indexOf("Show fewer"), expanded.indexOf("Export activity reports 1") + 1, "it follows the last initiative as Show fewer");
   await item(scope, "Show fewer").click();
   const gathered = ["Harden request retries 4", "Alpha search 2", "Beta billing 2", "2 more 3"];
-  assert.deepEqual(await settled(async () => (await itemNames(scope)).slice(7, 11), gathered), gathered, "Show fewer gathers them again");
+  assert.deepEqual(await settled(async () => (await itemNames(scope)).slice(8, 12), gathered), gathered, "Show fewer gathers them again");
   assert.deepEqual(page.errors, []);
 });
 
@@ -43,7 +43,7 @@ test("clauses 39, 41: a kind or an initiative opens its own address, shows only 
   await item(scope, "Failed verifications").click();
   await settledOn(page, "attention:failed");
   const view = page.locator("#artifact");
-  assert.equal(await view.getByText("Failed verifications · 1 of 13 items", { exact: true }).isVisible(), true, "the filter and its count show above the items");
+  assert.equal(await view.getByText("Failed verifications · 1 of 14 items", { exact: true }).isVisible(), true, "the filter and its count show above the items");
   assert.equal(await view.getByText("Retry dropped connections failed verification", { exact: true }).isVisible(), true, "the failed run is listed by its slice");
   assert.equal(await view.getByText(/The tests failed, 2 tests failed/).isVisible(), true, "with its reason in words");
   assert.equal(await view.getByText("Choose a bucket size", { exact: false }).count(), 0);
@@ -58,7 +58,7 @@ test("clauses 39, 41: a kind or an initiative opens its own address, shows only 
     await item(scope, "Export activity reports").click();
   });
   await settledOn(page, "attention:work/activity-reports");
-  assert.equal(await view.getByText("Export activity reports · 1 of 13 items", { exact: true }).isVisible(), true);
+  assert.equal(await view.getByText("Export activity reports · 1 of 14 items", { exact: true }).isVisible(), true);
   assert.equal(await view.getByText("Should a report download require a fresh login, or is an active session enough?").isVisible(), true);
   await view.getByRole("link", { name: "Show everything", exact: true }).click();
   await settledOn(page, "attention");
@@ -89,6 +89,11 @@ test("clause 40: with nothing answered this week the page says so", { skip, time
 
 test("clauses 36, 39, 73: the Attention sidebar and its filtered page match the mockup at three widths, and in their colors in the dark theme", { skip, timeout: 900000 }, async (context) => {
   const result = await comparePlaces(context, { scenes: "attention,attention-filtered", parts: "sidebar,head,trail,geometry,tokens" });
-  assert.equal(result.status, 0, `the comparison found differences:\n${result.stdout}${result.stderr}`);
-  for (const pair of result.report.pairs) assert.deepEqual(pair.differences, [], `${pair.scene} ${pair.width} ${pair.theme}`);
+  assert.ok(result.report, `the comparison wrote no report:\n${result.stdout}${result.stderr}`);
+  // The Format findings kind came after the mockup, so By kind may hold the mockup's rows followed by that one row, and nothing else differs.
+  const formatsRow = (line) => {
+    const match = /"By kind" fixed rows (\[.*?\]), app "By kind" rows (\[.*\])$/.exec(line);
+    return Boolean(match) && JSON.stringify([...JSON.parse(match[1]), "Format findings"]) === match[2];
+  };
+  for (const pair of result.report.pairs) assert.deepEqual(pair.differences.filter((line) => !formatsRow(line)), [], `${pair.scene} ${pair.width} ${pair.theme}`);
 });

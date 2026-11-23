@@ -1,4 +1,5 @@
 import { artifactLink, bindLinks, emptyState, escapeHtml, pageSub, recordStatus, setPageSub } from "./util.js";
+import { formatBadge } from "./format-marks.js";
 
 // Knowledge's two entry points: Touched by my work, the records behind the open slice, and Changed this week, the records changed in the last 7 days.
 
@@ -21,10 +22,11 @@ function statusChip(status: any) {
   return status ? recordStatus(status) : "";
 }
 
-// A record's title links to its page; its kind's icon leads the row and its kind is also said in words.
+// A record's title links to its page; its kind's icon leads the row and its kind is also said in words, and a file that breaks its format carries its mark after the title.
 function titleCell(record: any, ctx: any) {
   const [, icon] = KINDS[record.kind] ?? ["", "file"];
-  return `<span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon>${artifactLink(record.ref, ctx, record.title)}</span>`;
+  const format = record.format !== undefined ? record.format : ctx.formatOf?.(record.ref) ?? null;
+  return `<span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon>${artifactLink(record.ref, ctx, record.title)}${formatBadge(format)}</span>`;
 }
 
 const kindText = (record: any) => KINDS[record.kind]?.[0] ?? record.kind;
