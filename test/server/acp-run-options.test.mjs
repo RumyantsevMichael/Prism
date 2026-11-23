@@ -77,20 +77,20 @@ test("clause 14: an agent that speaks another ACP version reads failed with both
 test("clause 15: an agent that needs a sign-in reads sign-in with its own methods, and Prism never authenticates", { skip: posixOnly }, async (t) => {
   const s = await gemini(t, { authRequired: true, authMethods: [{ id: "oauth", name: "Google login", description: "Run gemini and choose Login with Google" }, { id: "key", name: "API key" }] });
   const report = (await runOptions(s, HOST)).json;
-  assert.deepEqual([report.state, report.reason], ["sign-in", "Gemini CLI needs you to sign in before it can run: Google login (Run gemini and choose Login with Google), API key."]);
+  assert.deepEqual([report.state, report.reason], ["sign-in", "Gemini CLI needs you to sign in before it can run: Google login (Run gemini and choose Login with Google), API key. Prism checks that it starts Prism's tools once you have signed in."]);
   assert.deepEqual(s.requests("authenticate"), []);
   const bare = await gemini(t, { authRequired: true });
-  assert.equal((await runOptions(bare, HOST)).json.reason, "Gemini CLI needs you to sign in before it can run: sign in with the agent's own command.");
+  assert.equal((await runOptions(bare, HOST)).json.reason, "Gemini CLI needs you to sign in before it can run: sign in with the agent's own command. Prism checks that it starts Prism's tools once you have signed in.");
 });
 
 test("clause 16: an agent whose session does not start Prism's server reads failed, since it cannot run Prism's workflow", { skip: posixOnly }, async (t) => {
   const s = await gemini(t, { startMcp: false });
   const report = (await runOptions(s, HOST)).json;
-  assert.deepEqual([report.state, report.reason], ["failed", "Gemini CLI did not start Prism's tools, so it cannot run Prism's workflow."]);
+  assert.deepEqual([report.state, report.reason], ["failed", "Gemini CLI did not start Prism's tools, so it cannot run Prism's workflow: it ignores the tool servers that Prism names when it opens a session, or starts them later than Prism waits."]);
 });
 
 test("clause 17: while the initiative's ACP host reads failed or sign-in, the launch is unavailable with that reason and asks nothing", { skip: posixOnly }, async (t) => {
-  for (const [plan, reason] of [[{ startMcp: false }, "Gemini CLI did not start Prism's tools, so it cannot run Prism's workflow."], [{ authRequired: true }, "Gemini CLI needs you to sign in before it can run: sign in with the agent's own command."]]) {
+  for (const [plan, reason] of [[{ startMcp: false }, "Gemini CLI did not start Prism's tools, so it cannot run Prism's workflow: it ignores the tool servers that Prism names when it opens a session, or starts them later than Prism waits."], [{ authRequired: true }, "Gemini CLI needs you to sign in before it can run: sign in with the agent's own command. Prism checks that it starts Prism's tools once you have signed in."]]) {
     const s = await gemini(t, plan);
     await setSettings(s.root, INITIATIVE, { host: HOST });
     const action = actionOf(await listing(s.base, TARGET(INITIATIVE), s.headers), "launch.run");

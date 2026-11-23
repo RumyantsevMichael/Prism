@@ -13,9 +13,9 @@ test("a description that restates its method's name is left out, and one that sa
     { id: "gateway", name: "API Gateway", description: "Use a custom API Gateway" },
     { id: "bare", name: "Token" }
   ];
-  assert.equal(acpReasons.signIn("Example agent", methods), "Example agent needs you to sign in before it can run: Log in with Example, Example API key, Cloud (Use an API key with Cloud GenAI), API Gateway, Token.");
+  assert.equal(acpReasons.signIn("Example agent", methods), "Example agent needs you to sign in before it can run: Log in with Example, Example API key, Cloud (Use an API key with Cloud GenAI), API Gateway, Token. Prism checks that it starts Prism's tools once you have signed in.");
 });
 
 test("an agent that names no method is told to sign in with its own command", () => {
-  assert.equal(acpReasons.signIn("Example agent", []), "Example agent needs you to sign in before it can run: sign in with the agent's own command.");
+  assert.equal(acpReasons.signIn("Example agent", []), "Example agent needs you to sign in before it can run: sign in with the agent's own command. Prism checks that it starts Prism's tools once you have signed in.");
 });

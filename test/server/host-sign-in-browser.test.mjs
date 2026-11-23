@@ -16,7 +16,7 @@ const METHODS = [
   { id: "key", name: "Example API key", description: "Use an API key" },
   { id: "cli", name: "Terminal login", description: "Run example-agent and choose Log in" }
 ];
-const REASON = "Example agent needs you to sign in before it can run: Log in with Example, Example API key, Terminal login (Run example-agent and choose Log in).";
+const REASON = "Example agent needs you to sign in before it can run: Log in with Example, Example API key, Terminal login (Run example-agent and choose Log in). Prism checks that it starts Prism's tools once you have signed in.";
 
 async function setup(t, { host }) {
   const s = await acpFixture(t, { plans: { example: { authRequired: true, authMethods: METHODS } } });

@@ -1800,7 +1800,7 @@ input.on("line", async (line) => {
       });
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
-      markToolsListed();
+      markToolsListed(process.env, process.argv, tools.map((tool: any) => tool.name));
     } else if (request.method === "tools/call") {
       callsInProgress.add(request.id);
       const meta = request.params?._meta;

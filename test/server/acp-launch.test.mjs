@@ -114,7 +114,7 @@ test("clause 22: an agent that never starts Prism's server ends without a prompt
   const id = await launch(s);
   const result = await settled(() => view(s, id), (item) => item && !["running", "waiting"].includes(item.state), { timeout: 60000 + WAIT_MS });
   assert.equal(result.state, "failed");
-  assert.match(result.reason, /Gemini CLI did not start Prism's tools, so it cannot run Prism's workflow\./);
+  assert.match(result.reason, /Gemini CLI did not start Prism's tools, so it cannot run Prism's workflow: it ignores the tool servers/);
   assert.ok(launchedLog(s).some((entry) => entry.kind === "start" && entry.agent === "gemini-launched"), "the launched run is the agent that never starts Prism's server");
   assert.deepEqual(sent(s, "session/prompt"), []);
 });
