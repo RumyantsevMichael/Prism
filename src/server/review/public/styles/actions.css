@@ -210,3 +210,67 @@
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+/* A form, such as a question's answer, is one action drawn as a column: its fields, then the line that says what is missing or that it is ready, beside its submit button. */
+.action-row.is-form {
+  grid-template-columns: minmax(0, 1fr);
+  padding: 0;
+  border-top: 0;
+}
+
+.action-row.is-form .action-control {
+  gap: var(--prism-space-5);
+}
+
+.action-fields.is-form {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-5);
+}
+
+/* The choice cards under their heading, with Clear choice at its end; the head keeps the button's height, so the cards do not move when it shows. */
+.action-cards {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.action-cards-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  min-height: var(--prism-control-height-sm);
+}
+
+.action-submit.is-form {
+  justify-content: flex-end;
+}
+
+.action-hint.is-form {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: var(--prism-space-3);
+  font-size: var(--prism-font-size-sm);
+}
+
+.action-hint.is-form.is-ready {
+  color: var(--prism-color-success);
+}
+
+.action-hint-text {
+  min-width: 0;
+}
+
+.action-hint.is-form:not(:has(.action-hint-text:not(:empty))) {
+  display: none;
+}
+
+/* On a phone a form's last button takes the rest of its line. */
+@media (max-width: 720px) {
+  .action-submit.is-form > :last-child {
+    flex: 1 1 auto;
+  }
+}

@@ -81,6 +81,12 @@ let appVersion: any = null;
 let sessionConnected = false;
 // The origin's shared event stream, which one tab holds for every tab of the review app.
 let relay: any = null;
+// Reads the project's index again at once, set once the page has drawn its first index.
+let refreshIndex: (() => unknown) | null = null;
+// How often a page whose event stream is joined reads its index for what no record holds, how often it reads it while the stream is down, and how often shown action lists check their listing.
+const INDEX_CHECK_MS = 5000;
+const INDEX_UNJOINED_MS = 1500;
+const ACTION_CHECK_MS = 4500;
 let saveQueue = Promise.resolve();
 // A workspace's page names each store artifact by its store location, store:<location>, in its tabs, links, and URLs, never by a checkout's path:
 // a checkout path that a record view or an older link names opens as the store artifact it names.
@@ -1143,6 +1149,9 @@ function onStreamEvent(name: string, data: any) {
     // and a comment on the open file shows at once rather than at the next check.
     document.dispatchEvent(new CustomEvent("prism:action", { detail: data }));
     if (data?.artifact?.path && data.artifact.path === selectedPath) void showArtifact(selectedPath);
+  } else if (name === "records") {
+    // The project's records changed, so the index and the open view are read again now rather than at the next check.
+    refreshIndex?.();
   } else if (name === "session") {
     sessionConnected = true;
     try {
@@ -2570,8 +2579,12 @@ function swapIn(memory: any) {
   if (memory.focusKey && !artifact!.contains(document.activeElement)) {
     const found = keyed(memory.focusKey) ?? (comment ? keyed("more-comments") : null);
     if ((found as any)?.dataset.commentId !== undefined) (found as any).tabIndex = -1;
-    if (found) (found as any).focus({ preventScroll: true });
-    else if (more) {
+    // A kit field takes focus on its own control, with the cursor where it was.
+    if (found) {
+      const control = (found as any).control ?? found;
+      control.focus({ preventScroll: true });
+      if (memory.selection && "setSelectionRange" in control) try { control.setSelectionRange(...memory.selection); } catch {}
+    } else if (more) {
       const list = artifact!.querySelector("[data-comment-list]");
       const listed = [...(list?.querySelectorAll("[data-comment-id]") ?? [])];
       // Without a press under way, focus goes to the last listed comment, the place in the list where the button stood.
@@ -3001,51 +3014,6 @@ function viewContext(path: any, state: any) {
       }
       // A diagram mounted after the page drew, such as on a slice's Diagram tab, gets its Maximize control too.
       if (path === selectedPath) decorateMaximize(path);
-    },
-    // A gate answer is the gate's answer action, applied against the revision its listing shows.
-    // An approval gate of a requirement or ADR is the target approval:<id>, since the artifact's status record in the store holds it, and its revision is the artifact's version.
-    async answerGate({ initiative, approval, id, choice, note }: { initiative: string; approval: any; id: string; choice: any; note: any }) {
-      if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
-      const target = approval ? `approval:${id}` : `gate:${initiative}/${id}`;
-      const unanswered = () => {
-        throw new Error("The review app did not answer, so the answer was not recorded. Try again in a moment.");
-      };
-      const listed = await appFetch(`./api/actions?target=${encodeURIComponent(target)}`, { headers: writeHeaders() }).catch(unanswered);
-      const listing = await listed.json().catch(() => ({}));
-      if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The answer was not recorded."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
-      const action = (listing.actions ?? []).find((item: any) => item.id === "gate.answer");
-      // A question the server no longer takes an answer to, such as one of a shipped initiative, is refused with the server's own reason.
-      if (action && !action.available) throw Object.assign(new Error(action.reason ?? "The answer was not recorded."), { code: "action_unavailable" });
-      const names = new Set((action?.fields ?? []).map((field: any) => field.name));
-      const input = Object.fromEntries([["choice", choice], ["note", note]].filter(([name, value]) => names.has(name) && value !== null && value !== undefined && value !== ""));
-      const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
-      const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
-      if (!response.ok) {
-        // A withdrawn question reads as one, and any other refusal carries the server's reason.
-        const code = result.code === "unknown_target" ? "unknown_gate" : result.code;
-        throw Object.assign(new Error(result.reason ?? result.message ?? "The answer was not recorded."), { code });
-      }
-      return result;
-    },
-    // Withdrawing a gate is its withdraw action, applied against the revision its listing shows; it takes no input.
-    async withdrawGate({ initiative, approval, id }: { initiative: string; approval: any; id: string }) {
-      if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
-      const target = approval ? `approval:${id}` : `gate:${initiative}/${id}`;
-      const unanswered = () => {
-        throw new Error("The review app did not answer, so the question was not withdrawn. Try again in a moment.");
-      };
-      const listed = await appFetch(`./api/actions?target=${encodeURIComponent(target)}`, { headers: writeHeaders() }).catch(unanswered);
-      const listing = await listed.json().catch(() => ({}));
-      if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The question was not withdrawn."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
-      const action = (listing.actions ?? []).find((item: any) => item.id === "gate.withdraw");
-      if (!action || !action.available) throw Object.assign(new Error(action?.reason ?? "The question was not withdrawn."), { code: "action_unavailable" });
-      const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.withdraw", target, input: {}, revision: action.revision ?? null }) }).catch(unanswered);
-      const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
-      if (!response.ok) {
-        const code = result.code === "unknown_target" ? "unknown_gate" : result.code;
-        throw Object.assign(new Error(result.reason ?? result.message ?? "The question was not withdrawn."), { code });
-      }
-      return result;
     },
     rerender() {
       lastSnapshot = "";
@@ -3613,11 +3581,14 @@ async function initialize() {
     renderTabs();
     await showArtifact(selectedPath);
   }
-  let polls = 0;
-  // The page checks its project every 1.5 s, one check at a time, and only while the tab is shown; a check without an answer within its deadline counts as failed.
-  const indexPoller = createPoller({ interval: 1500, run: async () => {
-    // Shown action lists check their listing every few seconds, so a change an agent made shows without a reload.
-    if (++polls % 3 === 0 && connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
+  // Shown action lists check their listing every few seconds, so a change an agent made shows without a reload.
+  void createPoller({ interval: ACTION_CHECK_MS, run: () => {
+    if (connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
+  } }).start();
+  // The page reads its project's index again when the server says the project's records changed, one read at a time and only while the tab is shown;
+  // it also reads it every few seconds while the event stream is joined, for what no record holds, such as the checkout's files and the store's sync,
+  // and every 1.5 s while the stream is down. A read without an answer within its deadline counts as failed.
+  const indexPoller = createPoller({ interval: () => sessionConnected ? INDEX_CHECK_MS : INDEX_UNJOINED_MS, run: async () => {
     try {
       const refreshed = await appFetch("./api/index", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);
       const answered = refreshed?.ok ? await refreshed.json().catch(() => null) : null;
@@ -3655,7 +3626,8 @@ async function initialize() {
     }
   } });
   // The first check waits one interval, since the page has just drawn from a fresh index.
-  setTimeout(() => void indexPoller.start(), 1500);
+  setTimeout(() => void indexPoller.start(), INDEX_UNJOINED_MS);
+  refreshIndex = () => indexPoller.now();
   // A hidden tab makes none of the checks above, so it reads the count of waiting questions alone, which raises the desktop notification the Attention page offers.
   void createPoller({ interval: ATTENTION_WATCH_MS, whileHidden: true, run: async () => {
     const response = await appFetch("./api/attention", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);

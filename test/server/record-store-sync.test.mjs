@@ -190,7 +190,9 @@ test("lists saved conflicts and serves each saved copy beside its current record
   const review = await startReviewServer({ projectRoot: a });
   try {
     const index = await fetchJson(`${review.baseUrl}/api/index`);
-    assert.deepEqual(index.recordStore, { kind: "folder", label: "../store-a", location: storeA, sync: true, workspaceName: null });
+    const { watching, ...recordStore } = index.recordStore;
+    assert.deepEqual(recordStore, { kind: "folder", label: "../store-a", location: storeA, sync: true, workspaceName: null });
+    assert.ok(Array.isArray(watching?.unwatched), "the index says which record folders are checked instead of watched");
     assert.deepEqual((await fetchJson(`${review.baseUrl}/api/store/conflicts`)).conflicts, listed);
     assert.equal((await fetchJson(`${review.baseUrl}/api/store/conflict?savedAs=${encodeURIComponent(listed[0].savedAs)}`)).saved, "{\"v\":\"a\"}\n");
   } finally {

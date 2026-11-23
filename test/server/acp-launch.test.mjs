@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_OPTIONS, INITIATIVE, TARGET, acpFixture, apply, fakeEntry, launches, setSettings } from "./fixtures/acp-agents.mjs";
 import { STRIPPED } from "./fixtures/launched-sessions.mjs";
 import { WAIT_MS, settled } from "./fixtures/wait.mjs";
+import { LAUNCH_NOTE } from "../../dist/server/session/launch-hosts.mjs";
 
 // Requirements: docs/requirements/acp-agents.md §1, §2, and §16, and docs/requirements/launched-sessions.md §29.
 // Contract clauses 18 to 23 and 25 to 31 of docs/plans/harness-client-protocol/slice.md: a launched session on an ACP agent gets
@@ -59,7 +60,10 @@ test("clauses 18, 19: a launch starts the agent in the checkout without host ses
   const [server] = opened.params.mcpServers;
   assert.equal(server.name, "prism");
   assert.equal(server.command, process.execPath);
-  assert.deepEqual(server.args, [path.join(PLUGIN, "dist/server/mcp.mjs")]);
+  assert.equal(server.args.length, 3);
+  assert.equal(server.args[0], path.join(PLUGIN, "dist/server/mcp.mjs"));
+  assert.equal(server.args[1], `--prism-launch=${id}`);
+  assert.match(server.args[2], /^--prism-acp-token=[0-9a-f]{32}$/);
   assert.deepEqual(server.env.map((item) => item.name).sort(), ["NODE_USE_ENV_PROXY", "PRISM_LAUNCH", "PRISM_REVIEW_APP_DIR"]);
   assert.equal(server.env.find((item) => item.name === "PRISM_LAUNCH").value, id);
   assert.equal(server.env.find((item) => item.name === "NODE_USE_ENV_PROXY").value, "1");
@@ -121,11 +125,12 @@ test("clause 23: the prompt carries the orchestrate skill as a resource and the 
   const [prompt] = sent(s, "session/prompt");
   assert.deepEqual(prompt.params.prompt, [
     { type: "resource", resource: { uri: "prism://skills/orchestrate/SKILL.md", mimeType: "text/markdown", text: SKILL } },
-    { type: "text", text: INSTRUCTION }
+    { type: "text", text: INSTRUCTION },
+    { type: "text", text: LAUNCH_NOTE }
   ]);
   const plain = await gemini(t, { plan: { embeddedContext: false } });
   await ended(plain, await launch(plain));
-  assert.deepEqual(sent(plain, "session/prompt")[0].params.prompt, [{ type: "text", text: SKILL }, { type: "text", text: INSTRUCTION }]);
+  assert.deepEqual(sent(plain, "session/prompt")[0].params.prompt, [{ type: "text", text: SKILL }, { type: "text", text: INSTRUCTION }, { type: "text", text: LAUNCH_NOTE }]);
 });
 
 test("clause 25: a resume reopens the session with Prism's server, sets the recorded choice again, and prompts again", { skip: posixOnly }, async (t) => {
@@ -161,7 +166,7 @@ test("clause 25: an agent without resume falls back to session/load, and one wit
 test("clause 26: a file system request from the agent is refused, and the run still ends", { skip: posixOnly }, async (t) => {
   const s = await gemini(t, { plan: { askFs: true } });
   const result = await ended(s, await launch(s));
-  assert.equal(result.state, "finished");
+  assert.equal(result.state, "ended-without-result");
   const answer = launchedLog(s).find((entry) => entry.kind === "input" && entry.message.id === 4000 && !entry.message.method);
   assert.deepEqual(answer.message.error, { code: -32601, message: "Prism answers no host requests." });
   assert.deepEqual(sent(s, "initialize")[0].params.clientCapabilities, {});

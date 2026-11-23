@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -112,5 +112,32 @@ test("§17 the menu counts Launched from Prism, Started outside Prism, and claim
     assert.equal(await page.evaluate(() => new URL(location.href).searchParams.get("artifact")), ref);
     await waitForView(page);
   }
+  assert.deepEqual(page.errors, []);
+});
+
+test("headless-run-questions §14 §16 Needs you lists a session that ended without a result after failed ones and before waiting ones, with Answer and Archive", { skip, timeout: 120000 }, async (t) => {
+  const s = await archiveProject(t);
+  // An installed ACP agent, whose command does not exist, so the session names it by its label and nothing can start it.
+  const version = path.join(s.app, "agents", "gemini", "1.0.0");
+  await mkdir(version, { recursive: true });
+  await writeFile(path.join(version, "install.json"), JSON.stringify({ id: "gemini", name: "Gemini CLI", version: "1.0.0", command: path.join(version, "missing-agent"), args: [], env: {}, installedAt: "2026-11-19T10:00:00.000Z" }));
+  await writeFile(path.join(s.app, "agents", "gemini", "current.json"), JSON.stringify({ version: "1.0.0" }));
+  const waiting = await s.launch("waiting");
+  const unresolved = await s.launch("ended-without-result", { host: "acp-gemini", label: "Gemini CLI" });
+  const failed = await s.launch("failed");
+  const open = await pageOpener(t, s);
+  const page = await open("agents:needs-you");
+  await settled(() => rowsOf(page), (rows) => rows.length === 3);
+  assert.deepEqual(await rowsOf(page), [`launch:${failed}`, `launch:${unresolved}`, `launch:${waiting}`]);
+  const row = page.locator(`[data-agent="launch:${unresolved}"]`);
+  assert.match(await textOf(row), /Ended without a result/);
+  assert.equal(await row.locator('prism-badge[tone="info"]').count(), 1, "the state reads with tone info");
+  assert.deepEqual(await row.locator("[data-agent-action]").evaluateAll((items) => items.map((item) => item.dataset.agentAction)), ["answer", "archive"]);
+  await row.locator('[data-agent-action="answer"]').click();
+  await settled(() => page.evaluate(() => new URL(location.href).searchParams.get("artifact")), (ref) => typeof ref === "string" && ref.startsWith("attention"));
+  const card = page.locator(".gate-no-result:visible");
+  await card.waitFor();
+  assert.equal(await textOf(card.locator(".attention-where")), "Export reports · Gemini CLI", "Answer opens its no-result gate on Attention");
+  assert.match(await textOf(card), /Should I park it\?/);
   assert.deepEqual(page.errors, []);
 });

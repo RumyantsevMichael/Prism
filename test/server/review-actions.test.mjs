@@ -262,6 +262,7 @@ test("gate answers are actions whose fields follow the gate kind, and the old an
     ["choice", "choice", ["approve", "request-changes"], true, null, null, null],
     ["note", "text", null, false, { field: "choice", values: ["request-changes"] }, 4000, true]
   ]);
+  assert.deepEqual(review.fields[0].options.map((option) => [option.label, option.consequence]), [["Approve", "The agent goes on with the work as it stands."], ["Request changes", "The agent revises the work from your note before it goes on."]], "the listing says what each answer leads to, so the page draws it from there");
   const [decision] = await fieldsOf(gateIds.decision);
   assert.deepEqual(decision.fields.map((field) => [field.name, field.options?.map((option) => option.value) ?? null, field.required, field.requiredWhen]), [["choice", ["keep", "drop"], false, null], ["note", null, false, { field: "choice", values: [null] }]]);
   assert.deepEqual(decision.fields[0].options.map((option) => [option.value, option.label, option.consequence]), [["keep", "Keep", KEEP_CONSEQUENCE], ["drop", "Drop", DROP_CONSEQUENCE]], "each option says what picking it does");

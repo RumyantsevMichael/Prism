@@ -153,8 +153,8 @@ function setText(element: any, text: any) {
 }
 
 /**
- * The run choices of one action: section is the element to place, and update({ fields, input, host, hostLabel, writable, disabled })
- * draws the pickers for the shown host's input. choose(name, value) is called with a field's new value, a provider string or null, or a run choice.
+ * The run choices of one action: section is the element to place, and update({ fields, input, host, hostLabel, writable, disabled, shownReason })
+ * draws the pickers for the shown host's input, where shownReason is the reason that a choice of host shows under the shown host, or null. choose(name, value) is called with a field's new value, a provider string or null, or a run choice.
  * read(query) resolves to { status, json } of api/run-options, and changed(), when given, is called after the pickers were drawn again.
  */
 export function createRunChoices({ read, choose, changed = null }: any) {
@@ -397,13 +397,14 @@ export function createRunChoices({ read, choose, changed = null }: any) {
     finish();
   }
 
-  // The pickers a host reports, and the reasons of the shown host's reports in the section's note.
+  // The pickers a host reports, and the reasons of the shown host's reports in the section's note, apart from the one that the
+  // choice of host already shows under that host.
   function finish() {
     if (!view) return;
     const runFields = view.fields.filter(isRunField);
     placed(runFields, (state: any) => state.field.kind === "run-choice" || Boolean(optionIn(state.reportHost === view.host ? state.report : null, state.field.option)));
     const current = [...pickers.values()].filter((state) => state.reportHost === view.host && state.reportKey === state.key);
-    const reasons = [...new Set(current.map((state) => state.report?.reason).filter(Boolean))];
+    const reasons = [...new Set(current.map((state) => state.report?.reason).filter((reason) => reason && reason !== view.shownReason))];
     setText(note, reasons.join(" "));
     note.hidden = !reasons.length;
     const sources = [...new Set(current.map((state) => sourceText(state.report)).filter(Boolean))];

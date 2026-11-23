@@ -120,7 +120,7 @@ test("a stop request written for a run that already exited 0 keeps its superviso
 test("a resume whose initiative shipped while the confirmation was open starts nothing and records nothing", { skip: posixOnly }, async (t) => {
   const s = await setup(t, { plans: { claude: [{ hold: 50 }, { hold: "forever" }] } });
   const id = (await apply(s.base, { action: "launch.run", target: `initiative:${INITIATIVE}`, input: {}, revision: null }, s.headers)).json.launch.id;
-  await waitFor(async () => (await s.launchView(id))?.state === "finished", { what: "the run to finish" });
+  await waitFor(async () => (await s.launchView(id))?.state === "ended-without-result", { what: "the run to finish" });
   await writeFile(path.join(s.app, "launches", "window.json"), JSON.stringify({ confirmedAt: new Date(Date.now() - 40 * 60000).toISOString(), endsAt: new Date(Date.now() - 10 * 60000).toISOString() }));
   // The dialog ships the initiative before it confirms, as an orchestrate run elsewhere might while the person reads it.
   const { readRecord } = await import("../../dist/server/workflow/record-store.mjs");

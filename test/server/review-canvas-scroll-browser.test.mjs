@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { demoProject, launch, openPage, reviewUrl, serveProject, settle, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
+import { demoProject, launch, openPage, reviewUrl, serveProject, settle, skip, useAppDirectory, writableReviewUrl } from "./fixtures/kit-browser.mjs";
 import { repainted, settled } from "./fixtures/wait.mjs";
 
 // The review page's canvases, scrolling, and refreshes: Attention's list and detail scroll apart, graphs and diagrams draw on a dotted grid that follows their zoom,
@@ -170,8 +170,10 @@ test("a menu taller than the window keeps its scroll position when the page plac
 });
 
 test("a gate's note grows with its text up to a limit", { skip, timeout: 90000 }, async (context) => {
-  const { page } = await stressPage(context, "attention", { viewport: { width: 1440, height: 900 } });
-  const note = page.locator(".attention-sheet:not([hidden]) .gate-note textarea");
+  // Only a tab that can make changes edits the note.
+  await useAppDirectory(context);
+  const page = await openPage(await launch(context), await writableReviewUrl(context, await demoProject(context, "seed-stress.mjs"), "attention"), { viewport: { width: 1440, height: 900 } });
+  const note = page.locator('.attention-sheet:not([hidden]) .gate-answer prism-field[data-field="note"] textarea');
   const empty = await note.evaluate((element) => element.getBoundingClientRect().height);
   await note.fill(Array.from({ length: 8 }, (_, index) => `Line ${index + 1} of a longer note.`).join("\n"));
   await repainted(page);

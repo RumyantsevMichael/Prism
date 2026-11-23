@@ -340,10 +340,13 @@ test("a socket at a tracked path under the artifact paths is passed over as a FI
   const place = await workspace(context);
   const api = await checkout(place, "api", { files: { "docs/plans/p/slice.md": "# Slice\n", "docs/plans/p/probe.sock": "x\n" } });
   // The tracked file is replaced in the work tree by a listening Unix socket, which open refuses.
+  // The socket listens at a short path and then moves to the tracked path, because macOS refuses a socket path longer than 104 bytes.
   await rm(path.join(api, "docs/plans/p/probe.sock"));
   const listener = net.createServer();
-  await new Promise((resolve, reject) => listener.once("error", reject).listen(path.join(api, "docs/plans/p/probe.sock"), resolve));
+  const short = path.join(place.parent, "probe.sock");
+  await new Promise((resolve, reject) => listener.once("error", reject).listen(short, resolve));
   context.after(() => new Promise((resolve) => listener.close(resolve)));
+  await rename(short, path.join(api, "docs/plans/p/probe.sock"));
   const prism = await server(context, place, api);
   const first = await prism.call("get_artifact", {});
   assert.deepEqual(ok(first).artifacts.map((entry) => entry.path), ["docs/plans/p/slice.md"]);

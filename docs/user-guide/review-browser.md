@@ -24,6 +24,15 @@ The agent opens the internal browser on a review URL that carries no grant, so t
 Answer the agent in the conversation instead, or ask it to present the review, which opens the system browser, or run `prism review` in the project.
 When the selected browser is unavailable, Prism presents the URL and source artifacts.
 
+### How the page stays current
+
+The review app keeps each page it has built until a file that the page reads changes, so an open tab that nothing changes costs almost nothing.
+It watches the record store, the checkout's `.prism` folder, and the artifact paths in `.prism/workflow.md`, and a change that an agent, a store sync, or an edit by hand makes there shows in an open tab within about a second.
+On Windows, where a watched folder could not be deleted or renamed, and on a file system that reports no changes made elsewhere, such as a network drive on macOS or Linux or a Windows folder opened from WSL, the review app compares the folders' times at each read instead, so a file that is added, removed, or replaced shows at once, and an edit made in place shows within 5 seconds.
+Anywhere else it also checks every 30 seconds for a change that a watcher missed.
+The store's details, which the store button in the status bar opens, say under **Outside changes** whether such changes show at once, and list each folder that Prism checks instead of watching, with the reason.
+A tab connected to the review app reads the checkout's other files and the store's sync status every 5 seconds, and every 1.5 seconds while its connection is down.
+
 ## Layout
 
 The browser follows the operating system's light or dark setting and changes with it while the page is open.
@@ -125,11 +134,14 @@ The tab and its page return to normal on their own when the target comes back, f
 When Prism moves a record from its legacy location into `.prism/`, a tab on that record follows it to the new path.
 
 The **Agents** button shows up to three avatars of the agents at work and how many work, such as `4 working`, counting the launched sessions that run or wait for you and the live claims that no launched session holds.
-While launched sessions failed or wait for you, it adds a red badge such as `1 failed` and an amber badge such as `1 waits`, and a screen reader also hears how many claims expired.
-In a window 600 pixels wide or less the button shows two avatars and one small count of the launched sessions that need you on its corner, red while one failed and amber otherwise, and no words.
+While launched sessions failed, ended without a result, or wait for you, it adds a red badge such as `1 failed`, a blue badge such as `1 ended without a result`, and an amber badge such as `1 waits`, in that order, and a screen reader also hears how many claims expired.
+In a window 1100 pixels wide or less the blue badge says `1 no result`, the button shows two avatars, and while a badge shows the count drops the word `working`, so the top bar keeps its width.
+A screen reader still hears every word.
+In a window 600 pixels wide or less the button shows two avatars and one small count of the launched sessions that need you on its corner, sessions that ended without a result included, red while one failed and amber otherwise, and no words.
 Opening it shows the **Agents** menu.
-Its **Needs you** group, left out while nothing needs you, lists each launched session that failed or waits for you with its initiative, its harness, its model, what it works on, its state, and how long it ran.
+Its **Needs you** group, left out while nothing needs you, lists each launched session that failed, ended without a result, or waits for you, in that order, with its initiative, its harness, its model, what it works on, its state, and how long it ran.
 A waiting session offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown, and a failed one offers **Open**, which opens [the Agents page](#the-agents-page) with its details shown.
+A session that ended without a result offers **Answer**, which opens its card on Attention.
 Below that, **Launched from Prism** counts the launched sessions that are not archived, **Started outside Prism** the live claims, and **Expired claims** the claims that expired less than a day ago, also at 0, and each opens the Agents page showing only those; **Open Agents** opens the whole page.
 The menu lists no claim, so every claim shows on the Agents page.
 Wherever the browser shows a claim, on a slice, an initiative, the roadmap, the sidebar, or the Agents page, it names the harness the agent runs in and the model of the session's main agent as `<harness> · <model>`, such as `Codex · gpt-5.5`, when the claim records them, and `Agent` and no model otherwise.
@@ -340,8 +352,9 @@ The **Coordinator** picker lists the agent's models in the agent's order and the
 The pickers of the other agents offer only **Host default** and say `<label> chooses the models of its own child agents.`, because the protocol gives Prism no way to choose them.
 An agent that speaks another protocol version shows `<label> speaks ACP version <n>, and Prism speaks version 1.`
 An agent whose session does not start Prism's tools shows `<label> did not start Prism's tools, so it cannot run Prism's workflow.`
-An agent that needs you to sign in shows `<label> needs you to sign in before it can run:` and the sign-in methods it names; Prism never signs in for you, so sign in with the agent's own command in a terminal, and the pickers read the agent again the next time they open.
+An agent that needs you to sign in shows `<label> needs you to sign in before it can run:` and the names of the sign-in methods it names, each with its description only when the description says more than the name; Prism never signs in for you, so sign in with the agent's own command in a terminal, and the pickers read the agent again the next time they open.
 While the initiative's ACP host shows one of these reasons, **Launch** is unavailable with that reason and asks you nothing.
+In the **Launch** and **Settings** dialogs the reason shows once, under the host in the **Host** choice, and **Launch** stays unavailable while the chosen host cannot run; the dialog's banners show only reasons that the **Host** choice does not, such as a model the host does not offer.
 
 Declare agents in `acp-agents.json`, which Prism only reads and never writes:
 
@@ -449,6 +462,9 @@ One install, update, or removal runs at a time on a computer, and another one me
 
 A launched session is a headless Claude Code, Codex, or [ACP agent](#acp-agents) session that runs Prism's orchestrate skill for one initiative on this computer, started from the review page.
 It works on the initiative as an agent you started in a terminal would, and you watch, stop, and resume it from the page.
+At the start of each launch and each resume, Prism tells the run that no person reads its messages.
+The run then asks you only through a gate that the review page shows, or it decides by itself where its autonomy lets it.
+Claude Code gets this note as an appended system prompt, Codex as the instructions of its thread, and an ACP agent as the last text block of its prompt.
 
 ### Launch an initiative
 
@@ -581,7 +597,7 @@ Its groups come in this order, each with the count of what the Show choice shows
 
 | Group | What it lists |
 | --- | --- |
-| Needs you | Launched sessions that failed, then those that wait for your answer, the latest launched first. |
+| Needs you | Launched sessions that failed, then those that ended without a result, then those that wait for your answer, the latest launched first. |
 | Launched from Prism | Every other launched session that is not archived, the latest launched first. |
 | Started outside Prism | Agents that hold a live claim, the claim that lapses first first. |
 | Claims that expired | Claims whose lease passed, the latest to lapse first. |
@@ -594,6 +610,7 @@ A claim's name is the claim's label, such as `Dana on studio-mac`, which opens t
 **Time** is how long a launched session has run, which counts every second while it runs, `<n> min left` for a live claim, and `expired <time> ago` for an expired one.
 A session that waits offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown; a running session offers **Stop**; any other session offers **Open**, which unfolds its details under its row.
 A finished, failed, stopped, or blocked session that is not archived also offers **Archive** beside **Open**, and an archived one offers **Unarchive** there.
+A session that ended without a result offers **Answer**, which opens its card on Attention, and **Archive**, while its question is open, and otherwise **Open** and **Archive**.
 A claim offers no action.
 
 The details of a session on an ACP agent start with the usage the agent reported for its last run: **Tokens** with the total and the cached tokens, such as `182,400 (12,000 cached)`, **Context** as the used and whole context, such as `61,200 of 200,000`, and **Cost** with its currency, such as `0.42 USD`, each `Not reported by <agent>` when the agent gave none.
@@ -609,18 +626,48 @@ A launched session's state is one of these:
 | Running | The host is working. |
 | Waiting for you | A question or a permission request of the session waits for your answer. |
 | Blocked | The host refused an action that the session needed, with a reason such as `Claude Code refused Bash: <the host's reason>`. |
-| Finished | The last run ended by itself. |
+| Ended without a result | The last run ended normally, but it left no question, no pause, and no ship, so Prism asks you what it must do next. |
+| Finished | The last run ended by itself with a result: an open question of the initiative, a pause that the run recorded, or a ship of the initiative. |
 | Failed | The host reported an error, its process ended with an exit code other than 0 or by a signal, or Prism stopped supervising it, each with its reason. |
 | Stopped | You stopped the last run. |
 
 A session whose supervisor ended without recording the run's end shows `Prism stopped supervising this session; its host process may still run.`.
 
+When a run on any host ends normally without a result, Prism adds one question to the initiative on Attention.
+The question is `The launched <host> run of <initiative> ended without a result. What should it do next?`, such as `The launched Gemini CLI run of reports ended without a result. What should it do next?`.
+Its context shows the run's last message, or says `The run left no message.`.
+Prism replaces the host session id in the last message with `<host session id>` and keeps at most 6000 characters of it.
+When the same session ends without a result again, the new question replaces the earlier unanswered one.
+A launched Claude Code run gets one reminder before its turn ends without a result.
+The reminder tells the run that no person reads its reply, and that it must ask through a gate, record a pause, or continue the work.
+The run gets no reminder while a background task of the run runs, or directly after an earlier reminder, so the second stop always ends the turn.
+Codex and ACP agent runs get no reminder.
+This question never makes the session wait for you.
+
+On this computer, Attention lists the question under **Needs you** as one card, on every host: Claude Code, Codex, and any ACP agent by its label.
+The list row shows the question as its title, and `Run ended without a result · <initiative> · <host>` under it, such as `Run ended without a result · Export reports · Gemini CLI`.
+The card shows the chip `Run ended without a result` and the same place line `<initiative> · <host>` that a [permission request](#permission-requests) card shows.
+The card lists **Initiative**, **Host**, **Launched**, and **Ended**, and shows the run's last message under **Last message**, or `The run left no message.`.
+Write your answer under **Your answer**, then press **Answer and resume**.
+**Archive session** archives the session, closes its question, and starts no run.
+The review app shows no transcript of the run, only its last message.
+On another computer the question shows as any other assistance question, with **Mark as done**.
+When Prism cannot record the question, the session still shows as ended without a result, with the reason `Prism could not record a question for this run: <message>`.
+
+When you answer this question on this computer, Prism resumes the session as for any question that the session asked.
+A resumed Claude Code or Codex session receives your answer as its next prompt, and a resumed ACP session gets its launch prompt again, whose orchestrate step reads your answer first.
+An answer from another computer starts nothing here, and the session stays ended without a result until you resume it.
+When you archive the session, Prism closes its unanswered question and starts no run, and unarchiving the session does not open the question again.
+When the session runs again, whether you resume it here or continue a Claude Code or Codex session in a terminal, Prism closes its unanswered question with the reason `The launched session runs again.`.
+An answered question stays open for the run to act on.
+An ACP session that you continue in a terminal runs no Prism hook, so its question stays until you answer it or archive the session.
+
 ### Archive a session
 
 Archive a session that ended so that it stops asking for you: an archived failed session leaves **Needs you**, the agents menu, and the mark on the top bar's **Agents** button.
-**Archive** on a finished, failed, stopped, or blocked session's row archives it, and the row leaves its group and every count at once while the toast says `Archived. The Archived filter keeps it.`.
+**Archive** on a finished, failed, stopped, blocked, or ended without a result session's row archives it, and the row leaves its group and every count at once while the toast says `Archived. The Archived filter keeps it.`.
 When the session ran again before you pressed it, the row stays and the toast says why, such as `Only a finished, failed, stopped, or blocked session can be archived.`.
-**Archive all ended** beside **Show** archives every finished, failed, stopped, and blocked session at once, without asking, and the toast counts them, such as `Archived 3 sessions. The Archived filter keeps them.`.
+**Archive all ended** beside **Show** archives every finished, failed, stopped, blocked, and ended without a result session at once, without asking, and the toast counts them, such as `Archived 3 sessions. The Archived filter keeps them.`.
 It shows while the Show choice includes **Needs you** or **Launched from Prism** and one of the sessions it shows can be archived.
 
 **Show** **Archived** lists the archived sessions, each with its state, **Open**, which unfolds its terminal command, **Copy**, and **Resume** as for any launched session, and **Unarchive**, which brings it back to its group with the toast `Unarchived.`.
@@ -791,7 +838,7 @@ While the changes show, **Source lines** shows the lines that changed instead, w
 The changes stay shown, in the way you chose, while comments arrive and the file changes.
 It then lists the comments on the file, oldest first, each with its author's Git name, the host it came from, the line it names, and its time, and marks a comment made on an earlier version of the file.
 Comments that a record store sync brings from other machines appear the next time the page checks the file, and comments from this machine's tabs appear at once.
-The page checks again 1.5 seconds after its last check ended, never while one still runs, and the review app reads only the comment files that the page lists and those that changed since its last read, so a file with many comments keeps the page responsive.
+The page checks again when [the records change](#how-the-page-stays-current), and otherwise 5 seconds after its last check ended, never while one still runs, and the review app reads only the comment files that the page lists and those that changed since its last read, so a file with many comments keeps the page responsive.
 The heading counts every comment on the file, while the list shows the first 20; while more follow, select **More comments** under the list to show the next 20, until every comment shows.
 After **More comments** shows the next comments, keyboard focus moves to the **More comments** button that follows them, or to the first comment it added when none follows, also when the page redrew the list meanwhile.
 Agents read the comments in the same pages of at most 20, with the total and where the next page starts.

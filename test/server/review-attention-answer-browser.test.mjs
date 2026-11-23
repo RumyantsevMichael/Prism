@@ -28,7 +28,7 @@ test("beside a long question the answer stays in view as the detail scrolls, and
   const { base, browser } = await placesDemo(context, { prepare: prepareAttention });
   const page = await openPage(browser, reviewUrl(base, "attention"), { viewport: { width: 1440, height: 900 } });
   await waitForView(page);
-  await page.locator(SHOWN).waitFor();
+  await page.locator(`${SHOWN} [data-apply]`).waitFor();
   const wide = await scrolledAnswer(page);
   assert.equal(wide.position, "sticky");
   assert.ok(wide.inside, "the answer stays inside the scrolled detail");
@@ -37,7 +37,7 @@ test("beside a long question the answer stays in view as the detail scrolls, and
     const answer = document.querySelector(shown);
     const detail = answer.closest(".attention-detail");
     answer.querySelector("prism-field").value = "A line of a long answer.\n".repeat(60);
-    const submit = answer.querySelector("[data-submit]");
+    const submit = answer.querySelector("[data-apply]");
     submit.scrollIntoView({ block: "nearest" });
     const box = answer.getBoundingClientRect();
     const frame = detail.getBoundingClientRect();
@@ -48,7 +48,7 @@ test("beside a long question the answer stays in view as the detail scrolls, and
   await page.close();
   const narrow = await openPage(browser, reviewUrl(base, "attention"), { viewport: { width: 820, height: 900 } });
   await waitForView(narrow);
-  await narrow.locator(SHOWN).waitFor();
+  await narrow.locator(`${SHOWN} [data-apply]`).waitFor();
   assert.equal((await scrolledAnswer(narrow)).position, "static", "where the answer sits below the question it scrolls with it");
   assert.deepEqual([...page.errors, ...narrow.errors], []);
 });

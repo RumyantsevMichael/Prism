@@ -628,10 +628,10 @@ const third = 3;</code></pre></prism-code>`,
   "prism-agent-summary": {
     quiet: `<prism-agent-summary variant="chrome" shape="round" working="0"></prism-agent-summary>`,
     working: `<prism-agent-summary variant="chrome" shape="round" working="2" expired="1"></prism-agent-summary>`,
-    "needs-you": `<prism-agent-summary variant="chrome" shape="round" working="4" failed="1" waiting="1" expired="1"></prism-agent-summary><prism-agent-summary variant="chrome" shape="round" working="3" waiting="2"></prism-agent-summary>`,
-    many: `<prism-agent-summary variant="chrome" shape="round" working="10" failed="1" waiting="1" expired="2"></prism-agent-summary>`,
-    "long-text": `<prism-agent-summary variant="chrome" shape="round" working="12345" failed="678" waiting="9012" expired="34"></prism-agent-summary>`,
-    "unbroken-name": `<prism-agent-summary variant="chrome" shape="round" working="1234567890" failed="1234567890" waiting="1234567890"></prism-agent-summary>`
+    "needs-you": `<prism-agent-summary variant="chrome" shape="round" working="4" failed="1" no-result="1" waiting="1" expired="1"></prism-agent-summary><prism-agent-summary variant="chrome" shape="round" working="3" waiting="2"></prism-agent-summary><prism-agent-summary variant="chrome" shape="round" working="2" no-result="1"></prism-agent-summary>`,
+    many: `<prism-agent-summary variant="chrome" shape="round" working="10" failed="1" no-result="2" waiting="1" expired="2"></prism-agent-summary>`,
+    "long-text": `<prism-agent-summary variant="chrome" shape="round" working="12345" failed="678" no-result="5678" waiting="9012" expired="34"></prism-agent-summary>`,
+    "unbroken-name": `<prism-agent-summary variant="chrome" shape="round" working="1234567890" failed="1234567890" no-result="1234567890" waiting="1234567890"></prism-agent-summary>`
   },
   "prism-page-sub": {
     default: `<prism-page-sub>Records changed in the last 7 days, from the repository's history, those not committed first.</prism-page-sub>`,

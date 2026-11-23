@@ -14,6 +14,18 @@ export const NOT_ENDED = "Only a finished, failed, stopped, or blocked session c
 export const READ_ONLY = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 
 const iso = (ms) => new Date(ms).toISOString();
+const NO_RESULT = "ended-without-result";
+
+/** Records a no-result gate in the initiative's coordination state, as a launch's supervisor does, and returns its id. */
+export async function askNoResult(root, initiative, label, message) {
+  const { readCoordinationState, updateCoordinationState } = await import("../../../dist/server/workflow/state.mjs");
+  const { noResultContext, noResultQuestion } = await import("../../../dist/server/session/run-result.mjs");
+  const read = await readCoordinationState({ projectRoot: root, initiative });
+  const changed = await updateCoordinationState({ projectRoot: root, initiative, expectedRevision: read.exists ? read.revision : null, changes: {
+    gateOperations: [{ op: "ask", kind: "assistance", question: noResultQuestion(label, initiative), context: noResultContext(message), artifacts: [] }]
+  } });
+  return changed.openedGates.at(-1).id;
+}
 
 /** One run of a launch record in the shape a supervisor writes it; state is finished, failed, stopped, blocked, or running. */
 export function runOf(state, { number = 1, endedMinutesAgo = 5, ranMinutes = 3, model = "claude-opus-5-5" } = {}) {
@@ -33,7 +45,8 @@ export function runOf(state, { number = 1, endedMinutesAgo = 5, ranMinutes = 3, 
 /**
  * A checkout with pending gates on INITIATIVE, a private review app folder as the process environment names it, and a review server over
  * the checkout with a write session. `launch(state)` writes a launched session of this checkout's record store; state "waiting" is a
- * finished run whose launch marked a pending gate. It returns the launch id.
+ * finished run whose launch marked a pending gate, and state "ended-without-result" a finished run whose supervisor recorded its
+ * no-result gate, with the last message `message`, or none when it is null. It returns the launch id.
  */
 export async function archiveProject(t) {
   const { root, gateIds } = await actionProject(t, { gates: true });
@@ -53,14 +66,21 @@ export async function archiveProject(t) {
   const trimmed = base.replace(/\/$/, "");
   let count = 0;
   const folderOf = (id) => records.launchFolder(env, id);
-  const launch = async (state, { initiative = INITIATIVE, host = "claude-code", endedMinutesAgo = 5 + count, gate = gateIds.free } = {}) => {
+  const launch = async (state, { initiative = INITIATIVE, host = "claude-code", label = "Claude Code", endedMinutesAgo = 5 + count, gate = gateIds.free, message = "Should I park it?" } = {}) => {
     count += 1;
     const id = `launch-${createHash("sha256").update(`${root}/${count}`).digest("hex").slice(0, 16)}`;
     const folder = await records.createLaunchFolder(env, id);
-    const run = runOf(state === "waiting" ? "finished" : state, { endedMinutesAgo });
+    const run = runOf(state === "waiting" || state === NO_RESULT ? "finished" : state, { endedMinutesAgo });
+    // A result mark names its run by a supervisor's token of 16 hexadecimal digits.
+    if (state === NO_RESULT) run.token = run.token.slice(0, 16);
     const hostSessionId = createHash("sha256").update(id).digest("hex").replace(/^(.{8})(.{4})(.{3})(.{3})(.{12}).*$/, "$1-$2-4$3-8$4-$5");
     await records.writeLaunchRecord(folder, { id, initiative, host, checkout: root, store, createdAt: run.startedAt, hostSessionId, runs: [run] });
     if (state === "waiting") await records.writeGateRecord(folder, { marks: [{ gate, at: run.endedAt }], answers: [] });
+    if (state === NO_RESULT) {
+      const asked = await askNoResult(root, initiative, label, message);
+      await records.writeGateRecord(folder, { marks: [{ gate: asked, at: run.endedAt }], answers: [] });
+      await records.writeResultMarks(folder, { pauses: [], checks: [], noResult: [{ run: run.token, gate: asked, failure: null, at: run.endedAt }] });
+    }
     return id;
   };
   const record = async (id) => JSON.parse(await readFile(path.join(folderOf(id), "launch.json"), "utf8"));

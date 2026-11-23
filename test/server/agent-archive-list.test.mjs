@@ -16,7 +16,7 @@ test.after(() => rm(privateData, { recursive: true, force: true }));
 
 const FIELDS = ["id", "kind", "group", "name", "harness", "model", "session", "initiative", "slice", "activity", "state", "reason", "expiresAt", "launch", "action"];
 const LAUNCH_FIELDS = ["id", "launchedAt", "runningMs", "runs", "endedAt", "exit", "resumeCommand", "waitingGate"];
-const VIEW_FIELDS = ["answerWaits", "checkout", "endedAt", "exit", "holder", "host", "hostLabel", "id", "initiative", "launchedAt", "model", "reason", "resumeCommand", "runningMs", "runs", "state", "waitingGate"];
+const VIEW_FIELDS = ["answerWaits", "checkout", "endedAt", "exit", "holder", "host", "hostLabel", "id", "initiative", "launchedAt", "model", "questionGate", "reason", "resumeCommand", "runningMs", "runs", "state", "waitingGate"];
 
 test("§8 a session that runs again leaves the archive, its mark is removed, and it stays unarchived once it ends again", async (t) => {
   const s = await archiveProject(t);
@@ -92,7 +92,7 @@ test("§11 the counts leave archived sessions and claims that expired a day ago 
   await s.beat(running);
   const { counts, agents } = await s.agents();
   assert.equal(agents.length, 7, "every agent is listed, archived and old expired ones too");
-  assert.deepEqual(counts, { all: 4, needsYou: 1, failed: 1, waiting: 0, thisComputer: 2, other: 1, expired: 1, working: 2 },
+  assert.deepEqual(counts, { all: 4, needsYou: 1, failed: 1, waiting: 0, endedWithoutResult: 0, thisComputer: 2, other: 1, expired: 1, working: 2 },
     "all: the failed and the running launch, the live claim, the claim that expired 23 hours ago, and nothing archived or expired a day ago");
   assert.equal(entryOf({ agents }, failed).group, "needs-you");
 });

@@ -4,13 +4,15 @@ import path from "node:path";
 import { readInitiativeRecordRunTotals } from "../session/run-totals.mjs";
 import { storeLocation } from "../session/launch-records.mjs";
 import { pendingRequests } from "../session/permission-requests.mjs";
+import { listLaunches } from "../session/launched-sessions.mjs";
+import { hostDefinition } from "../session/launch-hosts.mjs";
 import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workflow/initiative.mjs";
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { historyOrder, readCoordinationState } from "../workflow/state.mjs";
 import { readIndexHistory } from "../workflow/index-history.mjs";
-import { inArtifactStore, isStoreWithoutCheckout, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, inArtifactStore, isStoreWithoutCheckout, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordPath, recordStoreOf, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig as readCheckoutConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
@@ -25,6 +27,8 @@ import { relativeLinkTargets } from "./artifact-links.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
 import { keptSession, sessionFields } from "../session/session-links.mjs";
 import { failingTestLinks } from "./verification-view.mjs";
+import { createViewVersions } from "./view-versions.mjs";
+import { collectValidity, validUntil } from "../workflow/view-validity.mjs";
 
 // A workspace read through its store's clone alone has no checkout and so no configuration of its own: its defaults are no setting to warn about.
 async function readWorkflowConfig(projectRoot: string) {
@@ -36,10 +40,32 @@ const LIBRARY_LIMIT = 500;
 const RECENT_CHANGES_LIMIT = 20;
 const SLICE_FILE_LIMIT = 200;
 const UNRESOLVED = new Set(["OPEN", "IN PROGRESS", "REOPENED"]);
-// Each open page polls every 1.5 s, and one poll reads every record several times, so results are shared for a second.
-// The review server clears the cache after its own writes; writes from agents show up within the window.
-const MEMO_MS = 1000;
+// Each open page polls every few seconds, and one poll reads every record several times, so a view is computed once and reused until a file it reads may have changed:
+// a file watcher and a periodic listing of the store, the records, and the artifact folders change a version per project, and the review server's own writes change every version.
+// A view that a time decides, such as a claim that lapses, is reused only until that time; MAX_AGE_MS bounds the rest, for any input no listing covers.
+const MAX_AGE_MS = 10 * 60 * 1000;
 const memo = new Map();
+const versions = createViewVersions({ targetsOf: viewTargets });
+
+// What a project's views read: the record store's clone or folder, the checkout's records, every artifact path its configuration names, and the checkout's commits.
+async function viewTargets(projectRoot: string) {
+  const root = await realpath(projectRoot);
+  const store = await recordStoreOf(root);
+  const folders = new Set<string>([store.base]);
+  const files = new Set<string>();
+  if (!store.checkoutless) {
+    folders.add(path.join(root, RECORD_DIRECTORY));
+    const config = await readCheckoutConfig(root).catch(() => null);
+    for (const value of Object.values<any>(config?.paths ?? {})) {
+      if (typeof value !== "string" || value === "" || value === ".") continue;
+      const target = path.join(root, value);
+      const info = await stat(target).catch(() => null);
+      (info?.isDirectory() ? folders : files).add(target);
+    }
+  }
+  const nested = [...folders].filter((folder) => [...folders].some((other) => other !== folder && folder.startsWith(`${other}${path.sep}`)));
+  return { folders: [...folders].filter((folder) => !nested.includes(folder)).sort(), files: [...files].sort(), gitRoots: store.checkoutless ? [] : [root] };
+}
 
 // A workspace's page reads every scope's store artifacts; a checkout's own page reads its own paths, so the memo keeps the two apart.
 const workspaceView = new AsyncLocalStorage();
@@ -50,18 +76,51 @@ export function asWorkspaceView(run: any): Promise<any> {
   return workspaceView.run(true, run);
 }
 
-function remember(raw: any, compute: any) {
+async function remember(projectRoot: string, raw: any, compute: any) {
   const key = `${inWorkspaceView() ? "workspace" : "checkout"}|${raw}`;
-  const hit = memo.get(key);
-  if (hit && Date.now() - hit.at < MEMO_MS) return hit.value;
-  const value = compute();
-  memo.set(key, { at: Date.now(), value });
-  value.catch(() => memo.delete(key));
+  const version = await versions.current(projectRoot);
+  const now = Date.now();
+  let hit = memo.get(key);
+  if (!hit || hit.version !== version || now >= hit.until) {
+    const entry: any = { version, until: now + MAX_AGE_MS, value: null };
+    entry.value = collectValidity(compute).then(({ value, until }) => {
+      entry.until = Math.min(entry.until, until);
+      return value;
+    });
+    entry.value.catch(() => { if (memo.get(key) === entry) memo.delete(key); });
+    memo.set(key, entry);
+    hit = entry;
+  }
+  const value = await hit.value;
+  // A view computed inside another holds the outer one only as long as itself.
+  validUntil(hit.until);
   return value;
 }
 
+/** A value that a page computes from a project's records, reused as the views are, until a file it reads may have changed. */
+export function rememberView<T>(projectRoot: string, name: string, compute: () => Promise<T>): Promise<T> {
+  return remember(projectRoot, `${name}:${projectRoot}`, compute);
+}
+
+/** The version of a project's views, which changes whenever a file they read may have changed. */
+/** Which of a project's record folders and files no watcher covers, and why, so the store's details can say that changes made elsewhere show with a delay. */
+export function viewWatching(projectRoot: string) {
+  return versions.watching(projectRoot);
+}
+
+export function viewVersion(projectRoot: string) {
+  return versions.current(projectRoot);
+}
+
+/** Check a project's views against a full listing of their files at the next read, for a session that registered or presented the project and may have changed them. */
+export function recheckViews(projectRoot: string) {
+  versions.recheck(projectRoot);
+}
+
+/** Forget every computed view, after a write this process made, so its next read sees the write at once. */
 export function forgetWorkspace() {
   memo.clear();
+  versions.bump();
 }
 
 export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "code", "agents"]);
@@ -104,7 +163,7 @@ const textOf = (bytes: any) => Buffer.isBuffer(bytes) ? bytes.toString("utf8") :
  */
 function workspaceListing(projectRoot: string) {
   if (!inWorkspaceView()) return Promise.resolve(null);
-  return remember(`workspace-listing:${projectRoot}`, () => workspaceArtifacts(projectRoot).then((listed) => listed.held ? listed : null, (error) => {
+  return remember(projectRoot, `workspace-listing:${projectRoot}`, () => workspaceArtifacts(projectRoot).then((listed) => listed.held ? listed : null, (error) => {
     if (recordsUnavailable(error) || error?.name === "ArtifactError") return null;
     throw error;
   }));
@@ -262,7 +321,7 @@ async function initiativeFindings(root: string, config: any, id: string) {
 }
 
 export function loadRoadmapView(projectRoot: string) {
-  return remember(`roadmap:${projectRoot}`, () => computeRoadmapView(projectRoot));
+  return remember(projectRoot, `roadmap:${projectRoot}`, () => computeRoadmapView(projectRoot));
 }
 
 async function computeRoadmapView(projectRoot: string) {
@@ -320,12 +379,12 @@ async function computeRoadmapView(projectRoot: string) {
 
 // Every live and lapsed claim of the roadmap's initiatives and of the unlisted ones, in one read, for the page's claim index, which names no holder.
 export function loadClaims(projectRoot: string) {
-  return remember(`claims:${projectRoot}`, async () => ({ claims: (await loadHeldClaims(projectRoot)).claims.map(({ holder, ...claim }: { holder: string; [key: string]: any }) => claim) }));
+  return remember(projectRoot, `claims:${projectRoot}`, async () => ({ claims: (await loadHeldClaims(projectRoot)).claims.map(({ holder, ...claim }: { holder: string; [key: string]: any }) => claim) }));
 }
 
 /** The same claims with each one's holder, for the agents list, which matches a launched session to the claims it holds and never shows the holder. */
 export function loadHeldClaims(projectRoot: string) {
-  return remember(`held-claims:${projectRoot}`, () => computeClaims(projectRoot));
+  return remember(projectRoot, `held-claims:${projectRoot}`, () => computeClaims(projectRoot));
 }
 
 async function computeClaims(projectRoot: string) {
@@ -336,12 +395,12 @@ async function computeClaims(projectRoot: string) {
 }
 
 export function loadInitiativeView(projectRoot: string, id: string) {
-  return remember(`initiative:${id}:${projectRoot}`, () => computeInitiativeView(projectRoot, id));
+  return remember(projectRoot, `initiative:${id}:${projectRoot}`, () => computeInitiativeView(projectRoot, id));
 }
 
 // Only initiative and slice pages read run records; loadInitiativeView stays free of them for navigation polls.
 function loadInitiativeRunTotals(projectRoot: string, initiative: any) {
-  return remember(`run-totals:${initiative.id}:${projectRoot}`, () => readInitiativeRecordRunTotals(projectRoot, initiative.id, initiative));
+  return remember(projectRoot, `run-totals:${initiative.id}:${projectRoot}`, () => readInitiativeRecordRunTotals(projectRoot, initiative.id, initiative));
 }
 
 // Initiative reads keep only live claims; the browser also shows a claim that lapsed without a release, as expiredClaim, until someone claims or releases the slice.
@@ -678,7 +737,7 @@ function decisionRequirements(source: any, file: string, directory: any) {
 }
 
 export function loadLibrary(projectRoot: string, kind: any) {
-  return remember(`library:${kind}:${projectRoot}`, () => computeLibrary(projectRoot, kind));
+  return remember(projectRoot, `library:${kind}:${projectRoot}`, () => computeLibrary(projectRoot, kind));
 }
 
 async function computeLibrary(projectRoot: string, kind: any) {
@@ -844,10 +903,31 @@ function gateOrder(left: any, right: any) {
  * shared record; gateCount counts them beside the waiting questions.
  */
 export async function loadAttention(projectRoot: string) {
-  const [attention, permissions] = await Promise.all([remember(`attention:${projectRoot}`, () => computeAttention(projectRoot)), launchPermissions(projectRoot)]);
+  const [attention, permissions] = await Promise.all([remember(projectRoot, `attention:${projectRoot}`, () => computeAttention(projectRoot)), launchPermissions(projectRoot)]);
   // Who asked each gate, and in what state that session is, is read again at each request, since a hold lapses and a session opens or ends at any time.
-  const [needsYou, answered] = await Promise.all([withAskers(projectRoot, attention.needsYou), withAskers(projectRoot, attention.answered)]);
+  const [needsYou, answered] = await Promise.all([withLaunchQuestions(projectRoot, attention.needsYou).then((items) => withAskers(projectRoot, items)), withAskers(projectRoot, attention.answered)]);
   return { ...attention, needsYou, answered, permissions, gateCount: attention.gateCount + permissions.length };
+}
+
+/**
+ * The Needs you items, where each no-result gate of a launched session on this machine carries that session as
+ * launch: { id, host: { id, label }, launchedAt, endedAt, state }, read again at each request from the private launch folders.
+ * A gate that no launch of this machine asked, or a list the launches cannot be read for, stays as it is.
+ */
+async function withLaunchQuestions(projectRoot: string, needsYou: any[]) {
+  if (!needsYou.some((item: any) => item.type === "gate" && item.kind === "assistance")) return needsYou;
+  const { launches } = await listLaunches({ projectRoot }).catch(() => ({ launches: [] as any[] }));
+  const asked = new Map<string, any>();
+  for (const launch of launches) {
+    if (typeof launch.questionGate !== "string") continue;
+    const label = hostDefinition(launch.host)?.label ?? launch.hostLabel ?? launch.host;
+    asked.set(`${launch.initiative}/${launch.questionGate}`, { id: launch.id, host: { id: launch.host, label }, launchedAt: launch.launchedAt, endedAt: launch.endedAt, state: launch.state });
+  }
+  if (!asked.size) return needsYou;
+  return needsYou.map((item: any) => {
+    const launch = item.type === "gate" && item.kind === "assistance" ? asked.get(`${item.initiative?.id}/${item.id}`) : undefined;
+    return launch ? { ...item, launch } : item;
+  });
 }
 
 /**
@@ -888,12 +968,12 @@ async function launchPermissions(projectRoot: string) {
 }
 
 /**
- * Attention as its page shows it, with recentChanges: the shared Attention above, and the applied actions on store artifacts read again at each request,
- * because a store sync changes or removes their files at any time, so a file that a reader now leaves out never lingers in the list for the cache window.
+ * Attention as its page shows it, with recentChanges: the shared Attention above, and the applied actions on store artifacts,
+ * which are reused as the views are, until a file of the store changes, since a store sync changes or removes their files at any time.
  */
 export async function loadAttentionView(projectRoot: string) {
   const { changes, ...attention } = await loadAttention(projectRoot);
-  const recentChanges = [...changes, ...await artifactChanges(projectRoot)].sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
+  const recentChanges = [...changes, ...await remember(projectRoot, `artifact-changes:${projectRoot}`, () => artifactChanges(projectRoot))].sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
   return { ...attention, recentChanges };
 }
 
@@ -1092,6 +1172,8 @@ function recentlyAnswered(answered: any, closed: any) {
     ...answered.map((gate: any) => ({ gate, at: gate.answer?.answeredAt ?? null })),
     ...closed.map((gate: any) => ({ gate, at: gate.closedAt ?? gate.answer?.answeredAt ?? null }))
   ].filter(({ at }) => Date.parse(at ?? "") >= since);
+  // The list loses its oldest entry once that entry is a week old.
+  for (const { at } of entries) validUntil(Date.parse(at) + WEEK_MS);
   entries.sort((left, right) => newestFirst(left.at, right.at));
   return entries.map(({ gate, at }) => ({ id: gate.id ?? null, kind: gate.kind ?? null, question: gate.question, initiative: gate.initiative, slice: gate.slice ?? null, answer: gate.answer ?? null, reason: gate.reason ?? null, at }));
 }
@@ -1229,7 +1311,7 @@ function diagramName(file: string, source: any) {
  * a slice's folder belongs to `<initiative> · <slice>`, an initiative's folder to the initiative, and a decisions folder file to the decision beside it.
  */
 export function loadDiagrams(projectRoot: string) {
-  return remember(`diagrams:${projectRoot}`, () => computeDiagrams(projectRoot));
+  return remember(projectRoot, `diagrams:${projectRoot}`, () => computeDiagrams(projectRoot));
 }
 
 async function computeDiagrams(projectRoot: string) {
@@ -1424,7 +1506,7 @@ async function slicesInProgress(projectRoot: string) {
 }
 
 export function loadNavigation(projectRoot: string) {
-  return remember(`navigation:${projectRoot}`, () => computeNavigation(projectRoot));
+  return remember(projectRoot, `navigation:${projectRoot}`, () => computeNavigation(projectRoot));
 }
 
 async function computeNavigation(projectRoot: string) {

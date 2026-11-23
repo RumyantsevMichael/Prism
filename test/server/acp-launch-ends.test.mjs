@@ -37,7 +37,7 @@ test("an agent that exits 0 before its prompt answers fails the run with its exi
   assert.equal(quit.state, "failed");
   assert.match(quit.reason, /^Gemini CLI ended with exit code 0\./);
   const answered = await ended(t, {});
-  assert.equal(answered.state, "finished");
+  assert.equal(answered.state, "ended-without-result");
   assert.equal(answered.reason, null);
 });
 

@@ -5,6 +5,7 @@ import { acpHostDefinition, acpHosts, isAcpHost } from "./acp-agents.mjs";
 import { isAgentModel } from "./agent-models.mjs";
 import { acpConversation } from "./host-adapters/acp.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
+import { lastMessageOf } from "./run-result.mjs";
 import { shownForm, type PermissionAsk, type PermissionDecision } from "./permission-requests.mjs";
 
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
@@ -56,6 +57,9 @@ const CLAUDE_FLAGS = Object.freeze(["--input-format", "stream-json", "--output-f
 // The permission policy of every Codex thread that Prism starts or resumes: the host's automatic review decides what it can, and asks
 // Prism only the rest.
 const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" });
+// The fixed start note of every launched run, its launch and each resume: Claude Code reads it through --append-system-prompt,
+// Codex as the developerInstructions of its thread, and an ACP agent as the last text block of its prompt.
+export const LAUNCH_NOTE = "Prism launched this run headless, so no person reads your messages or replies. When you need the person, ask only through a Prism gate: record it with update_coordination_state and wait for the answer with wait_for_user_gate. Where your autonomy lets you, decide by yourself and continue the work. Never end a turn with a question in your reply, because nobody sees it.";
 const CODEX_CLIENT = Object.freeze({ clientInfo: { name: "prism-launch", version: "1" }, capabilities: { experimentalApi: true } });
 // The answer to every request that a host sends Prism other than a permission request, such as a question.
 export const HOST_REQUEST_REFUSAL = Object.freeze({ code: -32601, message: "Prism answers no host requests." });
@@ -230,7 +234,7 @@ export function hostArguments({ host, hostSessionId, resume, coordinator = null,
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
     const { model, effort } = coordinatorOf(coordinator);
-    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS, ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
+    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS, "--append-system-prompt", LAUNCH_NOTE, ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
   }
   if (host === "codex") return ["app-server"];
   if (acp) return [...acp.args];
@@ -289,9 +293,9 @@ export function claudePrompt(initiative: string, answeredGate: string | null = n
 export function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null }: { checkout: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown }) {
   const { model, provider } = coordinatorOf(coordinator);
   const chosen = { ...(model === null ? {} : { model }), ...(provider === null ? {} : { modelProvider: provider }) };
-  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY, ...chosen } };
+  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY, ...chosen, developerInstructions: LAUNCH_NOTE } };
   if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
-  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY, ...chosen } };
+  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY, ...chosen, developerInstructions: LAUNCH_NOTE } };
 }
 
 /** The Codex request that starts the run's one orchestrate turn, with the effort of the coordinator's choice, left out for the host default. */
@@ -483,7 +487,9 @@ const digestKey = (id: string) => createHash("sha256").update(Buffer.from(id, "u
 export interface HostRefusal { tool: string; reason: string }
 // agentSessionId is the session id an ACP agent named, whatever its characters, kept only to redact it; settled is false while an ACP
 // run has no outcome of its own, so an agent that exits 0 before its prompt answers fails the run.
-export interface HostFacts { hostSessionId: string | null; agentSessionId: string | null; settled: boolean; turnId: string | null; model: string | null; refusals: HostRefusal[]; refusalCount: number; hostError: string | null; failure: string | null; usage: any }
+// lastMessage is the text of the host's last reply in the run, with the session ids replaced and cut, or null; stopReason is the stop
+// reason with which an ACP agent's prompt answered, or null.
+export interface HostFacts { hostSessionId: string | null; agentSessionId: string | null; settled: boolean; turnId: string | null; model: string | null; refusals: HostRefusal[]; refusalCount: number; hostError: string | null; failure: string | null; usage: any; lastMessage: string | null; stopReason: string | null }
 export interface HostConversationOptions {
   initiative: string;
   checkout: string;
@@ -500,8 +506,8 @@ export interface HostConversationOptions {
   closeInput: () => void;
   onSessionId?: (id: string) => void;
   onModel?: (model: string) => void;
-  /** An ACP agent's run: its label and automatic mode, the starter's environment, the launch id, and the agent's process id. */
-  acp?: { label: string; autoMode: string | null; env: NodeJS.ProcessEnv; launch: string; agentPid: () => number | null } | null;
+  /** An ACP agent's run: its label and automatic mode, the starter's environment, and the launch id. */
+  acp?: { label: string; autoMode: string | null; env: NodeJS.ProcessEnv; launch: string } | null;
   /**
    * Where the host's permission requests wait for the person: ask() keeps one waiting, calls respond once it is answered, and returns
    * the function that withdraws it. Without it every permission request is refused at once.
@@ -522,7 +528,7 @@ export type PermissionAnswer = (decision: PermissionDecision) => unknown;
 export const REFUSED_ON_ATTENTION = "The person refused this on Attention.";
 
 export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, answeredGate = null, asker = null, askerAnswered = true, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null, permissions = null }: HostConversationOptions) {
-  const facts: HostFacts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null };
+  const facts: HostFacts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null, lastMessage: null, stopReason: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
   const named = (value: unknown) => {
@@ -537,6 +543,11 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
   // The id is replaced before the text is cut, so no cut leaves part of it behind.
   const cut = (value: string) => detached(redact(value).slice(0, REFUSAL_REASON_MAX));
   const hostError = (value: string) => cut(value || HOST_ERROR_FALLBACK);
+  // A reply's text as the run's last message, kept in a string of its own.
+  const replyText = (value: unknown) => {
+    const kept = lastMessageOf(value, redact);
+    return kept === null ? null : detached(kept);
+  };
   const toolName = (value: unknown, fallback: string) => (typeof value === "string" && value ? detached(redact(value).slice(0, TOOL_NAME_MAX)) : fallback);
   const write = (message: unknown) => {
     if (inputOpen) send(message);
@@ -592,12 +603,12 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     answeredGate,
     env: acp!.env,
     launch: acp!.launch,
-    agentPid: acp!.agentPid,
     facts,
     write,
     close,
     inputOpen: () => inputOpen,
     cut,
+    replyText,
     named,
     onSessionId,
     ask
@@ -686,6 +697,8 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
           return { tool, reason: reason || cut(`${tool} was refused.`) };
         });
         facts.hostError = event.is_error === true ? hostError(claudeErrorText(event)) : null;
+        // The last result that is no error holds the run's last reply.
+        if (event.is_error !== true) facts.lastMessage = replyText(event.result);
         if (tasks.size === 0 && untrackedTasks === 0) close();
       }
     };
@@ -718,6 +731,9 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     let turnDone = false;
     let stopAsked = false;
     let interruptSent = false;
+    // The last reply of each turn whose agent messages arrived before the turn/start answer named the run's turn, by turn digest,
+    // at most KEPT_EARLY_COMPLETIONS of them.
+    const earlyReplies = new Map<string, string | null>();
     const request = (method: string, params: unknown) => {
       const id = nextId++;
       pending.set(id, method);
@@ -766,6 +782,8 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
           return;
         }
         facts.turnId = id;
+        if (earlyReplies.has(digestKey(id))) facts.lastMessage = earlyReplies.get(digestKey(id)) ?? null;
+        earlyReplies.clear();
         if (completed.has(digestKey(id))) turnEnded(completed.get(digestKey(id)));
         else if (stopAsked) sendInterrupt();
       }
@@ -841,6 +859,16 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
         if (message.method === "serverRequest/resolved" && (typeof params.requestId === "string" || typeof params.requestId === "number")) {
           // Codex settled the request itself, so it is withdrawn and answered nothing.
           waitingApprovals.get(requestKey(params.requestId))?.dismiss();
+          return;
+        }
+        if (message.method === "item/completed" && params.item?.type === "agentMessage" && typeof params.turnId === "string" && !turnDone) {
+          // Only a reply of the run's turn counts; one that arrives before the turn/start answer waits for it.
+          if (facts.turnId === null) {
+            const key = digestKey(params.turnId);
+            earlyReplies.delete(key);
+            earlyReplies.set(key, typeof params.item.text === "string" ? replyText(params.item.text) : null);
+            if (earlyReplies.size > KEPT_EARLY_COMPLETIONS) earlyReplies.delete(earlyReplies.keys().next().value!);
+          } else if (params.turnId === facts.turnId && typeof params.item.text === "string") facts.lastMessage = replyText(params.item.text);
           return;
         }
         if (message.method === "item/completed" && params.item?.status === "declined") {

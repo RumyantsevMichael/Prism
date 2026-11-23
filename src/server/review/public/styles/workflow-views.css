@@ -607,30 +607,10 @@
   overflow-wrap: anywhere;
 }
 
-/* Withdraw sits under the asker line, with its refusal beside it. */
-.gate-withdraw {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--prism-space-2);
-  min-width: 0;
-}
-
-.gate-withdraw .gate-error {
-  margin: 0;
-}
-
-/* Continue on an answered question: the ways to continue, then the button that starts the picked one. */
+/* Withdraw under the asker line and Continue on an answered question hold the shared action renderer's forms. */
+.gate-withdraw,
 .gate-continue {
-  display: grid;
-  gap: var(--prism-space-2);
   min-width: 0;
-}
-
-.gate-continue .label-caps,
-.gate-continue .gate-error,
-.gate-continue-options p {
-  margin: 0;
 }
 
 /* The lifecycle keeps its six steps on one row, and takes two rows of three in a narrow sheet. */
@@ -821,67 +801,12 @@ a.inspect-tile:focus-visible {
   background: var(--prism-color-sunken);
 }
 
-.gate-choices {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  justify-items: stretch;
-  gap: var(--prism-space-3);
-  min-width: 0;
-}
-
-/* "Your answer" with Clear choice at its end; the row keeps the button's height, so the options do not move when it shows. */
-.gate-choices-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--prism-space-3);
-  min-width: 0;
-  min-height: var(--prism-control-height-sm);
-}
-
-.gate-note {
-  min-width: 0;
-}
-
-.gate-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--prism-space-4);
-  min-width: 0;
-}
-
-.gate-hint,
 .gate-error {
   min-width: 0;
   margin: 0;
+  color: var(--prism-color-danger);
   font-size: var(--prism-font-size-sm);
   overflow-wrap: anywhere;
-}
-
-.gate-hint {
-  display: flex;
-  flex: 1 1 100%;
-  align-items: center;
-  gap: var(--prism-space-3);
-  color: var(--prism-color-ink-muted);
-}
-
-.gate-hint.is-ready {
-  color: var(--prism-color-success);
-}
-
-.gate-hint-text {
-  min-width: 0;
-}
-
-.gate-hint:not(:has(.gate-hint-text:not(:empty))) {
-  display: none;
-}
-
-.gate-error {
-  color: var(--prism-color-danger);
 }
 
 .gate-given {
@@ -899,8 +824,22 @@ a.inspect-tile:focus-visible {
   margin: 0;
 }
 
-/* A permission request names its initiative, host, action, and reason; the action and reason are one line of host text that wraps anywhere. */
-.gate-permission .key-values {
+/* A permission request names its initiative, host, action, and reason; the action and reason are one line of host text that wraps anywhere.
+   A run that ended without a result names its initiative, host, and times in the same rows, under the same place line. */
+.gate-permission .key-values,
+.gate-no-result .key-values {
+  margin: 0;
+}
+
+/* The run's last message reads as a quoted reply: sunken and framed, so it stands apart from what Prism says about the run. */
+.gate-last-message {
+  padding: var(--prism-space-4) var(--prism-space-5);
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-sunken);
+}
+
+.gate-last-message-none {
   margin: 0;
 }
 
@@ -1927,10 +1866,6 @@ a.inspect-tile:focus-visible {
 
   .gate {
     padding: var(--prism-space-5);
-  }
-
-  .gate-actions > :last-child {
-    flex: 1 1 auto;
   }
 
   .key-values {

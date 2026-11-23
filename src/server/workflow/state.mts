@@ -103,6 +103,8 @@ const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
 const GATE_KEYS = new Set(["id", "kind", "slice", "question", "context", "artifacts", "options", "recommended", "askedAt", "standing", "answer"]);
 const ASK_KEYS = ["op", "kind", "slice", "question", "context", "artifacts", "options", "recommended"];
+// A decision that a run makes by itself under full autonomy is a decision ask with the run's own choice and reason, and takes no kind.
+const DECIDE_KEYS = ["op", "slice", "question", "context", "artifacts", "options", "recommended", "choice", "reason"];
 const OPTION_KEYS = new Set(["id", "label", "consequence"]);
 const RECOMMENDED_KEYS = new Set(["option", "reason"]);
 const CONTEXT_LIMIT = 8000;
@@ -611,7 +613,7 @@ function droppedGates(before: any, replacement: any) {
   return dropped.map((gate: any) => closedGate(gate, null));
 }
 
-function applyGateOperations(pending: any, operations: any, standing = null) {
+function applyGateOperations(pending: any, operations: any, standing = null, autonomy = "conservative") {
   const next = [...pending];
   const opened: any[] = [];
   const closed: any[] = [];
@@ -659,6 +661,8 @@ function applyGateOperations(pending: any, operations: any, standing = null) {
       }
       next.push(gate);
       opened.push({ id: gate.id, kind: gate.kind, slice: gate.slice ?? null });
+    } else if (operation.op === "decide") {
+      closed.push(decidedGate(operation, index, autonomy));
     } else if (operation.op === "resolve") {
       const unknown = Object.keys(operation).filter((key) => !["op", "id", "reason", "choice"].includes(key));
       if (unknown.length) {
@@ -686,10 +690,49 @@ function applyGateOperations(pending: any, operations: any, standing = null) {
       closed.push(closedGate(next[position], reason, operation.choice));
       next.splice(position, 1);
     } else {
-      throw error("invalid_changes", `gateOperations[${index}].op must be ask or resolve.`);
+      throw error("invalid_changes", `gateOperations[${index}].op must be ask, decide, or resolve.`);
     }
   });
   return { pending: next, opened, closed, superseded: superseded.sort() };
+}
+
+// Under full autonomy a run decides an undoable step by itself: the decision is checked as a decision ask and kept as a closed gate
+// with the run's choice and reason, so the person can read it later, while no question opens.
+function decidedGate(operation: any, index: number, autonomy: string) {
+  if (autonomy !== "full") {
+    throw error("autonomy_not_full", `gateOperations[${index}] decides by itself, which only full autonomy allows; the effective autonomy is ${autonomy}, so ask the person with an ask operation.`);
+  }
+  const unknown = Object.keys(operation).filter((key) => !DECIDE_KEYS.includes(key));
+  if (unknown.length) {
+    throw error("invalid_changes", `gateOperations[${index}] has unsupported fields: ${unknown.join(", ")}.`);
+  }
+  const gate = {
+    id: `gate-${randomBytes(6).toString("hex")}`,
+    kind: "decision",
+    ...(operation.slice === undefined ? {} : { slice: operation.slice }),
+    question: operation.question,
+    ...(operation.context === undefined ? {} : { context: operation.context }),
+    artifacts: operation.artifacts ?? [],
+    ...(operation.options === undefined ? {} : { options: operation.options }),
+    ...(operation.recommended === undefined ? {} : { recommended: operation.recommended }),
+    askedAt: new Date().toISOString()
+  };
+  const errors: any[] = [];
+  validateGate(gate, `gateOperations[${index}]`, errors);
+  const problems = errors.length ? [] : askProblems(gate);
+  if (problems.length) {
+    throw error("gate_context_missing", `The decision cannot be recorded yet: ${problems.join("; ")}.`, { errors: problems });
+  }
+  if (errors.length) {
+    throw error("invalid_changes", `The decision is invalid: ${errors.join("; ")}.`, { errors });
+  }
+  if (typeof operation.choice !== "string" || !(gate.options ?? []).some((option: any) => option?.id === operation.choice)) {
+    throw error("invalid_changes", `gateOperations[${index}].choice must be the id of one of the decision's options.`);
+  }
+  if (!boundedText(operation.reason, REASON_LIMIT)) {
+    throw error("invalid_changes", `gateOperations[${index}].reason must be a non-empty reason of at most ${REASON_LIMIT} characters.`);
+  }
+  return { ...gate, closedAt: gate.askedAt, reason: operation.reason.trim(), choice: operation.choice };
 }
 
 // Only the review browser records answers, so agent updates may keep an answer but never add or change one,
@@ -1172,7 +1215,7 @@ async function applyStateChange(resolved: any, expectedRevision: any, changes: a
     // A replacement pending list keeps an answered gate as it stands too, so a resolve in the same change cannot close a reworded copy.
     if (Array.isArray(changes.pending)) assertAnsweredGatesUnchanged(before.pending, changes.pending, []);
     const dropped = droppedGates(before.pending, changes.pending);
-    const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? [], standing);
+    const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? [], standing, effectiveSettings(before).autonomy);
     assertAnsweredGatesUnchanged(before.pending, gateResult.pending, gateResult.opened);
     const closed = [...(before.closed ?? []), ...dropped, ...gateResult.closed].slice(-CLOSED_LIMIT);
     const requested = changes.settings === undefined ? null : keepPersonSettings(before, changes.settings);
@@ -1395,5 +1438,18 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
     }
   }, error));
   await markLaunchedGates(projectRoot, initiative, paused.openedGates);
+  await markLaunchedPause(projectRoot, initiative);
   return paused;
+}
+
+// A pause recorded by a launched session of this machine, whose environment names its launch, is marked in that launch folder, so its
+// run counts as having a result; a mark that cannot be written leaves the pause as it succeeded.
+async function markLaunchedPause(projectRoot: string, initiative: string) {
+  if (typeof process.env.PRISM_LAUNCH !== "string" || !process.env.PRISM_LAUNCH) return;
+  try {
+    const { markLaunchPause } = await import("../session/launched-sessions.mjs");
+    await markLaunchPause({ projectRoot, initiative, env: process.env });
+  } catch {
+    // The run then ends without a result, and its no-result gate asks the person what it should do next.
+  }
 }

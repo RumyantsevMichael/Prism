@@ -21,7 +21,7 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadAttention, loadClaims, loadDeclaredView, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, viewWatching, loadAttention, loadClaims, loadDeclaredView, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { frozenTestFile, verificationLog } from "./verification-view.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
@@ -53,6 +53,8 @@ const TRUSTED_HOSTS = new Set(["127.0.0.1", "localhost"]);
 const VIEWER_OPEN_RETRY_MS = 10 * 1000;
 // The stale hint runs Git in the project, so its answer is reused for this long however often the page asks.
 const FRESHNESS_CHECK_MS = 30 * 1000;
+// How often the server checks, while a page is connected, whether the records its views read changed.
+const RECORDS_CHECK_MS = 1000;
 // The build code loads only when a page asks for the index state, so a review server starts without the native runtime's modules.
 const backgroundPreparation = () => import("../repository-intelligence/background-preparation.mjs");
 // An out-of-date index is rebuilt once the files stopped changing for this long, so a burst of edits causes one build, and at most once per gap.
@@ -191,7 +193,7 @@ function reviewListing(projectRoot: string) {
 
 // A wanted file whose presence on disk disagrees with the kept listing, such as one an agent has just written, moved, or deleted, lists the project again,
 // so a few checked files keep the listing honest without listing the whole project on every request.
-// The listing keeps only what the checkout holds; a store's artifacts, which another process's tool call can change at any time, are listed on every request.
+// The listing keeps only what the checkout holds; a store's artifacts, which another process's tool call can change at any time, are reused only until a file of the store changes.
 async function listedFiles(projectRoot: string, wanted: any[] = []) {
   const listing = reviewListing(projectRoot);
   let value = await listing.get();
@@ -209,10 +211,10 @@ async function listedFiles(projectRoot: string, wanted: any[] = []) {
 // With a record store, the descriptive artifacts the checkout sees come from the store, by path, while the checkout's own files under those paths are not artifacts.
 // An unavailable store or a refused repository name lists no artifact, and never the checkout's files in their place; null means the project names no store.
 async function storeArtifactEntries(projectRoot: string) {
-  return listStoreArtifacts(projectRoot).catch((error) => {
+  return rememberView(projectRoot, "store-artifacts", () => listStoreArtifacts(projectRoot).catch((error) => {
     if (recordsUnavailable(error) || error?.name === "ArtifactError") return [];
     throw error;
-  });
+  }));
 }
 
 /** Why the record store cannot serve the checkout's artifacts, as describeRecordStore reports it with the store named as configured, or null when it can or the project names no store. */
@@ -235,6 +237,10 @@ async function listReviewSources(projectRoot: string) {
 
 /** The store ref, store:<location>, of each store artifact the checkout sees, by path; a path that several scopes hold names the first by label. */
 async function storeArtifactRefs(projectRoot: string) {
+  return rememberView(projectRoot, "store-artifact-refs", () => computeStoreArtifactRefs(projectRoot));
+}
+
+async function computeStoreArtifactRefs(projectRoot: string) {
   const refs: Record<string, any> = {};
   for (const entry of await storeArtifactEntries(projectRoot) ?? []) {
     if (Object.hasOwn(refs, entry.path)) continue;
@@ -284,10 +290,10 @@ const storeRefOf = (location: any) => `${STORE_REF}${location}`;
 
 // Every scope's artifacts in the store that a workspace's page reads through, or null when the page reads no store or its store cannot serve them.
 async function workspaceStoreArtifacts(projectRoot: string) {
-  return workspaceArtifacts(projectRoot).catch((error) => {
+  return rememberView(projectRoot, "workspace-store-artifacts", () => workspaceArtifacts(projectRoot).catch((error) => {
     if (recordsUnavailable(error) || error?.name === "ArtifactError") return null;
     throw error;
-  });
+  }));
 }
 
 // Scopes listed workspace first and then by label.
@@ -1038,6 +1044,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const result = ended ? await archiveEndedLaunches({ projectRoot, env })
         : archiving ? await archiveLaunch({ projectRoot, id: body.launch, env })
           : await unarchiveLaunch({ projectRoot, id: body.launch, env });
+      // Archiving resolves the session's no-result gate in the coordination state, so Attention reads it again.
+      forgetWorkspace();
       sendJson(response, 200, result);
     } catch (error) {
       if (error?.code === "unknown_launch") sendJson(response, 404, { code: error.code, message: error.message });
@@ -1093,9 +1101,37 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     }
   }
 
+  // While a page is connected, the server checks every second whether the files its views read changed, and tells every page with a records event,
+  // so a page reads its index again when an agent or a sync changed the records instead of reading it on a short timer.
+  let recordsWatch: any = null;
+  let recordsVersion: number | null = null;
+  function watchRecords() {
+    if (recordsWatch) return;
+    let checking = false;
+    recordsWatch = setInterval(async () => {
+      if (viewers.size + hub.count(hubKey) === 0) {
+        clearInterval(recordsWatch);
+        recordsWatch = null;
+        recordsVersion = null;
+        return;
+      }
+      if (checking) return;
+      checking = true;
+      try {
+        const version = await viewVersion(projectRoot).catch(() => null);
+        if (version !== null && recordsVersion !== null && version !== recordsVersion) notify("records", {});
+        if (version !== null) recordsVersion = version;
+      } finally {
+        checking = false;
+      }
+    }, RECORDS_CHECK_MS);
+    recordsWatch.unref?.();
+  }
+
   function openViewerStream(response: any, writable: any) {
     const heartbeat = openEventStream(response, () => removeViewer(response));
     viewers.set(response, { heartbeat, writable });
+    watchRecords();
     reportViewers();
     if (writable) clearViewerOpenLease();
     writeEvent(response, "session", sessionSnapshot());
@@ -1106,6 +1142,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // It starts from the session snapshot and the pending notices, sent on the shared stream for this page only.
   function joinHub(stream: any, tab: any, writable: any) {
     if (!hub.join(stream, tab, hubKey, writable)) return false;
+    watchRecords();
     reportViewers();
     if (writable) clearViewerOpenLease();
     hub.send(stream, hubKey, "session", sessionSnapshot());
@@ -1542,6 +1579,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
 
   function closeViewerStreams() {
     clearViewerOpenLease();
+    if (recordsWatch) clearInterval(recordsWatch);
+    recordsWatch = null;
     // A shared hub serves other pages too, so only a hub of this page alone closes with its viewers.
     if (!sharedHub) hub.close();
     for (const response of viewers.keys()) {
@@ -1596,7 +1635,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const checkout = workspace && await isStoreWithoutCheckout(projectRoot) ? null : await readWorkspaceIdentity(projectRoot);
       const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null, repositories: await codeRepositories() } : { workspace: checkout };
       const scoped = storeIndex ? { artifactScopes: storeIndex.artifactScopes, scopes: storeIndex.scopes, ...(storeIndex.scopeFilter ? { scopeFilter: storeIndex.scopeFilter, unknownScopes: storeIndex.unknownScopes } : {}), notes: storeIndex.notes } : { artifactScopes: await listArtifactScopes(projectRoot) };
-      send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, version: appVersion ?? pluginVersion(), ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store), watching: await viewWatching(projectRoot).catch(() => null) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, version: appVersion ?? pluginVersion(), ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
     } else if (["/api/code/tree", "/api/code/compare", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
       await serveCode(response, route, url);
     } else if (route === "/api/slice-files" && request.method === "GET") {

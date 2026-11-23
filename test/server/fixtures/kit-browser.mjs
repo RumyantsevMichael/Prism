@@ -83,6 +83,19 @@ export async function serveProject(context, projectRoot) {
   return { base: review.baseUrl.replace(/\/$/, ""), close };
 }
 
+/**
+ * Starts a review server for a project and returns the URL of `ref` as Prism opens it, with the one-time write grant in its fragment,
+ * so the first page that loads it can make changes; a plain review URL only reads.
+ */
+export async function writableReviewUrl(context, projectRoot, ref) {
+  const { startReviewServer } = await reviewServer();
+  const opened = [];
+  const review = await startReviewServer({ projectRoot, openBrowser: async (url) => { opened.push(url); return true; } });
+  defer(context, () => review.close());
+  await review.open([ref]);
+  return opened.at(-1);
+}
+
 export async function launch(context) {
   const browser = await playwright.chromium.launch(CHROMIUM_OPTIONS);
   defer(context, () => browser.close());

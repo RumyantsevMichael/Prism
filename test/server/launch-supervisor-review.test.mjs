@@ -58,7 +58,7 @@ test("a run that names an unsafe thread id has no resume command and cannot be r
     const fixture = await launchFixture(t, { plans: { codex: [{ threadId }] } });
     const { resumeLaunch, startLaunch } = await module();
     const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "codex", env: fixture.env });
-    const view = await settled(fixture, launch.id, ["finished"]);
+    const view = await settled(fixture, launch.id, ["ended-without-result"]);
     assert.equal(view.resumeCommand, null);
     assert.ok(!JSON.stringify(view).includes(threadId));
     await assert.rejects(resumeLaunch({ id: launch.id, env: fixture.env }), { code: "no_host_session" });
@@ -121,7 +121,7 @@ test("listing removes an expired launch folder only under the launch lock", { sk
   const fixture = await launchFixture(t, { plans: { codex: [{}] } });
   const { listLaunches, startLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "codex", env: fixture.env });
-  await settled(fixture, launch.id, ["finished"]);
+  await settled(fixture, launch.id, ["ended-without-result"]);
   const folder = path.join(launchesDirectory(fixture.env), launch.id);
   const later = Date.now() + RETENTION_MS + 60000;
   let listed = null;
@@ -139,12 +139,12 @@ test("a resume that answers launch_failed after its timeout starts no run afterw
   const fixture = await launchFixture(t, { plans: { codex: [{}, { hold: "forever" }] } });
   const { listLaunches, resumeLaunch, startLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "codex", env: fixture.env });
-  await settled(fixture, launch.id, ["finished"]);
+  await settled(fixture, launch.id, ["ended-without-result"]);
   const slow = fileURLToPath(new URL("./fixtures/slow-launch-supervisor.mjs", import.meta.url));
   await assert.rejects(resumeLaunch({ id: launch.id, env: { ...fixture.env, NODE_OPTIONS: `--import ${slow}` } }), { code: "launch_failed" });
   await new Promise((resolve) => setTimeout(resolve, 4000));
   const { launches } = await listLaunches({ projectRoot: fixture.root, env: fixture.env });
   const view = launches.find((entry) => entry.id === launch.id);
   assert.equal(fixture.runs("codex").length, 1, `a run started after launch_failed; the session now shows ${view.state} with ${view.runs} runs`);
-  assert.equal(view.state, "finished");
+  assert.equal(view.state, "ended-without-result");
 });
