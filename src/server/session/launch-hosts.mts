@@ -540,7 +540,7 @@ export interface HostRefusal { tool: string; reason: string }
 // run has no outcome of its own, so an agent that exits 0 before its prompt answers fails the run.
 // lastMessage is the text of the host's last reply in the run, with the session ids replaced and cut, or null; stopReason is the stop
 // reason with which an ACP agent's prompt answered, or null.
-export interface HostFacts { hostSessionId: string | null; agentSessionId: string | null; settled: boolean; turnId: string | null; model: string | null; refusals: HostRefusal[]; refusalCount: number; hostError: string | null; failure: string | null; usage: any; lastMessage: string | null; stopReason: string | null }
+export interface HostFacts { hostSessionId: string | null; agentSessionId: string | null; settled: boolean; turnId: string | null; model: string | null; refusals: HostRefusal[]; refusalCount: number; ownToolAllows: number; hostError: string | null; failure: string | null; usage: any; lastMessage: string | null; stopReason: string | null }
 export interface HostConversationOptions {
   initiative?: string | null;
   migrationRun?: string | null;
@@ -577,7 +577,7 @@ export type PermissionAnswer = (decision: PermissionDecision) => unknown;
 export const REFUSED_ON_ATTENTION = "The person refused this on Attention.";
 
 export function hostConversation(host: string, { initiative = null, migrationRun = null, access = "full", readRoots = [], migrationServer = null, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null, permissions = null }: HostConversationOptions) {
-  const facts: HostFacts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null, lastMessage: null, stopReason: null };
+  const facts: HostFacts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, ownToolAllows: 0, hostError: null, failure: null, usage: null, lastMessage: null, stopReason: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
   const named = (value: unknown) => {

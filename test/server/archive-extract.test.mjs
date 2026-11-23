@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { extractTarGz, extractZip } from "../../dist/server/session/archive-extract.mjs";
+import { downloadForm, extractTarBz2, extractTarGz, extractZip, placeBinary } from "../../dist/server/session/archive-extract.mjs";
 import { zip } from "./fixtures/acp-registry.mjs";
 
 // The archive unpacker of registry installs: what lands inside the version folder, and what refuses the whole archive.
@@ -107,4 +107,27 @@ test("a zip with an absolute path refuses the archive, and one inside unpacks wi
   await extractZip(good, path.join(folder, "good"));
   assert.equal(readFileSync(path.join(folder, "good", "dir", "agent"), "utf8"), "run");
   if (process.platform !== "win32") assert.equal(statSync(path.join(folder, "good", "dir", "agent")).mode & 0o777, 0o755);
+});
+
+test("a tar.bz2 unpacks like a tar.gz, and a download that is no archive is placed as its program", { skip: posixOnly }, async (t) => {
+  const folder = await scratch(t);
+  const content = path.join(folder, "content");
+  await mkdir(path.join(content, "bin"), { recursive: true });
+  await writeFile(path.join(content, "bin", "agent"), "#!/bin/sh\n", { mode: 0o755 });
+  const file = path.join(folder, "archive.tar.bz2");
+  execFileSync("tar", ["-cjf", file, "-C", content, "bin"]);
+  assert.equal(await downloadForm(file), "bzip2");
+  await extractTarBz2(file, path.join(folder, "out"));
+  assert.equal(statSync(path.join(folder, "out", "bin", "agent")).mode & 0o777, 0o755);
+  const program = path.join(folder, "program");
+  await writeFile(program, "#!/bin/sh\necho hi\n");
+  assert.equal(await downloadForm(program), "binary");
+  await placeBinary(program, path.join(folder, "placed"), "./agent");
+  assert.equal(readFileSync(path.join(folder, "placed", "agent"), "utf8"), "#!/bin/sh\necho hi\n");
+  assert.equal(statSync(path.join(folder, "placed", "agent")).mode & 0o777, 0o755);
+  await assert.rejects(placeBinary(program, path.join(folder, "nested"), "bin/agent"), /plain file name/);
+  await assert.rejects(placeBinary(program, path.join(folder, "escape"), "../agent"), /\.\. part/);
+  const broken = path.join(folder, "broken.tar.bz2");
+  await writeFile(broken, Buffer.concat([Buffer.from("BZh9"), Buffer.alloc(40)]));
+  await assert.rejects(extractTarBz2(broken, path.join(folder, "broken")), /not a valid bzip2 file/);
 });

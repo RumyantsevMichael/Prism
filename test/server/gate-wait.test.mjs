@@ -212,6 +212,36 @@ test("on Codex, defers the wait to the Stop hook of the same session, which cont
   assert.deepEqual(await readdir(directory), []);
 });
 
+test("on Codex, a sub-agent's deferred wait keeps the orchestrator's, and each agent's stop hook continues it with its own answer", async (context) => {
+  const { root, gateIds } = await project(context);
+  const directory = path.join(root, ".app", "gate-waits");
+  const hook = (input) => waitForGateAnswers({ input: Readable.from([JSON.stringify({ session_id: "codex-session-3", turn_id: "turn-1", stop_hook_active: false, ...input })]), directory, pollMs: 20, settleMs: 0 });
+  // Codex names the calling thread in each call's turn metadata; a sub-agent shares the root session and names its parent thread.
+  const turn = (thread, parent) => ({ sessionId: "codex-session-3", threadId: thread, "x-codex-turn-metadata": { session_id: "codex-session-3", thread_id: thread, ...(parent ? { parent_thread_id: parent, thread_source: "subagent" } : { thread_source: "user" }) } });
+  const mcp = server(context, root, "codex-mcp-client");
+  await mcp.ready;
+  wait(mcp, 2, root, gateIds[0], {}, turn("codex-session-3"));
+  assert.equal((await mcp.response(2, 5000)).result.structuredContent.status, "deferred");
+  wait(mcp, 3, root, gateIds[1], {}, turn("019a-child", "codex-session-3"));
+  assert.equal((await mcp.response(3, 5000)).result.structuredContent.status, "deferred");
+  assert.equal((await readdir(directory)).length, 2);
+  // Codex runs SubagentStop, naming the sub-agent's thread as agent_id, when a sub-agent's turn ends, and Stop when the root's does.
+  const child = hook({ hook_event_name: "SubagentStop", agent_id: "019a-child", agent_type: "default" });
+  const orchestrator = hook({ hook_event_name: "Stop" });
+  await delay(200);
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: gateIds[1], choice: "approve" });
+  const childOutput = await child;
+  assert.equal(childOutput.decision, "block");
+  assert.match(childOutput.reason, new RegExp(gateIds[1]));
+  assert.doesNotMatch(childOutput.reason, new RegExp(gateIds[0]));
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: gateIds[0], choice: "fresh-login" });
+  const orchestratorOutput = await orchestrator;
+  assert.equal(orchestratorOutput.decision, "block");
+  assert.match(orchestratorOutput.reason, /Answer: Require a fresh login\./);
+  assert.doesNotMatch(orchestratorOutput.reason, new RegExp(gateIds[1]));
+  assert.deepEqual(await readdir(directory), []);
+});
+
 test("the Stop hook lets the turn stop when the gate is resolved without a browser answer", async (context) => {
   const { root, gateId } = await project(context);
   const directory = path.join(root, ".app", "gate-waits");

@@ -181,6 +181,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/wait-for-gate-answers.mjs\"",
+            "statusMessage": "Prism: waiting for answers to open questions",
+            "timeout": 3600
+          },
+          {
+            "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-trace.mjs\"",
             "statusMessage": "Prism: recording the session trace",
             "timeout": 5

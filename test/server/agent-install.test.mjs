@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { INITIATIVE, TARGET, acpFixture, actionOf, apply, get, installRecord, listing, setSettings } from "./fixtures/acp-agents.mjs";
@@ -86,6 +86,19 @@ test("clause 49: a .zip build installs like a .tar.gz one, and its program is no
   assert.ok(existsSync(path.join(agentsFolder(s), "zipped", "1.0.0", "agent")));
   assert.deepEqual(s.entries().filter((entry) => entry.kind === "start"), [], "the install ran no code of the download");
 });
+
+for (const [kind, form] of [["tar.bz2", "a .tar.bz2 archive"], ["binary", "the program itself under a URL with no suffix"]]) {
+  test(`a build served as ${form} installs like a .tar.gz one, and its program is not run by the install`, { skip: posixOnly }, async (t) => {
+    const { s, registry } = await setup(t);
+    registry.setAgents([await binaryAgent(s, registry, { id: "packed", kind })]);
+    const listed = await act(s, "agents.install", "packed");
+    assert.equal(listed.status, 200, listed.text);
+    const program = path.join(agentsFolder(s), "packed", "1.0.0", "agent");
+    assert.ok(existsSync(program));
+    assert.equal(statSync(program).mode & 0o111, 0o111, "the program is executable");
+    assert.deepEqual(s.entries().filter((entry) => entry.kind === "start"), [], "the install ran no code of the download");
+  });
+}
 
 test("clauses 50, 52: an npx install locks its dependencies before the dialog, installs from the lock without scripts, and checks the version", { skip: posixOnly }, async (t) => {
   const { s, registry } = await setup(t);

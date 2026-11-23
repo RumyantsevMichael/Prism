@@ -50,8 +50,8 @@ export const OTHER_PLATFORM = platformKey().startsWith("linux") ? "windows-x86_6
 
 const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex");
 
-/** A .tar.gz of the given files, { name: { text, mode } }, built with the system tar. */
-async function tarGz(files) {
+/** A .tar.gz, or with flags -cjf a .tar.bz2, of the given files, { name: { text, mode } }, built with the system tar. */
+async function tarGz(files, flags = "-czf") {
   const folder = await mkdtemp(path.join(os.tmpdir(), "prism-registry-tar-"));
   try {
     for (const [name, { text, mode = 0o644 }] of Object.entries(files)) {
@@ -60,8 +60,8 @@ async function tarGz(files) {
       await writeFile(file, text);
       chmodSync(file, mode);
     }
-    execFileSync("tar", ["-czf", path.join(folder, "out.tar.gz"), "-C", path.join(folder, "content"), ...Object.keys(files)]);
-    return await readFile(path.join(folder, "out.tar.gz"));
+    execFileSync("tar", [flags, path.join(folder, "out.tar"), "-C", path.join(folder, "content"), ...Object.keys(files)]);
+    return await readFile(path.join(folder, "out.tar"));
   } finally {
     await rm(folder, { recursive: true, force: true });
   }
@@ -129,7 +129,8 @@ export async function registryFixture(context, fixture) {
   process.env.PRISM_ACP_REGISTRY_URL = `${base}/registry.json`;
   fixture.env.PRISM_ACP_REGISTRY_URL = process.env.PRISM_ACP_REGISTRY_URL;
   const addArchive = async (name, files, { kind = "tar.gz" } = {}) => {
-    const bytes = kind === "zip" ? zip(files) : await tarGz(files);
+    // A "binary" download is the program itself, as a registry entry may serve it under a URL with no suffix.
+    const bytes = kind === "zip" ? zip(files) : kind === "binary" ? Buffer.from(Object.values(files)[0].text) : await tarGz(files, kind === "tar.bz2" ? "-cjf" : "-czf");
     archives.set(`/${name}`, bytes);
     return { url: `${base}/${name}`, sha256: sha256(bytes) };
   };
@@ -147,7 +148,7 @@ export async function registryFixture(context, fixture) {
 
 /** A binary registry entry for this platform whose archive holds the fake agent as ./agent. */
 export async function binaryAgent(fixture, registry, { id, name = id, version = "1.0.0", license = "MIT", sha = true, platform = platformKey(), kind = "tar.gz", extra = {} } = {}) {
-  const archive = await registry.addArchive(`${id}-${version}.${kind}`, { agent: agentProgram(fixture) }, { kind });
+  const archive = await registry.addArchive(kind === "binary" ? `${id}-${version}` : `${id}-${version}.${kind}`, { agent: agentProgram(fixture) }, { kind });
   return {
     id, name, version, description: `${name} for tests.`, repository: `https://example.invalid/${id}`, authors: ["Fake Authors"], license,
     distribution: { binary: { [platform]: { archive: archive.url, cmd: "./agent", args: [id], ...(sha ? { sha256: archive.sha256 } : {}) } } },

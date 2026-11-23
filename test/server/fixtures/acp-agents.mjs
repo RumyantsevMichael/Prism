@@ -12,7 +12,7 @@ export { INITIATIVE } from "./review-actions.mjs";
 export { actionOf, apply, get, listing };
 
 // A plan, per agent name: { protocolVersion = 1, authRequired, authMethods = [], startMcp = true, embeddedContext = true,
-// close = true, resume = true, load = false, configOptions, efforts: { <model>: [<level>] }, permission: { title, kind, options },
+// close = true, resume = true, load = false, configOptions, efforts: { <model>: [<level>] }, permission: { title, kind, options, rawInput },
 // hold, stopReason = "end_turn", stderr: [<line>], exitBeforeAnswer: <code>, usage, usageUpdate, askFs, mcpEnv: "inherit", mcpVia: "wrapper" | "detached" }.
 export const DEFAULT_OPTIONS = Object.freeze([
   { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "ask", options: [{ value: "ask", name: "Ask" }, { value: "auto", name: "Auto", description: "The agent decides permissions" }, { value: "bypassPermissions", name: "Bypass", description: "Accepts all permissions" }] },
@@ -112,7 +112,7 @@ process.stdin.on("data", (chunk) => {
       if (plan.hold) held = id;
       if (plan.permission) {
         asking = { ask: nextAsk++, prompt: id };
-        out({ jsonrpc: "2.0", id: asking.ask, method: "session/request_permission", params: { sessionId: params.sessionId, toolCall: { toolCallId: "t1", title: plan.permission.title ?? "Write probe.txt", kind: plan.permission.kind ?? "edit" }, options: plan.permission.options ?? [{ optionId: "yes", name: "Allow once", kind: "allow_once" }, { optionId: "always", name: "Always allow", kind: "allow_always" }, { optionId: "no", name: "Reject", kind: "reject_once" }] } });
+        out({ jsonrpc: "2.0", id: asking.ask, method: "session/request_permission", params: { sessionId: params.sessionId, toolCall: { toolCallId: "t1", title: plan.permission.title ?? "Write probe.txt", kind: plan.permission.kind ?? "edit", ...(plan.permission.rawInput === undefined ? {} : { rawInput: plan.permission.rawInput }) }, options: plan.permission.options ?? [{ optionId: "yes", name: "Allow once", kind: "allow_once" }, { optionId: "always", name: "Always allow", kind: "allow_always" }, { optionId: "no", name: "Reject", kind: "reject_once" }] } });
       } else if (!plan.hold) finish(id, plan.stopReason ?? "end_turn");
     } else if (method === "session/cancel") {
       if (held !== null) { finish(held, "cancelled"); held = null; }

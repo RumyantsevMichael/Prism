@@ -8,7 +8,9 @@ export const DEFAULT_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registr
 export const REGISTRY_KEPT_MS = 10 * 60 * 1000;
 const READ_TIMEOUT_MS = 30_000;
 const MAX_INDEX_BYTES = 16 * 1024 * 1024;
-const ARCHIVE_SUFFIXES = Object.freeze([".tar.gz", ".tgz", ".zip"]);
+// The registry allows a .zip, .tar.gz, .tgz, .tar.bz2, or .tbz2 archive or the program itself, and no installer; Prism also refuses an
+// archive form that the registry does not allow, so that it never places one as if it were the program.
+const UNSUPPORTED_SUFFIXES = Object.freeze([".dmg", ".pkg", ".deb", ".rpm", ".msi", ".tar.xz", ".txz", ".xz", ".tar.zst", ".zst", ".7z", ".rar", ".tar"]);
 const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const NPM_NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
 const UV_PIN = /^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9._,-]+\])?==([A-Za-z0-9][A-Za-z0-9.+!_-]*)$/;
@@ -165,7 +167,7 @@ async function installRefusal(name: string, distribution: RegistryDistribution, 
   if (distribution.kind === "binary") {
     if (!distribution.sha256 || !SHA256.test(distribution.sha256)) return `The registry lists no SHA-256 checksum for the ${distribution.platform} build of ${name}, so Prism cannot check its download.`;
     const archive = (() => { try { return new URL(distribution.archive).pathname.toLowerCase(); } catch { return distribution.archive.toLowerCase(); } })();
-    if (!ARCHIVE_SUFFIXES.some((suffix) => archive.endsWith(suffix))) return `The ${distribution.platform} archive of ${name} is not a .tar.gz, .tgz, or .zip file, so Prism cannot unpack it.`;
+    if (UNSUPPORTED_SUFFIXES.some((suffix) => archive.endsWith(suffix))) return `The ${distribution.platform} download of ${name} is not a .zip, .tar.gz, .tgz, .tar.bz2, or .tbz2 archive or the program itself, so Prism cannot unpack it.`;
     return null;
   }
   const tool = distribution.kind === "npx" ? "npm" : "uv";
