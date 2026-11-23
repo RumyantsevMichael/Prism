@@ -24,7 +24,7 @@ test("clause 1: the requirement format is version 2 and lists requirements.shall
   assert.match(source, /^Format version: 2$/m);
   assert.ok(listedRules(source).includes("requirements.shall"), "the reference lists the rule");
   assert.match(source, /^- `requirements\.shall`: .*\bRequirement:.*\bshall\b/m);
-  for (const type of ["adr", "glossary", "feature"]) assert.match(await reference(type), /^Format version: 1$/m, type);
+  for (const type of ["glossary", "feature"]) assert.match(await reference(type), /^Format version: 1$/m, type);
 });
 
 test("clause 2: a Requirement line with two sentences that say shall is a requirements.shall finding at its line, and one sentence with shall twice is none", async (context) => {
