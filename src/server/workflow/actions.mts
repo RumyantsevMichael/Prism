@@ -14,6 +14,8 @@ import { withoutCredentials } from "./remote-url.mjs";
 import { readRoadmap } from "./roadmap.mjs";
 import { roadmapEntry, shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction, validEarlierName } from "./state.mjs";
+import { recommendedChoice } from "./format-migrations.mjs";
+import { RUN_ID, allRuns, answerMigrationRun, continueMigrationRun, failContinuation, followedRun, readRun, rerunMigration, settledRunLaunches } from "./migration-runs.mjs";
 import { ambiguousApprovalMessage, answerArtifactApproval, answeredApprovalGates, commentOnArtifact, pendingApprovalGates, storeArtifactTarget, withdrawArtifactApproval } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { WITHDRAWN_REASON } from "./gate-wait.mjs";
@@ -74,6 +76,8 @@ function field(name: string, kind: any, label: string, extra: any = {}) {
 }
 
 const choice = (name: string, label: string, options: any, extra: any = {}) => field(name, "choice", label, { options, ...extra });
+// A field that chooses several of its options, whose value is the list of the chosen values in option order.
+const choices = (name: string, label: string, options: any, extra: any = {}) => field(name, "choices", label, { options, ...extra });
 const toggle = (name: string, label: string, off: any, on: any) => field(name, "toggle", label, { options: [option("off", "Off", off), option("on", "On", on)], required: true });
 const text = (name: string, label: string, maxLength: any, extra: any = {}) => field(name, "text", label, { maxLength, multiline: false, ...extra });
 
@@ -97,6 +101,8 @@ export function parseTarget(reference: any): any {
   if (match && SCOPE_LABEL.test(match[1])) return { kind: "artifact", reference, scope: match[1], path: match[2] };
   match = /^launch:(.+)$/.exec(reference);
   if (match && LAUNCH_ID_PATTERN.test(match[1])) return { kind: "launch", reference, launch: match[1] };
+  match = /^migration-run:(.+)$/.exec(reference);
+  if (match && RUN_ID.test(match[1])) return { kind: "migration-run", reference, run: match[1] };
   match = /^index:([^/]+)\/([^/]+)$/.exec(reference);
   if (match && REPOSITORY_NAME.test(match[1]) && REPOSITORY_NAME.test(match[2])) return { kind: "index", reference, identity: `${match[1]}/${match[2]}` };
   match = /^agent:(.+)$/.exec(reference);
@@ -171,6 +177,16 @@ async function seenArtifact(projectRoot: string, parsed: any) {
 // Reads what a target's actions need: the initiative's coordination state and record, the index component, the approval gate, the store artifact, or the launched session, and refuses a target that does not exist.
 // readOptions, when given, is the run options reader of the apply that reads the target again, so its reads are not repeated.
 async function readTarget(projectRoot: string, parsed: any, indexer: any, state = undefined, env = process.env, checkouts = null, readOptions: any = null) {
+  if (parsed.kind === "migration-run") {
+    // A format migration run lives in its own record, in the record store when one is configured.
+    const root = await realpath(projectRoot);
+    const record = await readRun(root, parsed.run).catch((error) => {
+      throw typeof error?.code === "string" ? storeRefusal(error) : error;
+    });
+    if (!record) throw unknownTarget(parsed.reference);
+    const followed = record.status === "failed" ? followedRun(await allRuns(root).catch(() => []), record) : false;
+    return { ...parsed, runRecord: record, followed };
+  }
   if (parsed.kind === "artifact") {
     const artifact = await seenArtifact(projectRoot, parsed);
     if (!artifact) throw unknownTarget(parsed.reference);
@@ -949,6 +965,102 @@ const LAUNCH_RESUME = {
   }
 };
 
+// ---- Format migration runs ----
+
+// A run's answer takes one field per asked point, named by the point's id; a separate source's removal takes none, since the run removes the source once every statement has a home.
+const POINT_TEXT_MAX = 500;
+const askedPoints = (context: any) => (context.runRecord.question?.points ?? []).filter((point: any) => isRecord(point) && typeof point.id === "string");
+const answeredPoints = (context: any) => askedPoints(context).filter((point: any) => point.kind !== "remove-source");
+// A point's place in the run's question, counted from 1 across every migration of the run, as the page numbers it.
+const pointNumber = (context: any, point: any) => askedPoints(context).indexOf(point) + 1;
+
+const ENTRY_OPTIONS = [
+  option("same", "They mean the same", "The target keeps its words, and the source's text counts as kept."),
+  option("target", "They differ: keep the target's", "The target's entry stays as it is."),
+  option("source", "They differ: take the source's", "The source's text replaces the target's entry.")
+];
+const CONFLICT_OPTIONS = [option("target", "Keep the target's definition", "The target's entry stays as it is."), option("source", "Take the source's definition", "The source's version replaces the target's entry.")];
+
+function pointField(context: any, point: any) {
+  const label = `Point ${pointNumber(context, point)}`;
+  if (point.kind === "entry") return choice(point.id, label, ENTRY_OPTIONS, { required: true, point: point.kind });
+  if (point.kind === "conflict") return choice(point.id, label, CONFLICT_OPTIONS, { required: true, point: point.kind });
+  return text(point.id, label, POINT_TEXT_MAX, { required: true, multiline: point.kind === "leftover", point: point.kind, ...(point.kind === "unknown" ? { allowsUnknown: point.allowsUnknown === true } : {}) });
+}
+
+// Each field's default: a leftover's recommended home, an unknown value's recommendation, which is the value itself, and a choice's recommended option.
+function pointDefault(point: any) {
+  if (point.kind === "entry" || point.kind === "conflict") return recommendedChoice(point.kind, point.recommendation);
+  return typeof point.recommendation === "string" ? point.recommendation : null;
+}
+
+const RUN_NOT_ASKING = (record: any) => `The format migration run is ${record.status === "waiting-for-host" ? "waiting for a host" : record.status}, so it asks nothing to answer.`;
+const answerRefusal = (record: any) => record.answers !== null && record.answers !== undefined ? "The format migration run already has its answers." : record.status !== "asking" ? RUN_NOT_ASKING(record) : null;
+
+const MIGRATION_RUN_ANSWER = {
+  id: "migration-run.answer",
+  kinds: ["migration-run"],
+  label: "Send answers",
+  group: "Format migration",
+  effect: "Records your answers, and Prism continues the run with them; it then applies every file of the run together, or none of them.",
+  target: (context: any) => context.reference,
+  fields: (context: any) => answeredPoints(context).map((point: any) => pointField(context, point)),
+  value: (context: any) => Object.fromEntries(answeredPoints(context).map((point: any) => [point.id, pointDefault(point)])),
+  // Every answer is recorded, also one that takes each recommendation as it stands.
+  stored: () => null,
+  context: () => null,
+  recommended: () => null,
+  confirm: () => ({ field: null, values: [], message: "Prism continues the run with your answers and applies every file of the run together, or none of them. You cannot change the answers afterwards." }),
+  revision: (context: any) => context.runRecord.question?.askedAt ?? context.runRecord.status,
+  unavailable: (context: any) => answerRefusal(context.runRecord),
+  unavailableCode: (context: any) => context.runRecord.answers !== null && context.runRecord.answers !== undefined ? "already_answered" : "run_not_asking",
+  after(values: any, context: any) {
+    const answers: Record<string, any> = {};
+    for (const point of askedPoints(context)) {
+      if (point.kind === "remove-source") {
+        answers[point.id] = { choice: "remove", value: null };
+        continue;
+      }
+      const given = values[point.id];
+      const label = `Point ${pointNumber(context, point)}`;
+      if (point.kind === "entry" || point.kind === "conflict") {
+        answers[point.id] = { choice: given, value: null };
+        continue;
+      }
+      if (point.kind === "unknown") {
+        if (/[\r\n]/.test(given)) throw invalid(point.id, "One line of 1 to 500 characters.", `${label} is one line: write the missing value without a line break.`);
+        if (given.toLowerCase() === "unknown" && point.allowsUnknown !== true) throw invalid(point.id, "A value other than unknown.", `${label} needs a real value: this file is decided, so unknown cannot stay in it.`);
+        answers[point.id] = { choice: "value", value: given };
+        continue;
+      }
+      answers[point.id] = { choice: null, value: given };
+    }
+    return answers;
+  }
+};
+
+// A failed run runs again as a new run of the artifacts of its set that still break their format.
+const runNotFailed = (context: any) => context.runRecord.status !== "failed" ? `The format migration run is ${context.runRecord.status === "waiting-for-host" ? "waiting for a host" : context.runRecord.status}, and only a failed run runs again.` : context.followed ? "A later format migration run already follows this one." : null;
+
+const MIGRATION_RUN_RERUN = {
+  id: "migration-run.rerun",
+  kinds: ["migration-run"],
+  label: "Run again",
+  group: "Format migration",
+  effect: "Starts this format migration again for the files of the run that still break their format, apart from every other task.",
+  target: (context: any) => context.reference,
+  fields: () => [],
+  value: () => null,
+  stored: () => null,
+  context: () => null,
+  recommended: () => null,
+  confirm: () => ({ field: null, values: [], message: "Prism starts a new run of this format migration on this computer for the files that still break their format." }),
+  revision: (context: any) => context.runRecord.endedAt ?? context.runRecord.status,
+  unavailable: runNotFailed,
+  unavailableCode: () => "run_not_failed",
+  after: () => ({ rerun: true })
+};
+
 // An answer to one permission request of the session, which this machine's launch folder alone holds, so an answer that reaches the
 // machine any other way applies nothing. An approval asks the run's supervisor to show the native dialog every time, whatever the launch
 // window, and the supervisor answers the host only after the person allowed that request there; a refusal asks nothing.
@@ -1036,9 +1148,9 @@ const AGENT_REMOVE = {
 // ---- This computer ----
 
 // The host and model of Prism's own runs, such as the runs that move records to a new format: one choice per computer, kept in the
-// review app folder, from the same host reports as a launch's coordinator. Any available host starts each run on the first host
-// found with its defaults, so it takes no provider, model, or effort.
-const AUTOMATIC_ONLY_DEFAULTS = "Any available host takes only the host's default model.";
+// review app folder, from the same host reports as a launch's coordinator. Any available host starts each run with Codex and its GPT-6 Luna model
+// where Codex lists it, and otherwise on the first host found with a small model, so it takes no provider, model, or effort.
+const AUTOMATIC_ONLY_DEFAULTS = "Any available host chooses its model itself.";
 // A choice that cannot be read shows no host, so the page offers to store a readable one, and any choice applied over it is stored.
 const UNREADABLE_PRISM_RUNS = "The stored choice could not be read, so each run starts on the first host Prism finds with its default model until you apply a host.";
 const prismRunsValue = (context: any) => {
@@ -1057,7 +1169,7 @@ const MACHINE_PRISM_RUNS = {
   target: (context: any) => context.reference,
   fields: (context: any) => [
     choice("host", "Host", [
-      { value: AUTOMATIC, label: AUTOMATIC_LABEL, consequence: "Each run starts on the first host Prism finds on this computer, with its default model.", reason: null },
+      { value: AUTOMATIC, label: AUTOMATIC_LABEL, consequence: "Each run starts with Codex and its GPT-6 Luna model where Codex lists it, and otherwise on the first host Prism finds on this computer with a small model.", reason: null },
       ...hostOptions(context, (label) => `${label} runs Prism's own runs.`, { ownRuns: true })
     ], { required: true, ...(context.prismRuns.state === "unreadable" ? { hint: UNREADABLE_PRISM_RUNS } : {}) }),
     field("provider", "run-option", "Provider", { for: "coordinator", option: "provider", hint: PROVIDER_HINT, fixedWhen: { field: "host", values: [AUTOMATIC] } }),
@@ -1084,7 +1196,7 @@ const MACHINE_PRISM_RUNS = {
 };
 
 /** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, GATE_WITHDRAW, APPROVAL_WITHDRAW, GATE_CONTINUE, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, AGENT_INSTALL, AGENT_UPDATE, AGENT_REMOVE, MACHINE_PRISM_RUNS];
+const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, GATE_WITHDRAW, APPROVAL_WITHDRAW, GATE_CONTINUE, MIGRATION_RUN_ANSWER, MIGRATION_RUN_RERUN, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, AGENT_INSTALL, AGENT_UPDATE, AGENT_REMOVE, MACHINE_PRISM_RUNS];
 
 /** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
 export const actionEffect = (id: string) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
@@ -1163,6 +1275,12 @@ function readInput(fields: any, input: any, ignores: (values: any) => any[] = ()
     const raw = input[item.name];
     if (item.kind === "run-option" || item.kind === "run-choice") {
       values[item.name] = item.kind === "run-option" ? runOptionInput(item, raw) : runChoiceInput(item, raw);
+    } else if (item.kind === "choices") {
+      const accepted = optionValues(item);
+      if (raw !== undefined && raw !== null && (!Array.isArray(raw) || raw.some((value: unknown) => typeof value !== "string" || !accepted.includes(value)) || new Set(raw).size !== raw.length)) {
+        throw invalid(item.name, accepted, `${item.label} must be a list of distinct values among ${accepted.join(", ") || "none"}.`);
+      }
+      values[item.name] = Array.isArray(raw) && raw.length ? accepted.filter((value: string) => raw.includes(value)) : null;
     } else if (item.kind === "text") {
       ignored ??= new Set(ignores(values));
       if (ignored.has(item.name)) {
@@ -1258,7 +1376,8 @@ async function check(definition: any, context: any, { revision, input, confirmed
   const after = await definition.after(values, context);
   const unchanged = definition.stored ? definition.stored(context) : current.value;
   if (unchanged !== null && sameValue(after, unchanged)) return null;
-  if (current.confirm && current.confirm.values.includes(values[current.confirm.field] ?? null) && confirmed !== true) {
+  // A confirmation that names no field is asked for every change.
+  if (current.confirm && (current.confirm.field === null || current.confirm.values.includes(values[current.confirm.field] ?? null)) && confirmed !== true) {
     throw fail("confirmation_required", current.confirm.message, { confirm: current.confirm });
   }
   return { current, after };
@@ -1313,6 +1432,8 @@ export async function applyAction({ projectRoot, target, action, input, revision
       if (error?.code === "artifact_changed") throw fail("artifact_changed", APPROVAL_CHANGED);
       if (error?.code === "invalid_answer") throw fail("invalid_input", error.message, { field: null });
       if (error?.code === "approval_ambiguous") throw fail("approval_ambiguous", error.message, { reason: error.message });
+      // An approval that would leave the file breaking its format conflicts with the file as it is, and the gate stays pending.
+      if (error?.code === "artifact_nonconforming") throw fail("artifact_nonconforming", error.message, { reason: error.message, artifacts: error.artifacts });
       throw storeRefused(error) ? storeRefusal(error) : error;
     });
   } else if (parsed.kind === "artifact") {
@@ -1328,6 +1449,35 @@ export async function applyAction({ projectRoot, target, action, input, revision
       if (error?.code === "version_conflict") throw fail("stale_revision", "The file changed since the page read it.", { current: view(definition, { ...read, artifact: { ...artifact, version: error.version ?? null } }) });
       throw storeRefused(error) ? storeRefusal(error) : error;
     });
+  } else if (parsed.kind === "migration-run") {
+    // A run's state refuses an answer or a rerun before the page's revision is compared, so an answered run reads as answered whatever the page last saw.
+    const reason = definition.unavailable(read);
+    if (reason) throw fail(definition.unavailableCode(read), reason, { reason });
+    const checked = await check(definition, read, request);
+    applied = await entryOf(checked, read);
+    // An answer records who gave it, so a checkout whose Git names no user is refused rather than recording an anonymous one.
+    if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the answer cannot record who gave it; set one with git config user.name and answer again.");
+    const runRefusal = (error: any) => {
+      if (["already_answered", "run_not_asking", "run_not_failed", "migration_run_conforming", "migration_run_closed"].includes(error?.code)) throw fail(error.code, error.message, { reason: error.message });
+      if (error?.code === "migration_run_unknown") throw unknownTarget(target);
+      throw typeof error?.code === "string" && error.name === "FormatMigrationError" ? storeRefusal(error) : error;
+    };
+    if (definition.id === "migration-run.answer") {
+      const by = { name: applied.by.name, email: applied.by.email, checkout: applied.by.checkout };
+      const answers = Object.fromEntries(Object.entries<any>(checked!.after).map(([id, answer]) => [id, { ...answer, by, at: applied!.at }]));
+      // The record's lock repeats the answered and asking checks, so an answer that lands after the read above is refused, never overwritten.
+      await answerMigrationRun(projectRoot, parsed.run, answers, { askedAt: read.runRecord.question?.askedAt }).catch(runRefusal);
+      // The answer is recorded and the run already continues, so a continuation that cannot start fails the run with why, where the person can run it again,
+      // and the answer still succeeds rather than telling the page that it was lost.
+      await continueMigrationRun(projectRoot, parsed.run, { env }).catch(async (error: any) => {
+        if (error?.code === "migration_run_closed") return;
+        await failContinuation(projectRoot, parsed.run, error?.message || String(error)).catch(() => {});
+      });
+    } else {
+      await rerunMigration(projectRoot, parsed.run, { name: applied.by.name, email: applied.by.email }, { env }).catch(runRefusal);
+      // The new run's session launches apart from the call; the action waits for it to start, as continuing a run does, so nothing of the launch lands after the response.
+      await settledRunLaunches(await realpath(projectRoot));
+    }
   } else if (parsed.kind === "machine") {
     // The write repeats the revision check under the file's lock, so a change that lands after the read above is refused as stale.
     const checked = await check(definition, read, request);

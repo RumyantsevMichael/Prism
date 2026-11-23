@@ -3,7 +3,7 @@ import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { createInitiative } from "./fixtures/repository-checkouts.mjs";
-import { browserRequest, checkout, commitFiles, exists, isolateGit, ok, refused, reviewBrowser, server, text, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { browserRequest, checkout, commitFiles, exists, isolateGit, ok, refused, reviewBrowser, server, text, workspace, writeArtifact, requirementFile } from "./fixtures/workspace-artifacts.mjs";
 
 // Contract clauses 19, 22, and 23 of the workspace-artifacts design: Prism's own design, pause, and view files, and the review browser, use the store, and a slug that would name a malformed, colliding, or too long plan folder is refused.
 const environment = await isolateGit();
@@ -139,8 +139,9 @@ test("clause 19: a frozen test cannot be an artifact path", async (context) => {
 
 test("clause 23: the review browser lists the store's artifacts with their scopes and serves their bytes", async (context) => {
   const { api, prism } = await designed(context);
-  await writeArtifact(prism, "docs/requirements/billing.md", "# Billing\n\nStored text.\n");
-  await writeArtifact(prism, "docs/requirements/api.md", "# API\n", { scope: "repository" });
+  // Requirement files that conform to their format, which every write of one is checked against.
+  await writeArtifact(prism, "docs/requirements/billing.md", `${requirementFile("Billing")}\nStored text.\n`);
+  await writeArtifact(prism, "docs/requirements/api.md", requirementFile("API"), { scope: "repository" });
   const review = await reviewBrowser(context, api);
   const index = await browserRequest(review, "/api/index");
   assert.equal(index.status, 200);

@@ -170,7 +170,7 @@ const SPECIMENS: Record<string, any> = {
   "prism-icon": {
     decorative: ICON_NAMES.map((name) => `<prism-icon name="${name}"></prism-icon>`).join(""),
     labelled: `<prism-icon name="warning" label="Warning"></prism-icon><prism-icon name="info" label="Information"></prism-icon>`,
-    tones: `<prism-icon name="store" tone="ok"></prism-icon><prism-icon name="store" tone="warn"></prism-icon><prism-icon name="store" tone="danger"></prism-icon><prism-icon name="store"></prism-icon>`,
+    tones: `<prism-icon name="store" tone="accent"></prism-icon><prism-icon name="store" tone="ok"></prism-icon><prism-icon name="store" tone="warn"></prism-icon><prism-icon name="store" tone="danger"></prism-icon><prism-icon name="store"></prism-icon>`,
     sizes: `<prism-icon name="agent"></prism-icon><prism-icon name="agent" size="sm"></prism-icon><prism-icon name="agent" size="xs"></prism-icon>`,
     "long-text": `<prism-chip tone="info"><prism-icon name="info" size="xs"></prism-icon>${LONG}</prism-chip>`,
     "unbroken-name": `<prism-chip><prism-icon name="file" size="xs"></prism-icon>${UNBROKEN}</prism-chip>`
@@ -310,6 +310,7 @@ const SPECIMENS: Record<string, any> = {
     chosen: choiceOf(answers, { value: "accept" }),
     clearable: choiceOf(answers, { label: "Your answer · click the chosen option again to clear it", value: "accept", clearable: true }),
     "with-detail": choiceOf(`<prism-choice-option value="now">Start now<span slot="detail">The first slice starts at once and the others wait for it.</span></prism-choice-option><prism-choice-option value="later">Later<span slot="detail">Nothing starts until you come back.</span></prism-choice-option>`, { label: "When to start" }),
+    multiple: `<prism-choice label="Pick several" name="${id("catalog-choice")}" multiple><prism-choice-option value="a">Old notes<span slot="detail">Breaks two rules.</span></prism-choice-option><prism-choice-option value="b">${UNBROKEN}<span slot="detail">Breaks one rule.</span></prism-choice-option><prism-choice-option value="c" disabled>Plain decision</prism-choice-option></prism-choice>`,
     "many-items": choiceOf(repeat(12, (index: number) => `<prism-choice-option value="v${index}">${index % 3 ? `Option ${index + 1}` : `${UNBROKEN}-${index + 1}`}</prism-choice-option>`), { label: "Pick one of many" }),
     "long-text": choiceOf(`<prism-choice-option value="long">${LONG}<span slot="detail">${LONG}</span></prism-choice-option>`, { label: LONG }),
     "unbroken-name": choiceOf(`<prism-choice-option value="u">${UNBROKEN}<span slot="detail">${UNBROKEN}</span></prism-choice-option>`, { label: UNBROKEN })
@@ -477,7 +478,7 @@ const SPECIMENS: Record<string, any> = {
     empty: pickerOf({ caption: "The host reported no models", options: "", extra: `<p slot="empty">The host reported no models.</p>`, value: "", display: "Host default", detail: "Host default effort" }),
     busy: pickerOf({ busy: true, display: "Reading the host’s models…", detail: "" }),
     invalid: pickerOf({ invalid: true, error: "Not offered: this host does not offer the model old-model." }),
-    disabled: pickerOf({ disabled: true, hint: "Any available host takes only the host's default model." }),
+    disabled: pickerOf({ disabled: true, hint: "Any available host chooses its model itself." }),
     "long-text": pickerOf({ label: LONG, heading: LONG, display: LONG, detail: LONG, hint: LONG, options: `<prism-list-item value="long">${LONG}<span slot="detail">${LONG}</span></prism-list-item>`, value: "long" }),
     "unbroken-name": pickerOf({ label: UNBROKEN, heading: UNBROKEN, display: UNBROKEN, detail: "High effort", options: `<prism-list-item value="u">${UNBROKEN}<span slot="detail">${UNBROKEN}</span></prism-list-item>`, value: "u" })
   },

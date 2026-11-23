@@ -98,7 +98,7 @@ Text deduplication alone does not establish that preservation.
 
 These are possible dimensions, not a claim that Prism implements every measurement.
 Unsupported deterministic dimensions remain unknown rather than estimated counts presented as measurements.
-Semantic concept counts and duplicated knowledge require identified concepts or qualified judgment.
+Semantic unit counts and duplicated knowledge require identified semantic units or qualified judgment.
 A Markdown bullet count is not a rule count without obligation classification.
 For analysis without a transformed artifact, after-values remain projections rather than observed results.
 

@@ -126,7 +126,8 @@ export function handOffRecordSyncs() {
 const GENERATED_VIEW = Buffer.from("This file is a generated view of ");
 // A repository registration syncs as a record, so a registration made on two machines keeps the upstream one instead of failing the merge.
 const isRegistrationFile = (relative: string) => /^repositories\/[^/]+\.json$/.test(relative);
-const isRecordFile = (relative: string) => relative === "roadmap.json" || relative.startsWith("initiatives/") || isRegistrationFile(relative);
+// Format migrations and reported format findings are workspace records, so they sync as the roadmap does: a conflict keeps the upstream version and saves this machine's.
+const isRecordFile = (relative: string) => relative === "roadmap.json" || relative.startsWith("initiatives/") || relative.startsWith("format-migrations/") || relative.startsWith("format-findings/") || isRegistrationFile(relative);
 const isClaimFile = (relative: string) => /^initiatives\/[^/]+\/claims\/[^/]+\.json$/.test(relative);
 // A claim or a registration that lost a race is its holder's news, reported through the refusal or acceptance it causes, so no conflict list shows it.
 const isQuietConflict = (relative: string) => isClaimFile(relative) || isRegistrationFile(relative);
@@ -644,6 +645,20 @@ export async function syncRecordStoreNow(base: string, options = {}) {
   }
 }
 
+/**
+ * Commit only the named store-relative files of a store whose sync is off, under the given message, as one commit of their own, holding the store's sync lock:
+ * nothing is fetched, merged, or pushed. Returns true when it made a commit, and false for a store that is no Git checkout or holds no change of those files.
+ */
+export async function commitStoreFiles(base: any, { message, files }: any) {
+  await mkdir(syncPath(base), { recursive: true });
+  return withFileLock(syncPath(base, "sync"), async () => {
+    const top = await git(base, ["rev-parse", "--show-toplevel"]);
+    if (!top.ok || path.resolve(top.text) !== path.resolve(base) || await gitTooOld()) return false;
+    const run = { own: { message, files: new Set(files) }, lockTried: true };
+    return commitLocal(base, await identity(base), run);
+  }, undefined, { ...syncLockOptions(), timeoutMs: SETTINGS.gitTimeoutMs });
+}
+
 /** The latest sync outcome of a store, or null before its first sync. */
 export async function readSyncStatus(base: string) {
   try { return parseStoreJson(await readFile(syncPath(base, "status.json"), "utf8")); }
@@ -663,6 +678,7 @@ async function writeStatus(base: string, status: any) {
 /**
  * Commit the store's record changes, merge its upstream, and push, holding the store-wide sync lock.
  * A process that finds the lock held skips and schedules another sync, so a change made after the holder committed is not left behind.
+ * options.commit, { message, files }, first commits only those store-relative files under that message, as a commit of its own, before the sync commits this machine's other changes.
  * Options let tests act between steps: beforeApply runs while the working-tree marker is held, beforePush before each push;
  * whileLocked(status) runs after the sync, while the lock is still held, and must not throw.
  */
@@ -1241,6 +1257,15 @@ async function commitLocal(base: string, author: any, run: any) {
     }
     if (shared.has(file)) files.set(file, shared.get(file)); else files.delete(file);
   }
+  // A commit of its own, such as a format migration run's, takes this machine's version of only the files it names and the branch's version of every other file, under its own message.
+  const own = run.own ?? null;
+  if (own) {
+    for (const file of new Set([...files.keys(), ...shared.keys()])) {
+      if (own.files.has(file)) continue;
+      if (shared.has(file)) files.set(file, shared.get(file)); else files.delete(file);
+    }
+  }
+  const message = own?.message ?? "prism: update records";
   const { treeFilesMax } = await storeLayout();
   for (;;) {
     const entries = besides(files, other);
@@ -1249,7 +1274,7 @@ async function commitLocal(base: string, author: any, run: any) {
     const changed = [...new Set<string>([...branch.keys(), ...entries.keys()])].filter((file) => !sameEntry(branch.get(file), entries.get(file))).sort();
     const listed = changed.slice(0, COMMIT_LIST).join("\n") + (changed.length > COMMIT_LIST ? `\n… and ${changed.length - COMMIT_LIST} more` : "");
     const tree = await writeTree(base, entries);
-    const commit = (await required(base, [...author, "commit-tree", tree, ...(previous ? ["-p", previous] : []), "-m", "prism: update records", "-m", listed])).text;
+    const commit = (await required(base, [...author, "commit-tree", tree, ...(previous ? ["-p", previous] : []), "-m", message, "-m", listed])).text;
     // The objects a commit adds pass the check that every other machine's fetch applies before the branch takes them, so the branch's history never holds one that no other machine could fetch.
     const refused = await refusedObjects(base, commit, previous ? [previous] : [], { pushing: false });
     if (refused) {
@@ -1275,7 +1300,7 @@ async function commitLocal(base: string, author: any, run: any) {
       run.pending = { commit, from: previous, files: entries.size, entries };
       return false;
     }
-    await moveBranch(base, commit, previous, "prism: update records");
+    await moveBranch(base, commit, previous, message);
     // The commits that this sync made of this machine's changes one after another, which a stop at the bound on a store tree's files takes off together.
     run.made = previous && run.made?.to === previous ? { from: run.made.from, to: commit } : { from: previous, to: commit };
     return true;
@@ -1876,6 +1901,13 @@ async function sync(base: string, options: any) {
   // A sync that found an artifact update holding the artifact lock commits, merges, and pushes nothing, so no merge moves an artifact away from a file on disk that no commit holds yet;
   // it is no failure, so it ends as a sync that found another sync running does, writes no status, and the next sync, which the update's write schedules, tries again.
   const locked = () => ({ state: "skipped" });
+  // A commit of its own comes first, holding only the files it names, and every other change of this machine follows in the sync's usual commit.
+  if (options.commit) {
+    run.own = { message: options.commit.message, files: new Set(options.commit.files) };
+    try { await commitLocal(base, author, run); }
+    finally { run.own = null; }
+    if (run.lockBusy) return locked();
+  }
   await commitLocal(base, author, run);
   if (run.lockBusy) return locked();
   let upstream = await upstreamOf(base);

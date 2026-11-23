@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { checkout, eventually, isolateGit, notes, ok, remoteFile, server, syncedWorkspace, text, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { checkout, eventually, isolateGit, notes, ok, remoteFile, server, syncedWorkspace, text, writeArtifact, requirementFile } from "./fixtures/workspace-artifacts.mjs";
 
 // Contract clauses 24 and 25 of the workspace-artifacts design: artifact writes sync like records, and a concurrent change is kept aside and reported.
 const environment = await isolateGit();
@@ -10,7 +10,8 @@ test.after(() => rm(environment, { recursive: true, force: true }));
 
 const FILE = "docs/requirements/billing.md";
 const LOCATION = "artifacts/requirements/billing.md";
-const BASE = "# Billing\n\nFirst sentence.\nSecond sentence.\nThird sentence.\n";
+// A requirement file that conforms to its format, which every write of one is checked against, with three sentences of its own to change.
+const BASE = `${requirementFile("Billing")}\nFirst sentence.\nSecond sentence.\nThird sentence.\n`;
 
 // Every file a sync saved under a store's sync folder, as paths below its conflicts folder.
 async function savedCopies(store) {
@@ -54,7 +55,7 @@ test("clause 25: changes to different lines of one artifact on two machines both
   const { machines, onA, onB, version } = await shared(context);
   ok(await onA.call("update_artifact", { operations: [{ op: "edit", path: FILE, expectedVersion: version, edits: [{ oldText: "First sentence.", newText: "First sentence from a." }] }] }));
   ok(await onB.call("update_artifact", { operations: [{ op: "edit", path: FILE, expectedVersion: version, edits: [{ oldText: "Third sentence.", newText: "Third sentence from b." }] }] }));
-  const merged = "# Billing\n\nFirst sentence from a.\nSecond sentence.\nThird sentence from b.";
+  const merged = `${requirementFile("Billing")}\nFirst sentence from a.\nSecond sentence.\nThird sentence from b.`;
   await eventually(() => remoteFile(machines.remote, LOCATION) === merged, 45000, "both edits reaching the remote");
   assert.deepEqual(await savedCopies(machines.storeA), []);
   assert.deepEqual(await savedCopies(machines.storeB), []);

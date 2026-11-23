@@ -44,6 +44,171 @@ A short resume note records settings, active work, pending questions, next actio
 Requirements preserve intent, ADRs preserve decisions, and feature files preserve acceptance examples.
 Tests and consumed contracts enforce behavior, and code supplies implementation details.
 
+## Artifact formats
+
+Requirement files, ADRs, the glossary, and feature files each have one format with a version, a list of rules, and a complete example that conforms to it.
+Each format's reference sits beside the skill that writes the artifact:
+
+| Artifact | Reference | What it requires |
+|---|---|---|
+| Requirement file | `skills/write-requirements/references/requirement-format.md` | A `# <capability>` title, `Status:`, `Created:`, and `Approved:` lines, the Problem, Goals, Non-goals, and Design questions sections, and numbered sections with anchors and the Pattern, Disposition, Requirement, Rationale, and Related fields, with at most one `Supersedes:` line anywhere after Disposition, and at most one sentence that says `shall` in each `Requirement:` line, so each numbered section states one requirement, where a period after an abbreviation such as `e.g.` or inside a code span ends no sentence |
+| ADR | `skills/write-adr/references/adr-format.md` | A `# <decision>` title, `Status:` and `Created:` lines, and the eight sections from Requirements to Decision Log, where only the Decision Log may be empty and every link in Requirements is a relative `.md` link, written as one link to a requirement section per list item |
+| Glossary | `skills/workflow/references/glossary-format.md` | A `# <name>` title and a purpose paragraph, then terms, each a `## <term>` heading after an `<a id="<id>"></a>` anchor, a definition whose first sentence stands on its own, and a `Source:` line that links the Approved requirement section or Accepted ADR that introduced it |
+| Feature file | `skills/write-feature/references/feature-format.md` | A `Feature:` line, and Rules that each link a requirement and hold examples with Given, one When, and Then steps |
+
+Any required value or section body may be the single word `unknown` when nobody knows it yet, except a title, a status, or an identity.
+Only an undecided artifact may leave a value unknown: a requirement file while its status is Draft and an ADR while its status is Proposed, read as the status Prism recorded in a project with a record store.
+An `unknown` value in any other artifact, such as an Approved requirement file, an Accepted ADR, a glossary, or a feature file, breaks the format's `unknown` rule, such as `requirements.unknown`.
+A glossary term whose sources are a Draft requirement, a Proposed or Declined ADR, or a missing file is reported, and so is a term whose every source was withdrawn or superseded.
+So agents add a term to the glossary once its source is decided: when a person approves the requirement file or amendment that introduces it, and when an ADR that introduces it is accepted.
+
+Agents check artifacts with the `check_artifacts` tool.
+Without paths it checks every `.md` file other than `README.md` up to four folders below the configured Requirements and ADRs paths, every `.feature` file up to four folders below the Feature files path, and the configured Glossary file.
+A path set to `n/a` in `.prism/workflow.md` is not checked.
+For each artifact it reports whether it conforms, each broken rule by its id, such as `requirements.fields`, with its line and a message, and each value written as `unknown`.
+It also lists each finding that an agent reported for the artifact's current version, with the rule `<type>.reported`, such as `requirements.reported`, so the artifact does not conform until its content changes.
+A path that lies under none of the configured paths is refused with `artifact_type_unknown`, and a path that does not exist with `artifact_missing`.
+
+In a project whose `.prism/workflow.md` names a record store, requirement files, ADRs, and glossaries live in the store, and `check_artifacts` reads them from every scope the checkout sees: the workspace, its repository, and that repository's components.
+Feature files stay in the checkout and are read there.
+Each result names its artifact by path and scope, where the scope is the one `get_artifact` returns, or `null` for a checkout file, and a path that several scopes hold is listed once for each scope.
+To check one copy, pass a paths entry as `{ "path": "docs/Glossary.md", "scope": "workspace" }`, with `scope` set to `workspace`, `repository`, or `component` together with `component`.
+A path that two scopes hold is refused with `artifact_ambiguous`, listing their scopes, until you name one, and a scope on a feature file, or in a project without a store, is refused with `scope_invalid`.
+When the store cannot be used, the check is refused with the store's own refusal, such as `store_unavailable`, and never falls back to copies in the checkout.
+A glossary source counts by the status Prism recorded for the requirement or ADR, so a `Status:` line that differs from it is no finding.
+Each glossary resolves its sources in its own scope first, then in its repository's scope for a component, then in the workspace, so a glossary has the same findings in every checkout that sees it, and a source that only another scope holds is reported as outside the glossary's scope.
+Each scope's glossary is checked on its own, so one term id in two glossaries is no finding.
+
+### Writes that break a format
+
+In a project with a record store, Prism checks every write it makes to a requirement file, ADR, or glossary against the current format, as `check_artifacts` would check the content it leaves.
+This covers an agent's `update_artifact` write or edit, a person's approval in the review browser, which rewrites the file's `Status:` and `Approved:` lines, and a ship that sets ADRs Accepted.
+A format migration run checks each target it would write, in the store and in the checkout, as a write is checked, with the run's own glossary sources counted as decided.
+A write whose content breaks the format is refused with `artifact_nonconforming`, which names each artifact, its scope, and its broken rule ids, and the refused update, approval, or ship changes nothing.
+A new requirement file is recorded as Draft whatever its `Status:` line says, so it may hold `unknown` values, while approving a file that still holds one is refused and its question stays open.
+Removing a file, moving it to another scope, and the move of a checkout's files into the store keep the bytes as they are and are not checked, so a moved file that breaks its format shows its findings in its new scope.
+Plan files, diagrams, the roadmap view, and files an agent writes in the checkout without Prism are not checked by a write.
+
+### Reported findings
+
+An agent that finds a break of a format that `check_artifacts` does not see reports it with the `report_format_finding` tool, giving the artifact, a plain-text message of at most 500 characters on one line, and optionally the line it is on.
+Prism records the finding against the artifact's current version and never changes the artifact, and a second report of the same version, line, and message returns the first finding.
+`check_artifacts` and Attention list the finding until the artifact's content changes, and the review browser shows its message as plain text.
+Reported findings live under `format-findings/` in the record store, whose sync shares them with every checkout, or under `.prism/format-findings/` in a project without a store.
+
+### Work that cites a nonconforming artifact
+
+Prism refuses new work that builds on an artifact that breaks its format, because a contract or plan that cites it would rest on rules nobody can check.
+The refusal is `artifact_nonconforming`, and it applies to these requests:
+
+- Creating or splitting an initiative, reporting a defect, or adding a fix with `update_initiative`, for each requirement file the request references.
+- Proposing or accepting a design, for each requirement file, ADR, glossary, or feature file that a Markdown link in the scope's or a planned slice's `slice.md` points to, and for each frozen test that is a `.feature` file.
+- Adding a roadmap entry with `update_roadmap`, for each requirement file the entry references, and updating one, for each requirement file the update adds to the entry's references.
+
+Prism checks what a request cites before anything else except its arguments, and a refused request changes nothing.
+The refusal lists each artifact with its path, its scope, its type, its findings, and `migration`, the state of its format migration run as `check_artifacts` reports it, or null.
+Its message names each artifact with its broken rule ids, followed by one sentence on the state of its migration:
+
+| State of the migration | Sentence |
+| --- | --- |
+| `starting`, `running`, or `continuing` | `Prism is migrating it into its format in the run <run id>.` |
+| `asking` | `Its format migration <run id> waits for your answers on Attention.` |
+| `waiting-for-host` | `Its format migration <run id> waits for an available host.` |
+| `failed` | `Its format migration <run id> failed: <reason> Run it again from Attention.` |
+| No run, for a feature file | `Prism does not migrate feature files, so bring it into its format in a change of its own.` |
+| No run otherwise | `Prism has not started its format migration yet.` |
+
+The refusal never asks for or offers a migration, since Prism starts the run of a nonconforming requirement file, ADR, or glossary by itself when it checks what the request cites.
+Only a file that `check_artifacts` lists as an artifact is cited, so a link to a `README.md`, a diagram, or a file more than four folders below its configured folder refuses nothing.
+A value written as `unknown` refuses work that cites a requirement file that is not a Draft or an ADR that is not Proposed, like any other `<type>.unknown` finding, while an `unknown` value in a Draft requirement file or a Proposed ADR refuses nothing.
+A cited file that does not exist refuses nothing, and records that already cite a nonconforming artifact still load.
+
+To go on, send the refused request again once the artifact's migration is applied, answer the run's question on Attention when it asks, or bring a feature file into its format in a change of its own.
+With a record store, a requirement reference cites every copy that a scope the checkout sees holds at its path, and a link in a `slice.md` cites the copy in that `slice.md`'s scope, else the only copy a seen scope holds, else every copy.
+The message then names a store artifact as `<path> in scope <label>`, followed by the state of that copy's migration.
+
+### Format migrations
+
+A format migration converts one artifact that breaks its format into its format.
+It is not the move of a checkout's files into a record store.
+Prism migrates requirement files, ADRs, and glossaries by itself, in format migration runs, and never migrates a feature file.
+
+Whenever Prism checks a project's artifacts, through `check_artifacts`, Attention, `report_format_finding`, or the check of work that cites an artifact, it starts one run for each new set apart from that check.
+A set is the requirement files, ADRs, or glossaries of one type in one scope that break the current version of their format and that no earlier run holds at their current version.
+Checking again starts no second run of a set, while an artifact that changes is held by no run at its new version, so the next check starts a run for it.
+`check_artifacts` lists, for each artifact, `migration`: the run that holds it at its current version, with its status and its failure or waiting reason, or null.
+A run's status is `starting`, `running`, `waiting-for-host`, `asking`, `continuing`, `applied`, or `failed`, and only `applied` and `failed` end it.
+A run's `cause` is `format-update` when every artifact of its set conforms to an earlier version of its format, and `findings` otherwise.
+Read a run with `get_migration_run`, which lists its set with each artifact's current findings, its format migrations, its question, the person's answers, its result, and its failure.
+A run is never a roadmap entry, an initiative, a slice, a claim, or a gate.
+
+Prism launches each new run's session on this computer at once, without asking, as a [launched session](review-browser.md#launched-sessions) of the checkout whose check found the set.
+The host and model are the ones that **Prism's own runs** in the review app's [Settings](review-browser.md#layout) chose for this computer.
+A host is available when its executable, `claude` or `codex`, is on the `PATH` of the Prism server that started the run.
+Without that choice, or with **Any available host**, the run starts with Codex and its `gpt-6-luna` model when Codex is available and lists that model, even when Claude Code is available too.
+Prism reads Codex's models for that as the review app reads them, in a Codex app server of its own that starts no session, and a read that fails or takes too long counts as a list without `gpt-6-luna`.
+Otherwise the run starts on the first available of Claude Code and Codex with a small model: Claude Code with `haiku`, and Codex with the first model it lists whose name ends in `-luna` or `-mini`, or with its own default model when it lists none.
+When the chosen host is not found or the choice cannot be read, the run starts on the first available of Claude Code and Codex with that host's own default model, and says why.
+The session's only prompt is `/prism:migrate-artifact <run id>` for Claude Code, or `$prism:migrate-artifact <run id>` for Codex, so no artifact text reaches its command line or prompt.
+Once the host started, the run is `running` and `get_migration_run` names the session as `launch` with its id and host, and no second session of the run starts while it runs.
+When no host is available, the run waits as `waiting-for-host` with the reason `No host is available on this machine:` and each host's reason, and the next check of the project on a computer where a host is available launches it.
+When a run's session ends, by its exit, a host error, or a stop, while the run is still `starting`, `running`, or `continuing`, the run fails with `The run's session ended before the run finished:` and the session's last reason, and applies nothing.
+A session that ends after its run asked its question leaves the run `asking`.
+Once you answer a run's question, the run is `continuing`: Prism resumes its session with the same prompt, or launches a new one on an available host when it cannot be resumed, and the run waits as `waiting-for-host` when none is available.
+Your answer and the move to `continuing` are one write, so a continuation that cannot start fails the run with `The run could not continue after the answer:` and why, and you can run it again, while your answers stay recorded.
+Running a failed run again from its page in the review browser starts a new run with the cause `rerun` that holds the artifacts of the failed run's set that still break their format, and a run that is not failed, or that a later run of its set follows, cannot run again.
+An artifact has at most one open run: when it changes into a newer version that still breaks its format, its open run fails with a reason that names it, Prism stops that run's session on this computer, and a new run migrates the new version.
+A run whose session's supervision was lost, or whose session ended without reporting it, fails with that reason at the next check on the computer that ran it, and a run that never launched its session within 5 minutes fails with `The run's session never started:` and why.
+A run's session reads only, because it reads artifact text that others wrote.
+It works in an empty folder of its own outside the checkout and reads no file of the checkout, so it cannot copy a file such as `.env` or `.git/config` into the record store.
+It takes the target format's reference from the run, as the Prism that checks its proposals holds it, so it reads the same format wherever its host keeps the plugin.
+Claude Code gets no built-in tool, so it reads no file, and only Prism's scoped server, with no other MCP server or claude.ai connector, and runs no shell command, and Codex runs in its read-only sandbox, readable beside its own folder only in Prism's own folder and Codex's plugin cache, and never asks to run a command outside it.
+Of Prism's tools, the session can call only the run's own: reading the run, with the project's configured paths and each source's Git history, reading the run's artifacts and other files of their type under the same configured path, never a dot-file or a dot-folder, in the record store or the checkout, proposing the run's format migrations, and finishing or failing the run.
+Prism refuses every other tool, such as changing an artifact, the roadmap, an initiative, or a review, to that session, so nothing written into an artifact can make the session change them.
+No Prism tool that an agent calls starts, continues, or runs again a run's session.
+
+The session of a run follows the `migrate-artifact` skill and proposes one format migration for each artifact of the set with `propose_migration`, passing the run, the type, the source and the target, the whole migrated content, a summary of what changes and why, and leftovers: each statement of the source that the content does not keep, with a proposed home such as the project instructions.
+The target lies under the type's configured path, and equals the source for a format migration in place, and a source that is no artifact of the run's set is refused with `invalid_input`.
+A checkout source or target whose path passes through a symbolic link is refused with `artifact_outside`, and one that is no regular file with `invalid_path`, when it is proposed and again when the run applies, so a format migration never touches a file outside the project.
+Prism splits the source into statements, each sentence of a paragraph, list item, blockquote line, or table cell and each fenced code block, and refuses a proposal with `migration_unaccounted` when a statement appears in neither the content, a leftover, nor a conflict.
+It refuses with `migration_invented` a statement of the content that is no statement of the source or the target, compared whole, so a sentence cut short counts as invented, while the format's structure, its default values, `unknown`, links, the pattern of a section split out of a requirement section, and dates from the source's Git history count as no statements.
+It refuses with `migration_misplaced` a statement that the content moves to a section that does not correspond to the one it came from, as the format reference's corresponding sections list them.
+A requirement file's numbered section that holds several requirements is split, not merged: the section keeps its first requirement, number, and anchor, and each further requirement becomes a new numbered section at the end of the file under the section's title, with its own pattern, the section's rationale, and a Related link back to the section.
+A statement may land in such a new section, whose number the source does not use, only while the content keeps the section it came from under its number and title, beginning with its first requirement, so a split that moves that first requirement, renumbers a section, or lands under another section's title is refused with `migration_misplaced`.
+A value that neither the source nor its Git history gives is written as `unknown`, and content that breaks its format other than through `unknown` values is refused with `artifact_nonconforming`.
+A status or a Created, Approved, or Accepted date counts only when it is the type's new status, the source or the target states it in that same field, or the date comes from the source's Git history.
+When the source or the target is Approved or Accepted, content that changes its status, its Created or Approved date, or drops an identity, such as a requirement section number or a glossary term id, is refused with `migration_changes_decision`.
+A target that already exists keeps each of its entries, a requirement section, a glossary term, or a feature Rule, unchanged: the source's differing version of an entry goes under `conflicts`, and content that changes a target entry is refused with `migration_conflict`.
+A target that another open run's proposal holds, or that another source's proposal in the same run writes, is refused with `migration_pending`, and a new proposal of a source replaces the run's earlier proposal of it.
+Within one run a file is never both migrated into and migrated away: a target that another proposal moves elsewhere and removes, or a separate source that another proposal writes into, is refused with `migration_pending`, so no chain of moves can leave a statement in no file.
+
+Each proposal lists its points: each leftover, each source entry that the target holds with other text, and Prism's own points, one for each `unknown` value of the content, one for each conflict, and one for removing a separate source.
+The proposal settles a leftover or such an entry under `settled`, with the reason it loses nothing, or asks the person under `asked`, with its recommendation, and Prism's own points are always asked.
+A point that is neither settled nor asked refuses the proposal with `migration_unsettled`, which lists the points, after every other check.
+An `unknown` point says whether the target may keep the value unknown, which only a Draft requirement file or a Proposed ADR may.
+
+Once every artifact of the set has a proposal, the session calls `finish_migration_run`.
+When nothing was asked, Prism applies the run without a person.
+Otherwise it asks the person once, with every asked point of the run and each recommendation, and the run waits as `asking` until you answer it on the run's page in the review browser, as [Format migration runs](review-browser.md#format-migration-runs) describes.
+A run that asked once and still holds an unanswered point when it finishes again fails with `The run asked again after the person answered.`
+A run that cannot migrate its set is failed with `fail_migration_run` and a reason.
+
+A run applies all its format migrations or none.
+It writes each migration's content with the person's chosen values and entries and with the migration's id after each glossary `Source: migration`, so the term's source is the run's format migration, and removes a separate source, since the answer gives every leftover a home before the source goes.
+A source or target that changed since its proposal, a target that the write check refuses, or a target that cannot be written fails the run with that reason and changes nothing, so a failed run applies nothing, and a checkout file the run wrote before a later step failed is put back.
+The write check of a run is strict: `unknown` stays only in a target that will be a Draft requirement file or a Proposed ADR.
+A run's record that changed after its proposals were checked, or whose paths leave the project, is refused with `record_invalid` or `invalid_input` and applies nothing.
+A checkout file that a run writes or removes is left uncommitted in the working tree, for you to commit.
+Applying drops the reported findings of each artifact the run wrote.
+
+In a project whose `.prism/workflow.md` names a record store, a requirement, ADR, or glossary target is a store artifact, and a source under a store artifact path is one too, while feature files and every other file stay in the checkout.
+A store target's `Status:` line must equal the status Prism recorded for it, or for a new one the recorded status of a store source of the same type, else `Draft` for a requirement and `Proposed` for an ADR.
+A run writes every store target and removes every store source it removes in one checked store update, so their comments, recorded statuses, and identities stay as `update_artifact` keeps them.
+An Approved or Accepted store artifact keeps its status, and its migrated bytes become its accepted version, which `get_artifact` attributes to the run as `acceptedFrom`.
+In a store that is a Git checkout, the run's store change is a commit of its own, `prism: format migration <run id>`, made without a person after the store's earlier changes; with store sync on, the sync pushes it.
+With store sync on, a new run is confirmed with the store's remote, so a run of the same set that another machine recorded first is the one that stands, and an unreachable remote starts no run until the next check.
+Prism keeps each run under `format-migrations/`, in the store when one is configured, where its sync shares it, and under `.prism/format-migrations/` otherwise, where it stays on this machine and Git ignores it.
+
 ## Verification
 
 A slice whose design is accepted lists its frozen acceptance tests and says whether its implementation needs independent review.
@@ -329,7 +494,7 @@ An initiative with no slice document in the checkout records nothing until a rea
 `changedAfterShip` lists `{ path, change }` for each recorded document whose content differs, ignoring the mark, as `changed`, for each one that no longer exists as `removed`, and for a slice document in a folder that had none recorded as `added`.
 A copy of a document without the mark, as on a branch from before the ship commit, is not a change.
 
-A shipped initiative's records stay, and every request to change its state is refused with `initiative_shipped` before every check except argument validation, naming the initiative and its ship time in `shippedAt`.
+A shipped initiative's records stay, and every request to change its state is refused with `initiative_shipped` before every check except argument validation and the check of what the request cites, naming the initiative and its ship time in `shippedAt`.
 The refusal covers every `update_initiative` operation, `remove_records` included, as well as `update_coordination_state`, `checkpoint_pause`, `update_review`, `verify_slice` with `contractDefects` or `dependents` too, `update_design_view`, and `update_change_map`, and it changes no record and no project file.
 Start new work on a shipped initiative as a new initiative that references it.
 `remove_records` still removes the records of a superseded initiative.

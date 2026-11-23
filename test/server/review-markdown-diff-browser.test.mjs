@@ -10,30 +10,53 @@ const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
 const FILE = "docs/requirements/retries.md";
+// The file keeps the requirements format, since Prism refuses a write or an approval that would break it, so the changes lie in its free sections.
 const ACCEPTED = `# Retries
 
-Status: Approved
+Status: Draft
+Created: 2026-11-07
+Approved: n/a
 
-## 1. Total deadline
+## Problem
 
 When a request times out, the client shall retry it until the total deadline elapses, at most three times.
-
-## 2. Dropped connections
 
 When a connection drops, the client shall retry the request.
 
 Each retry waits between 100 and 400 milliseconds.
 
-## 3. Metrics
+## Goals
+
+- Recover from short failures.
+
+## Non-goals
+
+- n/a
+
+## Design questions
 
 | Name | Meaning |
 | --- | --- |
 | attempts | Retries made |
+
+<a id="1"></a>
+## 1. Total deadline
+
+Pattern: Ubiquitous
+
+Disposition: Active
+
+Requirement: The client shall stop retrying at the total deadline.
+
+Rationale: A bound keeps connections free.
+
+Related: n/a
 `;
-const changed = (accepted) => accepted
+// Text added before the first requirement section stays in the free sections.
+const beforeRequirements = (content, text) => content.replace('<a id="1"></a>', `${text}<a id="1"></a>`);
+const changed = (accepted) => beforeRequirements(accepted
   .replace("until the total deadline elapses, at most three times.", "until the total deadline, counted from the first attempt, elapses.")
-  .replace("Each retry waits between 100 and 400 milliseconds.\n\n", "")
-  .concat("\n## 4. Jitter\n\nThe client shall wait a random interval before each retry.\n");
+  .replace("Each retry waits between 100 and 400 milliseconds.\n\n", ""), "### 4. Jitter\n\nThe client shall wait a random interval before each retry.\n\n");
 
 const pageUrl = (review, file) => `${review.baseUrl.replace(/\/$/, "")}/review?artifact=${encodeURIComponent(file)}`;
 
@@ -96,7 +119,7 @@ test("Source lines shows the numbered line diff, and the shown changes and the c
   assert.ok(await table.locator("tr.diff-add").count() >= 3, "added lines show");
   assert.ok(await table.locator("tr.diff-del").count() >= 2, "removed lines show");
   assert.equal(await page.locator("#artifact .artifact-diff-legend").count(), 0, "the rendered legend goes with the rendered changes");
-  ok(await prism.call("update_artifact", { operations: [{ op: "write", path: FILE, content: `${content}\nA late sentence.\n`, expectedVersion: version }] }));
+  ok(await prism.call("update_artifact", { operations: [{ op: "write", path: FILE, content: beforeRequirements(content, "A late sentence.\n\n"), expectedVersion: version }] }));
   await page.locator("#artifact .artifact-source-diff", { hasText: "A late sentence." }).waitFor({ timeout: 15000 });
   assert.equal(await page.locator("#artifact").getByRole("radiogroup", { name: "Changes as" }).getByRole("radio", { name: "Source lines" }).getAttribute("aria-checked"), "true", "the page drew the change and kept the choice");
   await page.locator("#artifact").getByRole("radiogroup", { name: "Changes as" }).getByRole("radio", { name: "Rendered" }).click();

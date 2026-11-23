@@ -37,7 +37,7 @@ const approvalActions = (review, id, headers = {}) => browserRequest(review, `/a
 const apply = (review, body, headers = {}) => browserRequest(review, "/api/actions/apply", { method: "POST", body, headers });
 
 test("clauses 30, 31, and 32: a written status that no gate recorded is reported, the recorded one counts, and the browser shows it", async (context) => {
-  const { api, prism } = await project(context);
+  const { place, api, prism } = await project(context);
   const written = ok(await prism.call("update_artifact", { operations: [{ op: "write", path: FILE, content: requirementFile("Billing", "Approved", "2026-11-07"), expectedVersion: null }] }));
   assert.equal(written.artifacts[0].statusMismatch.written, "Approved", "the write reports the mismatch and is not refused");
   assert.equal(written.artifacts[0].statusMismatch.recorded, "Draft");
@@ -57,7 +57,9 @@ test("clauses 30, 31, and 32: a written status that no gate recorded is reported
   assert.equal(draft.status, "Draft");
   assert.equal(draft.statusMismatch, undefined, "a matching status reports nothing");
   // A Status line below the first level-two heading is not the file's status.
-  await writeArtifact(prism, "docs/requirements/late.md", "# Late\n\n## Section\n\nStatus: Approved\n");
+  // Such a file breaks the requirement format, which every write through Prism is checked against, so it arrives as another machine's sync would bring it.
+  await mkdir(path.join(place.store, "artifacts", "requirements"), { recursive: true });
+  await writeFile(path.join(place.store, "artifacts", "requirements", "late.md"), "# Late\n\n## Section\n\nStatus: Approved\n");
   assert.equal(ok(await prism.call("get_artifact", { path: "docs/requirements/late.md" })).statusMismatch.written, null);
 
   const listed = ok(await prism.call("get_artifact", { path: "docs/requirements" })).artifacts;
@@ -71,7 +73,7 @@ test("clauses 30, 31, and 32: a written status that no gate recorded is reported
 });
 
 test("clauses 33, 34, and 35: approving a requirement at its gate rewrites its status lines and records who approved it", async (context) => {
-  const { api, prism } = await project(context);
+  const { place, api, prism } = await project(context);
   const created = await writeArtifact(prism, FILE, requirementFile("Billing"));
   const asked = ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: FILE, question: "Approve the billing requirements?", context: "They define how invoices are totalled." }] }));
   const gate = asked.artifacts[0].gate;
@@ -98,11 +100,14 @@ test("clauses 33, 34, and 35: approving a requirement at its gate rewrites its s
   assert.notEqual(read.version, created.version);
   assert.deepEqual(await pendingApprovals(review), []);
 
-  // A file without an Approved line gains one after its Status line.
-  await writeArtifact(prism, "docs/requirements/short.md", "# Short\n\nStatus: Draft\n\n## 1. One\n");
+  // A file without an Approved line breaks the requirement format, and so would the file that approving it leaves, so the approval is refused and the file keeps its text.
+  // It arrives as another machine's sync would bring it, since every write through Prism is checked against the format.
+  const shortText = "# Short\n\nStatus: Draft\n\n## 1. One\n";
+  await writeFile(path.join(place.store, "artifacts", "requirements", "short.md"), shortText);
   const short = ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: "docs/requirements/short.md", context: "A short file." }] }));
-  assert.equal((await answer(review, { artifact: "docs/requirements/short.md", scope: "workspace", id: short.artifacts[0].gate, choice: "approve", note: null })).status, 200);
-  assert.equal(ok(await prism.call("get_artifact", { path: "docs/requirements/short.md" })).content, `# Short\n\nStatus: Approved\nApproved: ${today()}\n\n## 1. One\n`);
+  const shortAnswer = await answer(review, { artifact: "docs/requirements/short.md", scope: "workspace", id: short.artifacts[0].gate, choice: "approve", note: null });
+  assert.equal(shortAnswer.body?.code, "artifact_nonconforming", JSON.stringify(shortAnswer.body));
+  assert.equal(ok(await prism.call("get_artifact", { path: "docs/requirements/short.md" })).content, shortText);
 
   // A request for changes keeps the recorded status.
   await writeArtifact(prism, "docs/requirements/other.md", requirementFile("Other"));

@@ -21,7 +21,7 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, viewWatching, loadAttention, loadClaims, loadDeclaredView, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, viewWatching, loadAttention, loadClaims, loadDeclaredView, loadFormatMark, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { frozenTestFile, verificationLog } from "./verification-view.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
@@ -546,8 +546,8 @@ async function readReviewed(projectRoot: string, file: any) {
 async function reviewedStoreArtifact(projectRoot: string, file: string, options: any) {
   const stored = await reviewStoreArtifact(projectRoot, file, options);
   if (stored === null) throw Object.assign(new Error(`${file} is not in the record store.`), { code: "ENOENT" });
-  const { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } = stored;
-  return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, artifact: { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } };
+  const { scope, version, accepted, changed, acceptedFrom, comments, totalComments, nextCommentOffset } = stored;
+  return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, artifact: { scope, version, accepted, changed, acceptedFrom, comments, totalComments, nextCommentOffset } };
 }
 
 export async function loadArtifact(projectRoot: string, artifactPath: string, { commentOffset = 1 }: any = {}) {
@@ -773,7 +773,7 @@ export async function readBody(request: any) {
 }
 
 // A refusal of the action registry answers with its status and a JSON body of its code, message, and the fields that refusal carries.
-// An approval of an artifact that changed since it was asked, of an id that more than one pending gate holds, an approval or comment by a checkout whose Git names no user,
+// An approval of an artifact that changed since it was asked, or that would leave it breaking its format, of an id that more than one pending gate holds, an approval or comment by a checkout whose Git names no user,
 // or a comment on a file that already holds the comments a file may hold, conflicts with the store as it is,
 // and a store that cannot be used answers an approval or comment target with its own refusal as unavailable, as an artifact read does.
 const ACTION_STATUS: Record<string, any> = {
@@ -784,8 +784,15 @@ const ACTION_STATUS: Record<string, any> = {
   confirmation_required: 409,
   artifact_changed: 409,
   approval_ambiguous: 409,
+  artifact_nonconforming: 409,
   author_unknown: 409,
   comment_limit: 409,
+  already_answered: 409,
+  // A format migration run's answer and rerun are refused by the run's state.
+  run_not_asking: 409,
+  run_not_failed: 409,
+  migration_run_conforming: 409,
+  migration_run_closed: 409,
   invalid_input: 400,
   // The refusals of a launch, a stop, and a resume, and of the confirmation outside the page that comes before a start.
   confirmation_pending: 409,
@@ -816,7 +823,8 @@ const ACTION_STATUS: Record<string, any> = {
   install_failed: 500,
   agent_running: 409
 };
-const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
+// A refusal of an approval that would break the format names each artifact with its findings, as update_artifact names them.
+const ACTION_FIELDS = ["current", "reason", "field", "accepted", "artifacts"];
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 
 export function sendJson(response: any, statusCode: any, body: any) {
@@ -1385,9 +1393,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const content = read.bytes.toString("utf8");
     // Only a Markdown artifact's text is rendered with links, as the page renders it.
     const links = location.toLowerCase().endsWith(".md") ? resolveLinks({ content, location, ...await linkContext(read.scope), has: (candidate: any) => held.has(candidate) }) : [];
-    const { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } = read;
+    const { scope, version, accepted, changed, acceptedFrom, comments, totalComments, nextCommentOffset } = read;
     const below = location.slice(scopePrefix(scope).length);
-    const artifact = { scope, version, accepted, changed, comments, totalComments, nextCommentOffset, target: `artifact:${scope.label}:${below}` };
+    const artifact = { scope, version, accepted, changed, acceptedFrom, comments, totalComments, nextCommentOffset, target: `artifact:${scope.label}:${below}` };
     const answer: any = { ref, path: ref, location, scope, content, modifiedAt: read.modifiedAt, artifact, links, unresolvedLinks: links.filter((link) => link.resolved === false).length };
     if (path.posix.extname(location).toLowerCase() === ".json") Object.assign(answer, { diagrams: [] }, await loadJsonArtifact(projectRoot, location, content));
     else answer.diagrams = await storeDiagrams(location, content, links, held);
@@ -1750,7 +1758,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       send(response, 200, JSON.stringify(await entityContext(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
     } else if (route === "/api/entity") {
       const ref = url.searchParams.get("ref");
-      if (["initiative", "slice"].includes(parseEntityRef(ref)?.kind) && !(await entityExists(projectRoot, ref))) {
+      if (["initiative", "slice", "migration-run"].includes(parseEntityRef(ref)?.kind) && !(await entityExists(projectRoot, ref))) {
         send(response, 404, "The item no longer exists in this project.");
         return;
       }
@@ -1840,6 +1848,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         send(response, 404, "The file is not available for review.");
         return;
       }
+      // A requirement, decision, glossary, or feature file that breaks its format carries its mark, which the page shows above the document.
+      loaded = { ...loaded, format: await loadFormatMark(projectRoot, artifactPath, loaded.artifact?.scope ?? null) };
       // A design view that its folder declares carries its kind, question, clauses, and governing contract.
       const view = await loadDeclaredView(projectRoot, artifactPath).catch(() => null);
       send(response, 200, JSON.stringify(view ? { ...loaded, view } : loaded), "application/json; charset=utf-8");

@@ -3,6 +3,7 @@ import { pluginURL } from "./plugin-root.mjs";
 import { reviewAppDirectory } from "./review/review-app-discovery.mjs";
 import { startReviewApp } from "./review/review-app-server.mjs";
 import { errorFields, log, startProcessLog } from "./log.mjs";
+import { launchRunSession, setRunLauncher } from "./workflow/migration-runs.mjs";
 import { configureRecordSync, handOffRecordSyncs } from "./workflow/record-store-sync.mjs";
 
 // The detached review app that no agent session owns; a start that loses the lock exits quietly, so concurrent starts leave one app.
@@ -11,6 +12,8 @@ const { version } = JSON.parse(await readFile(pluginURL(".claude-plugin", "plugi
 startProcessLog("review-app", { version });
 // A detached watcher finishes the app's pending store syncs if the app is ended by force.
 configureRecordSync({ watchPending: true, log });
+// Each format migration run that the app's pages start through a check is launched on this machine at once, as a session of its own host.
+setRunLauncher(launchRunSession);
 let app;
 try {
   app = await startReviewApp({ directory: reviewAppDirectory(), pluginVersion: version });

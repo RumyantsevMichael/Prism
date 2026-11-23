@@ -4,9 +4,9 @@ import { skip } from "./fixtures/kit-browser.mjs";
 import { pause } from "./fixtures/wait.mjs";
 import { choosePlace, comparePlaces, eventually, groupHeadings, item, itemNames, open, placesDemo, settledOn, sidebar } from "./fixtures/places-browser.mjs";
 
-// The Knowledge place over the demo, which holds four requirements files, three decisions, three glossary terms, and one diagram, eleven records in all.
+// The Knowledge place over the demo, which holds five requirements files, three decisions, three glossary terms, and one diagram, twelve records in all.
 
-const field = (scope) => scope.getByRole("searchbox", { name: "Search 11 records", exact: true }).or(scope.getByRole("textbox", { name: "Search 11 records", exact: true }));
+const field = (scope) => scope.getByRole("searchbox", { name: "Search 12 records", exact: true }).or(scope.getByRole("textbox", { name: "Search 12 records", exact: true }));
 
 test("clauses 49, 50: the Knowledge sidebar holds a records search, Start from, and Browse by kind with counts, and each entry opens its page", { skip, timeout: 90000 }, async (context) => {
   const { base, browser } = await placesDemo(context);
@@ -19,7 +19,7 @@ test("clauses 49, 50: the Knowledge sidebar holds a records search, Start from, 
   assert.equal(names.length, 6, "two entry points and four kinds, and no single record");
   assert.match(names[0], /^Touched by my work\b/);
   assert.match(names[1], /^Changed this week\b/);
-  assert.deepEqual(names.slice(2), ["Requirements 4", "Decisions 3", "Glossary 3", "Diagrams 1"]);
+  assert.deepEqual(names.slice(2), ["Requirements 5", "Decisions 3", "Glossary 3", "Diagrams 1"]);
   for (const [name, ref] of [["Requirements", "requirements"], ["Decisions", "decisions"], ["Glossary", "glossary"], ["Diagrams", "knowledge:diagrams"], ["Touched by my work", "knowledge:touched"], ["Changed this week", "knowledge:changed"]]) {
     await item(side, name).click();
     await settledOn(page, ref);

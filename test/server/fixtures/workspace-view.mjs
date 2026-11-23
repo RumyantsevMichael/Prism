@@ -4,11 +4,11 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { artifactConfig, checkout, closeServers, commitFiles, eventually, exists, git, isolateGit, ok, refused, server, text, version, writeArtifact } from "./workspace-artifacts.mjs";
+import { adrFile, artifactConfig, checkout, closeServers, commitFiles, eventually, exists, git, isolateGit, ok, refused, requirementFile, server, text, version, writeArtifact } from "./workspace-artifacts.mjs";
 
 // The review app started in the test process, the checkouts it serves, and Git remotes that HTTPS and SSH spellings reach through insteadOf.
 // A test file calls isolateGit before anything else, so every Git command and every Prism server shares one private Git configuration.
-export { artifactConfig, checkout, closeServers, commitFiles, eventually, exists, git, isolateGit, ok, refused, server, text, version, writeArtifact };
+export { adrFile, artifactConfig, checkout, closeServers, commitFiles, eventually, exists, git, isolateGit, ok, refused, requirementFile, server, text, version, writeArtifact };
 
 export const sha16 = (value) => createHash("sha256").update(value).digest("hex").slice(0, 16);
 /** The managed clone folder name of a store identity, and the workspace id of a store identity or of a checkout without a store. */

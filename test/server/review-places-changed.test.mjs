@@ -10,7 +10,7 @@ import { demoProject, serveProject, useAppDirectory } from "./fixtures/kit-brows
 // and leaves the glossary modified and a new requirements file untracked.
 
 const DAY = 24 * 60 * 60 * 1000;
-const RECORD_FILES = 9; // four requirements files, three decisions, the glossary, and one diagram
+const RECORD_FILES = 10; // five requirements files, three decisions, the glossary, and one diagram
 
 function git(root, args, { author = "Old Author", daysAgo = 30 } = {}) {
   const date = new Date(Date.now() - daysAgo * DAY).toISOString();

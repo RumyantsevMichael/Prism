@@ -3,7 +3,7 @@ import http from "node:http";
 import { rename, rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { alias, artifactConfig, bareRemote, blobOf, commitFiles, eventually, exists, git, isolateGit, networkStore, ok, place, server, sha16, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
+import { alias, artifactConfig, bareRemote, blobOf, commitFiles, eventually, exists, git, isolateGit, networkStore, ok, place, requirementFile, server, sha16, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
 import { repository } from "./fixtures/repository-checkouts.mjs";
 import { launch, settle, skip } from "./fixtures/kit-browser.mjs";
 
@@ -196,7 +196,8 @@ test("clause 50: no code answer names a Git host's URL", async (context) => {
 
 const NOTES = "Billing notes\n";
 const CHECKOUT_TOTAL = "// the checkout's own copy\n";
-const LINKED = "# Billing\n\nSee [total](../../packages/billing/total.js), [notes](../../packages/billing/notes.txt), [page](../../packages/web/page.js), [secret](../../.env), [logo](../../assets/logo.bin), [big](../../assets/big.txt), and [none](../../none.js).\n";
+// The links sit in the requirements file's Problem paragraph, its ninth line, since the file keeps its format.
+const LINKED = requirementFile("Billing").replace("Something is missing.", "See [total](../../packages/billing/total.js), [notes](../../packages/billing/notes.txt), [page](../../packages/web/page.js), [secret](../../.env), [logo](../../assets/logo.bin), [big](../../assets/big.txt), and [none](../../none.js).");
 const LINKED_REF = "store:repositories/api/requirements/billing.md";
 
 // A workspace added from its store URL alone, whose api scope holds a requirement linking to code files; api's code remote holds main and feature-x, its HEAD naming head.
@@ -228,8 +229,8 @@ async function linkedWorkspace(context, { head = "main" } = {}) {
   return { where, code, prism, id, apiRoot, links, open };
 }
 
-const available = (file) => ({ line: 3, target: `code:api:${file}`, resolved: true });
-const unavailable = (file) => ({ line: 3, target: `code:api:${file}`, resolved: null, reason: "code_not_available" });
+const available = (file) => ({ line: 9, target: `code:api:${file}`, resolved: true });
+const unavailable = (file) => ({ line: 9, target: `code:api:${file}`, resolved: null, reason: "code_not_available" });
 
 test("clause 50: with code content on and no checkout, a link to a code file resolves from the clone's default branch", async (context) => {
   const { code, prism, id, links, open } = await linkedWorkspace(context);
@@ -277,8 +278,8 @@ test("clause 50: a registered checkout that lists the path still answers the lin
   const listed = await links();
   assert.deepEqual(listed["packages/billing/total.js"], available("packages/billing/total.js"));
   assert.deepEqual(listed["packages/billing/notes.txt"], available("packages/billing/notes.txt"));
-  assert.deepEqual(listed["packages/web/page.js"], { line: 3, target: null, resolved: false }, "with a checkout registered, a path neither it nor the default branch holds names nothing");
-  assert.deepEqual(listed[".env"], { line: 3, target: null, resolved: false }, "with a checkout registered, a secret names nothing");
+  assert.deepEqual(listed["packages/web/page.js"], { line: 9, target: null, resolved: false }, "with a checkout registered, a path neither it nor the default branch holds names nothing");
+  assert.deepEqual(listed[".env"], { line: 9, target: null, resolved: false }, "with a checkout registered, a secret names nothing");
   const total = await open("packages/billing/total.js");
   assert.equal(total.status, 200, total.body);
   assert.equal(total.json.content, CHECKOUT_TOTAL, "the checkout wins over the clone");

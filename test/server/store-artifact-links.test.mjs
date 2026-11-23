@@ -4,7 +4,7 @@ import test from "node:test";
 import { markdownLinks, resolveLinks } from "../../dist/server/review/artifact-links.mjs";
 import { linkTargets, renderText } from "../../dist/server/review/public/views/markdown.js";
 import { artifactKinds, parseWorkflowConfig } from "../../dist/server/workflow/workflow-config.mjs";
-import { git, isolateGit, networkStore, place, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
+import { git, isolateGit, networkStore, place, requirementFile, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
 import { launch, settle, skip } from "./fixtures/kit-browser.mjs";
 
 // A workspace page's store artifacts: one comment target per artifact, the server's links agreeing with the page's renderer, and a palette that lists each store artifact once by scope.
@@ -18,10 +18,10 @@ async function workspace(context) {
   const webRoot = await storeCheckout(context, where, "web", store.url);
   const api = await server(context, where, apiRoot);
   const web = await server(context, where, webRoot);
-  await writeArtifact(api, "docs/requirements/billing.md", "# Billing\n", { scope: "repository" });
-  await writeArtifact(api, "docs/requirements/totals.md", "# Totals\n", { scope: "component", component: "billing" });
-  await writeArtifact(api, "docs/requirements/shared.md", "# Shared\n", { scope: "repository" });
-  await writeArtifact(web, "docs/requirements/shared.md", "# Shared\n", { scope: "repository" });
+  await writeArtifact(api, "docs/requirements/billing.md", requirementFile("Billing"), { scope: "repository" });
+  await writeArtifact(api, "docs/requirements/totals.md", requirementFile("Totals"), { scope: "component", component: "billing" });
+  await writeArtifact(api, "docs/requirements/shared.md", requirementFile("Shared"), { scope: "repository" });
+  await writeArtifact(web, "docs/requirements/shared.md", requirementFile("Shared"), { scope: "repository" });
   const prism = await startApp(context, where);
   await prism.register(apiRoot);
   return { prism, id: workspaceId(store.identity) };

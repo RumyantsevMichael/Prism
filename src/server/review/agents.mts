@@ -1,7 +1,8 @@
 // The agents list: every launched session of this computer and every claim of the workspace that no launched session holds, one entry each,
 // grouped by what needs the person, with the counts the top bar and the Agents page show. No entry names a claim holder or a launched session's host session id; a claim's entry carries the link to its session when the claim records one.
 import { archivedLaunches, listLaunches } from "../session/launched-sessions.mjs";
-import { loadHeldClaims, loadRoadmapView } from "./workspace-model.mjs";
+import { readRun } from "../workflow/migration-runs.mjs";
+import { loadHeldClaims, loadRoadmapView, migrationRunTitle } from "./workspace-model.mjs";
 
 const GROUPS = ["needs-you", "launched", "other", "expired", "archived"];
 // A claim that expired this long ago or more leaves the counts, while the list keeps every expired claim.
@@ -29,7 +30,8 @@ function launchEntry(launch: any, title: string, claim: any, archived: boolean) 
     state: launch.state,
     reason: launch.reason ?? null,
     expiresAt: null,
-    launch: { id: launch.id, launchedAt: launch.launchedAt, runningMs: launch.runningMs, runs: launch.runs, endedAt: launch.endedAt, exit: launch.exit, resumeCommand: launch.resumeCommand, waitingGate: launch.waitingGate, ...(typeof launch.questionGate === "string" ? { questionGate: launch.questionGate } : {}), ...(launch.usage ? { usage: launch.usage } : {}) },
+    // A format migration run's session names its run, whose page its name opens in place of an initiative's.
+    launch: { id: launch.id, launchedAt: launch.launchedAt, runningMs: launch.runningMs, runs: launch.runs, endedAt: launch.endedAt, exit: launch.exit, resumeCommand: launch.resumeCommand, waitingGate: launch.waitingGate, ...(launch.migrationRun ? { migrationRun: launch.migrationRun } : {}), ...(typeof launch.questionGate === "string" ? { questionGate: launch.questionGate } : {}), ...(launch.usage ? { usage: launch.usage } : {}) },
     action: launchAction(launch)
   };
 }
@@ -80,7 +82,10 @@ export async function listAgents({ projectRoot, env = process.env, now = Date.no
   const agents: any[] = [];
   for (const launch of launches) {
     const live = claims.find((claim: any) => holds(launch, claim) && !lapsed(claim)) ?? null;
-    agents.push(launchEntry(launch, titles.get(launch.initiative) ?? launch.initiative, live, archived.has(launch.id)));
+    // A format migration run belongs to no initiative and is named by its run's type.
+    const run = launch.migrationRun ? await readRun(projectRoot, launch.migrationRun).catch(() => null) : null;
+    const title = launch.migrationRun ? (run ? migrationRunTitle(run) : "Format migration") : titles.get(launch.initiative) ?? launch.initiative;
+    agents.push(launchEntry(launch, title, live, archived.has(launch.id)));
   }
   for (const claim of claims) {
     if (launches.some((launch) => holds(launch, claim))) continue;

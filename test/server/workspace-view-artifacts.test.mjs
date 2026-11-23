@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import test from "node:test";
-import { eventually, git, isolateGit, networkStore, ok, place, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
+import { adrFile, eventually, git, isolateGit, networkStore, ok, place, requirementFile, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
 import { launch, playwright, settle, skip } from "./fixtures/kit-browser.mjs";
 
 // Contract clauses 34-40 of the workspace-view design: the app shows every scope's artifacts together, by store location, with a filter and resolved links.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
-const BILLING = "# Billing\n\nSee [the plan](../plans/reports/slice.md), [the ledger](../ADRs/ledger.md), [shared](shared.md), [gone](missing.md), [the app](../../src/app.js), [old code](../../src/gone.js), and [the site](https://example.com/x.md).\n";
+// The links sit in the requirements file's Problem paragraph, its ninth line, since the file keeps its format.
+const BILLING = requirementFile("Billing").replace("Something is missing.", "See [the plan](../plans/reports/slice.md), [the ledger](../ADRs/ledger.md), [shared](shared.md), [gone](missing.md), [the app](../../src/app.js), [old code](../../src/gone.js), and [the site](https://example.com/x.md).");
 
 // One store with artifacts in the workspace scope, two repository scopes, and a component scope; the api checkout holds src/app.js, and the app has it registered.
 async function combined(context, { register = true } = {}) {
@@ -18,11 +19,11 @@ async function combined(context, { register = true } = {}) {
   const webRoot = await storeCheckout(context, where, "web", store.url);
   const api = await server(context, where, apiRoot);
   const web = await server(context, where, webRoot);
-  await writeArtifact(api, "docs/requirements/shared.md", "# Shared\n");
+  await writeArtifact(api, "docs/requirements/shared.md", requirementFile("Shared"));
   await writeArtifact(api, "docs/requirements/billing.md", BILLING, { scope: "repository" });
   await writeArtifact(api, "docs/plans/reports/slice.md", "# API reports\n", { scope: "repository" });
-  await writeArtifact(api, "docs/ADRs/ledger.md", "# Ledger\n", { scope: "repository" });
-  await writeArtifact(api, "docs/requirements/totals.md", "# Totals\n", { scope: "component", component: "billing" });
+  await writeArtifact(api, "docs/ADRs/ledger.md", adrFile("Ledger"), { scope: "repository" });
+  await writeArtifact(api, "docs/requirements/totals.md", requirementFile("Totals"), { scope: "component", component: "billing" });
   await writeArtifact(web, "docs/plans/reports/slice.md", "# Web reports\n", { scope: "repository" });
   const prism = await startApp(context, where);
   if (register) await prism.register(apiRoot);
@@ -89,12 +90,12 @@ test("clause 37: relative links resolve against the store location, then through
   const { prism, id } = await combined(context);
   const read = (await prism.get(`/w/${id}/api/artifact?ref=${encodeURIComponent("store:repositories/api/requirements/billing.md")}`)).json;
   assert.deepEqual(read.links, [
-    { line: 3, href: "../plans/reports/slice.md", target: "store:repositories/api/plans/reports/slice.md", resolved: true },
-    { line: 3, href: "../ADRs/ledger.md", target: "store:repositories/api/adrs/ledger.md", resolved: true },
-    { line: 3, href: "shared.md", target: "store:requirements/shared.md", resolved: true },
-    { line: 3, href: "missing.md", target: null, resolved: false },
-    { line: 3, href: "../../src/app.js", target: "code:api:src/app.js", resolved: true },
-    { line: 3, href: "../../src/gone.js", target: null, resolved: false }
+    { line: 9, href: "../plans/reports/slice.md", target: "store:repositories/api/plans/reports/slice.md", resolved: true },
+    { line: 9, href: "../ADRs/ledger.md", target: "store:repositories/api/adrs/ledger.md", resolved: true },
+    { line: 9, href: "shared.md", target: "store:requirements/shared.md", resolved: true },
+    { line: 9, href: "missing.md", target: null, resolved: false },
+    { line: 9, href: "../../src/app.js", target: "code:api:src/app.js", resolved: true },
+    { line: 9, href: "../../src/gone.js", target: null, resolved: false }
   ]);
   assert.equal(read.unresolvedLinks, 2);
 });
@@ -114,10 +115,10 @@ test("clause 37: without a checkout of the artifact's repository, a link to a co
   const { prism, id } = await storeOnly(context);
   const read = (await prism.get(`/w/${id}/api/artifact?ref=${encodeURIComponent("store:repositories/api/requirements/billing.md")}`)).json;
   assert.deepEqual(read.links.filter((link) => link.href.startsWith("../../src/")), [
-    { line: 3, href: "../../src/app.js", target: "code:api:src/app.js", resolved: null, reason: "code_not_available" },
-    { line: 3, href: "../../src/gone.js", target: "code:api:src/gone.js", resolved: null, reason: "code_not_available" }
+    { line: 9, href: "../../src/app.js", target: "code:api:src/app.js", resolved: null, reason: "code_not_available" },
+    { line: 9, href: "../../src/gone.js", target: "code:api:src/gone.js", resolved: null, reason: "code_not_available" }
   ]);
-  assert.deepEqual(read.links.find((link) => link.href === "missing.md"), { line: 3, href: "missing.md", target: null, resolved: false });
+  assert.deepEqual(read.links.find((link) => link.href === "missing.md"), { line: 9, href: "missing.md", target: null, resolved: false });
   assert.equal(read.unresolvedLinks, 1);
 });
 

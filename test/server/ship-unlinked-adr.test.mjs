@@ -13,7 +13,7 @@ const TEST_SOURCE = "import test from \"node:test\";\ntest(\"check exits 0\", ()
 const SLICE = "docs/plans/reports/slice.md";
 const CONTRACT = "# Reports\n\n## Contract\n1. `check.mjs` exits 0.\n";
 const OWN = "docs/ADRs/reports/own.md";
-const citing = (title) => adrFile(title).replace("## Decision", "## Requirements\n\n- [Reports](../../requirements/r.md) §1.\n\n## Decision");
+const citing = (title) => adrFile(title).replace("## Requirements\n\nn/a", "## Requirements\n\n- [Reports](../../requirements/r.md) §1.");
 
 const revision = async (prism) => ok(await prism.call("get_initiative", { initiative: "reports" })).revision;
 const roadmap = async (prism) => ok(await prism.call("get_roadmap", {}));
@@ -73,7 +73,7 @@ test("ship refuses, and readyToShip is false, while a Proposed ADR cites the ini
 test("an ADR that cites other requirements, or that another plan's slice.md links, does not stop the ship", async (context) => {
   const OTHER = "docs/ADRs/billing/ledger.md";
   const UNRELATED = "docs/ADRs/billing/unrelated.md";
-  const { prism, review } = await finished(context, { [OTHER]: citing("Ledger"), [UNRELATED]: adrFile("Unrelated").replace("## Decision", "## Requirements\n\n- [Billing](../../requirements/billing.md) §1.\n\n## Decision") });
+  const { prism, review } = await finished(context, { [OTHER]: citing("Ledger"), [UNRELATED]: adrFile("Unrelated").replace("## Requirements\n\nn/a", "## Requirements\n\n- [Billing](../../requirements/billing.md) §1.") });
   await writeArtifact(prism, "docs/plans/billing/slice.md", "# Billing\n\n## Contract\n1. Ledgers follow [the ledger decision](../../ADRs/billing/ledger.md).\n");
   assert.equal((await derivedOf(prism)).readyToShip, true);
   const shipped = ok(await ship(prism, await approved(prism, review)));

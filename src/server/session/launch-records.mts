@@ -62,6 +62,17 @@ export function launchFolder(env: NodeJS.ProcessEnv, id: string) {
   return path.join(launchesDirectory(env), id);
 }
 
+// The folder that holds the working folders of format migration runs' launches, beside the launches folder, so no launch record's folder holds one.
+const WORK_FOLDERS = "launch-work";
+export function launchWorkDirectory(env = process.env) {
+  return path.join(reviewAppDirectory(env), WORK_FOLDERS);
+}
+
+const touches = (folder: string, other: string) => {
+  const inside = (child: string, parent: string) => child === parent || child.startsWith(`${parent}${path.sep}`);
+  return inside(folder, other) || inside(other, folder);
+};
+
 async function privateDirectory(directory: string) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const info = await lstat(directory);
@@ -84,6 +95,24 @@ export async function createLaunchFolder(env: NodeJS.ProcessEnv, id: string) {
   const folder = launchFolder(env, id);
   await mkdir(folder, { mode: 0o700 });
   if (process.platform !== "win32") await chmod(folder, 0o700);
+  return folder;
+}
+
+/**
+ * Creates the empty private working folder of a format migration run's launch, named by the launch alone, by its real path:
+ * it lies outside the launch's own folder, and it is refused when it is the checkout, lies inside it, or holds it.
+ */
+export async function createLaunchWorkFolder(env: NodeJS.ProcessEnv, id: string, checkout: string) {
+  await prepareLaunchesDirectory(env);
+  await privateDirectory(launchWorkDirectory(env));
+  const created = path.join(launchWorkDirectory(env), id);
+  await mkdir(created, { mode: 0o700 });
+  if (process.platform !== "win32") await chmod(created, 0o700);
+  const folder = await realpath(created);
+  if (touches(folder, checkout)) {
+    await rm(created, { recursive: true, force: true });
+    throw new LaunchError("launch_failed", `The working folder ${folder} of a format migration run's session would reach the checkout ${checkout}; keep the review app folder outside the project.`);
+  }
   return folder;
 }
 
@@ -395,9 +424,9 @@ function stateOf(record: any, status: any, label: string, gates: any, permission
 }
 
 /**
- * The launch view of a record: { id, initiative, host, hostLabel, model, holder, checkout, launchedAt, runningMs, runs, endedAt, state,
- * reason, exit, resumeCommand, waitingGate, answerWaits, questionGate }, and for an ACP agent's launch usage, the last run's { tokens, context, cost },
- * each null when the agent did not report it.
+ * The launch view of a record: { id, initiative, migrationRun (only for a format migration run's session), host, hostLabel, model, holder,
+ * checkout, launchedAt, runningMs, runs, endedAt, state, reason, exit, resumeCommand, waitingGate, answerWaits, questionGate }, and for an ACP agent's
+ * launch usage, the last run's { tokens, context, cost }, each null when the agent did not report it.
  * model is the last run's recorded model, holder the claim holder that the host session takes claims as, and only resumeCommand
  * names the host session id.
  * gates is gateFacts of the launch as the page's checkout reads its initiative's coordination state; without it no gate is counted.
@@ -426,7 +455,9 @@ export function launchView(record: any, { now = Date.now(), gates = null, permis
   const resumeCommand = command ? { command, cwd: record.checkout } : null;
   return {
     id: record.id,
-    initiative: record.initiative,
+    initiative: record.initiative ?? null,
+    // Only a format migration run's session names its run, so an initiative's view keeps its fields.
+    ...(typeof record.migrationRun === "string" ? { migrationRun: record.migrationRun } : {}),
     host: record.host,
     hostLabel: label,
     model: isAgentModel(last?.model) ? last.model : null,
@@ -517,6 +548,9 @@ export function archivedNow(mark: ArchiveMark | null, record: any, state: unknow
   return mark !== null && Array.isArray(record?.runs) && record.runs.length === mark.runs && launchEnded(state);
 }
 
-export async function removeLaunchFolder(folder: string) {
+/** Removes a launch's folder, and the working folder of a format migration run's launch with it, which ends with the launch. */
+export async function removeLaunchFolder(folder: string, record: any = null) {
+  const work = record?.workdir;
+  if (typeof work === "string" && path.isAbsolute(work) && path.basename(work) === record.id && path.basename(path.dirname(work)) === WORK_FOLDERS) await rm(work, { recursive: true, force: true });
   await rm(folder, { recursive: true, force: true });
 }

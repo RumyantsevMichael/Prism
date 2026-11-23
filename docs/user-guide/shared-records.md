@@ -38,6 +38,7 @@ Ask an agent for a change to one of them, or comment on it in the review browser
 A read returns the file's text in pages of at most 2000 lines and 64 KiB, with its scope, its version, its comments from the review browser, whether it changed since a person last accepted it, and, for a requirement or ADR, its recorded status and your latest answer to its approval.
 Without a path, or with a folder, `get_artifact` lists the files that the checkout sees there.
 One update writes, edits, removes, or moves up to 50 files, each against the version that the agent last read, so a change that someone else made in the meantime refuses the whole update with `version_conflict` and changes nothing.
+A write or edit that would leave a requirement file, ADR, or glossary breaking its format refuses the whole update with `artifact_nonconforming` and changes nothing, as [Writes that break a format](workflow.md#writes-that-break-a-format) describes.
 A file holds at most 1 MiB of UTF-8 text, and a larger one is refused with `artifact_too_large`.
 A name below a configured folder begins with an ASCII letter or digit, holds only ASCII letters, digits, `.`, `_`, and `-`, does not end in `.` or `.lock`, and is no Windows device name such as `con`, `aux`, `nul`, `com1`, or `lpt1` before its first `.`, in any letter case, or Prism refuses it with `artifact_name_invalid`.
 A new file whose path differs from a file the checkout sees only in letter case is refused with `artifact_name_conflict`.
@@ -56,6 +57,7 @@ An agent's edit of a `Status:` line is kept, but Prism still reads the file with
 To approve a requirement, or an amendment of an Approved one, the agent asks for your approval with the `ask_approval` operation of `update_artifact`, and the question appears on [Attention](review-browser.md#attention).
 The agent also names the initiative the approval serves, and the slice when there is one, so the question's card links to that work.
 Approving writes the status, `Approved` unless the agent asked for another such as `Withdrawn`, into the file's `Status:` line, sets its `Approved:` line to the day you answered, and records your checkout's Git `user.name` and your machine's host name as the approver.
+An approval that would leave an Approved file breaking its format, such as one that still holds an `unknown` value, is refused with `artifact_nonconforming`, and its question stays open until the agent revises the file.
 Request changes with a note when the file needs another revision, and the agent revises it and asks again.
 An ADR becomes `Accepted` when its initiative ships, and an approval can still give it another status, such as `Superseded`.
 An ADR that an initiative realized but whose ship left it `Proposed`, as a ship did before it checked for unlinked ADRs, becomes `Accepted` only through an approval that names that shipped initiative: `update_artifact` `ask_approval` with `shipped` set to the initiative's id.
@@ -117,8 +119,9 @@ Store sync is on by default for a remote store, so Prism keeps the clone in step
 
 `- Store sync: off` keeps the clone but never fetches, commits, or pushes after the first clone.
 Prism never deletes, replaces, or rewrites the history of a clone it made.
-Prism shares the regular files at the paths it writes in a store: the records under `initiatives/`, `roadmap.json`, the registrations under `repositories/`, the migration files under `migrations/`, the ledgers of moved artifacts under `artifact-migrations/`, the artifacts under `artifacts/` whose every name follows the artifact name form, the comments on them under `artifact-comments/`, and the store's `.gitignore` and `.gitattributes`.
+Prism shares the regular files at the paths it writes in a store: the records under `initiatives/`, `roadmap.json`, the registrations under `repositories/`, the migration files under `migrations/`, the ledgers of moved artifacts under `artifact-migrations/`, the format migration runs under `format-migrations/`, the reported format findings under `format-findings/`, the artifacts under `artifacts/` whose every name follows the artifact name form, the comments on them under `artifact-comments/`, and the store's `.gitignore` and `.gitattributes`.
 It also shares a `README`, `README.md`, `README.txt`, `LICENSE`, `LICENSE.md`, `LICENSE.txt`, or `COPYING` at the store's root, spelled exactly so, which Prism never reads.
+A `legacy-marks/` folder that an earlier Prism wrote is no longer part of this layout: nothing reads it, and a sync no longer writes it to disk.
 Prism uses Git in the store only to keep these files' bytes: the clone and every sync write each file as the remote's branch holds it, and every commit holds each file as it is on disk.
 So no `.gitignore` or `.gitattributes` line, in the store or in your Git configuration, and no line-ending setting such as `core.autocrlf`, changes what Prism commits, merges, or writes.
 A sync commits the removal of a file Prism shares only when the disk once held that file as the branch does, so a removal on disk, by Prism or by hand, still syncs.
@@ -214,6 +217,8 @@ Every kind of file that a store shares has a size limit well above the largest f
 | Comment | `artifact-comments/<location>/<name>.json` | 64 KiB |
 | Move ledger | `artifact-migrations/<name>.json` | 16 MiB |
 | Record migration file | `migrations/<name>.json` | 16 MiB |
+| Format migration run | `format-migrations/<run id>.json` | 16 MiB |
+| Reported format finding | `format-findings/<id>.json` | 64 KiB |
 | Registration | `repositories/<repository>.json` | 64 KiB |
 | Roadmap record, initiative record, coordination state, change map | `roadmap.json`, `initiatives/<initiative>/initiative.json`, `initiatives/<initiative>/state.json`, `initiatives/<initiative>/slices/<slice>/change-map.json` | 1 MiB |
 | Review ledger, design view, kept frozen tests, run entry | `review.json`, `design-view.json`, `frozen-tests.json`, and `runs/<id>.json` below `initiatives/<initiative>/slices/<slice>/` | 4 MiB |

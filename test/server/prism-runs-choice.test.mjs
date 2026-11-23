@@ -34,7 +34,7 @@ test("clause 1: this computer lists one action for Prism's own runs, with the ho
     ["run", "run-choice", "Model", "coordinator"]
   ]);
   assert.deepEqual(action.fields[0].options, [
-    { value: "automatic", label: "Any available host", consequence: "Each run starts on the first host Prism finds on this computer, with its default model.", reason: null },
+    { value: "automatic", label: "Any available host", consequence: "Each run starts with Codex and its GPT-6 Luna model where Codex lists it, and otherwise on the first host Prism finds on this computer with a small model.", reason: null },
     { value: "claude-code", label: "Claude Code", consequence: "Claude Code runs Prism's own runs.", reason: null },
     { value: "codex", label: "Codex", consequence: "Codex runs Prism's own runs.", reason: "Codex was not found: no codex executable on PATH." }
   ]);
@@ -75,7 +75,7 @@ test("clause 3: a choice takes only what the chosen host reports, or a model typ
     [choice({ run: { model: "claude-opus-4-6", effort: "xhigh", typed: false } }), "run", "Opus 4.6 does not take the effort xhigh."],
     [choice({ provider: "openai" }), "provider", "Claude Code on this computer has no provider openai."],
     [choice({ run: { model: "-p", effort: null, typed: true } }), "run", "A model name has 1 to 200 letters, digits, and . _ - : / @ [ ] +, and starts with a letter or digit."],
-    [choice({ host: "automatic", run: { model: "fable", effort: null, typed: false } }), "run", "Any available host takes only the host's default model."]
+    [choice({ host: "automatic", run: { model: "fable", effort: null, typed: false } }), "run", "Any available host chooses its model itself."]
   ];
   for (const [input, field, message] of cases) {
     const refused = await send(s, input);

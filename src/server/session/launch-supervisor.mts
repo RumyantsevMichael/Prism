@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The detached supervisor of one run of a launched session: node launch-supervisor.mjs <launch folder> <cause> <token>.
-// It starts the run's host in the checkout with its own environment, which the starter prepared, holds the host's standard input,
+// It starts the run's host in the checkout, or a format migration run's host in the launch's own working folder outside it, with its own environment, which the starter prepared, holds the host's standard input,
 // gives the host its prompt there and closes it once the host's work is over, reads the host's output, renews the heartbeat in the
 // launch record, and records the run's end with the host's exit code and signal.
 // It watches its launch folder for a stop request that names its run, and then sends the host the interrupt of the host's own Stop
@@ -14,14 +14,16 @@
 // After a run that exited 0, it resumes the session once when the person answered here, during the run, a gate that is still pending,
 // and otherwise records a no-result gate for a run that ended normally without a result. Once its host started, it resolves the
 // launch's unanswered no-result gate, since the session runs again.
+// The run of a format migration run's session reports its end to that run, which fails when it was still open.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
-import { ANSWERED_GATE_PATTERN, launchCoordinator, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
+import { ANSWERED_GATE_PATTERN, launchCoordinator, launchView, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
 import { isAcpHost } from "./acp-agents.mjs";
-import { askerResumeOf, hostArguments, hostConversation, hostEnvironment, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { askerResumeOf, hostArguments, hostConversation, hostEnvironment, migrationServerDefinition, MIGRATION_SERVER, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 import { approvalText, confirmApproval } from "./launch-confirmation.mjs";
 import { permissionBroker, shownForm } from "./permission-requests.mjs";
 
@@ -125,7 +127,29 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
   const acp: any = (resolved as any).acp ?? null;
   // The version folder of a registry agent that this run starts on, which an update or sweep never removes while the run runs.
   const agentVersion: string | null = acp?.install ? path.basename(acp.install.folder) : null;
-  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator, acp });
+  // A format migration run's session works only in the launch's own folder, never in the checkout.
+  const workFolder = typeof record.migrationRun === "string" ? record.workdir : record.checkout;
+  if (typeof workFolder !== "string" || !workFolder) {
+    await failStart("The format migration run's launch has no working folder of its own, so its session cannot start.");
+    return;
+  }
+  // A format migration run's session has one MCP server, Prism's own scoped to the run, which Claude Code reads from the launch's own folder.
+  const migration = typeof record.migrationRun === "string";
+  const migrationServer = migration ? migrationServerDefinition({ run: record.migrationRun, project: record.checkout, launch: record.id, env }) : null;
+  let mcpConfig: string | null = null;
+  if (migration) {
+    mcpConfig = path.join(folder, "mcp-config.json");
+    await writeFile(mcpConfig, `${JSON.stringify({ mcpServers: { [MIGRATION_SERVER]: migrationServer } }, null, 2)}\n`, { mode: 0o600 });
+  }
+  let args: string[];
+  try {
+    args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator, access: record.access ?? "full", readRoots: record.readRoots ?? [],
+      // A format migration run's Claude Code session is denied every read of the checkout, whatever the person's own settings allow.
+      deniedRoots: migration ? [record.checkout] : [], mcpConfig, acp });
+  } catch (error) {
+    await failStart(error.message);
+    return;
+  }
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
@@ -150,7 +174,11 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
       permissions,
       acp: acp && { label: resolved.label, autoMode: acp.autoMode ?? null, env, launch: record.id },
       initiative: record.initiative,
-      checkout: record.checkout,
+      migrationRun: record.migrationRun ?? null,
+      access: record.access ?? "full",
+      readRoots: record.readRoots ?? [],
+      migrationServer,
+      checkout: workFolder,
       hostSessionId: record.hostSessionId,
       resume,
       coordinator,
@@ -301,7 +329,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     }
     let child;
     try {
-      child = (spawn as any)(resolved.command, [...resolved.prefix, ...args], { cwd: record.checkout, env: acp ? hostEnvironment(env, record.id, acp) : env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      child = (spawn as any)(resolved.command, [...resolved.prefix, ...args], { cwd: workFolder, env: acp ? hostEnvironment(env, record.id, null, null, acp) : env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     } catch (error) {
       await failStart(`${resolved.label} could not be started: ${error.message}`);
       return null;
@@ -324,6 +352,10 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     const { sweepUnusedVersions } = await import("./agent-installs.mjs");
     await sweepUnusedVersions(env, [acp.id]);
   }
+  if (started && typeof record.migrationRun === "string") {
+    await reportRunEnd(folder, token).catch(() => {});
+    return;
+  }
   // A run that exited 0 with an answer given here while it ran, whose gate is still pending, is resumed once for that answer;
   // only then does Prism check whether a run that ended normally ended with a result, and record its no-result gate when it did not.
   if (started) {
@@ -332,6 +364,19 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     const ended = ending as { normal: boolean; lastMessage: string | null } | null;
     await settleRunResult({ id: record.id, token, normal: ended?.normal === true, resumed, lastMessage: ended?.lastMessage ?? null, env }).catch(() => {});
   }
+}
+
+// The end of a format migration run's session, as its launch view states it, reaches the run: a run that is still open fails with it.
+async function reportRunEnd(folder: any, token: any) {
+  const record = await readLaunchRecord(folder);
+  const run = record?.runs.find((entry: any) => entry.token === token);
+  if (!run?.endedAt || record.runs.at(-1) !== run) return;
+  const view = launchView(record);
+  const exit = run.exit?.signal ? `signal ${run.exit.signal}` : `exit code ${run.exit?.code ?? "unknown"}`;
+  // The same reason as launchEndReason gives, read here from the run this supervisor ran.
+  const reason = view.reason ?? (view.state === "stopped" ? `${view.hostLabel} was stopped.` : `${view.hostLabel} ended with ${exit}.`);
+  const { sessionEnded } = await import("../workflow/migration-runs.mjs");
+  await sessionEnded(record.checkout, record.migrationRun, { launch: record.id, reason, endedAt: run.endedAt });
 }
 
 const [folder, cause, token] = process.argv.slice(2);

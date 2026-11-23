@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
-import { artifactConfig, checkout, commitFiles, exists, git, isolateGit, ok, refused, remoteFile, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { artifactConfig, checkout, commitFiles, exists, git, isolateGit, ok, refused, remoteFile, server, syncedWorkspace, text, version, workspace, writeArtifact, requirementFile, adrFile } from "./fixtures/workspace-artifacts.mjs";
 
 // Contract clauses 1-18, 20, and 21 of the workspace-artifacts design: agents read, list, and write store artifacts by path and scope.
 const environment = await isolateGit();
@@ -12,6 +12,8 @@ test.after(() => rm(environment, { recursive: true, force: true }));
 const workspaceScope = { kind: "workspace", label: "workspace" };
 // The named fields of a result, so a check of one clause leaves the fields that later clauses add to it alone.
 const pick = (value, names) => Object.fromEntries(names.map((name) => [name, value[name]]));
+// A requirement file that conforms to its format, which every write of one is checked against, ending with one sentence of its own.
+const billingWith = (sentence) => `${requirementFile("Billing")}\n${sentence}\n`;
 
 test("clauses 1, 3, and 8: each configured kind maps to its folder of the workspace scope, and a read returns the file with its version", async (context) => {
   const place = await workspace(context);
@@ -24,15 +26,21 @@ test("clauses 1, 3, and 8: each configured kind maps to its folder of the worksp
     "docs/Glossary.md": ["glossary", "glossary.md"],
     "docs/roadmap.md": ["roadmap", "roadmap.md"]
   };
+  // A requirement, ADR, or glossary write holds content that conforms to its format, which every write of one is checked against.
+  const contents = {
+    "docs/requirements/billing.md": requirementFile("Billing"),
+    "docs/ADRs/payments/ledger.md": adrFile("Ledger"),
+    "docs/Glossary.md": "# Glossary\n\nTerms used across billing.\n"
+  };
   for (const [file, [kind, location]] of Object.entries(files)) {
-    const content = `# ${file}\n\nOne line.\n`;
+    const content = contents[file] ?? `# ${file}\n\nOne line.\n`;
     // Only the fields that clauses 8 and 12 name: a requirement or ADR also carries the status fields of clause 32.
     const written = await writeArtifact(prism, file, content);
     assert.deepEqual(pick(written, ["path", "scope", "version"]), { path: file, scope: workspaceScope, version: version(content) });
     assert.equal(await text(path.join(place.store, "artifacts", location)), content, `${file} is stored at artifacts/${location}`);
     assert.equal(await exists(path.join(api, file)), false, `${file} is not written into the checkout`);
     const read = ok(await prism.call("get_artifact", { path: file }));
-    assert.deepEqual(pick(read, ["path", "scope", "kind", "version", "bytes", "totalLines", "offset", "content", "nextOffset"]), { path: file, scope: workspaceScope, kind, version: version(content), bytes: Buffer.byteLength(content), totalLines: 3, offset: 1, content, nextOffset: null });
+    assert.deepEqual(pick(read, ["path", "scope", "kind", "version", "bytes", "totalLines", "offset", "content", "nextOffset"]), { path: file, scope: workspaceScope, kind, version: version(content), bytes: Buffer.byteLength(content), totalLines: content.split("\n").length - 1, offset: 1, content, nextOffset: null });
   }
 });
 
@@ -40,26 +48,26 @@ test("clause 1: the longest configured path names the kind, and a key set to n/a
   const place = await workspace(context);
   const api = await checkout(place, "api", { paths: ["- Requirements: specs", "- Plans: specs/plans", "- ADRs: n/a"] });
   const prism = await server(context, place, api);
-  await writeArtifact(prism, "specs/plans/reports/slice.md", "# Plan\n");
-  await writeArtifact(prism, "specs/billing.md", "# Billing\n");
-  assert.equal(await text(path.join(place.store, "artifacts", "plans", "reports", "slice.md")), "# Plan\n");
-  assert.equal(await text(path.join(place.store, "artifacts", "requirements", "billing.md")), "# Billing\n");
+  await writeArtifact(prism, "specs/plans/reports/slice.md", requirementFile("Plan"));
+  await writeArtifact(prism, "specs/billing.md", requirementFile("Billing"));
+  assert.equal(await text(path.join(place.store, "artifacts", "plans", "reports", "slice.md")), requirementFile("Plan"));
+  assert.equal(await text(path.join(place.store, "artifacts", "requirements", "billing.md")), requirementFile("Billing"));
   assert.equal(ok(await prism.call("get_artifact", { path: "specs/plans/reports/slice.md" })).kind, "plans");
-  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/ADRs/ledger.md", content: "# Ledger\n", expectedVersion: null }] }), "not_an_artifact");
+  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/ADRs/ledger.md", content: requirementFile("Ledger"), expectedVersion: null }] }), "not_an_artifact");
 });
 
 test("clauses 2, 4, and 7: repository and component scopes have folders of their own, and an unknown component or scope is refused", async (context) => {
   const place = await workspace(context);
   const api = await checkout(place, "api", { components: ["- billing: packages/billing"] });
   const prism = await server(context, place, api);
-  const repositoryEntry = await writeArtifact(prism, "docs/requirements/api.md", "# API\n", { scope: "repository" });
+  const repositoryEntry = await writeArtifact(prism, "docs/requirements/api.md", requirementFile("API"), { scope: "repository" });
   assert.deepEqual(repositoryEntry.scope, { kind: "repository", repository: "api", label: "api" });
-  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "requirements", "api.md")), "# API\n");
-  const componentEntry = await writeArtifact(prism, "docs/requirements/totals.md", "# Totals\n", { scope: "component", component: "billing" });
+  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "requirements", "api.md")), requirementFile("API"));
+  const componentEntry = await writeArtifact(prism, "docs/requirements/totals.md", requirementFile("Totals"), { scope: "component", component: "billing" });
   assert.deepEqual(componentEntry.scope, { kind: "component", repository: "api", component: "billing", label: "api/billing" });
-  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "components", "billing", "requirements", "totals.md")), "# Totals\n");
-  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/web.md", content: "# Web\n", expectedVersion: null, scope: "component", component: "web" }] }), "component_unknown");
-  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/web.md", content: "# Web\n", expectedVersion: null, scope: "galaxy" }] }), "scope_invalid");
+  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "components", "billing", "requirements", "totals.md")), requirementFile("Totals"));
+  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/web.md", content: requirementFile("Web"), expectedVersion: null, scope: "component", component: "web" }] }), "component_unknown");
+  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/web.md", content: requirementFile("Web"), expectedVersion: null, scope: "galaxy" }] }), "scope_invalid");
   assert.equal(await exists(path.join(place.store, "artifacts", "requirements", "web.md")), false);
 });
 
@@ -73,7 +81,7 @@ test("clause 2: a repository name that is a Windows device name is refused befor
     const prism = await server(context, place, await named(name));
     for (const response of [
       await prism.call("get_artifact", {}),
-      await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/api.md", content: "# API\n", expectedVersion: null, scope: "repository" }] }),
+      await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/api.md", content: requirementFile("API"), expectedVersion: null, scope: "repository" }] }),
       await prism.call("get_roadmap", {})
     ]) {
       const error = refused(response, "repository_name_invalid");
@@ -92,9 +100,9 @@ test("clause 2: a repository name that is a Windows device name is refused befor
   assert.ok(portable(proposed), `the proposal ${proposed} is a portable name`);
   await commitFiles(con, { ".prism/workflow.md": artifactConfig({ repository: proposed }) }, "rename the repository");
   const renamed = await server(context, place, con);
-  const entry = await writeArtifact(renamed, "docs/requirements/conf.md", "# Conf\n", { scope: "repository" });
+  const entry = await writeArtifact(renamed, "docs/requirements/conf.md", requirementFile("Conf"), { scope: "repository" });
   assert.deepEqual(entry.scope, { kind: "repository", repository: proposed, label: proposed });
-  assert.equal(await text(path.join(place.store, "artifacts", "repositories", proposed, "requirements", "conf.md")), "# Conf\n");
+  assert.equal(await text(path.join(place.store, "artifacts", "repositories", proposed, "requirements", "conf.md")), requirementFile("Conf"));
   assert.ok(await exists(path.join(place.store, "repositories", `${proposed}.json`)), "the proposed name registers");
 });
 
@@ -109,35 +117,35 @@ test("clause 2: no update creates a component folder whose name is a Windows dev
     return error;
   };
   for (const component of ["aux", "com1", "nul"]) {
-    nameRefused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/plans/x/slice.md", content: "# X\n", expectedVersion: null, scope: "component", component }] }), component);
+    nameRefused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/plans/x/slice.md", content: requirementFile("X"), expectedVersion: null, scope: "component", component }] }), component);
   }
-  const moving = await writeArtifact(prism, "docs/plans/y/slice.md", "# Y\n", { scope: "repository" });
+  const moving = await writeArtifact(prism, "docs/plans/y/slice.md", requirementFile("Y"), { scope: "repository" });
   nameRefused(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: "docs/plans/y/slice.md", expectedVersion: moving.version, scope: "component", component: "aux" }] }), "aux");
   nameRefused(await prism.call("update_artifact", { operations: [
-    { op: "write", path: "docs/plans/z/slice.md", content: "# Z\n", expectedVersion: null, scope: "component", component: "billing" },
-    { op: "write", path: "docs/plans/x/slice.md", content: "# X\n", expectedVersion: null, scope: "component", component: "nul" }
+    { op: "write", path: "docs/plans/z/slice.md", content: requirementFile("Z"), expectedVersion: null, scope: "component", component: "billing" },
+    { op: "write", path: "docs/plans/x/slice.md", content: requirementFile("X"), expectedVersion: null, scope: "component", component: "nul" }
   ] }), "nul");
   assert.equal(await exists(components), false, "a refused update creates no component folder");
-  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "plans", "y", "slice.md")), "# Y\n");
-  await writeArtifact(prism, "docs/plans/z/slice.md", "# Z\n", { scope: "component", component: "billing" });
+  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "plans", "y", "slice.md")), requirementFile("Y"));
+  await writeArtifact(prism, "docs/plans/z/slice.md", requirementFile("Z"), { scope: "component", component: "billing" });
   assert.deepEqual(await readdir(components), ["billing"]);
 
   // A component folder of such a name that the store already holds, as an earlier version wrote it, stays seen, and its artifacts can be moved out.
   const held = path.join(components, "aux", "plans", "old");
   await mkdir(held, { recursive: true });
-  await writeFile(path.join(held, "a.md"), "# A\n");
-  await writeFile(path.join(held, "b.md"), "# B\n");
+  await writeFile(path.join(held, "a.md"), requirementFile("A"));
+  await writeFile(path.join(held, "b.md"), requirementFile("B"));
   const auxScope = { kind: "component", repository: "api", component: "aux", label: "api/aux" };
   const listed = ok(await prism.call("get_artifact", { path: "docs/plans/old" })).artifacts;
   assert.deepEqual(listed.map((entry) => [entry.path, entry.scope]), [["docs/plans/old/a.md", auxScope], ["docs/plans/old/b.md", auxScope]]);
-  nameRefused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/plans/old/c.md", content: "# C\n", expectedVersion: null }] }), "aux");
+  nameRefused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/plans/old/c.md", content: requirementFile("C"), expectedVersion: null }] }), "aux");
   assert.equal(await exists(path.join(held, "c.md")), false);
   const a = ok(await prism.call("get_artifact", { path: "docs/plans/old/a.md" }));
-  assert.deepEqual([a.scope, a.content], [auxScope, "# A\n"]);
-  const b = ok(await prism.call("update_artifact", { operations: [{ op: "edit", path: "docs/plans/old/b.md", expectedVersion: version("# B\n"), edits: [{ oldText: "# B", newText: "# B, edited" }] }] })).artifacts[0];
-  assert.equal(await text(path.join(held, "b.md")), "# B, edited\n");
+  assert.deepEqual([a.scope, a.content], [auxScope, requirementFile("A")]);
+  const b = ok(await prism.call("update_artifact", { operations: [{ op: "edit", path: "docs/plans/old/b.md", expectedVersion: version(requirementFile("B")), edits: [{ oldText: "# B", newText: "# B, edited" }] }] })).artifacts[0];
+  assert.equal(await text(path.join(held, "b.md")), requirementFile("B, edited"));
   ok(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: "docs/plans/old/a.md", expectedVersion: a.version, scope: "repository" }] }));
-  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "plans", "old", "a.md")), "# A\n");
+  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "plans", "old", "a.md")), requirementFile("A"));
   assert.equal(await exists(path.join(held, "a.md")), false);
   ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/plans/old/b.md", expectedVersion: b.version }] }));
   assert.equal(await exists(path.join(held, "b.md")), false);
@@ -150,11 +158,11 @@ test("clauses 5 and 10: a checkout lists the workspace's artifacts and every rep
   const web = await checkout(place, "web");
   const apiServer = await server(context, place, api);
   const webServer = await server(context, place, web);
-  await writeArtifact(apiServer, "docs/requirements/shared.md", "# Shared\n");
-  await writeArtifact(apiServer, "docs/requirements/api.md", "# API\n", { scope: "repository" });
-  await writeArtifact(apiServer, "docs/requirements/billing.md", "# Billing\n", { scope: "component", component: "billing" });
-  await writeArtifact(apiServer, "docs/plans/reports/slice.md", "# Reports\n");
-  await writeArtifact(webServer, "docs/requirements/web.md", "# Web\n", { scope: "repository" });
+  await writeArtifact(apiServer, "docs/requirements/shared.md", requirementFile("Shared"));
+  await writeArtifact(apiServer, "docs/requirements/api.md", requirementFile("API"), { scope: "repository" });
+  await writeArtifact(apiServer, "docs/requirements/billing.md", requirementFile("Billing"), { scope: "component", component: "billing" });
+  await writeArtifact(apiServer, "docs/plans/reports/slice.md", requirementFile("Reports"));
+  await writeArtifact(webServer, "docs/requirements/web.md", requirementFile("Web"), { scope: "repository" });
 
   const listed = ok(await apiServer.call("get_artifact", {}));
   assert.deepEqual(listed.artifacts.map((entry) => [entry.path, entry.scope.label]), [
@@ -166,8 +174,8 @@ test("clauses 5 and 10: a checkout lists the workspace's artifacts and every rep
   ]);
   const shared = listed.artifacts.find((entry) => entry.path === "docs/requirements/shared.md");
   assert.equal(shared.kind, "requirements");
-  assert.equal(shared.version, version("# Shared\n"));
-  assert.equal(shared.bytes, 9);
+  assert.equal(shared.version, version(requirementFile("Shared")));
+  assert.equal(shared.bytes, Buffer.byteLength(requirementFile("Shared")));
   assert.equal("content" in shared, false, "a listing holds no content");
   assert.equal(listed.truncated ?? false, false);
 
@@ -180,16 +188,16 @@ test("clause 6: a path that two seen scopes hold needs a scope, which picks one"
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
-  await writeArtifact(prism, "docs/requirements/first.md", "# First\n");
+  await writeArtifact(prism, "docs/requirements/first.md", requirementFile("First"));
   // Two machines can create one path in two scopes before either syncs, so the store ends up holding both.
   await mkdir(path.join(place.store, "artifacts", "repositories", "api", "requirements"), { recursive: true });
-  await writeFile(path.join(place.store, "artifacts", "requirements", "dup.md"), "# Workspace copy\n");
-  await writeFile(path.join(place.store, "artifacts", "repositories", "api", "requirements", "dup.md"), "# Repository copy\n");
+  await writeFile(path.join(place.store, "artifacts", "requirements", "dup.md"), requirementFile("Workspace copy"));
+  await writeFile(path.join(place.store, "artifacts", "repositories", "api", "requirements", "dup.md"), requirementFile("Repository copy"));
   const error = refused(await prism.call("get_artifact", { path: "docs/requirements/dup.md" }), "artifact_ambiguous");
   assert.deepEqual([...error.data.scopes].sort(), ["api", "workspace"]);
-  refused(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/requirements/dup.md", expectedVersion: version("# Workspace copy\n") }] }), "artifact_ambiguous");
-  assert.equal(ok(await prism.call("get_artifact", { path: "docs/requirements/dup.md", scope: "repository" })).content, "# Repository copy\n");
-  assert.equal(ok(await prism.call("get_artifact", { path: "docs/requirements/dup.md", scope: "workspace" })).content, "# Workspace copy\n");
+  refused(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/requirements/dup.md", expectedVersion: version(requirementFile("Workspace copy")) }] }), "artifact_ambiguous");
+  assert.equal(ok(await prism.call("get_artifact", { path: "docs/requirements/dup.md", scope: "repository" })).content, requirementFile("Repository copy"));
+  assert.equal(ok(await prism.call("get_artifact", { path: "docs/requirements/dup.md", scope: "workspace" })).content, requirementFile("Workspace copy"));
 });
 
 test("clause 9: a long file is read in pages of whole lines, which join to its text", async (context) => {
@@ -234,7 +242,7 @@ test("clause 11: an unknown path and a file that is not text are refused", async
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
-  await writeArtifact(prism, "docs/requirements/first.md", "# First\n");
+  await writeArtifact(prism, "docs/requirements/first.md", requirementFile("First"));
   refused(await prism.call("get_artifact", { path: "docs/requirements/missing.md" }), "artifact_not_found");
   await writeFile(path.join(place.store, "artifacts", "requirements", "binary.md"), Buffer.from([0xff, 0xfe, 0x00, 0x41]));
   refused(await prism.call("get_artifact", { path: "docs/requirements/binary.md" }), "artifact_not_text");
@@ -245,17 +253,17 @@ test("clauses 12, 13, and 15: writes, edits, removals, and scope moves check the
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
   const file = "docs/requirements/billing.md";
-  const original = "# Billing\n\nFirst sentence.\nSecond sentence.\n";
+  const original = `${requirementFile("Billing")}\nFirst sentence.\nSecond sentence.\n`;
   const created = await writeArtifact(prism, file, original);
-  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: "# Again\n", expectedVersion: null }] }), "version_conflict");
-  const stale = refused(await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: "# Stale\n", expectedVersion: version("# Other\n") }] }), "version_conflict");
+  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: requirementFile("Again"), expectedVersion: null }] }), "version_conflict");
+  const stale = refused(await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: requirementFile("Stale"), expectedVersion: version(requirementFile("Other")) }] }), "version_conflict");
   assert.equal(stale.data.version, created.version);
 
   const edited = ok(await prism.call("update_artifact", { operations: [{ op: "edit", path: file, expectedVersion: created.version, edits: [
     { oldText: "First sentence.", newText: "First sentence, edited." },
     { oldText: "edited.\nSecond", newText: "edited twice.\nSecond" }
   ] }] })).artifacts[0];
-  const expected = "# Billing\n\nFirst sentence, edited twice.\nSecond sentence.\n";
+  const expected = `${requirementFile("Billing")}\nFirst sentence, edited twice.\nSecond sentence.\n`;
   assert.equal(edited.version, version(expected), "each edit applies to the text that earlier edits left");
   assert.equal(ok(await prism.call("get_artifact", { path: file })).content, expected);
   const notApplied = refused(await prism.call("update_artifact", { operations: [{ op: "edit", path: file, expectedVersion: edited.version, edits: [{ oldText: "sentence", newText: "line" }] }] }), "edit_not_applied");
@@ -278,14 +286,14 @@ test("clause 14: a new artifact takes its folder's scope, and a path another see
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
-  await writeArtifact(prism, "docs/plans/reports/slice.md", "# Reports\n", { scope: "repository" });
-  const beside = await writeArtifact(prism, "docs/plans/reports/download/slice.md", "# Download\n");
+  await writeArtifact(prism, "docs/plans/reports/slice.md", requirementFile("Reports"), { scope: "repository" });
+  const beside = await writeArtifact(prism, "docs/plans/reports/download/slice.md", requirementFile("Download"));
   assert.equal(beside.scope.label, "api", "a file inside a folder that one scope holds takes that scope");
-  const elsewhere = await writeArtifact(prism, "docs/plans/billing/slice.md", "# Billing\n");
+  const elsewhere = await writeArtifact(prism, "docs/plans/billing/slice.md", requirementFile("Billing"));
   assert.equal(elsewhere.scope.label, "workspace", "a file without such a folder takes the workspace scope");
 
-  await writeArtifact(prism, "docs/requirements/shared.md", "# Shared\n");
-  const taken = refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/shared.md", content: "# Mine\n", expectedVersion: null, scope: "repository" }] }), "artifact_exists");
+  await writeArtifact(prism, "docs/requirements/shared.md", requirementFile("Shared"));
+  const taken = refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/shared.md", content: requirementFile("Mine"), expectedVersion: null, scope: "repository" }] }), "artifact_exists");
   assert.equal(taken.data.scope.label, "workspace");
   assert.equal(await exists(path.join(place.store, "artifacts", "repositories", "api", "requirements", "shared.md")), false);
 });
@@ -295,14 +303,14 @@ test("clauses 16 and 17: content above 1 MiB is refused, and a refused update ch
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
   refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/plans/reports/big.md", content: "z".repeat(1024 * 1024 + 1), expectedVersion: null }] }), "artifact_too_large");
-  const kept = await writeArtifact(prism, "docs/requirements/kept.md", "# Kept\n");
+  const kept = await writeArtifact(prism, "docs/requirements/kept.md", requirementFile("Kept"));
   refused(await prism.call("update_artifact", { operations: [
-    { op: "write", path: "docs/requirements/new.md", content: "# New\n", expectedVersion: null },
-    { op: "write", path: "docs/requirements/kept.md", content: "# Changed\n", expectedVersion: kept.version },
-    { op: "remove", path: "docs/requirements/kept.md", expectedVersion: version("# Wrong\n") }
+    { op: "write", path: "docs/requirements/new.md", content: requirementFile("New"), expectedVersion: null },
+    { op: "write", path: "docs/requirements/kept.md", content: requirementFile("Changed"), expectedVersion: kept.version },
+    { op: "remove", path: "docs/requirements/kept.md", expectedVersion: version(requirementFile("Wrong")) }
   ] }), "version_conflict");
   assert.equal(await exists(path.join(place.store, "artifacts", "requirements", "new.md")), false);
-  assert.equal(await text(path.join(place.store, "artifacts", "requirements", "kept.md")), "# Kept\n");
+  assert.equal(await text(path.join(place.store, "artifacts", "requirements", "kept.md")), requirementFile("Kept"));
   assert.deepEqual((await readdir(path.join(place.store, "artifacts", "requirements"))).sort(), ["kept.md"]);
 });
 
@@ -310,10 +318,12 @@ test("clause 9: a read's text is the stored bytes decoded exactly, with a byte o
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
-  await writeArtifact(prism, "docs/requirements/first.md", "# First\n");
-  const file = "docs/requirements/marked.md";
+  await writeArtifact(prism, "docs/requirements/first.md", requirementFile("First"));
+  // A plan file, which no format check reads, since a requirement file starts with its title and not with a byte order mark.
+  const file = "docs/plans/marked.md";
+  await mkdir(path.join(place.store, "artifacts", "plans"), { recursive: true });
   const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("# Marked\r\nLine one.\r\nLine two.\r\n")]);
-  await writeFile(path.join(place.store, "artifacts", "requirements", "marked.md"), bytes);
+  await writeFile(path.join(place.store, "artifacts", "plans", "marked.md"), bytes);
   const read = ok(await prism.call("get_artifact", { path: file }));
   assert.equal(read.content, "﻿# Marked\r\nLine one.\r\nLine two.\r\n");
   assert.equal(read.version, version(bytes));
@@ -328,9 +338,9 @@ test("clause 9: a read's text is the stored bytes decoded exactly, with a byte o
   assert.deepEqual(Buffer.from(pages.join(""), "utf8"), bytes, "the pages join to the stored bytes");
   const rewritten = ok(await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: pages.join(""), expectedVersion: read.version }] })).artifacts[0];
   assert.equal(rewritten.version, read.version, "writing the text back stores the same bytes");
-  assert.deepEqual(await readFile(path.join(place.store, "artifacts", "requirements", "marked.md")), bytes);
+  assert.deepEqual(await readFile(path.join(place.store, "artifacts", "plans", "marked.md")), bytes);
   const edited = ok(await prism.call("update_artifact", { operations: [{ op: "edit", path: file, expectedVersion: read.version, edits: [{ oldText: "Line one.", newText: "Edited." }] }] })).artifacts[0];
-  const stored = await readFile(path.join(place.store, "artifacts", "requirements", "marked.md"));
+  const stored = await readFile(path.join(place.store, "artifacts", "plans", "marked.md"));
   assert.deepEqual(stored, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("# Marked\r\nEdited.\r\nLine two.\r\n")]), "an edit changes only the text it replaces");
   assert.equal(edited.version, version(stored));
 });
@@ -339,9 +349,9 @@ test("clause 11: a symbolic link or special file in the store is never followed 
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
-  const first = await writeArtifact(prism, "docs/requirements/first.md", "# First\n");
+  const first = await writeArtifact(prism, "docs/requirements/first.md", requirementFile("First"));
   const outside = await mkdtemp(path.join(place.parent, "outside-"));
-  await writeFile(path.join(outside, "secret.md"), "# Secret\n");
+  await writeFile(path.join(outside, "secret.md"), requirementFile("Secret"));
   const folder = path.join(place.store, "artifacts", "requirements");
   await symlink(outside, path.join(folder, "linked"));
   await symlink(path.join(outside, "secret.md"), path.join(folder, "file-link.md"));
@@ -352,24 +362,24 @@ test("clause 11: a symbolic link or special file in the store is never followed 
     const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("the call did not answer within 5 seconds")), 5000); });
     try { return await Promise.race([call, late]); } finally { clearTimeout(timer); }
   };
-  const secret = version("# Secret\n");
+  const secret = version(requirementFile("Secret"));
   for (const [file, current] of [["docs/requirements/linked/secret.md", secret], ["docs/requirements/file-link.md", secret], ["docs/requirements/pipe.md", version("")]]) {
     refused(await prompt(prism.call("get_artifact", { path: file })), "invalid_path");
     for (const operation of [
-      { op: "write", path: file, content: "# Changed\n", expectedVersion: current },
-      { op: "write", path: file, content: "# Changed\n", expectedVersion: null },
+      { op: "write", path: file, content: requirementFile("Changed"), expectedVersion: current },
+      { op: "write", path: file, content: requirementFile("Changed"), expectedVersion: null },
       { op: "edit", path: file, expectedVersion: current, edits: [{ oldText: "Secret", newText: "Changed" }] },
       { op: "remove", path: file, expectedVersion: current },
       { op: "move_scope", path: file, expectedVersion: current, scope: "repository" }
     ]) refused(await prompt(prism.call("update_artifact", { operations: [operation] })), "invalid_path");
   }
-  refused(await prompt(prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/linked/new.md", content: "# New\n", expectedVersion: null }] })), "invalid_path");
+  refused(await prompt(prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/linked/new.md", content: requirementFile("New"), expectedVersion: null }] })), "invalid_path");
   assert.deepEqual(await readdir(outside), ["secret.md"], "nothing was written through the link");
-  assert.equal(await text(path.join(outside, "secret.md")), "# Secret\n");
+  assert.equal(await text(path.join(outside, "secret.md")), requirementFile("Secret"));
   assert.deepEqual(ok(await prompt(prism.call("get_artifact", { path: "docs/requirements" }))).artifacts.map((entry) => [entry.path, entry.version]), [["docs/requirements/first.md", first.version]], "a listing leaves out links and special files");
   assert.deepEqual(ok(await prompt(prism.call("get_artifact", {}))).artifacts.map((entry) => entry.path), ["docs/requirements/first.md"]);
-  await prompt(writeArtifact(prism, "docs/requirements/next.md", "# Next\n"));
-  assert.equal(await text(path.join(folder, "next.md")), "# Next\n", "a later update is not held behind the pipe");
+  await prompt(writeArtifact(prism, "docs/requirements/next.md", requirementFile("Next")));
+  assert.equal(await text(path.join(folder, "next.md")), requirementFile("Next"), "a later update is not held behind the pipe");
 });
 
 test("clause 13: store sync replaces no artifact between an update's version checks and its last write, so an upstream change never vanishes under the update", async (context) => {
@@ -382,19 +392,19 @@ test("clause 13: store sync replaces no artifact between an update's version che
     const place = await syncedWorkspace(context);
     const machine = { ...place.a, sync: undefined };
     const prism = await server(context, machine, await checkout(machine, "api"));
-    const base = await writeArtifact(prism, file, "# Billing\n\nThe base sentence.\n");
+    const base = await writeArtifact(prism, file, billingWith("The base sentence."));
     assert.equal((await syncRecordStore(place.storeA)).state, "ok");
-    assert.equal(remoteFile(place.remote, location), "# Billing\n\nThe base sentence.");
+    assert.equal(remoteFile(place.remote, location), billingWith("The base sentence.").trimEnd());
     // Another machine changes the same line upstream.
     git(place.storeB, "pull", "-q");
-    await writeFile(path.join(place.storeB, location), "# Billing\n\nThe upstream sentence.\n");
+    await writeFile(path.join(place.storeB, location), billingWith("The upstream sentence."));
     git(place.storeB, "add", "-A");
     git(place.storeB, "commit", "-q", "-m", "change the artifact upstream");
     git(place.storeB, "push", "-q");
 
     // A long update: many large new artifacts, then the artifact that changed upstream, written over the base version it read.
     const large = Array.from({ length: 49 }, (_, index) => ({ op: "write", path: `docs/plans/bulk/part-${String(index).padStart(2, "0")}.md`, content: `${String(index).padStart(2, "0")}${"z".repeat(1024 * 1024 - 8)}\n`, expectedVersion: null }));
-    const update = prism.call("update_artifact", { operations: [...large, { op: "write", path: file, content: "# Billing\n\nThe local sentence.\n", expectedVersion: base.version }] });
+    const update = prism.call("update_artifact", { operations: [...large, { op: "write", path: file, content: billingWith("The local sentence."), expectedVersion: base.version }] });
     // Once any new artifact is in the store, the update has checked every version, and a sync runs while it writes the rest.
     const bulk = path.join(place.storeA, "artifacts", "plans", "bulk");
     const deadline = Date.now() + 60000;
@@ -404,10 +414,10 @@ test("clause 13: store sync replaces no artifact between an update's version che
     }
     await syncRecordStore(place.storeA);
     ok(await update);
-    assert.equal(await text(path.join(place.storeA, location)), "# Billing\n\nThe local sentence.\n", `round ${round}: the update wrote its change`);
+    assert.equal(await text(path.join(place.storeA, location)), billingWith("The local sentence."), `round ${round}: the update wrote its change`);
     // The local change and the upstream one changed one line concurrently, so the store keeps the upstream text rather than publishing the update's write over it.
     await syncRecordStore(place.storeA);
-    assert.equal(remoteFile(place.remote, location), "# Billing\n\nThe upstream sentence.", `round ${round}: the upstream change survives`);
+    assert.equal(remoteFile(place.remote, location), billingWith("The upstream sentence.").trimEnd(), `round ${round}: the upstream change survives`);
   }
 });
 
@@ -429,7 +439,7 @@ test("clause 13: an update's changes reach the store's history together, so no s
     const place = await syncedWorkspace(context);
     const machine = { ...place.a, sync: undefined };
     const prism = await server(context, machine, await checkout(machine, "api"));
-    const moving = await writeArtifact(prism, "docs/requirements/billing.md", "# Billing\n");
+    const moving = await writeArtifact(prism, "docs/requirements/billing.md", requirementFile("Billing"));
     assert.equal((await syncRecordStore(place.storeA)).state, "ok");
     const base = git(place.storeA, "rev-parse", "HEAD");
     assert.equal(holds(place.storeA, base), none);
@@ -459,7 +469,7 @@ test("clause 14: an update never creates a path that collides in letter case wit
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
-  const plan = await writeArtifact(prism, "docs/plans/x/Plan.md", "# Plan\n");
+  const plan = await writeArtifact(prism, "docs/plans/x/Plan.md", requirementFile("Plan"));
   const conflict = (response, other) => {
     const error = refused(response, "artifact_name_conflict");
     assert.equal(error.data.path, other, "data.path names the path it collides with");
@@ -474,14 +484,14 @@ test("clause 14: an update never creates a path that collides in letter case wit
   assert.deepEqual(await readdir(path.join(place.store, "artifacts", "plans", "x")), ["Plan.md"]);
   assert.equal(await exists(path.join(place.store, "artifacts", "repositories")), false);
   // Names that differ in more than letter case, and a folder in its own letter case, collide with nothing.
-  await writeArtifact(prism, "docs/plans/x/plan-2.md", "# Plan 2\n");
-  await writeArtifact(prism, "docs/plans/x/notes.md", "# Notes\n");
-  await writeArtifact(prism, "docs/requirements/plan.md", "# Another kind\n");
+  await writeArtifact(prism, "docs/plans/x/plan-2.md", requirementFile("Plan 2"));
+  await writeArtifact(prism, "docs/plans/x/notes.md", requirementFile("Notes"));
+  await writeArtifact(prism, "docs/requirements/plan.md", requirementFile("Another kind"));
 
   // Two writes of one update collide with each other, and neither is written.
   const pair = refused(await prism.call("update_artifact", { operations: [
-    { op: "write", path: "docs/plans/y/Notes.md", content: "# A\n", expectedVersion: null },
-    { op: "write", path: "docs/plans/y/notes.md", content: "# B\n", expectedVersion: null }
+    { op: "write", path: "docs/plans/y/Notes.md", content: requirementFile("A"), expectedVersion: null },
+    { op: "write", path: "docs/plans/y/notes.md", content: requirementFile("B"), expectedVersion: null }
   ] }), "artifact_name_conflict");
   assert.ok(["docs/plans/y/Notes.md", "docs/plans/y/notes.md"].includes(pair.data.path));
   assert.equal(await exists(path.join(place.store, "artifacts", "plans", "y")), false);
@@ -489,28 +499,28 @@ test("clause 14: an update never creates a path that collides in letter case wit
   // A path held before the update counts even when the update removes it, so a rename that changes only letter case takes two updates.
   conflict(await prism.call("update_artifact", { operations: [
     { op: "remove", path: "docs/plans/x/Plan.md", expectedVersion: plan.version },
-    { op: "write", path: "docs/plans/x/plan.md", content: "# Plan\n", expectedVersion: null }
+    { op: "write", path: "docs/plans/x/plan.md", content: requirementFile("Plan"), expectedVersion: null }
   ] }), "docs/plans/x/Plan.md");
-  assert.equal(await text(path.join(place.store, "artifacts", "plans", "x", "Plan.md")), "# Plan\n");
+  assert.equal(await text(path.join(place.store, "artifacts", "plans", "x", "Plan.md")), requirementFile("Plan"));
   ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/plans/x/Plan.md", expectedVersion: plan.version }] }));
-  assert.equal((await writeArtifact(prism, "docs/plans/x/plan.md", "# Plan\n")).version, plan.version);
+  assert.equal((await writeArtifact(prism, "docs/plans/x/plan.md", requirementFile("Plan"))).version, plan.version);
   assert.deepEqual((await readdir(path.join(place.store, "artifacts", "plans", "x"))).sort(), ["notes.md", "plan-2.md", "plan.md"]);
 
   // Two machines that created one name in two letter cases before either synced leave the store holding both.
-  const repositoryCopy = await writeArtifact(prism, "docs/requirements/Totals.md", "# Totals of the repository\n", { scope: "repository" });
-  await writeFile(path.join(place.store, "artifacts", "requirements", "totals.md"), "# Totals of the workspace\n");
-  const workspaceVersion = version("# Totals of the workspace\n");
+  const repositoryCopy = await writeArtifact(prism, "docs/requirements/Totals.md", requirementFile("Totals of the repository"), { scope: "repository" });
+  await writeFile(path.join(place.store, "artifacts", "requirements", "totals.md"), requirementFile("Totals of the workspace"));
+  const workspaceVersion = version(requirementFile("Totals of the workspace"));
   const totals = (listing) => listing.artifacts.filter((entry) => /totals/i.test(entry.path)).map((entry) => [entry.path, entry.scope.label, entry.version]);
   assert.deepEqual(totals(ok(await prism.call("get_artifact", { path: "docs/requirements" }))), [
     ["docs/requirements/Totals.md", "api", repositoryCopy.version],
     ["docs/requirements/totals.md", "workspace", workspaceVersion]
   ], "a listing shows both paths");
-  assert.equal(ok(await prism.call("get_artifact", { path: "docs/requirements/Totals.md" })).content, "# Totals of the repository\n");
-  assert.equal(ok(await prism.call("get_artifact", { path: "docs/requirements/totals.md" })).content, "# Totals of the workspace\n");
+  assert.equal(ok(await prism.call("get_artifact", { path: "docs/requirements/Totals.md" })).content, requirementFile("Totals of the repository"));
+  assert.equal(ok(await prism.call("get_artifact", { path: "docs/requirements/totals.md" })).content, requirementFile("Totals of the workspace"));
   const editedWorkspace = ok(await prism.call("update_artifact", { operations: [{ op: "edit", path: "docs/requirements/totals.md", expectedVersion: workspaceVersion, edits: [{ oldText: "workspace", newText: "whole workspace" }] }] })).artifacts[0];
-  const writtenRepository = ok(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/Totals.md", content: "# Totals, rewritten\n", expectedVersion: repositoryCopy.version }] })).artifacts[0];
-  assert.equal(await text(path.join(place.store, "artifacts", "requirements", "totals.md")), "# Totals of the whole workspace\n");
-  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "requirements", "Totals.md")), "# Totals, rewritten\n");
+  const writtenRepository = ok(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/Totals.md", content: requirementFile("Totals, rewritten"), expectedVersion: repositoryCopy.version }] })).artifacts[0];
+  assert.equal(await text(path.join(place.store, "artifacts", "requirements", "totals.md")), requirementFile("Totals of the whole workspace"));
+  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "requirements", "Totals.md")), requirementFile("Totals, rewritten"));
   conflict(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: "docs/requirements/Totals.md", expectedVersion: writtenRepository.version, scope: "workspace" }] }), "docs/requirements/totals.md");
   const third = refused(await create("docs/requirements/TOTALS.md"), "artifact_name_conflict");
   assert.ok(["docs/requirements/Totals.md", "docs/requirements/totals.md"].includes(third.data.path));
@@ -518,7 +528,7 @@ test("clause 14: an update never creates a path that collides in letter case wit
   ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/requirements/totals.md", expectedVersion: editedWorkspace.version }] }));
   const moved = ok(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: "docs/requirements/Totals.md", expectedVersion: writtenRepository.version, scope: "workspace" }] })).artifacts[0];
   assert.equal(moved.scope.label, "workspace");
-  assert.equal(await text(path.join(place.store, "artifacts", "requirements", "Totals.md")), "# Totals, rewritten\n");
+  assert.equal(await text(path.join(place.store, "artifacts", "requirements", "Totals.md")), requirementFile("Totals, rewritten"));
 });
 
 test("clause 16: a created or moved artifact's location holds at most 455 bytes and names of at most 200, so every file Prism keeps for it fits a store, and a longer stored one stays usable", async (context) => {
@@ -577,18 +587,18 @@ test("clause 17: a write whose location is a folder of artifacts, lies below a s
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
-  const slice = await writeArtifact(prism, "docs/plans/reports/slice.md", "# Reports\n");
+  const slice = await writeArtifact(prism, "docs/plans/reports/slice.md", requirementFile("Reports"));
   const attempts = [
-    [{ op: "write", path: "docs/requirements/new.md", content: "# New\n", expectedVersion: null }, { op: "write", path: "docs/plans/reports", content: "# Folder\n", expectedVersion: null }],
-    [{ op: "write", path: "docs/plans/a", content: "# A\n", expectedVersion: null }, { op: "write", path: "docs/plans/a/b.md", content: "# B\n", expectedVersion: null }],
-    [{ op: "write", path: "docs/plans/a/b.md", content: "# B\n", expectedVersion: null }, { op: "write", path: "docs/plans/a", content: "# A\n", expectedVersion: null }],
-    [{ op: "write", path: "docs/requirements/new.md", content: "# New\n", expectedVersion: null }, { op: "write", path: "docs/plans/reports/slice.md/notes.md", content: "# Notes\n", expectedVersion: null }]
+    [{ op: "write", path: "docs/requirements/new.md", content: requirementFile("New"), expectedVersion: null }, { op: "write", path: "docs/plans/reports", content: requirementFile("Folder"), expectedVersion: null }],
+    [{ op: "write", path: "docs/plans/a", content: requirementFile("A"), expectedVersion: null }, { op: "write", path: "docs/plans/a/b.md", content: requirementFile("B"), expectedVersion: null }],
+    [{ op: "write", path: "docs/plans/a/b.md", content: requirementFile("B"), expectedVersion: null }, { op: "write", path: "docs/plans/a", content: requirementFile("A"), expectedVersion: null }],
+    [{ op: "write", path: "docs/requirements/new.md", content: requirementFile("New"), expectedVersion: null }, { op: "write", path: "docs/plans/reports/slice.md/notes.md", content: requirementFile("Notes"), expectedVersion: null }]
   ];
   for (const operations of attempts) {
     refused(await prism.call("update_artifact", { operations }), "invalid_path");
     assert.equal(await exists(path.join(place.store, "artifacts", "requirements")), false, "the other write did not land");
     assert.equal(await exists(path.join(place.store, "artifacts", "plans", "a")), false, "neither write landed");
-    assert.equal(await text(path.join(place.store, "artifacts", "plans", "reports", "slice.md")), "# Reports\n");
+    assert.equal(await text(path.join(place.store, "artifacts", "plans", "reports", "slice.md")), requirementFile("Reports"));
   }
   assert.deepEqual(ok(await prism.call("get_artifact", {})).artifacts.map((entry) => [entry.path, entry.version]), [["docs/plans/reports/slice.md", slice.version]]);
 });
@@ -639,7 +649,9 @@ test("clauses 1 and 18: only a path whose names follow the artifact name form is
     "docs/requirements/locks.md", "docs/plans/Report_2/v1.0-draft.md", "docs/plans/9lives/x...y", "docs/ADRs/0001-Use-Git.md", "docs/Glossary.md", "docs/roadmap.md",
     "docs/plans/x/auxiliary.md", "docs/plans/x/console", "docs/plans/x/com10.md", "docs/plans/x/lpt.md", "docs/plans/x/nul-results.md", "docs/plans/x/my.con.md", "docs/plans/x/x.aux"
   ];
-  for (const file of kept) await writeArtifact(prism, file, `# ${file}\n`);
+  // A requirement, ADR, or glossary holds content that conforms to its format, which every write of one is checked against.
+  const contentOf = (file) => file.startsWith("docs/requirements/") ? requirementFile(file) : file.startsWith("docs/ADRs/") ? adrFile(file) : file === "docs/Glossary.md" ? "# Glossary\n\nTerms used across the project.\n" : `# ${file}\n`;
+  for (const file of kept) await writeArtifact(prism, file, contentOf(file));
   for (const [file, name] of malformedPaths) {
     refusedAsMalformed(await prism.call("get_artifact", { path: file }), file, name);
     refusedAsMalformed(await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: "*\n", expectedVersion: null }] }), file, name);
@@ -647,7 +659,7 @@ test("clauses 1 and 18: only a path whose names follow the artifact name form is
   refusedAsMalformed(await prism.call("get_artifact", { path: "docs/plans/_drafts" }), "docs/plans/_drafts", "_drafts");
   // One malformed name refuses the whole update, so the artifact beside it is not written either.
   refusedAsMalformed(await prism.call("update_artifact", { operations: [
-    { op: "write", path: "docs/plans/y/extra.md", content: "# Extra\n", expectedVersion: null },
+    { op: "write", path: "docs/plans/y/extra.md", content: requirementFile("Extra"), expectedVersion: null },
     { op: "write", path: "docs/plans/.gitignore", content: "*\n", expectedVersion: null }
   ] }), "docs/plans/.gitignore", ".gitignore");
   assert.equal(await exists(path.join(place.store, "artifacts", "plans", "y", "extra.md")), false);
@@ -671,7 +683,7 @@ test("clauses 1 and 18: the configured glossary and roadmap file names follow th
   const prism = await server(context, place, api);
   for (const [file, name] of [["docs/_glossary.md", "_glossary.md"], ["docs/.roadmap.md", ".roadmap.md"]]) {
     refusedAsMalformed(await prism.call("get_artifact", { path: file }), file, name);
-    refusedAsMalformed(await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: "# Glossary\n", expectedVersion: null }] }), file, name);
+    refusedAsMalformed(await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: requirementFile("Glossary"), expectedVersion: null }] }), file, name);
   }
   assert.equal(await exists(path.join(place.store, "artifacts", "glossary.md")), false);
   assert.equal(await exists(path.join(place.store, "artifacts", "roadmap.md")), false);
@@ -681,8 +693,8 @@ test("clauses 1 and 18: files with malformed names that the store holds are left
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
-  const slice = await writeArtifact(prism, "docs/plans/y/slice.md", "# Slice\n");
-  const requirement = await writeArtifact(prism, "docs/requirements/first.md", "# First\n");
+  const slice = await writeArtifact(prism, "docs/plans/y/slice.md", requirementFile("Slice"));
+  const requirement = await writeArtifact(prism, "docs/requirements/first.md", requirementFile("First"));
   // Store sync leaves lock and temporary files beside a store file while it writes, and an older Prism or another tool may have left other names.
   const planted = {
     "plans/y/slice.md.lock": ["docs/plans/y/slice.md.lock", "slice.md.lock"],
@@ -721,29 +733,29 @@ test("clauses 1 and 18: files with malformed names that the store holds are left
 
 test("clause 20: a project without a store keeps its artifacts in the checkout and the artifact tools refuse", async (context) => {
   const place = await workspace(context);
-  const api = await checkout(place, "api", { store: null, files: { "docs/requirements/billing.md": "# Billing\n" } });
+  const api = await checkout(place, "api", { store: null, files: { "docs/requirements/billing.md": requirementFile("Billing") } });
   const prism = await server(context, place, api);
   refused(await prism.call("get_artifact", { path: "docs/requirements/billing.md" }), "store_not_configured");
-  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/other.md", content: "# Other\n", expectedVersion: null }] }), "store_not_configured");
-  assert.equal(await text(path.join(api, "docs", "requirements", "billing.md")), "# Billing\n");
+  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/other.md", content: requirementFile("Other"), expectedVersion: null }] }), "store_not_configured");
+  assert.equal(await text(path.join(api, "docs", "requirements", "billing.md")), requirementFile("Billing"));
   assert.equal(await exists(path.join(api, "docs", "requirements", "other.md")), false);
 });
 
 test("clause 21: an unavailable store or a refused repository name refuses every artifact read and write without using the checkout", async (context) => {
   const place = await workspace(context);
-  const api = await checkout(place, "api", { store: "../missing-store", files: { "docs/requirements/billing.md": "# Billing\n" } });
+  const api = await checkout(place, "api", { store: "../missing-store", files: { "docs/requirements/billing.md": requirementFile("Billing") } });
   const prism = await server(context, place, api);
   const read = refused(await prism.call("get_artifact", { path: "docs/requirements/billing.md" }), "store_unavailable");
   assert.match(read.message, /\.\.\/missing-store/, "the message names the store as configured");
   refused(await prism.call("get_artifact", {}), "store_unavailable");
-  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/other.md", content: "# Other\n", expectedVersion: null }] }), "store_unavailable");
+  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/other.md", content: requirementFile("Other"), expectedVersion: null }] }), "store_unavailable");
   assert.equal(await exists(path.join(api, "docs", "requirements", "other.md")), false);
-  assert.equal(await text(path.join(api, "docs", "requirements", "billing.md")), "# Billing\n");
+  assert.equal(await text(path.join(api, "docs", "requirements", "billing.md")), requirementFile("Billing"));
 
   const web = await checkout(place, "web");
   await commitFiles(web, { ".prism/workflow.md": "## Paths\n- Plans: docs/plans\n\n## Workspace\n- Store: ../store\n" }, "name no repository");
   const unnamed = await server(context, place, web);
   refused(await unnamed.call("get_artifact", {}), "repository_name_missing");
-  refused(await unnamed.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/web.md", content: "# Web\n", expectedVersion: null }] }), "repository_name_missing");
+  refused(await unnamed.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/web.md", content: requirementFile("Web"), expectedVersion: null }] }), "repository_name_missing");
   assert.equal(await exists(path.join(place.store, "artifacts")), false);
 });

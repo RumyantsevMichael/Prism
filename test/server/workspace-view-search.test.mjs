@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import test from "node:test";
-import { isolateGit, networkStore, place, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
+import { isolateGit, networkStore, place, requirementFile, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
 
 // Contract clauses 58-60 of the workspace-view design: Knowledge searches every scope and names left-out components, and checkout actions need a checkout.
 const environment = await isolateGit();
@@ -13,11 +13,11 @@ async function searchable(context) {
   const store = await networkStore(where);
   const apiRoot = await storeCheckout(context, where, "api", store.url, { components: ["- billing: packages/billing"] });
   const webRoot = await storeCheckout(context, where, "web", store.url, { components: ["- pages: packages/pages"] });
-  await writeArtifact(await server(context, where, apiRoot), "docs/requirements/billing.md", "# Billing totals\n", { scope: "repository" });
+  await writeArtifact(await server(context, where, apiRoot), "docs/requirements/billing.md", requirementFile("Billing totals"), { scope: "repository" });
   const web = await server(context, where, webRoot);
-  await writeArtifact(web, "docs/requirements/invoices.md", "# Billing invoices\n", { scope: "repository" });
-  await writeArtifact(web, "docs/requirements/screens.md", "# Billing screens\n", { scope: "component", component: "pages" });
-  await writeArtifact(web, "docs/requirements/shared.md", "# Shared billing terms\n");
+  await writeArtifact(web, "docs/requirements/invoices.md", requirementFile("Billing invoices"), { scope: "repository" });
+  await writeArtifact(web, "docs/requirements/screens.md", requirementFile("Billing screens"), { scope: "component", component: "pages" });
+  await writeArtifact(web, "docs/requirements/shared.md", requirementFile("Shared billing terms"));
   // web's checkout leaves this machine, so its entry in the machine's checkout list no longer counts.
   await web.close();
   await rm(webRoot, { recursive: true, force: true });

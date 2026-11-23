@@ -4,6 +4,7 @@ import { renderView } from "./views/registry.js";
 import { closeEvidence, openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, KNOWLEDGE_PAGES, parseEntityRef, recordKind, recordLabel, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
+import { formatBadgeElement, formatBanner, migratedNote } from "./views/format-marks.js";
 import { highlight, highlightLines, languageOf } from "./views/highlight.js";
 import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, linkTargets, markCurrentSection, renderText, revealInDocument } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
@@ -170,7 +171,8 @@ const ATTENTION_KINDS = [
   ["failed", "Failed verifications", "flask"],
   ["blocked", "Blocked work", "warning"],
   ["ready", "Ready to ship", "check-circle"],
-  ["problems", "Problems", "warning"]
+  ["problems", "Problems", "warning"],
+  ["formats", "Format findings", "document"]
 ];
 // The row of By work that shows the initiatives past the first few; choosing it shows or hides them below it.
 const ATTENTION_MORE = "attention:more";
@@ -1621,6 +1623,9 @@ function describe(path: any) {
   return { ...recordLabel(path, titleIndex()), code: false };
 }
 
+// The names of the format migration runs whose pages were open, by ref.
+const runTitles = new Map<string, string>();
+
 function pageLabel(path: any) {
   const parsed = parseEntityRef(path);
   if (!parsed) {
@@ -1634,6 +1639,7 @@ function pageLabel(path: any) {
   const indexed = (navigation.index?.find((entry) => (entry as any).ref === path) as any)?.label;
   if (indexed) return indexed;
   if (currentContext?.ref === path) return currentContext.value.trail.at(-1)?.label ?? path;
+  if (parsed.kind === "migration-run") return runTitles.get(path) ?? "Format migration";
   return parsed.kind === "slice" ? parsed.slug : parsed.id;
 }
 
@@ -2217,7 +2223,10 @@ function knowledgeMatches(query: any) {
     // A glossary term opens the Glossary, so it is never marked as the open page.
     const results = group.results.filter((result: any) => !isStoreRef(result.ref) || scopeShown(scopeOfRef(result.ref)));
     if (!results.length) continue;
-    const rows = results.map((result: any) => treeItem(result.ref, result.title, { selected: kind !== "glossary-term" && selectedPath === result.ref, start: [navIcon(icon)], tip: result.title }));
+    const rows = results.map((result: any) => {
+      const mark = kind === "glossary-term" ? null : formatBadgeElement(formatOf(result.ref));
+      return treeItem(result.ref, result.title, { selected: kind !== "glossary-term" && selectedPath === result.ref, start: [navIcon(icon)], end: mark ? [mark] : [], tip: result.title });
+    });
     parts.push(section(label), tree(label, rows));
   }
   return parts;
@@ -2331,6 +2340,8 @@ async function refreshContext(path: any) {
   }
   contextSnapshot = snapshot;
   currentContext = { ref: path, value };
+  // A format migration run's tab keeps the name its context gave it after another tab is selected.
+  if (parseEntityRef(path)?.kind === "migration-run") runTitles.set(path, value.trail?.at(-1)?.label ?? "Format migration");
   renderNavigation();
   pageBar.setTrail(trailOf(path), path);
   const history = artifact!.querySelector("[data-shipped-history]");
@@ -2881,6 +2892,8 @@ async function showArtifact(path: any) {
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
     </header>
+    ${formatBanner(data.format)}
+    ${migratedNote(data.artifact)}
     ${view ? viewNoteHtml(view, "view-note view-header-note") : ""}
     ${artifactReviewHtml(data, state)}
     <div class="document-history" data-shipped-history>${documentHistoryHtml(path)}</div>
@@ -2955,6 +2968,7 @@ function viewContext(path: any, state: any) {
     lane: pendingLane?.path === path ? pendingLane.lane : null,
     // Touched by my work reads the slice in the selected tab, or else the one selected last, and passes its answer back for the sidebar's count.
     touchedSlice: () => lastSlice,
+    formatOf,
     fetchTouched: async (slice: string) => (await touchedAnswer(slice)).answer,
     onTouched: (slice: string, answer: any) => noteTouched(slice, answer),
     escapeHtml,
@@ -3022,9 +3036,16 @@ function viewContext(path: any, state: any) {
   };
 }
 
+// The format mark of a record the review app lists, by its ref: each requirement and decision of the index and the glossary carry theirs, and any other ref none.
+function formatOf(ref: any) {
+  if (!ref) return null;
+  const glossary: any = navigation.glossary ?? {};
+  if (glossary.path === ref) return glossary.format ?? null;
+  return ((navigation.index ?? []).find((entry: any) => entry.ref === ref && (entry.kind === "requirement" || entry.kind === "decision")) as any)?.format ?? null;
+}
+
 // The links of a store artifact's read to code files that no checkout on this machine holds.
 const unavailableLinks = (data: any) => Array.isArray(data.links) ? data.links.filter((item: any) => item.resolved === null).length : 0;
-
 function paletteEntries() {
   const places = [
     { ref: "attention", label: "Attention", kind: "place", detail: "What needs you" },

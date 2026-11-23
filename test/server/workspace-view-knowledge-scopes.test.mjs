@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import test from "node:test";
-import { isolateGit, networkStore, place, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
+import { adrFile, git, isolateGit, networkStore, place, requirementFile, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
 import { launch, settle, skip } from "./fixtures/kit-browser.mjs";
+import { answerGate, ok, reviewBrowser } from "./fixtures/workspace-artifacts.mjs";
 
 // The Knowledge place of a workspace lists every scope's requirements, decisions, and glossary terms, and the scope chips narrow every count and list at once.
 const environment = await isolateGit();
@@ -16,12 +17,22 @@ async function scoped(context) {
   const webRoot = await storeCheckout(context, where, "web", store.url);
   const api = await server(context, where, apiRoot);
   const web = await server(context, where, webRoot);
-  await writeArtifact(api, "docs/requirements/shared.md", "# Shared\n\nStatus: Draft\n");
-  await writeArtifact(api, "docs/requirements/billing.md", "# Billing\n\nStatus: Draft\n\n## 1 Invoices\n", { scope: "repository" });
-  await writeArtifact(web, "docs/requirements/billing.md", "# Web billing\n\nStatus: Draft\n", { scope: "repository" });
-  await writeArtifact(api, "docs/ADRs/ledger.md", "# Ledger\n\nStatus: Proposed\n", { scope: "repository" });
-  await writeArtifact(api, "docs/Glossary.md", "# Glossary\n\n## Ledger\n\nThe api's charge table.\n", { scope: "repository" });
-  await writeArtifact(web, "docs/Glossary.md", "# Glossary\n\n## Ledger\n\nThe record of every charge.\n\n## Workspace\n\nEvery repository together.\n");
+  await writeArtifact(api, "docs/requirements/shared.md", requirementFile("Shared"));
+  await writeArtifact(api, "docs/requirements/billing.md", requirementFile("Billing"), { scope: "repository" });
+  await writeArtifact(web, "docs/requirements/billing.md", requirementFile("Web billing"), { scope: "repository" });
+  await writeArtifact(api, "docs/ADRs/ledger.md", adrFile("Ledger"), { scope: "repository" });
+  // A glossary term cites a decided source, so the cited requirements are approved first.
+  // The review browser of the checkout runs in this process, so it resolves the store's clone in this machine's application folder.
+  process.env.PRISM_REVIEW_APP_DIR = where.app;
+  git(apiRoot, "config", "user.name", "Ada Reviewer");
+  const review = await reviewBrowser(context, apiRoot);
+  for (const [file, scope] of [["docs/requirements/billing.md", "repository"], ["docs/requirements/shared.md", "workspace"]]) {
+    const gate = ok(await api.call("update_artifact", { operations: [{ op: "ask_approval", path: file, scope, context: "The glossary cites it." }] })).artifacts[0].gate;
+    const answered = await answerGate(review, { id: gate, choice: "approve" });
+    assert.equal(answered.status, 200, JSON.stringify(answered.body));
+  }
+  await writeArtifact(api, "docs/Glossary.md", "# Glossary\n\nTerms of the api.\n\n<a id=\"ledger\"></a>\n## Ledger\n\nThe api's charge table.\n\nSource: [billing.md§1](requirements/billing.md#1)\n", { scope: "repository" });
+  await writeArtifact(web, "docs/Glossary.md", "# Glossary\n\nTerms of every repository.\n\n<a id=\"ledger\"></a>\n## Ledger\n\nThe record of every charge.\n\nSource: [shared.md§1](requirements/shared.md#1)\n\n<a id=\"workspace\"></a>\n## Workspace\n\nEvery repository together.\n\nSource: [shared.md§1](requirements/shared.md#1)\n");
   const prism = await startApp(context, where);
   await prism.register(apiRoot);
   return { prism, id: workspaceId(store.identity) };

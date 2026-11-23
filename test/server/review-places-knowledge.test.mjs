@@ -48,7 +48,8 @@ test("clause 53: the records search groups matches by kind, titles that contain 
   assert.deepEqual(terms, ["Retry deadline"]);
 
   const signed = await get("/api/records/search?q=signed");
-  assert.deepEqual(signed.groups.map((group) => group.kind), ["requirement", "glossary-term"], "empty groups are left out");
+  // The superseded CSV decision names the signed-exports decision that replaced it, so decisions match too, and the empty Diagrams group is left out.
+  assert.deepEqual(signed.groups.map((group) => group.kind), ["requirement", "decision", "glossary-term"], "empty groups are left out");
 
   assert.deepEqual((await get("/api/records/search?q=d")).groups, [], "one character finds nothing");
   assert.deepEqual((await get("/api/records/search?q=zzzz")).groups, []);

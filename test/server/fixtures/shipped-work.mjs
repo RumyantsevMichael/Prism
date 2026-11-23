@@ -25,13 +25,22 @@ export const finished = () => ({
   audit: slice("Audit downloads", "done", "root", ["docs/requirements/reports.md#2"], { dependencies: ["download"] })
 });
 
+/**
+ * A requirement file that conforms to the requirements format, since work that cites a nonconforming one is refused:
+ * Approved, with one Active Ubiquitous section per title, numbered from 1.
+ */
+export function requirementFile(title, sections, { status = "Approved" } = {}) {
+  const numbered = sections.map((name, index) => `<a id="${index + 1}"></a>\n## ${index + 1}. ${name}\n\nPattern: Ubiquitous\n\nDisposition: Active\n\nRequirement: The system shall ${name.toLowerCase()}.\n\nRationale: The work needs it.\n\nRelated: n/a\n`);
+  return [`# ${title}\n\nStatus: ${status}\nCreated: 2026-09-10\nApproved: ${status === "Approved" ? "2026-09-12" : "n/a"}\n\n## Problem\n\nThe work needs it.\n\n## Goals\n\n- Do the work.\n\n## Non-goals\n\n- n/a\n\n## Design questions\n\n- n/a\n`, ...numbered].join("\n");
+}
+
 export async function project(context) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-shipped-")));
   defer(context, () => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await mkdir(path.join(root, "docs/requirements"), { recursive: true });
   await writeFile(path.join(root, ".prism/workflow.md"), WORKFLOW);
-  await writeFile(path.join(root, "docs/requirements/reports.md"), "# Reports\n\nStatus: Approved\n\n## 1. Download\n\n## 2. Audit\n");
+  await writeFile(path.join(root, "docs/requirements/reports.md"), requirementFile("Reports", ["Download", "Audit"]));
   return root;
 }
 

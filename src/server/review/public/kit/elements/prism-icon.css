@@ -19,6 +19,10 @@
   height: var(--prism-icon-size-xs);
 }
 
+:host([tone="accent"]) {
+  color: var(--prism-color-accent);
+}
+
 :host([tone="ok"]) {
   color: var(--prism-color-success);
 }

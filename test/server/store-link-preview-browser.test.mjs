@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import test from "node:test";
-import { isolateGit, networkStore, place, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
+import { isolateGit, networkStore, place, requirementFile, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
 import { launch, settle, skip } from "./fixtures/kit-browser.mjs";
 
 // A link preview on a workspace's page reads its target the way opening the link does, and shows the whole linked section, or the whole document, in a card that scrolls.
@@ -9,14 +9,17 @@ const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
 const LONG_SECTION = Array.from({ length: 30 }, (_, index) => `Paragraph ${index + 1} of the rounding section.`).join("\n\n");
-const TOTALS = `# Totals\n\nIntro.\n\n## Rounding\n\n${LONG_SECTION}\n\n## Currency\n\nThe next section.\n`;
+// Both files keep the requirement format, which a store write checks, so the linked sections are subsections of the problem.
+const withProblem = (title, problem) => requirementFile(title).replace("## Problem\n\nSomething is missing.\n", `## Problem\n\n${problem}\n`);
+const TOTALS = withProblem("Totals", `Intro.\n\n### Rounding\n\n${LONG_SECTION}\n\n### Currency\n\nThe next section.\n`);
+const BILLING = withProblem("Billing", "See [rounding](totals.md#rounding) and [all totals](totals.md).\n");
 
 async function workspacePage(context, viewport = { width: 1280, height: 800 }) {
   const where = await place(context);
   const store = await networkStore(where);
   const root = await storeCheckout(context, where, "api", store.url);
   const api = await server(context, where, root);
-  await writeArtifact(api, "docs/requirements/billing.md", "# Billing\n\nSee [rounding](totals.md#rounding) and [all totals](totals.md).\n", { scope: "repository" });
+  await writeArtifact(api, "docs/requirements/billing.md", BILLING, { scope: "repository" });
   await writeArtifact(api, "docs/requirements/totals.md", TOTALS, { scope: "repository" });
   const prism = await startApp(context, where);
   await prism.register(root);
