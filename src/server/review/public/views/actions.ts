@@ -185,14 +185,15 @@ function hostChoiceHtml(action: any, field: any, input: any, { disabled, key, re
   return `<div class="action-choice is-wide"><prism-choice class="action-host-choice" aria-label="${escapeHtml(field.label)}" value="${escapeHtml(picked ?? "")}" data-select data-field="${escapeHtml(field.name)}">${options}</prism-choice>${hint}</div>`;
 }
 
-// A form draws a choice as kit choice cards: each option with its consequence under its label, the recommended one with its badge, and a tone
-// the form gives it, such as Request changes in danger. A choice that is not required can be unpicked with Clear choice, leaving the answer to the text fields.
+// A form draws a choice as kit choice cards: each option with its consequence under its label, or, for an option that does not apply, disabled with
+// its reason there, the recommended one with its badge, and a tone the form gives it, such as Request changes in danger. A choice that is not required can be unpicked with Clear choice, leaving the answer to the text fields.
 function cardsHtml(action: any, field: any, input: any, { disabled, key, form }: { disabled: any; key: any; form: any }) {
   const picked = normalized(input[field.name]);
   const recommended = action.recommended?.value ?? null;
   const options = field.options.map((option: any) => {
     const tone = form.tone?.(option) ?? null;
-    return `<prism-choice-option value="${escapeHtml(option.value)}" data-focus-key="${escapeHtml(`${key}|${field.name}|${option.value}`)}"${tone ? ` tone="${escapeHtml(tone)}"` : ""}${disabled ? " disabled" : ""}>${escapeHtml(option.label ?? option.value)}${option.value === recommended ? ` ${badge("Recommended", "accent")}` : ""}${option.consequence ? `<span slot="detail">${escapeHtml(option.consequence)}</span>` : ""}</prism-choice-option>`;
+    const detail = option.reason ?? option.consequence ?? null;
+    return `<prism-choice-option value="${escapeHtml(option.value)}" data-focus-key="${escapeHtml(`${key}|${field.name}|${option.value}`)}"${tone ? ` tone="${escapeHtml(tone)}"` : ""}${disabled || option.reason ? " disabled" : ""}>${escapeHtml(option.label ?? option.value)}${option.value === recommended ? ` ${badge("Recommended", "accent")}` : ""}${detail ? `<span slot="detail">${escapeHtml(detail)}</span>` : ""}</prism-choice-option>`;
   }).join("");
   const clear = field.required ? "" : `<prism-button size="sm" variant="ghost" data-clear data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}|clear`)}" tip="Unchoose the option to answer in your own words"${picked === null || disabled ? " hidden" : ""}><prism-icon name="close" size="xs"></prism-icon>Clear choice</prism-button>`;
   const heading = form.heading ? `<p class="label-caps" aria-hidden="true">${escapeHtml(form.heading)}</p>` : "";
@@ -258,9 +259,9 @@ function actionHtml(action: any, entry: any, { writable, renderMarkdown, heading
   const label = named ? "" : `<span class="action-label" id="${id}-label">${head.label}</span>`;
   const choice = action.fields.find((field: any) => field.kind !== "text");
   let control;
-  // A form that can no longer be sent, such as a question someone already answered, shows only why.
+  // A form that can no longer be sent, such as a question someone already answered, shows only why, and what the form adds to that.
   if (form) {
-    control = action.available ? formHtml(action, entry, state, { disabled, layout, renderMarkdown, form, id }) : `<p class="action-reason">${escapeHtml(action.reason ?? "")}</p>`;
+    control = action.available ? formHtml(action, entry, state, { disabled, layout, renderMarkdown, form, id }) : `<p class="action-reason">${escapeHtml(action.reason ?? "")}</p>${form.unavailable?.(action) ?? ""}`;
     return `<div class="action-row is-form" data-action-key="${escapeHtml(key)}" aria-busy="${Boolean(sending)}">
     <div class="action-control">${control}<p class="action-error" role="alert"${error ? "" : " hidden"}>${escapeHtml(error ?? "")}</p></div>
   </div>`;
@@ -326,12 +327,14 @@ const lastListings = new WeakMap();
  * notice false leaves out the read-only notice, for a page that shows many lists and says it once for all of them.
  * sections, [{ heading, actions }], heads the rows of the action ids each lists with its heading, in the list's order.
  * unavailableButtons keeps the button of an unavailable action without fields, disabled, beside the reason it is unavailable.
- * form draws each action as a form, such as a question's answer: { heading, tone(option), wording(action, state), trailing(action), guidance }, where wording gives
+ * actions, when given, keeps only the listed actions of those ids, such as one question's answer apart from its other actions.
+ * form draws each action as a form, such as a question's answer: { heading, tone(option), wording(action, state), trailing(action), unavailable(action), guidance }, where wording gives
  * { field: { <name>: { label, placeholder } }, submit: { label, variant }, hint, ready } for the form's state. A form keeps the person's input when the record changed
  * under it, and sends once more against the current revision when the action is still available, since its input does not depend on the record's other values.
  * onApplied(action, input, result) replaces the toast of an applied change, and onRefused(action, result) may return the words to show for a refusal.
+ * The list's loaded promise settles once its first listing is drawn, so a page built out of sight can wait for it before it shows; a list drawn from its targets' last listings is loaded at once.
  */
-export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false, groups = null, batch = false, sections = null, unavailableButtons = false, form = null, onApplied = null, onRefused = null }: any) {
+export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false, groups = null, actions = null, batch = false, sections = null, unavailableButtons = false, form = null, onApplied = null, onRefused = null }: any) {
   if (!lastListings.has(api)) lastListings.set(api, new Map());
   const known = lastListings.get(api);
   const listings = new Map(targets.filter((target: any) => known.has(target)).map((target: any) => [target, known.get(target)]));
@@ -354,7 +357,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     return entry;
   }
 
-  const actionsOf = () => wanted.flatMap((target) => ((listings.get(target) as any)?.actions ?? []).filter((action: any) => !groups || groups.includes(action.group)).map((action: any) => ({ target, action })));
+  const actionsOf = () => wanted.flatMap((target) => ((listings.get(target) as any)?.actions ?? []).filter((action: any) => (!groups || groups.includes(action.group)) && (!actions || actions.includes(action.id))).map((action: any) => ({ target, action })));
   const writable = () => wanted.length > 0 && wanted.every((target) => (listings.get(target) as any)?.writable === true);
   const itemOf = (target: any, action: any, items: any[] = actionsOf()) => items.find((item: any) => item.target === target && item.action.id === action.id) ?? { target, action };
 
@@ -895,8 +898,12 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
   };
   document.addEventListener("prism:action", onChange);
   document.addEventListener("prism:poll", onChange);
+  // A list drawn from the last listings of all its targets, as when a page is drawn again, is drawn already, so it does not hold a page
+  // built out of sight, which would otherwise lie beside the page showing, with the same controls, for as long as the listings take to read.
+  const drawn = wanted.every((target) => listings.has(target));
   render();
-  void refresh();
+  const first = refresh().catch(() => {});
+  (panel as any).loaded = drawn ? Promise.resolve() : first;
   return panel;
 }
 

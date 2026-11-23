@@ -361,6 +361,28 @@ test("clause 45: a dialog opens modally over a blurred scrim, keeps focus inside
   }
 });
 
+test("a fixed-height dialog keeps one height whatever its body holds, and fills a phone's window", { skip }, async (context) => {
+  const { page } = await catalog(context, "", { viewport: { width: 1440, height: 900 } });
+  await mount(page, `<prism-dialog id="fixed" heading="Settings" size="lg" height="fixed"><p id="fixed-body">One line.</p></prism-dialog>`);
+  const surface = () => page.evaluate(() => {
+    const box = document.querySelector("#fixed dialog").getBoundingClientRect();
+    return { top: box.top, height: box.height, width: box.width, window: { width: innerWidth, height: innerHeight }, token: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--prism-dialog-height")) };
+  });
+  // The dialog rises into place as it opens, so its edges are measured once that has finished.
+  await page.evaluate(async () => { document.getElementById("fixed").show(); await Promise.all(document.getAnimations().map((animation) => animation.finished)); });
+  const short = await surface();
+  assert.ok(Math.abs(short.height - Math.min(short.token, short.window.height)) <= 1, `a fixed dialog is --prism-dialog-height tall, not ${short.height}`);
+  await page.evaluate(() => { document.getElementById("fixed-body").textContent = "A long body. ".repeat(2000); });
+  await repainted(page);
+  const long = await surface();
+  assert.deepEqual([long.top, long.height], [short.top, short.height], "a longer body moves none of the dialog's edges");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await repainted(page);
+  const phone = await surface();
+  assert.deepEqual([phone.top, phone.width, phone.height], [0, 390, 844], "on a phone a fixed dialog fills the window");
+  await page.evaluate(() => document.getElementById("fixed").close());
+});
+
 test("clause 46: a popover opens from its button as a named non-modal dialog, closes with Escape or a click outside, and stays inside the window", { skip }, async (context) => {
   const { page } = await catalog(context, "", { viewport: { width: 1280, height: 800 } });
   await mount(page, `<div class="end"><prism-button id="who">3 working</prism-button></div>

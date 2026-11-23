@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { forgetAskedGates } from "./approval-deliveries.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { endGateWait, gateWaitStep, personChangesText } from "./change-notices.mjs";
+import { holdGates } from "./gate-askers.mjs";
 
 export const DEFAULT_WAIT_MINUTES = 720;
 export const MAX_WAIT_MINUTES = 1440;
@@ -59,6 +60,53 @@ export function gateSource({ projectRoot, initiative, artifact, scope }: { proje
   return async () => (await readCoordinationState({ projectRoot, initiative })).state?.pending ?? [];
 }
 
+/** The reason a gate that the person withdrew in the review browser closes with, which marks it as withdrawn rather than resolved. */
+export const WITHDRAWN_REASON = "The person withdrew this question without an answer.";
+
+/** The text of a wait that found gates the person withdrew. */
+export function withdrawnText(value: any) {
+  return value.withdrawn.map((item: any) => `The person withdrew user gate ${item.id} in the review browser without an answer. Do not act on it as answered.`).join("\n");
+}
+
+// The waited gates that the person withdrew, as { id, at, by: { name } }: an artifact wait's source lists them as state.withdrawn, and an
+// initiative's are its closed gates with the withdrawal reason, whose gate.withdraw history entry names who withdrew them.
+function withdrawnOf(initiative: string, gateIds: string[], state: any, history: any[]) {
+  if (Array.isArray(state?.withdrawn)) return state.withdrawn.filter((item: any) => gateIds.includes(item.id));
+  const closed = Array.isArray(state?.closed) ? state.closed : [];
+  const entries = Array.isArray(history) && history.length ? history : Array.isArray(state?.history) ? state.history : [];
+  return gateIds.flatMap((id) => {
+    const gate = closed.findLast((item: any) => isRecord(item) && item.id === id && item.reason === WITHDRAWN_REASON && !item.answer);
+    if (!gate) return [];
+    const entry = entries.findLast((item: any) => isRecord(item) && item.action === "gate.withdraw" && item.target === `gate:${initiative}/${id}`);
+    return [{ id, at: typeof gate.closedAt === "string" ? gate.closedAt : entry?.at ?? null, by: { name: typeof entry?.by?.name === "string" ? entry.by.name : null } }];
+  });
+}
+
+/**
+ * One read of the waited gates that the person withdrew, as a wait that finds them returns it, { status: "withdrawn", gateIds, withdrawn }, or null;
+ * a host that cannot wait still learns at once that a gate was withdrawn. A read that fails answers null.
+ */
+export async function peekWithdrawn({ projectRoot, initiative, artifact, scope, gateIds }: { projectRoot: string; initiative?: any; artifact?: any; scope?: any; gateIds: string[] }) {
+  try {
+    const ids = [...new Set(gateIds)];
+    let state: any;
+    if (typeof artifact === "string" && artifact) {
+      const gates = await gateSource({ projectRoot, artifact, scope })();
+      state = { pending: gates.filter((gate: any) => !gate.withdrawn), withdrawn: gates.filter((gate: any) => gate.withdrawn).map((gate: any) => ({ id: gate.id, ...gate.withdrawn })) };
+    } else {
+      const read = await readCoordinationState({ projectRoot, initiative });
+      if (!read.valid) return null;
+      state = read.state ?? {};
+    }
+    const pending = new Set((state.pending ?? []).filter(isRecord).map((gate: any) => gate.id));
+    const answered = (state.pending ?? []).some((gate: any) => isRecord(gate) && ids.includes(gate.id) && gate.answer);
+    const withdrawn = answered ? [] : withdrawnOf(initiative, ids.filter((id) => !pending.has(id)), state, []);
+    return withdrawn.length ? { status: "withdrawn", gateIds: ids, withdrawn } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The text of a wait that the person's changes ended. */
 export function changedText(value: any) {
   return [personChangesText(value.changes), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n");
@@ -67,8 +115,11 @@ export function changedText(value: any) {
 function outcome(initiative: string, gateIds: any, state: any, history: any, shown: any, held: any, known: any, first: any, watchChanges: any) {
   const pending = state?.pending ?? [];
   const present = gateIds.map((id: string) => pending.find((item: any) => isRecord(item) && item.id === id)).filter(Boolean);
-  if (!present.length) return { result: { status: first ? "unknown_gate" : "resolved" } };
   const answered = present.filter((gate: any) => gate.answer);
+  // A gate the person withdrew ends the wait at once, before resolved and unknown_gate, unless another waited gate has an answer to return.
+  const withdrawn = answered.length ? [] : withdrawnOf(initiative, gateIds.filter((id: string) => !present.some((gate: any) => gate.id === id)), state, history);
+  if (withdrawn.length) return { result: { status: "withdrawn", withdrawn } };
+  if (!present.length) return { result: { status: first ? "unknown_gate" : "resolved" } };
   const waiting = present.filter((gate: any) => !gate.answer).map((gate: any) => gate.id);
   if (answered.length) return { result: { status: "answered", answered, waiting }, answers: answered.map((gate: any) => gate.id) };
   if (!watchChanges) return { result: null };
@@ -80,7 +131,7 @@ function outcome(initiative: string, gateIds: any, state: any, history: any, sho
 }
 
 // Each poll renews the wait's hold on its gates for this long, at least ten polls, so the hold of a wait whose process stopped lapses soon.
-const HOLD_LEASE_MS = 15000;
+export const HOLD_LEASE_MS = 15000;
 
 // The wait reads the coordination state record, or an artifact's status record, rather than server memory, so an answer recorded by any review server process ends it.
 // After the first answer it keeps polling briefly, because a user often answers several gates in one visit.
@@ -100,7 +151,7 @@ export async function waitForUserGates(input: any) {
   return result;
 }
 
-async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries, notices = null, watchChanges = false, leaseMs = Math.max(HOLD_LEASE_MS, 10 * pollMs) }: { projectRoot: string; initiative: string; artifact: any; scope: any; gateIds: any; maxWaitMinutes?: any; signal: any; onProgress: any; heartbeatMs?: number; pollMs?: number; settleMs?: number; knownEntries: any; notices?: any; watchChanges?: boolean; leaseMs?: any }) {
+async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries, notices = null, watchChanges = false, leaseMs = Math.max(HOLD_LEASE_MS, 10 * pollMs), holdAskers = true }: { projectRoot: string; initiative: string; artifact: any; scope: any; gateIds: any; maxWaitMinutes?: any; signal: any; onProgress: any; heartbeatMs?: number; pollMs?: number; settleMs?: number; knownEntries: any; notices?: any; watchChanges?: boolean; leaseMs?: any; holdAskers?: boolean }) {
   if (!Array.isArray(gateIds) || !gateIds.length || gateIds.length > MAX_WAIT_GATES || gateIds.some((id) => typeof id !== "string" || !id)) {
     throw new Error(`Pass one to ${MAX_WAIT_GATES} gate ids.`);
   }
@@ -133,7 +184,10 @@ async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, 
     return decision;
   };
   const poll = readArtifactGates
-    ? async () => decide({ pending: await readArtifactGates() }, [], new Set()).result
+    ? async () => {
+      const gates = await readArtifactGates();
+      return decide({ pending: gates.filter((gate: any) => !gate.withdrawn), withdrawn: gates.filter((gate: any) => gate.withdrawn).map((gate: any) => ({ id: gate.id, ...gate.withdrawn })) }, [], new Set()).result;
+    }
     : notices
     ? () => gateWaitStep({ projectRoot, initiative, ...session, waitId, gateIds: ids, until: Date.now() + leaseMs }, decide)
     : async () => {
@@ -144,6 +198,8 @@ async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, 
       return decide(state, history, new Set(history.map((entry: any) => entry.id))).result;
     };
   let value;
+  // Once the first read finds the gates still waiting, the wait holds them in their shared asker records, so every machine that shares the records sees that a session waits.
+  let askerHold: ReturnType<typeof holdGates> | null = null;
   try {
     // Only the wait's very first read throws.
     let firstRead = true;
@@ -166,6 +222,7 @@ async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, 
       if (signal?.aborted) {
         return (value = { status: "cancelled", gateIds: ids });
       }
+      if (holdAskers && !askerHold) askerHold = holdGates(projectRoot, ids.map((gate) => (readArtifactGates ? { gate } : { initiative, gate })));
       if (Date.now() >= deadline) {
         return (value = last ? { ...last, gateIds: ids } : { status: "timeout", gateIds: ids });
       }
@@ -173,6 +230,7 @@ async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, 
     }
   } finally {
     if (heartbeat) clearInterval(heartbeat);
+    if (askerHold) await askerHold.release();
     if (notices) {
       await endGateWait({ projectRoot, initiative, ...session, waitId, cancelled: !value || value.status === "cancelled", hold: value?.status === "timeout" ? hold : null }).catch(() => {});
     }

@@ -134,6 +134,9 @@ export function voidToken(record: any, token: string) {
   record.voidedTokens = [...(Array.isArray(record.voidedTokens) ? record.voidedTokens : []), token].slice(-VOIDED_TOKENS_KEPT);
 }
 
+/** A gate id that a launch's start may name, for a launch that continues an answered gate: an initiative's user gate or an approval gate. */
+export const ANSWERED_GATE_PATTERN = /^(gate|approval)-[0-9a-f]{8,32}$/;
+
 export async function readLaunchRecord(folder: string) {
   try {
     const info = await lstat(path.join(folder, RECORD_FILE));

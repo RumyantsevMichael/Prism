@@ -44,9 +44,11 @@ export const shipDate = (decision: any) => String(decision.at).slice(0, 10);
 /** The shipped decision of a roadmap entry, or null when the entry has none. */
 export const entryShippedDecision = (entry: any) => entry?.decision?.kind === "shipped" && typeof entry.decision.at === "string" ? entry.decision : null;
 
-// The roadmap entry of an initiative: { entry } read from the roadmap record, with entry undefined when the record or the entry is absent,
-// or { problem, error } with why a record that exists cannot be read or parsed.
-async function roadmapEntry(projectRoot: string, initiative: string) {
+/**
+ * The roadmap entry of an initiative: { entry } read from the roadmap record, with entry undefined when the record or the entry is absent,
+ * or { problem, error } with why a record that exists cannot be read or parsed.
+ */
+export async function roadmapEntry(projectRoot: string, initiative: string) {
   let record;
   try {
     const { bytes } = await readRecord(projectRoot, { kind: "roadmap" });

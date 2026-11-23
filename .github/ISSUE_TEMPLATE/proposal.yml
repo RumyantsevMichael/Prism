@@ -1,0 +1,49 @@
+name: Proposal
+description: Propose a feature or a change in behavior. Code for it is accepted only after the maintainer accepts the proposal.
+labels: ["type:enhancement", "needs-design"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not open a pull request for a feature before this proposal is accepted.
+        An accepted proposal is designed through Prism's own workflow first, and the pull request then implements that design.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you are trying to do, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What Prism should do instead, as seen by the person using it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other ways you considered, including working around it.
+  - type: dropdown
+    id: implement
+    attributes:
+      label: Would you like to implement it?
+      options:
+        - "No, I am only proposing it"
+        - "Yes, once it is accepted and designed"
+    validations:
+      required: true
+  - type: dropdown
+    id: ownership
+    attributes:
+      label: Who would own code you write for it?
+      description: An employer or client often owns code written by its employees or contractors, even in their own time. CONTRIBUTING.md explains why this matters.
+      options:
+        - "I would, and no employer or client can claim it"
+        - "My employer or a client may own it"
+        - "I am not sure"
+        - "I am not offering to write code"
+    validations:
+      required: true

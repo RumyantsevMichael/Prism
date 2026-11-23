@@ -18,7 +18,7 @@ import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
 import { declaredView, governingContract, readViews, VIEW_KINDS } from "../workflow/view-declarations.mjs";
-import { appliedArtifactActions, pendingApprovalGates, readStoreArtifactAt, storeArtifactStatuses, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
+import { answeredApprovalGates, appliedArtifactActions, pendingApprovalGates, readStoreArtifactAt, storeArtifactStatuses, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
 import { servedWorkItem } from "../workflow/artifact-status.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
@@ -895,7 +895,7 @@ async function recordedStatuses(projectRoot: string, directory: string) {
 
 /**
  * The glossary: path, the configured path; exists and content, of the glossary this checkout reads; and in a workspace, glossaries,
- * each scope's glossary as { ref, scope, terms }, terms being { term, text } in the order the file defines them.
+ * each scope's glossary as { ref, scope, terms, format }, terms being { term, text } in the order the file defines them and format its mark or null.
  */
 export async function loadGlossary(projectRoot: string) {
   const config = await readWorkflowConfig(projectRoot);
@@ -903,9 +903,11 @@ export async function loadGlossary(projectRoot: string) {
   const scoped = await scopedArtifacts(projectRoot, "glossary", () => true);
   if (scoped) {
     const glossaries = [];
+    const markOf = await loadFormatMarks(projectRoot);
     for (const item of scoped.entries) {
       const content = await readText(projectRoot, item.ref);
-      if (content !== null) glossaries.push({ ref: item.ref, scope: item.label, terms: glossaryEntries(content).map(({ term, text }) => ({ term, text: text.replace(/\s+/g, " ").trim() })) });
+      // A scope's glossary that breaks its format carries its mark, by its checkout path and its scope, as one glossary does.
+      if (content !== null) glossaries.push({ ref: item.ref, scope: item.label, terms: glossaryEntries(content).map(({ term, text }) => ({ term, text: text.replace(/\s+/g, " ").trim() })), format: item.path ? markOf(item.path, item.label) : null });
     }
     const mine = glossaryPath ? await readText(projectRoot, glossaryPath) : null;
     return { path: glossaryPath, exists: glossaries.length > 0, content: mine, glossaries };
@@ -970,8 +972,9 @@ export async function loadAttention(projectRoot: string) {
   const items = formats.filter((entry: any) => entry.count > 0).map((entry: any) => ({ type: "format-findings", artifactType: entry.type, label: entry.label, count: entry.count, earlier: entry.earlier, artifacts: entry.artifacts }));
   // A run's question waits on the person as a gate does, so it counts among the questions that the rail and a background tab's notification count.
   const questions = runs.needsYou.filter((item: any) => item.type === "migration-question").length;
-  const launched = await withLaunchQuestions(projectRoot, attention.needsYou);
-  return { ...attention, needsYou: [...runs.needsYou, ...launched, ...items], watch: [...attention.watch, ...runs.watch], formats, permissions, gateCount: attention.gateCount + questions + permissions.length };
+  // Who asked each gate, and in what state that session is, is read again at each request, since a hold lapses and a session opens or ends at any time.
+  const [launched, answered] = await Promise.all([withLaunchQuestions(projectRoot, attention.needsYou).then((listed) => withAskers(projectRoot, listed)), withAskers(projectRoot, attention.answered)]);
+  return { ...attention, needsYou: [...runs.needsYou, ...launched, ...items], answered, watch: [...attention.watch, ...runs.watch], formats, permissions, gateCount: attention.gateCount + questions + permissions.length };
 }
 
 /**
@@ -993,6 +996,32 @@ async function withLaunchQuestions(projectRoot: string, needsYou: any[]) {
     const launch = item.type === "gate" && item.kind === "assistance" ? asked.get(`${item.initiative?.id}/${item.id}`) : undefined;
     return launch ? { ...item, launch } : item;
   });
+}
+
+/**
+ * Each gate item with its asker: { known, harness, machine, checkout, cloud, launched, thisMachine, state, reason, reach, wake },
+ * read from the gate's shared asker record and, for a session of this machine, from its kept session; no field names a session id.
+ */
+async function withAskers(projectRoot: string, items: any[]) {
+  if (!items.some((item) => item?.type === "gate")) return items;
+  const { readGateAsker } = await import("../workflow/gate-askers.mjs");
+  const { askerReach, askerState, readAskerSessions } = await import("../session/asker-sessions.mjs");
+  const { readGateWakes } = await import("../session/cloud-wakes.mjs");
+  const kept = await readAskerSessions().catch(() => ({} as Record<string, any>));
+  // The latest wake that this machine sent for each gate, which only this machine's review app folder holds.
+  const wakes = await readGateWakes().catch(() => ({} as Record<string, any>));
+  return Promise.all(items.map(async (item) => {
+    if (item?.type !== "gate") return item;
+    const key = item.kind === "approval" ? { gate: item.id } : typeof item.initiative?.id === "string" ? { initiative: item.initiative.id, gate: item.id } : null;
+    if (!key) return item;
+    const target = key.initiative === undefined ? `approval:${key.gate}` : `gate:${key.initiative}/${key.gate}`;
+    const read = await readGateAsker(projectRoot, key as any);
+    const own = Object.hasOwn(kept, target) ? kept[target] : null;
+    const thisMachine = read.known && own !== null;
+    const { state, reason } = await askerState(read, thisMachine ? own : null).catch(() => ({ state: "unknown", reason: "Prism cannot tell whether this session is open." }));
+    const asker = { known: read.known, harness: read.harness, machine: read.machine, checkout: read.checkout, cloud: read.cloud, launched: read.launched, thisMachine, state, reason, reach: askerReach(state, read), wake: Object.hasOwn(wakes, target) ? wakes[target] : null };
+    return { ...item, asker };
+  }));
 }
 
 /**
@@ -1084,7 +1113,9 @@ async function loadMigrationRunView(projectRoot: string, id: string) {
     const contentEntries = typeof migration.content === "string" ? entriesFor(migration.type, migration.content) : [];
     const map = statementMap(migration, { answers: answers ?? {} });
     // A leftover point names its statement only, so its source line comes from the same split of the source that the statement map shows.
-    const sourceLines = new Map((map?.statements ?? []).filter((statement: any) => statement.landed?.kind === "leftover" && statement.landed.point).map((statement: any) => [statement.landed.point, statement.line]));
+    // A leftover that spans several of the map's statements shows the line of its first one, where it starts, as the map does.
+    const sourceLines = new Map();
+    for (const statement of map?.statements ?? []) if (statement.landed?.kind === "leftover" && statement.landed.point && !sourceLines.has(statement.landed.point)) sourceLines.set(statement.landed.point, statement.line);
     return {
       id: migration.id, type: migration.type, source: migration.source, target: migration.target, separateSource: migration.separateSource, summary: migration.summary,
       status: headerStatus(migration.content), proposedAt: migration.proposedAt ?? null,
@@ -1241,6 +1272,7 @@ async function computeAttention(projectRoot: string) {
     if (item?.readyToShip && item.state !== "shipped") watch.push({ type: "ready-to-ship", initiative });
   }
   needsYou.push(...await approvalGates(projectRoot));
+  answered.push(...await answeredApprovals(projectRoot));
   needsYou.sort((left, right) => (left.type === "gate") === (right.type === "gate") ? gateOrder(left, right) : left.type === "gate" ? -1 : 1);
   if (roadmap.error) needsYou.push({ type: "roadmap-problem", path: config.paths.roadmap, message: roadmap.error });
   else if (!roadmap.exists && config.paths.roadmap) needsYou.push({ type: "roadmap-missing", path: roadmap.recordPath });
@@ -1281,6 +1313,28 @@ async function approvalGates(projectRoot: string) {
     workItem: await workItem(servedWorkItem(gate)),
     ...(holders.get(gate.id) > 1 ? { ambiguous: true } : {})
   })));
+}
+
+/**
+ * The answered approval gates whose asker Prism recorded, as Attention items of kind approval with their answer { choice, note, answeredAt },
+ * kept until a newer approval of the same artifact is asked or 7 days after the answer, so the person can continue the work from the card.
+ */
+async function answeredApprovals(projectRoot: string) {
+  const config = await readWorkflowConfig(projectRoot);
+  if ((config.workspace?.store ?? null) === null) return [];
+  const gates = await answeredApprovalGates(projectRoot).catch(() => []);
+  if (!gates.length) return [];
+  const { readGateAsker } = await import("../workflow/gate-askers.mjs");
+  const workItem = servedWorkItems(projectRoot);
+  const items = await Promise.all(gates.map(async (gate: any) => {
+    if (!(await readGateAsker(projectRoot, { gate: gate.id })).known) return null;
+    return {
+      type: "gate", id: gate.id, kind: "approval", status: gate.status, recorded: gate.recorded, question: gate.question, context: gate.context ?? null, options: null, recommended: null,
+      askedAt: gate.askedAt, answer: { choice: gate.answer.choice, note: gate.answer.note ?? null, answeredAt: gate.answer.answeredAt }, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope },
+      workItem: await workItem(servedWorkItem(gate))
+    };
+  }));
+  return items.filter(Boolean);
 }
 
 /**

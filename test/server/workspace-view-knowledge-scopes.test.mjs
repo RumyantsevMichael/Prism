@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import test from "node:test";
-import { adrFile, git, isolateGit, networkStore, place, requirementFile, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
+import { adrFile, git, isolateGit, networkStore, place, pushToRemote, requirementFile, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
 import { launch, settle, skip } from "./fixtures/kit-browser.mjs";
 import { answerGate, ok, reviewBrowser } from "./fixtures/workspace-artifacts.mjs";
 
@@ -10,7 +10,7 @@ const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
 // One store with requirements in the workspace, api, and web scopes, a decision in api, and glossaries in the api and workspace scopes that both define Ledger; web writes the workspace one, since api already sees its own.
-async function scoped(context) {
+async function scoped(context, { brokenWorkspaceGlossary = false } = {}) {
   const where = await place(context);
   const store = await networkStore(where);
   const apiRoot = await storeCheckout(context, where, "api", store.url);
@@ -33,6 +33,8 @@ async function scoped(context) {
   }
   await writeArtifact(api, "docs/Glossary.md", "# Glossary\n\nTerms of the api.\n\n<a id=\"ledger\"></a>\n## Ledger\n\nThe api's charge table.\n\nSource: [billing.md§1](requirements/billing.md#1)\n", { scope: "repository" });
   await writeArtifact(web, "docs/Glossary.md", "# Glossary\n\nTerms of every repository.\n\n<a id=\"ledger\"></a>\n## Ledger\n\nThe record of every charge.\n\nSource: [shared.md§1](requirements/shared.md#1)\n\n<a id=\"workspace\"></a>\n## Workspace\n\nEvery repository together.\n\nSource: [shared.md§1](requirements/shared.md#1)\n");
+  // A workspace glossary that another machine pushed without the sources its terms need breaks the glossary format, since every write through Prism is checked.
+  if (brokenWorkspaceGlossary) await pushToRemote(where, store.bare, { "artifacts/glossary.md": "# Glossary\n\nTerms of every repository.\n\n<a id=\"ledger\"></a>\n## Ledger\n\nThe record of every charge.\n" });
   const prism = await startApp(context, where);
   await prism.register(apiRoot);
   return { prism, id: workspaceId(store.identity) };
@@ -115,4 +117,19 @@ test("the glossary lists each scope's terms in one table and marks a term anothe
   assert.equal(rows.length, 3);
   assert.ok(rows.filter((row) => row.startsWith("Ledger")).every((row) => /also defines it/.test(row)), "both definitions of Ledger name the other scope");
   assert.ok(!/also defines it/.test(rows.find((row) => row.startsWith("Workspace"))));
+});
+
+test("the glossary shows a banner with the findings of each scope's glossary that breaks its format, and counts it under the title", { skip, timeout: 120000 }, async (context) => {
+  const { prism, id } = await scoped(context, { brokenWorkspaceGlossary: true });
+  const browser = await launch(context);
+  const page = await (await browser.newContext()).newPage();
+  await page.goto(`${prism.viewer}/w/${id}/review?artifact=glossary`);
+  await settle(page);
+  await table(page).waitFor({ timeout: 10000 });
+  const banners = page.locator("#artifact prism-banner[data-format-mark]");
+  await banners.first().waitFor({ timeout: 10000 });
+  assert.equal(await banners.count(), 1, "only the workspace's glossary breaks its format");
+  assert.equal(await banners.first().getAttribute("heading"), "The glossary of workspace breaks its format");
+  assert.ok(await banners.first().locator(".format-finding").count() >= 1, "the banner lists what breaks");
+  await subReads(page, /1 of 2 glossaries breaks its format/);
 });

@@ -43,6 +43,7 @@ test("clauses 6, 8, 9: a requirements list marks the nonconforming file's row wi
   assert.equal(found.length, 1, JSON.stringify(found));
   assert.deepEqual([found[0].tag, found[0].tone, found[0].text], ["prism-badge", "warning", "Breaks its format"]);
   assert.match(found[0].title, /requirements\.header/);
+  assert.match(found[0].title, /^Line \d+: \S.* \(requirements\.[a-z-]+\)$/m, "the note says what breaks, not only the rule");
   const row = page.locator("[data-format-mark]").first().locator("xpath=ancestor::*[contains(@class, 'prism-lib-row') or self::prism-list-item][1]");
   assert.match(await row.innerText(), /Old notes|old-a/);
   assert.deepEqual(page.errors, []);

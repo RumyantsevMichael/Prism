@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { answerText, changedText, HOOK_WAIT_MINUTES, waitForUserGates } from "../server/workflow/gate-wait.mjs";
+import { answerText, changedText, HOOK_WAIT_MINUTES, waitForUserGates, withdrawnText } from "../server/workflow/gate-wait.mjs";
 import { NOTICE_FOLDER } from "../server/workflow/change-notices.mjs";
 import { sessionHolder } from "../server/workflow/slice-claims.mjs";
 import { takeWaitRequest } from "../server/workflow/gate-wait-requests.mjs";
@@ -52,6 +52,9 @@ export async function waitForGateAnswers({ input = process.stdin, directory, pol
       "Act on each change at the point its effect names, then call wait_for_user_gate again for the gates still waiting."
     ];
     return { decision: "block", reason: lines.join("\n") };
+  }
+  if (result.status === "withdrawn") {
+    return { decision: "block", reason: ["The person withdrew a question while Prism's wait_for_user_gate call waited after your turn; this is its result.", withdrawnText(result)].join("\n") };
   }
   if (result.status !== "answered") return null;
   const lines = [

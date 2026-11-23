@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -6,7 +7,7 @@ import test from "node:test";
 import { createViewVersions } from "../../dist/server/review/view-versions.mjs";
 import { collectValidity, validUntil } from "../../dist/server/workflow/view-validity.mjs";
 import { isLive } from "../../dist/server/workflow/slice-claims.mjs";
-import { settled } from "./fixtures/wait.mjs";
+import { pause, settled } from "./fixtures/wait.mjs";
 
 async function folder(t) {
   const root = await mkdtemp(path.join(tmpdir(), "prism-view-versions-"));
@@ -26,6 +27,47 @@ test("a watched change to a store file gives the root a new version at once, and
   assert.equal(await versions.current(root), first, "nothing changed, so the version holds");
   await writeFile(path.join(root, "store", "initiatives", "added.json"), "{}\n");
   await settled(() => versions.current(root), (version) => version !== first);
+});
+
+// Windows watches no folder, so there only the listings that the tests below check notice changes.
+const watchedOnly = process.platform === "win32" ? "folders are not watched on Windows" : false;
+
+test("a watched file that another write replaces by a rename, again and again, gives the root a new version each time without a listing", { skip: watchedOnly }, async (t) => {
+  const root = await folder(t);
+  const clock = 1000;
+  // The clock stands still, so no listing runs and only the watcher can change the version.
+  const versions = createViewVersions({ targetsOf: async () => ({ folders: [path.join(root, "store")], files: [], gitRoots: [] }), isEventless: async () => false, now: () => clock });
+  t.after(() => versions.close());
+  // Every write Prism makes writes a new file and renames it over the old one, and here each rename lands before the watcher's process reads an event, as on a busy machine.
+  const record = path.join(root, "store", "initiatives", "record.json");
+  writeFileSync(record, "0\n");
+  let version = await versions.current(root);
+  for (let write = 1; write <= 5; write += 1) {
+    writeFileSync(`${record}.tmp`, `${write}\n`);
+    renameSync(`${record}.tmp`, record);
+    const next = await settled(() => versions.current(root), (read) => read !== version);
+    assert.notEqual(next, version, `rewrite ${write} changes the version`);
+    version = next;
+  }
+});
+
+test("a folder made after the watcher started is watched too, and a file written into it at once is counted", { skip: watchedOnly }, async (t) => {
+  const root = await folder(t);
+  const clock = 1000;
+  const versions = createViewVersions({ targetsOf: async () => ({ folders: [path.join(root, "store")], files: [], gitRoots: [] }), isEventless: async () => false, now: () => clock });
+  t.after(() => versions.close());
+  const first = await versions.current(root);
+  const made = path.join(root, "store", "initiatives", "reports", "slices");
+  mkdirSync(made, { recursive: true });
+  writeFileSync(path.join(made, "totals.json"), "{}\n");
+  const created = await settled(() => versions.current(root), (read) => read !== first);
+  assert.notEqual(created, first, "the new folder and its file change the version");
+  // Once the creation's events have arrived, a later write inside the new folder is reported by that folder's own watcher.
+  await pause(300, "the creation's last events arrive, so a change after them comes from the later write alone");
+  const seen = await versions.current(root);
+  writeFileSync(`${path.join(made, "totals.json")}.tmp`, '{"changed":true}\n');
+  renameSync(`${path.join(made, "totals.json")}.tmp`, path.join(made, "totals.json"));
+  assert.notEqual(await settled(() => versions.current(root), (read) => read !== seen), seen, "a rewrite in the new folder changes the version");
 });
 
 test("without a watcher, an in-place edit is found by the listing check within the short interval", async (t) => {

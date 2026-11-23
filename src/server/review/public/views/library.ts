@@ -213,15 +213,19 @@ function renderLibrary(container: any, kind: any, data: any, ctx: any) {
   const all = narrowed ? every.filter((entry: any) => !entry.scope || ctx.scopeShown(entry.scope)) : every;
   const count = narrowed ? `${all.length} of ${plural(every.length, NOUNS[kind])}` : `${plural(every.length, NOUNS[kind])}${scopes.length > 1 ? ` in ${plural(scopes.length, "scope")}` : ""}`;
   const note = narrowed ? `<p class="library-narrowed muted" data-library-narrowed>Narrowed to ${escapeHtml(andList(narrowed))}. <a href="#" data-show-all-scopes>Show all scopes</a></p>` : "";
-  // The line under the title also counts the shown files that break their format.
-  const broken = all.filter((entry: any) => entry.format).length;
-  const sub = pageSub(`${escapeHtml(library.sub(count))}${broken ? ` · <b>${broken} of ${all.length}</b> ${broken === 1 ? "breaks its" : "break their"} format` : ""}`);
+  // The line under the title also counts the shown files that break their format: the records themselves, or for the glossary, which lists terms, the scopes' glossaries,
+  // each of which that breaks its format also shows its findings in a banner above the terms.
+  const glossaries = kind === "glossary" ? (data.glossaries ?? []).filter((glossary: any) => !narrowed || ctx.scopeShown(glossary.scope)) : null;
+  const files = glossaries ?? all;
+  const broken = files.filter((entry: any) => entry.format).length;
+  const sub = pageSub(`${escapeHtml(library.sub(count))}${broken ? ` · <b>${broken} of ${glossaries ? `${files.length} ${files.length === 1 ? "glossary" : "glossaries"}` : files.length}</b> ${broken === 1 ? "breaks its" : "break their"} format` : ""}`);
+  const notices = (glossaries ?? []).filter((glossary: any) => glossary.format).map((glossary: any) => formatBanner(glossary.format, glossaries!.length > 1 ? `The glossary of ${glossary.scope} breaks its format` : "This glossary breaks its format")).join("");
   const bindNarrowed = () => container.querySelector("[data-show-all-scopes]")?.addEventListener("click", (event: any) => {
     event.preventDefault();
     ctx.showAllScopes?.();
   });
   if (!all.length) {
-    const body = `${note}${every.length ? '<p class="prism-lib-nothing">No record of the chosen scopes.</p>' : library.empty(data)}`;
+    const body = `${note}${notices}${every.length ? '<p class="prism-lib-nothing">No record of the chosen scopes.</p>' : library.empty(data)}`;
     container.innerHTML = setPageSub(container, sub, ctx) ? body : `${sub}${body}`;
     bindNarrowed();
     return;
@@ -233,7 +237,7 @@ function renderLibrary(container: any, kind: any, data: any, ctx: any) {
   const effective = (value: any) => choices.some(([name]: any) => name === value) ? value : choices[0][0];
   let grouping = effective(preference(key));
   const filter = () => ctx.state.libraryFilter[kind] ?? "";
-  const body = `${note}${toolbar(kind, grouping, filter(), choices)}<prism-lib-table class="library-table is-${kind}">${head(library.columns)}<div class="library-rows" data-library-rows></div></prism-lib-table>`;
+  const body = `${note}${notices}${toolbar(kind, grouping, filter(), choices)}<prism-lib-table class="library-table is-${kind}">${head(library.columns)}<div class="library-rows" data-library-rows></div></prism-lib-table>`;
   container.innerHTML = setPageSub(container, sub, ctx) ? body : `${sub}${body}`;
   bindNarrowed();
   const rows = container.querySelector("[data-library-rows]");

@@ -8,7 +8,7 @@ import { runCheckout, runFor } from "./fixtures/format-migration-runs.mjs";
 import { launch, openPage, skip as noBrowser, waitForView } from "./fixtures/kit-browser.mjs";
 import { startActionReview } from "./fixtures/review-actions.mjs";
 
-// A leftover point on an asking run's page shows, beneath its quoted statement, the line of the source that holds it.
+// A leftover point on an asking run's page shows, beneath its quoted statement, the line of the source where that statement starts.
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-run-leftover-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -18,10 +18,10 @@ test.after(() => rm(privateData, { recursive: true, force: true }));
 const skip = noBrowser || (process.platform === "win32" ? "the stub hosts are POSIX scripts" : false);
 const TERMS = "docs/requirements/terms.md";
 const PURPOSE = "Terms used by the payments team.";
-const SOURCE = `# Payment terms\n\n${PURPOSE}\n\n| Term | Definition |\n| --- | --- |\n| Backoff | The wait between two attempts. |\n`;
 
-test("a leftover point shows the source line of its statement", { skip, timeout: 120000 }, async (context) => {
-  const { root, call, hosts } = await runCheckout(context, { ...CONFORMING, [TERMS]: SOURCE });
+// Opens the page of a run whose one leftover is purpose and checks the source line its point shows.
+async function leftoverLine(context, purpose, line) {
+  const { root, call, hosts } = await runCheckout(context, { ...CONFORMING, [TERMS]: `# Payment terms\n\n${purpose}\n\n| Term | Definition |\n| --- | --- |\n| Backoff | The wait between two attempts. |\n` });
   const saved = { ...process.env };
   Object.assign(process.env, hosts.env, { PRISM_REVIEW_APP_DIR: hosts.app, PLUGIN_DATA: privateData });
   context.after(() => {
@@ -30,7 +30,7 @@ test("a leftover point shows the source line of its statement", { skip, timeout:
   });
   const run = await runFor(call, TERMS);
   const glossary = CONFORMING[PATHS.glossary];
-  const leftover = { statement: PURPOSE, home: "The project instructions." };
+  const leftover = { statement: purpose, home: "The project instructions." };
   const proposal = (extra = {}) => ({ run, type: "glossary", source: TERMS, target: PATHS.glossary, content: `${glossary}\n<a id="backoff"></a>\n## Backoff\n\nThe wait between two attempts.\n\nSource: migration\n`, summary: "Moves the payments team's one term into the glossary.", leftovers: [leftover], ...extra });
   const bare = await call("propose_migration", proposal());
   assert.equal(bare.value?.code, "migration_unsettled", bare.text);
@@ -42,8 +42,12 @@ test("a leftover point shows the source line of its statement", { skip, timeout:
   const browser = await launch(context);
   const page = await openPage(browser, opened.at(-1));
   await waitForView(page);
-  const quote = page.locator("blockquote.run-quote", { hasText: PURPOSE });
+  const quote = page.locator("blockquote.run-quote", { hasText: purpose.split("\n")[0] });
   await quote.first().waitFor();
-  assert.match(await quote.first().innerText(), /Line 3 of the source/);
+  assert.match(await quote.first().innerText(), new RegExp(`Line ${line} of the source`));
   assert.deepEqual(page.errors, []);
-});
+}
+
+test("a leftover point shows the source line of its statement", { skip, timeout: 120000 }, (context) => leftoverLine(context, PURPOSE, 3));
+
+test("a leftover statement that spans lines shows the line it starts on", { skip, timeout: 120000 }, (context) => leftoverLine(context, `${PURPOSE}\nThey review it every quarter.`, 3));

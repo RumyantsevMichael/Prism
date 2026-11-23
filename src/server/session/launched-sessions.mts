@@ -9,7 +9,7 @@ import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { listInitiatives } from "../workflow/record-store.mjs";
 import { readRoadmap } from "../workflow/roadmap.mjs";
 import { readCoordinationState } from "../workflow/state.mjs";
-import { checkedCoordinator, hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { askerResumeOf, checkedCoordinator, hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 import {
   LAUNCH_ID_PATTERN,
   LaunchError,
@@ -29,6 +29,7 @@ import {
   launchCoordinator,
   launchFolder,
   launchRunning,
+  ANSWERED_GATE_PATTERN,
   launchView,
   launchesDirectory,
   listLaunchRecords,
@@ -89,6 +90,8 @@ async function withLaunchLock<T>(env: NodeJS.ProcessEnv, action: () => Promise<T
 }
 
 async function otherRunning(env: NodeJS.ProcessEnv, { initiative = null, migrationRun = null, store, except = null }: { initiative?: string | null; migrationRun?: string | null; store: string; except?: any }) {
+  // A resumed asker of an approval gate that names no initiative shares the one-session rule with no other session.
+  if (initiative === null && migrationRun === null) return false;
   const now = Date.now();
   for (const { record } of await listLaunchRecords(env)) {
     if (!record || record.id === except) continue;
@@ -158,14 +161,15 @@ const RECORDED_CHOICE_INVALID = "The session's recorded model choice is not one 
  * Starts a launched session's first run with the coordinator's choice { provider, model, effort, typed }, each part null for the
  * host default: { launch }, its view in state running. The launch record keeps the choice, and every resume runs with it.
  */
-export async function startLaunch({ projectRoot, initiative, host, coordinator = null, env = process.env }: { projectRoot: string; initiative: string; host: string; coordinator?: unknown; env?: NodeJS.ProcessEnv }) {
+export async function startLaunch({ projectRoot, initiative, host, coordinator = null, answeredGate = null, env = process.env }: { projectRoot: string; initiative: string; host: string; coordinator?: unknown; answeredGate?: string | null; env?: NodeJS.ProcessEnv }) {
+  if (answeredGate !== null && !ANSWERED_GATE_PATTERN.test(answeredGate)) throw refuse("invalid_gate", "The answered gate is not a gate id that Prism records.");
   const definition = hostDefinition(host, env);
   if (!definition) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code, codex, and the ACP agents that this computer offers.`);
   const choice = checkedCoordinator(coordinator);
   if (!choice) throw refuse("invalid_choice", INVALID_CHOICE);
   const checkout = await realpath(projectRoot);
   if (!(await initiativeExists(checkout, initiative))) throw refuse("unknown_initiative", `No initiative ${String(initiative)} exists in this checkout.`);
-  return launchSession({ checkout, subject: { initiative, migrationRun: null }, host, coordinator: choice, env });
+  return launchSession({ checkout, subject: { initiative, migrationRun: null }, host, coordinator: choice, answeredGate, env });
 }
 
 /**
@@ -180,7 +184,7 @@ export async function startMigrationLaunch({ projectRoot, migrationRun, host, co
   if (!choice) throw refuse("invalid_choice", INVALID_CHOICE);
   if (typeof migrationRun !== "string" || !/^run-[0-9a-f]{16}$/.test(migrationRun)) throw refuse("unknown_migration_run", `No format migration run ${String(migrationRun)} exists.`);
   const checkout = await realpath(projectRoot);
-  return launchSession({ checkout, subject: { initiative: null, migrationRun }, host, coordinator: choice, access: access === "full" ? "full" : "read-only", readRoots: host === "codex" ? await migrationReadRoots(checkout, host, env) : [], env });
+  return launchSession({ checkout, subject: { initiative: null, migrationRun }, host, coordinator: choice, access: access === "full" ? "full" : "read-only", readRoots: host === "codex" ? await migrationReadRoots(checkout, host, env, (await resolveHost(host, env))?.executable ?? null) : [], env });
 }
 
 // The folder this Prism runs from, which holds its skills.
@@ -191,11 +195,12 @@ const PRISM_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
  * where the host keeps the skills it runs, each by its real path when it exists and is not the checkout, inside it, or holding it.
  * A run's Claude Code session adds no folder, since it has no built-in tool and takes the format reference from get_migration_run.
  */
-export async function migrationReadRoots(checkout: string, host: string, env: NodeJS.ProcessEnv = process.env) {
+export async function migrationReadRoots(checkout: string, host: string, env: NodeJS.ProcessEnv = process.env, executable: string | null = null) {
   const home = os.homedir();
   const hostHome = host === "codex" ? (env.CODEX_HOME || path.join(home, ".codex")) : (env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"));
   const roots: string[] = [];
-  for (const candidate of [PRISM_ROOT, path.join(hostHome, "plugins", "cache")]) {
+  const install = executable ? await installFolder(executable) : null;
+  for (const candidate of [PRISM_ROOT, path.join(hostHome, "plugins", "cache"), ...(install ? [install] : [])]) {
     let real;
     try {
       real = await realpath(candidate);
@@ -210,7 +215,24 @@ export async function migrationReadRoots(checkout: string, host: string, env: No
   return roots;
 }
 
-async function launchSession({ checkout, subject, host, coordinator, access = "full", readRoots = [], env }: { checkout: string; subject: LaunchSubject; host: string; coordinator: any; access?: string; readRoots?: string[]; env: NodeJS.ProcessEnv }) {
+/**
+ * The folder that holds the host's own program, which its sandbox runs again inside itself on Linux: for a program that a package manager installed,
+ * the scope folder above its package, which also holds its platform binary, and otherwise the folder of the program itself, or null when it cannot be read.
+ */
+async function installFolder(executable: string) {
+  let real;
+  try {
+    real = await realpath(executable);
+  } catch {
+    return null;
+  }
+  const parts = real.split(path.sep);
+  const modules = parts.lastIndexOf("node_modules");
+  if (modules >= 0 && parts[modules + 1]?.startsWith("@")) return parts.slice(0, modules + 2).join(path.sep);
+  return path.dirname(real);
+}
+
+async function launchSession({ checkout, subject, host, coordinator, access = "full", readRoots = [], answeredGate = null, env }: { checkout: string; subject: LaunchSubject; host: string; coordinator: any; access?: string; readRoots?: string[]; answeredGate?: string | null; env: NodeJS.ProcessEnv }) {
   const resolved = await resolveHost(host, env);
   if (!resolved!.available) throw refuse("host_unavailable", resolved!.reason!);
   const store = await storeLocation(checkout);
@@ -235,6 +257,59 @@ async function launchSession({ checkout, subject, host, coordinator, access = "f
       createdAt: new Date().toISOString(),
       hostSessionId: host === "claude-code" ? randomUUID() : null,
       coordinator,
+      // A launch that continues an answered gate names it in its first run's start, so the orchestrate skill acts on that answer first.
+      ...(answeredGate === null ? {} : { answeredGate }),
+      runs: []
+    };
+    await writeLaunchRecord(folder, record);
+    try {
+      return { launch: await startRun({ folder, record, env, cause: "launch" }) };
+    } catch (error) {
+      await removeLaunchFolder(folder, record);
+      throw error;
+    }
+  });
+}
+
+const ASKER_RUNNING = "The session is open, so a resume would run beside it.";
+
+/** Whether a run of a launched session that continues this host session id runs on this machine, such as a resumed asker. */
+export async function hostSessionRunning(env: NodeJS.ProcessEnv, hostSessionId: string, except: string | null = null) {
+  const now = Date.now();
+  return (await listLaunchRecords(env)).some(({ record }) => record && record.id !== except && record.hostSessionId === hostSessionId && launchRunning(record, now));
+}
+
+/**
+ * Resumes the session that asked a gate as a launched session of this machine: a Claude Code or Codex session under its kept id in its
+ * kept checkout, whose first run is a resume with the message that the person answered the gate; resume is { gate, initiative, artifact },
+ * initiative null for an approval gate that names none. Answers { launch }, its view in state running. The caller confirmed it outside the page.
+ */
+export async function startAskerResume({ checkout: kept, host, hostSessionId, resume, env = process.env }: { checkout: string; host: string; hostSessionId: string; resume: unknown; env?: NodeJS.ProcessEnv }) {
+  if (host !== "claude-code" && host !== "codex") throw refuse("unknown_host", `${hostDefinition(host, env)?.label ?? String(host)} does not let Prism resume a session by its id.`);
+  if (!validHostSessionId(hostSessionId)) throw refuse("no_host_session", "Prism kept no session id for it.");
+  const asker = askerResumeOf(resume);
+  if (!asker) throw refuse("invalid_gate", "The answered gate is not a gate id that Prism records.");
+  const checkout = await realpath(kept).catch(() => null);
+  if (!checkout) throw refuse("launch_failed", `The checkout ${kept} of the session that asked no longer exists.`);
+  const resolved = await resolveHost(host, env);
+  if (!resolved!.available) throw refuse("host_unavailable", resolved!.reason!);
+  const store = await storeLocation(checkout);
+  return withLaunchLock(env, async () => {
+    if (await otherRunning(env, { initiative: asker.initiative, store })) throw refuse("launch_running", runningMessage(asker.initiative!));
+    if (await hostSessionRunning(env, hostSessionId)) throw refuse("launch_running", ASKER_RUNNING);
+    const id = newLaunchId();
+    const folder = await createLaunchFolder(env, id);
+    const record = {
+      id,
+      initiative: asker.initiative,
+      host,
+      checkout,
+      store,
+      createdAt: new Date().toISOString(),
+      hostSessionId,
+      coordinator: checkedCoordinator(null),
+      // Every run of a resumed asker continues its own session under the kept id; only its first tells it that its gate has an answer.
+      askerResume: asker,
       runs: []
     };
     await writeLaunchRecord(folder, record);
@@ -256,6 +331,8 @@ async function resumeLocked(env: NodeJS.ProcessEnv, folder: string, id: string, 
   if (launchRunning(record)) throw refuse("launch_running", "The session is running.");
   if (await otherRunning(env, { ...subjectOf(record), store: record.store, except: id })) throw refuse("launch_running", subjectRunningMessage(subjectOf(record)));
   if (!validHostSessionId(record.hostSessionId)) throw refuse("no_host_session", "The session never reported its host session id, so it cannot be resumed.");
+  // Another launched session that continues the same host session, such as a second resume of one asker, would run beside this one.
+  if (await hostSessionRunning(env, record.hostSessionId, id)) throw refuse("launch_running", ASKER_RUNNING);
   if (!launchCoordinator(record)) throw refuse("invalid_choice", RECORDED_CHOICE_INVALID);
   const resolved = await resolveHost(record.host, env);
   if (!resolved?.available) throw refuse("host_unavailable", resolved?.reason ?? `Unknown host ${record.host}.`);
@@ -281,6 +358,7 @@ export async function resumeRefusal({ id, env = process.env }: { id: string; env
   if (launchRunning(record)) return "The session is running.";
   if (await otherRunning(env, { ...subjectOf(record), store: record.store, except: id })) return subjectRunningMessage(subjectOf(record));
   if (!validHostSessionId(record.hostSessionId)) return "The session never reported its host session id, so it cannot be resumed.";
+  if (await hostSessionRunning(env, record.hostSessionId, id)) return ASKER_RUNNING;
   if (!launchCoordinator(record)) return RECORDED_CHOICE_INVALID;
   const resolved = await resolveHost(record.host, env);
   return resolved?.available ? null : resolved?.reason ?? `Unknown host ${record.host}.`;
@@ -493,7 +571,7 @@ export async function settleRunResult({ id, token, normal, resumed, lastMessage,
       && typeof run.failure !== "string" && typeof run.hostError !== "string" && !(Array.isArray(run.refusals) && run.refusals.length) && !(run.refusalCount > 0);
     if (!normal || resumed || !ended || (await readStopRequest(folder))?.token === token) return;
     const marks = await readResultMarks(folder);
-    if (await runHasResult({ checkout: record.checkout, initiative: record.initiative, since: run.startedAt, pauses: marks.pauses })) return;
+    if (await runHasResult({ checkout: record.checkout, initiative: record.initiative, since: run.startedAt, until: run.endedAt, pauses: marks.pauses })) return;
     const asked = await askNoResultGate(record, noResultGates(marks), lastMessage, env);
     if (!("gate" in asked)) {
       mark = { run: token, gate: null, failure: asked.failure!, at: new Date().toISOString() };

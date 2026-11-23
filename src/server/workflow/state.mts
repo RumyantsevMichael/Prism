@@ -1173,6 +1173,12 @@ export async function updateCoordinationState({ projectRoot, initiative, expecte
     return applyStateChange(resolved, expectedRevision, changes, standing);
   }, error, { renew: Boolean(changes.activeOperations?.length) }));
   await markLaunchedGates(projectRoot, initiative, result.openedGates);
+  // Each gate opened records its asker beside the gate, never as a field of it, since earlier releases refuse a gate field they do not know.
+  const opened = (Array.isArray(result.openedGates) ? result.openedGates : []).map((gate: any) => gate?.id).filter((id: any) => typeof id === "string");
+  if (opened.length) {
+    const { recordGateAskers } = await import("./gate-askers.mjs");
+    await recordGateAskers(projectRoot, opened.map((gate: string) => ({ initiative, gate })));
+  }
   return result;
 }
 
@@ -1306,8 +1312,8 @@ export async function answerUserGate({ projectRoot, initiative, id, choice = nul
 /**
  * The review app's one write of a person's action on coordination state, under the state lock.
  * prepare(current) sees { exists, revision, state, valid } as the lock found it and returns null to change nothing,
- * or { entry, setting?: { name, value }, answer?: { id, choice, note } }: a setting is stored and marked in personSettings, an answer is recorded on its gate with its author and entry,
- * and the entry joins history at its place, in the same write.
+ * or { entry, setting?: { name, value }, answer?: { id, choice, note }, withdraw?: { id, reason } }: a setting is stored and marked in personSettings, an answer is recorded on its gate with its author and entry,
+ * a withdrawal closes its unanswered gate without an answer and with its reason, and the entry joins history at its place, in the same write.
  */
 export async function recordPersonAction({ projectRoot, initiative, prepare }: { projectRoot: string; initiative: string; prepare: any }) {
   const decide = async (resolved: any, current: any) => {
@@ -1332,7 +1338,7 @@ export async function recordPersonAction({ projectRoot, initiative, prepare }: {
     if (change === null) return { ...publicStateResult(resolved, current), entry: null };
     // A ship that landed after the first check refuses the action too, so the state never changes after the initiative shipped.
     await refuseShipped(projectRoot, initiative);
-    const { entry, setting, answer } = change;
+    const { entry, setting, answer, withdraw } = change;
     const problem = historyEntryProblem(entry);
     if (problem) throw error("invalid_changes", `The history entry is invalid: ${problem}.`);
     const before = current.state ?? defaultState();
@@ -1350,6 +1356,13 @@ export async function recordPersonAction({ projectRoot, initiative, prepare }: {
       if (answerProblemText) throw error("invalid_answer", `The answer is invalid: ${answerProblemText}.`);
       candidate.pending = [...before.pending];
       candidate.pending[position] = { ...before.pending[position], answer: { choice: answer.choice, note: answer.note, via: "browser", answeredAt: entry.at, by: entry.by, entry: entry.id } };
+    }
+    if (withdraw) {
+      const position = before.pending.findIndex((item: any) => isRecord(item) && item.id === withdraw.id);
+      if (position === -1) throw error("unknown_gate", "The question is no longer open; the agent resolved or withdrew it.");
+      if (before.pending[position].answer) throw error("gate_answered", "The question already has an answer.");
+      candidate.pending = before.pending.filter((_: any, index: number) => index !== position);
+      candidate.closed = [...(before.closed ?? []), { ...closedGate(before.pending[position], withdraw.reason), closedAt: entry.at }].slice(-CLOSED_LIMIT);
     }
     const normalized = normalizeState(candidate);
     const validation = validateStateValue(normalized);

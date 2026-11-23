@@ -34,14 +34,14 @@ export const LAUNCH_ID = /^launch-[0-9a-f]{16}$/;
 // interrupt control request with a control response and ends a running turn with an error result, and exits when its input closes.
 // The codex stub runs as `codex app-server`, answers the JSON-RPC requests initialize, thread/start, thread/resume, turn/start, and
 // turn/interrupt, sends turn notifications, and exits when its input closes; any other codex command fails with exit code 2.
-// A plan: { hold: "forever" | <ms until the turn ends>, exit, stderr, isError, denials: [{ tool, reason }], background: <ms> (claude:
+// A plan: { hold: "forever" | "release" (the turn ends once the test calls release()) | <ms until the turn ends>, exit, stderr, isError, denials: [{ tool, reason }], background: <ms> (claude:
 // a background task that ends that long after the turn and is followed by one more turn), threadId (codex; null refuses thread/start),
 // declined: [<command>] (codex), failed (codex), model (the model that the claude init event or the codex thread/start and thread/resume results name), askApproval (codex: the stub asks the client for an approval), ignoreInterrupt
 // (the stub answers no interrupt and keeps running after its input closes), children: ["attached" | "detached"] }.
 // The log holds one { kind: "run" } entry per run, one { kind: "input" } entry per message the run read, and { kind: "closed" } when its input closed.
 // Each stub names node by its absolute path, so PATH needs no folder of node's, which may also hold a real host.
 const STUB = String.raw`#!${process.execPath}
-const { appendFileSync, readFileSync } = require("node:fs");
+const { appendFileSync, readFileSync, rmSync } = require("node:fs");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const host = path.basename(process.argv[1]).startsWith("codex") ? "codex" : "claude";
@@ -70,6 +70,11 @@ const valueAfter = (flag) => { const index = argv.indexOf(flag); return index >=
 const timers = new Set();
 const later = (ms, action) => { const timer = setTimeout(() => { timers.delete(timer); action(); }, ms); timers.add(timer); };
 const cancel = () => { for (const timer of timers) clearTimeout(timer); timers.clear(); };
+// Each release file that the test writes ends one held turn, and the stub takes it away so the next turn holds again.
+const released = (action) => {
+  try { rmSync(process.env.PRISM_STUB_RELEASE); } catch { later(20, () => released(action)); return; }
+  action();
+};
 let started = false;
 let interrupted = false;
 let results = 0;
@@ -104,7 +109,8 @@ if (host === "claude") {
         turn = true;
         write({ type: "system", subtype: "init", session_id: id, permissionMode: valueAfter("--permission-mode"), ...(plan.model !== undefined ? { model: plan.model } : {}) });
         if (plan.background !== undefined) write({ type: "system", subtype: "task_started", task_id: "task_bg", task_type: "local_bash", session_id: id });
-        if (plan.hold !== "forever") later(plan.hold ?? 0, endTurn);
+        if (plan.hold === "release") released(endTurn);
+        else if (plan.hold !== "forever") later(plan.hold ?? 0, endTurn);
       });
     }
     if (message.type === "control_request" && message.request?.subtype === "interrupt" && !plan.ignoreInterrupt) {
@@ -290,6 +296,9 @@ export async function launchFixture(context, { hosts = ["claude", "codex"], plan
   const plansFile = path.join(scratch, "stub-plans.json");
   const setPlans = (value) => writeFile(plansFile, JSON.stringify(value));
   await setPlans(plans);
+  const releaseFile = path.join(scratch, "stub-release");
+  /** Ends the turn that a { hold: "release" } plan holds. */
+  const release = () => writeFile(releaseFile, "");
   // Stub dialog programs answer the native confirmation with dialog.code (0 confirms, 1 declines, any other code leaves it unanswered)
   // and log each dialog they show: zenity, which Linux runs, and osascript, which macOS runs, so no platform reaches a real dialog.
   // Without a dialog there is no stub, and the test process's PATH holds no real dialog program either.
@@ -305,7 +314,7 @@ export async function launchFixture(context, { hosts = ["claude", "codex"], plan
     }
   }
   const base = isolatedEnv();
-  const env = { ...base, ...FOREIGN_SESSION, PATH: controlledPath(bin, base.PATH), PRISM_REVIEW_APP_DIR: app, PRISM_STUB_LOG: log, PRISM_STUB_PLANS: plansFile, PRISM_STUB_MARKER: "kept", PRISM_LAUNCH_STOP_GRACE_MS: "1500", ...(dialog ? { DISPLAY: ":0" } : {}) };
+  const env = { ...base, ...FOREIGN_SESSION, PATH: controlledPath(bin, base.PATH), PRISM_REVIEW_APP_DIR: app, PRISM_STUB_LOG: log, PRISM_STUB_PLANS: plansFile, PRISM_STUB_RELEASE: releaseFile, PRISM_STUB_MARKER: "kept", PRISM_LAUNCH_STOP_GRACE_MS: "1500", ...(dialog ? { DISPLAY: ":0" } : {}) };
   delete env.WAYLAND_DISPLAY;
   if (!dialog) delete env.DISPLAY;
   const entries = () => existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
@@ -340,7 +349,7 @@ export async function launchFixture(context, { hosts = ["claude", "codex"], plan
     // process has ended, or after 5 seconds.
     return settledEnd(ended.filter((pid) => pid !== process.pid));
   };
-  return { root, gateIds, app, bin, log, env, setPlans, runs, inputs, closed, alive, dialogs, setDialog, useAsProcessEnv };
+  return { root, gateIds, app, bin, log, env, setPlans, release, runs, inputs, closed, alive, dialogs, setDialog, useAsProcessEnv };
 }
 
 /** The process ids whose command line names a path, such as a launch folder. */

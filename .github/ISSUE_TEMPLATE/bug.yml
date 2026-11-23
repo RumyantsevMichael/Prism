@@ -1,0 +1,33 @@
+name: Bug report
+description: Something in Prism behaves differently from what it promises.
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what Prism did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest steps that show the problem, with any error messages or logs.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Prism version
+      description: The version from `/plugin` in Claude Code or `codex plugin list`, or a commit.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Host and system
+      description: The agent host and its version, and your operating system.
+      placeholder: Claude Code 2.4.0 on macOS 26.1
+    validations:
+      required: true

@@ -6,6 +6,7 @@ import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { acpHostDefinition, acpHosts, isAcpHost } from "./acp-agents.mjs";
 import { isAgentModel } from "./agent-models.mjs";
 import { acpConversation } from "./host-adapters/acp.mjs";
+import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { lastMessageOf } from "./run-result.mjs";
 import { shownForm, type PermissionAsk, type PermissionDecision } from "./permission-requests.mjs";
 
@@ -61,8 +62,9 @@ const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsRevi
 // A launch's access: "full" for an initiative's orchestration, and "read-only" for a format migration run, whose session reads artifact text that others wrote,
 // works in an empty folder of its own outside the checkout, and reads nothing of the checkout: it gets the run's sources, the project's paths, and the sources'
 // Git history, and the format reference through the run's own Prism tools. A read-only Claude Code run has no built-in tool and adds no folder, so it reads no file,
-// allows only the run's Prism tools and no shell, and denies every other call, since nothing asks; a read-only Codex thread runs in the read-only sandbox,
-// readable only in its working folder, Prism's own folder, Codex's plugin cache, and the platform's own, and never asks to run a command outside it.
+// allows only the run's Prism tools and no shell, and denies every other call, since nothing asks; a read-only Codex thread selects a permission profile of its own,
+// which reads only in its working folder, Prism's own folder, Codex's plugin cache and install folder, and the platform's minimal ones, writes nowhere,
+// has no network, and never asks to run a command outside it.
 // Prism's server, which the session starts with PRISM_MIGRATION_RUN naming the run and PRISM_MIGRATION_PROJECT naming the checkout,
 // lists and takes only the run's tools for that run's project and artifacts.
 export const LAUNCH_ACCESS = Object.freeze(["full", "read-only"]);
@@ -123,9 +125,17 @@ function requiredServer(server: unknown) {
   return server;
 }
 const deniedOf = (folders: unknown): string[] => (Array.isArray(folders) ? folders.filter((folder) => typeof folder === "string" && (path.posix.isAbsolute(folder) || /^[A-Za-z]:[\\/]/.test(folder))) : []);
-const CODEX_READ_ONLY = Object.freeze({ approvalPolicy: "never", sandbox: "read-only" });
-/** The sandbox of a read-only Codex turn: reads only in the run's working folder, the given folders, and the platform's own. */
-const codexReadOnlySandbox = (folder: string, readRoots: string[]) => ({ type: "readOnly", access: { type: "restricted", includePlatformDefaults: true, readableRoots: [folder, ...readRoots] } });
+/** The permission profile that a read-only Codex thread defines in its own configuration and selects, in place of a sandbox mode. */
+export const CODEX_READ_ONLY_PROFILE = "prism-read-only";
+/**
+ * The configuration and selection of that profile: reads only in the run's working folder, the given folders, and the platform's minimal ones,
+ * writes nowhere, and no network, since Codex now restricts reads only through a named permission profile.
+ */
+const codexReadOnly = (folder: string, readRoots: string[]) => ({
+  approvalPolicy: "never",
+  permissions: CODEX_READ_ONLY_PROFILE,
+  profile: { filesystem: Object.fromEntries([[":minimal", "read"], ...[folder, ...readRoots].map((root) => [root, "read"])]), network: { enabled: false } }
+});
 const rootsOf = (readRoots: unknown): string[] => (Array.isArray(readRoots) ? readRoots.filter((root) => typeof root === "string" && path.isAbsolute(root)) : []);
 const readOnly = (access: unknown) => access === "read-only";
 // The fixed start note of every launched run of an initiative, its launch and each resume: Claude Code reads it through --append-system-prompt,
@@ -315,28 +325,78 @@ export function hostArguments({ host, hostSessionId, resume, coordinator = null,
 
 /**
  * The skill invocation that a run's prompt holds, without its host's prefix: `prism:migrate-artifact <run id>` for a format migration run,
- * and `prism:orchestrate <initiative>` otherwise. Nothing else reaches a prompt.
+ * and `prism:orchestrate <initiative>` otherwise.
  */
 export function runInvocation({ initiative = null, migrationRun = null }: { initiative?: string | null; migrationRun?: string | null }) {
   return typeof migrationRun === "string" && migrationRun ? `prism:migrate-artifact ${migrationRun}` : `prism:orchestrate ${initiative}`;
 }
 
-/** The stream-json user message that gives a Claude Code run its prompt, for an initiative or for { initiative, migrationRun } as runInvocation takes it. */
-export function claudePrompt(subject: string | { initiative?: string | null; migrationRun?: string | null } | null) {
-  const invocation = subject !== null && typeof subject === "object" ? runInvocation(subject) : runInvocation({ initiative: subject });
-  return { type: "user", message: { role: "user", content: `/${invocation}` } };
+// A start that continues an answered gate names it after the initiative, so the orchestrate skill acts on that answer first.
+const answeredSuffix = (answeredGate: string | null) => (answeredGate === null ? "" : ` answered-gate ${answeredGate}`);
+
+/**
+ * The asker that a launch resumes after the person answered its gate: the gate, and the initiative it names or, for an approval
+ * gate that names none, the artifact path; null for a launch that is no resumed asker or a record whose fields do not keep their rules.
+ */
+export interface AskerResume { gate: string; initiative: string | null; artifact: string | null }
+const ASKED_GATE = /^(gate|approval)-[0-9a-f]{8,32}$/;
+// An artifact path reaches the resumed session's message and the dialog, so only plain path characters pass.
+const ARTIFACT_PATH = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
+export function askerResumeOf(value: any): AskerResume | null {
+  if (!value || typeof value !== "object" || typeof value.gate !== "string" || !ASKED_GATE.test(value.gate)) return null;
+  const initiative = value.initiative ?? null;
+  const artifact = value.artifact ?? null;
+  if (initiative !== null && (typeof initiative !== "string" || !SLUG_PATTERN.test(initiative))) return null;
+  if (initiative === null && (typeof artifact !== "string" || artifact.length > 512 || !ARTIFACT_PATH.test(artifact))) return null;
+  return { gate: value.gate, initiative, artifact: initiative === null ? artifact : null };
+}
+
+/** What the resumed asker's question belongs to: the initiative, or the artifact of an approval gate that names none. */
+export const askerSubject = (resume: AskerResume) => (resume.initiative !== null ? `the initiative ${resume.initiative}` : resume.artifact!);
+
+/** The message that a resumed asker gets: the person answered its gate, whose answer it reads from Prism's records. */
+export function askerResumeText(resume: AskerResume) {
+  return `Prism: the person answered your question ${resume.gate} of ${askerSubject(resume)} in the review app. Read the answer from Prism's records and continue.`;
+}
+
+/**
+ * The start of a later run of a resumed asker, which no longer claims that its gate was just answered: the orchestrate start that any
+ * launched session's resume gets, or for an approval gate that names no initiative a plain continuation of its artifact.
+ */
+export function askerLaterText(resume: AskerResume, prefix: string) {
+  return resume.initiative !== null ? `${prefix}prism:orchestrate ${resume.initiative}` : `Prism: continue your work on ${resume.artifact}.`;
+}
+
+// A resumed asker's first run gets the message that its gate has an answer, and each later run the start of any other resume.
+// A format migration run's start is its migrate-artifact invocation alone, which no gate answer or asker changes.
+const startText = (prefix: string, initiative: string | null, answeredGate: string | null, asker: AskerResume | null, askerAnswered: boolean, migrationRun: string | null = null) =>
+  typeof migrationRun === "string" && migrationRun ? `${prefix}${runInvocation({ migrationRun })}`
+    : asker ? (askerAnswered ? askerResumeText(asker) : askerLaterText(asker, prefix)) : `${prefix}${runInvocation({ initiative })}${answeredSuffix(answeredGate)}`;
+
+/**
+ * The stream-json user message that gives a Claude Code run its prompt, for an initiative or for { initiative, migrationRun } as runInvocation takes it,
+ * naming the answered gate a continuation starts from, or the resumed asker's message.
+ */
+export function claudePrompt(subject: string | { initiative?: string | null; migrationRun?: string | null } | null, answeredGate: string | null = null, asker: AskerResume | null = null, askerAnswered = true) {
+  const { initiative = null, migrationRun = null } = subject !== null && typeof subject === "object" ? subject : { initiative: subject };
+  return { type: "user", message: { role: "user", content: startText("/", initiative, answeredGate, asker, askerAnswered, migrationRun) } };
 }
 
 /**
  * The Codex request that opens the run's thread: thread/start for a launch, thread/resume with the kept thread id for a resume,
  * each with the model and provider of the coordinator's choice, left out for the host default.
  */
-export function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null, access = "full", migrationServer = null }: { checkout: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string; migrationServer?: unknown }) {
+export function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null, access = "full", migrationServer = null, readRoots = [] }: { checkout: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string; migrationServer?: unknown; readRoots?: string[] }) {
   const { model, provider } = coordinatorOf(coordinator);
   const chosen = { ...(model === null ? {} : { model }), ...(provider === null ? {} : { modelProvider: provider }) };
-  // A read-only thread's configuration names Prism's scoped server as its only MCP server, in place of those of the person's own configuration.
+  // A read-only thread's configuration names Prism's scoped server as its only MCP server, in place of those of the person's own configuration,
+  // and defines the permission profile that the thread selects, on a launch and on each resume alike.
   // A migration run asks the person through its own tools, so its thread gets no start note, which names the gate tools that it cannot call.
-  const policy = readOnly(access) ? { ...CODEX_READ_ONLY, config: { mcp_servers: { [MIGRATION_SERVER]: requiredServer(migrationServer) } } } : { ...CODEX_POLICY, developerInstructions: LAUNCH_NOTE };
+  const readOnlyPolicy = () => {
+    const { profile, ...selected } = codexReadOnly(checkout, rootsOf(readRoots));
+    return { ...selected, config: { mcp_servers: { [MIGRATION_SERVER]: requiredServer(migrationServer) }, permissions: { [CODEX_READ_ONLY_PROFILE]: profile } } };
+  };
+  const policy = readOnly(access) ? readOnlyPolicy() : { ...CODEX_POLICY, developerInstructions: LAUNCH_NOTE };
   if (!resume) return { method: "thread/start", params: { cwd: checkout, ...policy, ...chosen } };
   if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
   return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...policy, ...chosen } };
@@ -344,13 +404,13 @@ export function codexThreadRequest({ checkout, hostSessionId, resume, coordinato
 
 /**
  * The Codex request that starts the run's one turn: the initiative's orchestrate, or the format migration run's migrate-artifact,
- * whose read-only turn reads only in its working folder, the given folders, and the platform's own, with the effort of the coordinator's
- * choice, left out for the host default.
+ * whose reads its thread's permission profile limits, with the effort of the coordinator's choice, left out for the host default;
+ * a turn that continues an answered gate or resumes its asker starts with that message instead.
  */
-export function codexTurnRequest({ threadId, initiative = null, migrationRun = null, coordinator = null, access = "full", checkout = null, readRoots = [] }: { threadId: string; initiative?: string | null; migrationRun?: string | null; coordinator?: unknown; access?: string; checkout?: string | null; readRoots?: string[] }) {
+export function codexTurnRequest({ threadId, initiative = null, migrationRun = null, coordinator = null, answeredGate = null, asker = null, askerAnswered = true }: { threadId: string; initiative?: string | null; migrationRun?: string | null; coordinator?: unknown; access?: string; checkout?: string | null; readRoots?: string[]; answeredGate?: string | null; asker?: AskerResume | null; askerAnswered?: boolean }) {
   const { effort } = coordinatorOf(coordinator);
-  const sandbox = readOnly(access) && typeof checkout === "string" ? { sandboxPolicy: codexReadOnlySandbox(checkout, rootsOf(readRoots)) } : {};
-  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$${runInvocation({ initiative, migrationRun })}` }], ...(effort === null ? {} : { effort }), ...sandbox } };
+  const text = startText("$", initiative, answeredGate, asker, askerAnswered, migrationRun);
+  return { method: "turn/start", params: { threadId, input: [{ type: "text", text }], ...(effort === null ? {} : { effort }) } };
 }
 
 const CODEX_APPROVALS: ReadonlySet<string> = new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"]);
@@ -551,6 +611,12 @@ export interface HostConversationOptions {
   hostSessionId?: string | null;
   resume?: boolean;
   coordinator?: unknown;
+  /** The answered gate that this run's start names, for a launch that continues it, or null. */
+  answeredGate?: string | null;
+  /** The asker that this run resumes, whose message replaces the orchestrate start, or null. */
+  asker?: AskerResume | null;
+  /** Whether this run is the asker's first, which alone tells the session that its gate has an answer. */
+  askerAnswered?: boolean;
   send: (message: unknown) => void;
   closeInput: () => void;
   onSessionId?: (id: string) => void;
@@ -576,7 +642,7 @@ export interface WaitingAsk { respond: (decision: PermissionDecision) => void; d
 export type PermissionAnswer = (decision: PermissionDecision) => unknown;
 export const REFUSED_ON_ATTENTION = "The person refused this on Attention.";
 
-export function hostConversation(host: string, { initiative = null, migrationRun = null, access = "full", readRoots = [], migrationServer = null, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null, permissions = null }: HostConversationOptions) {
+export function hostConversation(host: string, { initiative = null, migrationRun = null, access = "full", readRoots = [], migrationServer = null, checkout, hostSessionId = null, resume = false, coordinator = null, answeredGate = null, asker = null, askerAnswered = true, send, closeInput, onSessionId = () => {}, onModel = () => {}, acp = null, permissions = null }: HostConversationOptions) {
   const facts: HostFacts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, ownToolAllows: 0, hostError: null, failure: null, usage: null, lastMessage: null, stopReason: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
@@ -651,6 +717,7 @@ export function hostConversation(host: string, { initiative = null, migrationRun
     hostSessionId,
     resume,
     coordinator: coordinatorOf(coordinator),
+    answeredGate,
     env: acp!.env,
     launch: acp!.launch,
     facts,
@@ -677,7 +744,7 @@ export function hostConversation(host: string, { initiative = null, migrationRun
     // Each can_use_tool request that waits, by its request id, so that a control_cancel_request withdraws it.
     const waitingTools = new Map<string, WaitingAsk>();
     return {
-      start: () => write(claudePrompt({ initiative, migrationRun })),
+      start: () => write(claudePrompt({ initiative, migrationRun }, answeredGate, asker, askerAnswered)),
       interrupt() {
         if (interruptId !== null) return;
         interruptId = randomUUID();
@@ -804,7 +871,7 @@ export function hostConversation(host: string, { initiative = null, migrationRun
     const answered = (method: string, result: any) => {
       if (method === "initialize") {
         write({ jsonrpc: "2.0", method: "initialized", params: {} });
-        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, coordinator, access, migrationServer });
+        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, coordinator, access, migrationServer, readRoots });
         request(open, params);
         return;
       }
@@ -820,7 +887,7 @@ export function hostConversation(host: string, { initiative = null, migrationRun
           close();
           return;
         }
-        const { method: turn, params } = codexTurnRequest({ threadId, initiative, migrationRun, coordinator, access, checkout, readRoots });
+        const { method: turn, params } = codexTurnRequest({ threadId, initiative, migrationRun, coordinator, answeredGate, asker, askerAnswered });
         turnRequested = true;
         request(turn, params);
         return;

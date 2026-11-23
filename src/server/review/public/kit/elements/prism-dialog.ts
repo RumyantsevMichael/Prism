@@ -4,6 +4,7 @@ import { Base, deepActiveElement, distribute, emit, focusables, make, setAttribu
 
 const PLACEMENTS = ["center", "top", "start", "bottom", "end"];
 const SIZES = ["sm", "md", "lg"];
+const HEIGHTS = ["fit", "fixed"];
 
 export class PrismDialog extends Base {
   declare body: any;
@@ -16,13 +17,14 @@ export class PrismDialog extends Base {
   declare returnTo: any;
   declare surface: any;
   static tag = "prism-dialog";
-  static observedAttributes = ["heading", "open", "size", "placement", "bare", "modeless", "flush"];
+  static observedAttributes = ["heading", "open", "size", "height", "placement", "bare", "modeless", "flush"];
   static catalog = {
     purpose: "A modal dialog on frosted glass over a blurred scrim, which keeps focus inside it and returns focus where it was when it closes; it can also open near the top as a command palette does, as a drawer from the left edge, or as a sheet from the bottom.",
     options: [
       { name: "heading", values: ["text"], default: "", description: "The heading, which names the dialog." },
       { name: "open", values: ["boolean"], default: "false", description: "Whether the dialog shows; show() and close() set it." },
       { name: "size", values: SIZES, default: "md", description: "The width of a centered dialog." },
+      { name: "height", values: HEIGHTS, default: "fit", description: "fit makes a centered dialog as tall as its content; fixed keeps it at --prism-dialog-height, or the window's height inside its margins when that is less, whatever its body holds, so its edges stay put as the content changes, and on a window as narrow as --prism-sheet-width it fills the window." },
       { name: "placement", values: PLACEMENTS, default: "center", description: "center floats in the window; top hangs below the top bar with the spectrum on its top edge, as a command palette; start opens a drawer at --prism-drawer-width from the left edge, an island between the top bar and the status bar; bottom rises from the bottom edge at full width; and end stands at --prism-panel-width against the right edge between the top bar and the status bar." },
       { name: "modeless", values: ["boolean"], default: "false", description: "Opens without a scrim and leaves the page usable behind it, as a drawer of details beside the page does; Escape and Close still close it, and focus moves into it when it opens." },
       { name: "bare", values: ["boolean"], default: "false", description: "Shows no header: the heading still names the dialog for assistive technology without being a heading of its own, and Escape or a click on the scrim closes it, for a dialog whose content draws its own header or none." },
@@ -30,7 +32,7 @@ export class PrismDialog extends Base {
       { name: "slot=\"footer\"", values: ["children"], default: "", description: "Actions after the body." },
       { name: "slot=\"footer-note\"", values: ["children"], default: "", description: "A short note at the start of the footer, before its actions, such as what confirming does; on a narrow window the actions wrap below it." }
     ],
-    states: ["closed", "center", "top", "start", "bottom", "end", "modeless", "bare", "flush", "long-content"],
+    states: ["closed", "center", "top", "start", "bottom", "end", "modeless", "bare", "flush", "fixed-height", "long-content"],
     keyboard: [
       "Focus moves into the dialog when it opens, and Tab and Shift+Tab stay inside it.",
       "Escape, the Close button, or a click on the scrim closes it and sends prism-close; focus returns to the element that had it; a bare dialog has no Close button."
@@ -101,6 +103,7 @@ export class PrismDialog extends Base {
     if (!PLACEMENTS.includes((this.getAttribute("placement") as any))) setAttribute(this.surface, "data-placement", "center");
     else setAttribute(this.surface, "data-placement", this.getAttribute("placement"));
     setAttribute(this.surface, "data-size", SIZES.includes((this.getAttribute("size") as any)) ? this.getAttribute("size") : "md");
+    setAttribute(this.surface, "data-height", this.getAttribute("height") === "fixed" ? "fixed" : null);
     const bare = this.hasAttribute("bare");
     setAttribute(this.surface, "data-bare", bare ? "" : null);
     // A bare dialog shows no header, so its heading only names the dialog and is no heading of the content, which may draw its own.

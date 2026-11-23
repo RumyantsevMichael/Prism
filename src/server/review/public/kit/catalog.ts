@@ -452,6 +452,7 @@ const SPECIMENS: Record<string, any> = {
     bottom: opener("Open the bottom sheet", `<prism-dialog heading="Diagram" placement="bottom"><p>The slice's diagram on a phone.</p></prism-dialog>`),
     end: opener("Open the evidence drawer", `<prism-dialog heading="Evidence" placement="end" modeless><p>The evidence of a finding, beside the page.</p></prism-dialog>`),
     modeless: opener("Open a modeless dialog", `<prism-dialog heading="Evidence" placement="end" modeless><p>The page behind stays usable; Escape closes this.</p></prism-dialog>`),
+    "fixed-height": opener("Open a fixed-height dialog", `<prism-dialog heading="Settings" size="lg" height="fixed"><p>The dialog keeps its height whatever it shows; on a phone it fills the window.</p></prism-dialog>`),
     "long-content": opener("Open a long dialog", `<prism-dialog heading="Command palette" size="lg">${repeat(30, (index: number) => `<p>Paragraph ${index + 1} of a body that scrolls inside the dialog.</p>`)}</prism-dialog>`),
     "long-text": opener(LONG, `<prism-dialog heading="${LONG}"><p>${LONG} ${LONG}</p></prism-dialog>`),
     "unbroken-name": opener(UNBROKEN, `<prism-dialog heading="${UNBROKEN}"><p>${UNBROKEN}</p></prism-dialog>`)
