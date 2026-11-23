@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { ARTIFACT_ACCEPTED, ARTIFACT_STATUS, artifactLocation, locationArtifact, STATUS_RECORD_NAME } from "./artifact-paths.mjs";
+import { COSTS, PREFERRED, RULES_OUT, draftOptions, sectionsOf } from "./artifact-formats.mjs";
 import { canonicalJson } from "./record-merge.mjs";
 import { markdownLinkDestinations } from "./markdown-links.mjs";
 import { parseStoreJson } from "./store-json.mjs";
@@ -49,9 +50,16 @@ export function acceptedLocation(version: any) {
   return path.posix.join(ARTIFACT_ACCEPTED, hex);
 }
 
-/** The record of an artifact that no gate has changed yet: a new requirement is Draft and a new ADR Proposed, unless status gives the written status of a moved file. */
-export function newRecord(kind: string, status = null) {
-  return { status: hasStatus(kind) ? status ?? newStatus(kind) : null, acceptedVersion: null, approval: null, pending: [], closed: [], history: [] };
+/** The status a new ADR is recorded with when its Status: line says Draft, since it records a choice that design decides. */
+export const DRAFT_STATUS = "Draft";
+
+/**
+ * The record of an artifact that no gate has changed yet: a new requirement is Draft and a new ADR Proposed, unless status gives the written status of a moved file;
+ * written is the Status: line of a new file's text, and a new ADR written as Draft is recorded Draft.
+ */
+export function newRecord(kind: string, status: string | null = null, written: string | null = null) {
+  const initial = kind === "adrs" && written === DRAFT_STATUS ? DRAFT_STATUS : newStatus(kind);
+  return { status: hasStatus(kind) ? status ?? initial : null, acceptedVersion: null, approval: null, pending: [], closed: [], history: [] };
 }
 
 /**
@@ -59,6 +67,8 @@ export function newRecord(kind: string, status = null) {
  * since a file that reached it before the move did so as an approval gate would have taken it there.
  */
 export function acceptedWhenMoved(kind: string, status: any) {
+  // A Draft ADR is undecided, as a new ADR is, so a move records it Draft and accepts nothing.
+  if (kind === "adrs" && typeof status === "string" && status.trim().toLowerCase() === DRAFT_STATUS.toLowerCase()) return false;
   return hasStatus(kind) && typeof status === "string" && status.trim() !== "" && !/[\r\n]/.test(status) && status.toLowerCase() !== newStatus(kind)!.toLowerCase();
 }
 
@@ -197,6 +207,12 @@ export function askApproval(kind: string, file: string, record: any, { status, q
   } else if (kind === "adrs" && /^accepted$/i.test(wanted)) {
     throw fail("status_by_ship", `${file} is an ADR, which becomes Accepted when a person confirms that an initiative whose slice.md links it ships, or approves it afterwards for the shipped initiative that realized it; ask approval with shipped naming that initiative, or for another status, such as Superseded, or ship the initiative after its correctness gate.`);
   }
+  // A Draft ADR becomes Proposed only when design decides it from its options, and Declined only at a person's gate.
+  if (kind === "adrs" && record.status === DRAFT_STATUS && wanted !== "Declined") {
+    throw fail("draft_transition", wanted === "Proposed"
+      ? `${file} is a Draft ADR, which becomes Proposed only when design decides it with update_artifact decide, naming the chosen option; nothing changed.`
+      : `${file} is a Draft ADR, which a gate may only decline; it becomes Proposed when design decides it with update_artifact decide, so ask for Declined or decide it; nothing changed.`);
+  }
   if (wanted === record.status && version === record.acceptedVersion) {
     throw fail("nothing_to_approve", `${file} is already ${record.status}, and its bytes are the version a person accepted, so there is nothing to approve; change the artifact first, or ask for another status.`);
   }
@@ -215,6 +231,61 @@ export function askApproval(kind: string, file: string, record: any, { status, q
   };
   const superseded = record.pending.map((earlier: any) => ({ ...earlier, closedAt: at, closed: "superseded", supersededBy: gate.id }));
   return { record: { ...record, pending: [gate], closed: keep([...record.closed, ...superseded], CLOSED_KEPT) }, gate };
+}
+
+// The lines of an option's body with the blank lines at its start and end left out.
+const trimmed = (items: any[]) => {
+  let start = 0, end = items.length;
+  while (start < end && !items[start].value.trim()) start += 1;
+  while (end > start && !items[end - 1].value.trim()) end -= 1;
+  return items.slice(start, end).map((item: any) => item.value);
+};
+const sectionText = (title: string, lines: string[]) => [`## ${title}`, "", ...lines, ""];
+const optionLine = (item: any) => !item.fenced && [COSTS, RULES_OUT, PREFERRED].some((pattern) => pattern.test(item.value.trim()));
+
+/**
+ * The text of a Draft ADR decided for one of its options, as Proposed: the Decision holds the chosen option's body without its Costs:, Rules out:, and Preferred by: lines,
+ * the Rationale holds rationale, the Alternatives every other option under its ### heading with its body, the Consequences the chosen option's Costs: and Rules out: lines and then consequences,
+ * and the Mechanism holds mechanism, in place of the Options section; every other section stays, and the Decision Log ends with a line that names the choice and the date.
+ * An option that no ### heading names refuses with option_unknown and options, the options' names.
+ */
+export function decideDraft(file: string, text: string, { option, rationale, consequences, mechanism, date }: { option: string; rationale: string; consequences: string; mechanism: string; date: string }) {
+  const { head, sections } = sectionsOf(text);
+  const optionsSection = sections.find((section: any) => section.title === "Options");
+  const options = draftOptions(optionsSection?.body ?? []);
+  const chosen = options.find((item: any) => item.title === option.trim());
+  if (!chosen) throw fail("option_unknown", `${file} has no option named "${option}"; its options are ${options.map((item: any) => `"${item.title}"`).join(", ")}, and decide names one exactly as its ### heading does; nothing changed.`, { options: options.map((item: any) => item.title) });
+  const paragraphs = (value: string) => value.trim().split(/\r?\n/);
+  const lines: string[] = head.map((item: any) => item.value);
+  while (lines.length && !lines.at(-1)!.trim()) lines.pop();
+  lines.push("");
+  const entry = `- ${date}: Decided from its Draft options; chose ${chosen.title}.`;
+  for (const section of sections as any[]) {
+    if (section.title === "Options") {
+      const consequence = chosen.body.filter((item: any) => !item.fenced && (COSTS.test(item.value.trim()) || RULES_OUT.test(item.value.trim()))).map((item: any) => item.value.trim());
+      lines.push(
+        ...sectionText("Decision", trimmed(chosen.body.filter((item: any) => !optionLine(item)))),
+        ...sectionText("Rationale", paragraphs(rationale)),
+        ...sectionText("Alternatives", options.filter((item: any) => item !== chosen).flatMap((item: any, index: number) => [...(index ? [""] : []), `### ${item.title}`, "", ...trimmed(item.body)])),
+        ...sectionText("Consequences", [...consequence, "", ...paragraphs(consequences)]),
+        ...sectionText("Mechanism", paragraphs(mechanism))
+      );
+      continue;
+    }
+    const body = trimmed(section.body);
+    if (section.title === "Decision Log") {
+      lines.push(...sectionText(section.title, body.length === 0 || (body.length === 1 && body[0].trim() === "n/a") ? [entry] : [...body, entry]));
+      continue;
+    }
+    lines.push(...sectionText(section.title, body));
+  }
+  while (lines.length && !lines.at(-1)!.trim()) lines.pop();
+  return rewriteStatusLines(`${lines.join("\n")}\n`, "Proposed", date);
+}
+
+/** A status record after design decided its Draft ADR: status Proposed, with the decision in its history. */
+export function decidedRecord(record: any, { option, at }: { option: string; at: string }) {
+  return { ...record, status: "Proposed", history: keep([...record.history, { event: "decided", status: "Proposed", option, at }], HISTORY_KEPT) };
 }
 
 export const notAStatusArtifact = (file: string) => fail("not_a_status_artifact", `${file} is no requirement or ADR, so it has no status to approve; approval gates apply only to files under the configured Requirements and ADRs folders.`);
