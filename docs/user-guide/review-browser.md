@@ -196,6 +196,47 @@ Elsewhere, or after the 55 minutes, the agent receives the answer with your next
 An answer to a question that an agent asked reaches only the session whose agent or sub-agents asked it, so another session working in the same project, on the same initiative or another, never receives it.
 An answer to the approval of a requirement or ADR reaches, once and in the same ways, only an agent working in the checkout that asked for the approval, however long you take to answer.
 Agents in other checkouts or on other machines are not told, but any agent that reads that file also reads your latest answer and its note, so requested changes are not lost when nothing waits.
+
+### Who asked a question
+
+Under its question each card names the session that asked it, as `Asked by <harness> on <machine> · <repository>/<branch>`, such as `Asked by Claude Code on studio · shop/main`, with ` · cloud session` added for a Claude Code on the web session.
+A question asked before Prism recorded who asks, or whose record is missing or damaged, reads `Asked by an unknown session`.
+Beside that line a chip names the state of the asking session, and its description says why when Prism cannot tell:
+
+| Chip | Meaning |
+|---|---|
+| Waits for your answer | A wait of an agent, on any machine that shares the records, holds the question, so your answer reaches it on its own. |
+| Open, not waiting | The session is open on this computer but no wait holds the question. |
+| Not running | The session is not open on this computer. |
+| Prism cannot tell | The session is a cloud session, ran on another machine, ran in a harness that Prism cannot ask, or its harness did not answer. |
+
+Prism tells whether a Claude Code session is open from `claude agents --json`, run in the checkout that asked, a Codex session from its thread lock under `CODEX_HOME`, or `~/.codex` without it, and a session that Prism launched from its launch.
+Only the machine that asked can tell, because the session's id stays in that machine's review app folder and never reaches the shared records.
+A wait holds its questions for 15 minutes and renews the hold every 5 minutes, so a wait that stopped without ending, such as one whose computer crashed, stops counting as waiting within 15 minutes.
+For a session that is open but not waiting, the card says `Prism cannot reach this session, because no wait holds the question. Send any message in that <harness> session, and it reads the answer.`
+A question that no session will read, because its asking session is not running or Prism cannot tell, has **Withdraw** under that line.
+Withdraw closes the question without an answer and removes it from Attention, records who withdrew it and when, and starts no session.
+It is unavailable while a session waits on the question, while the asking session is open, and once the question has an answer.
+Withdrawing a requirement's or ADR's approval leaves the file's recorded status and accepted version as they were.
+A session that later waits on a withdrawn question learns at once that you withdrew it, and does not act on it as answered.
+An answered question whose answer cannot reach its asking session, because no wait holds it and that session is not open, has **Continue the work** on its card.
+It lists the ways to continue, and names why each one that does not apply cannot, such as a question that names no initiative or an initiative that the roadmap does not list, was superseded, or shipped.
+**New orchestration session** is the default: it launches the question's initiative as **Launch** does, with the initiative's host and models, and its start names the answered question, so the new session acts on your answer first.
+**Resume the session that asked** continues the asking Claude Code or Codex session itself, under its own session id and headless in its own checkout, with a message that your answer is in Prism's records.
+It applies only on the computer where that session ran, while that session is not running and Prism can tell so, and while no launched session of the question's initiative runs there, and never to a cloud session.
+The confirmation names the session's host, the question, and the checkout, and shares the 30-minute window of **Launch**.
+The resumed session then shows under the agents as a launched session, which **Stop** and **Resume** act on as on any other.
+**Wake the cloud session that asked** posts one turn into the Claude Code on the web session that asked, from your own computer, through `claude -p <pointer> --cloud <session>` run in this checkout.
+The turn is only a pointer, `Prism: question <id> of the initiative <initiative> has an answer in the review app. Read it from Prism's records before you continue.`, so neither your answer nor anything else of the question reaches Claude Code, and the cloud session reads the answer from Prism's records.
+It applies only to a question that a cloud session asked, only when this review app does not itself run in a Claude Code cloud session, since a wake must be sent from your own computer, and only when `claude` is on `PATH`.
+Claude Code delivers the wake only when it is signed in to the account that started the cloud session.
+The confirmation names the cloud session's link, the question, and the initiative, says that Prism sends only a pointer, and shares the 30-minute window of **Launch**.
+Under the asking line the card then shows the latest wake that this computer sent, as `Wake sent <time>` when Claude Code delivered it within 120 seconds, or `Wake not delivered: <reason>` with the last line Claude Code printed, such as a session of another account, or the reason it timed out.
+You can wake the session again from the same card, and the latest wake stays only in this computer's review app folder.
+Nothing starts until you confirm the launch, resume, or wake outside the browser, and a declined confirmation starts or sends nothing.
+Answering a question starts no session by itself, here or when an answer arrives from another machine through the shared records.
+Continue is unavailable while a session waits on the question or the asking session is open, since that session reads your answer itself, and for a session that Prism launched, which resumes from its launched session.
+An answered requirement or ADR approval whose asking session Prism recorded stays under Answered with its answer, so you can continue its work, until a newer approval of the same file is asked or for 7 days.
 Attention also lists blocked slices, open findings, failed verifications, and active work.
 In a window as narrow as a phone, Attention opens on its list, and picking an item shows its card in place of the list, with **All items** to go back.
 A slice that is not done is a failed verification while its latest verification run failed, with the reason in words, such as `The tests failed, 2 tests failed`, until a later run passes or the slice is done.

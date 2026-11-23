@@ -1738,9 +1738,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       }
       try {
         const result: any = await applyAction({ projectRoot, target: body.target, action: body.action, input: body.input, revision: body.revision, confirmed: body.confirmed, via: "review-app", indexer, checkouts: await checkoutRoots() });
-        if (result.applied) forgetWorkspace();
-        // A launch, stop, or resume also answers with the launched session it changed; an approval's or comment's artifact stays in the event alone.
-        sendJson(response, 200, { applied: result.applied, actions: result.actions, ...(result.launch !== undefined ? { launch: result.launch } : {}) });
+        // A wake changes what the page shows even when its history entry could not be recorded.
+        if (result.applied || result.wake !== undefined) forgetWorkspace();
+        // A launch, stop, or resume also answers with the launched session it changed, and a wake with whether it arrived and any warning that its history entry was not recorded; an approval's or comment's artifact stays in the event alone.
+        sendJson(response, 200, { applied: result.applied, actions: result.actions, ...(result.launch !== undefined ? { launch: result.launch } : {}), ...(result.wake !== undefined ? { wake: result.wake } : {}), ...(result.warnings !== undefined ? { warnings: result.warnings } : {}) });
         if (result.applied) {
           const target = parseTarget(result.applied.target);
           // An approval or a comment belongs to no initiative, so its event names its artifact, as Attention's recent changes list it.

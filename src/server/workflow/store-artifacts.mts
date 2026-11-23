@@ -7,7 +7,7 @@ import { artifactIndex, markArtifactIndexStale } from "./artifact-index.mjs";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACTS, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, ARTIFACT_LOCATION_BYTES_MAX, letterCaseKey, locationArtifact, locationExcess, locationIdentity, locationLimits, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, scopeFolder, STORE_NAME_BYTES_MAX, uniqueIdentities, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
-import { acceptAtShip, acceptedLocation, acceptedWhenMoved, answerApproval, askApproval, hasStatus, linkedPaths, movedWithoutAcceptance, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion, writtenStatus as writtenStatusOf } from "./artifact-status.mjs";
+import { acceptAtShip, acceptedLocation, acceptedWhenMoved, answerApproval, askApproval, hasStatus, linkedPaths, movedWithoutAcceptance, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion, withdrawApproval, writtenStatus as writtenStatusOf } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
 import { checkArtifactFolders, folderChecks, noteToolCallWrite, recordStoreOf, repositoryScopes, resolveArtifactFile, resolveStatusFile, seenScopes, statusFileResolver, withArtifactStoreLock } from "./record-store.mjs";
 import { pruneArtifactFolders, runGit, scheduleRecordSync } from "./record-store-sync.mjs";
@@ -517,7 +517,7 @@ async function readResult(seen: any, input: any, { file, name, scope, address, r
 }
 
 // Operations on a status, which only a requirement or an ADR has; answer_approval and accept_version are Prism's own, never an agent's.
-const STATUS_OPERATIONS = new Set(["ask_approval", "answer_approval"]);
+const STATUS_OPERATIONS = new Set(["ask_approval", "answer_approval", "withdraw_approval"]);
 
 // What can be checked without the store: each operation's artifact, its scope input, and the size of the content it writes.
 function checkOperation(config: any, kinds: any, operation: any) {
@@ -694,7 +694,16 @@ export async function updateArtifact(input: any) {
     const seen = await seenScopes(input.projectRoot);
     for (const item of checked) if (item.operation.op === "ask_approval" && item.operation.shipped !== undefined) item.shipped = await shippedRealization(input.projectRoot, seen, kinds, item.operation.shipped);
     // The tool call notes what its update wrote, so a move that the call finishes still removes a moved file whose artifact the update changed.
-    return withArtifactStoreLock(seen, async () => ({ artifacts: (await applyOperations(seen, checked, { noteWrites: true })).artifacts }));
+    const result = await withArtifactStoreLock(seen, async () => ({ artifacts: (await applyOperations(seen, checked, { noteWrites: true })).artifacts }));
+    // Each approval gate asked records its asker beside the gate, outside its status record.
+    const asked = (result?.artifacts ?? []).map((entry: any) => entry?.gate).filter((gate: any) => typeof gate === "string");
+    if (asked.length) {
+      // The operations apply in order and each ask_approval adds one asked gate, so the nth asked gate serves the nth ask's initiative.
+      const named = checked.filter((item: any) => item.operation.op === "ask_approval").map((item: any) => typeof item.operation.initiative === "string" ? item.operation.initiative : null);
+      const { recordGateAskers } = await import("./gate-askers.mjs");
+      await recordGateAskers(input.projectRoot, asked.map((gate: string, index: number) => ({ gate, named: named[index] ?? null })));
+    }
+    return result;
   });
 }
 
@@ -957,6 +966,12 @@ async function applyOperations(seenStore: any, checked: any, { held = null, note
       setStatus(status.target, file, record);
       artifacts.push({ path: file, scope: source.scope, version, gate: answered.gate });
       if (answered.text !== null) noteFormatted(file, source.scope, address);
+    } else if (operation.op === "withdraw_approval") {
+      // A withdrawal closes the gate alone: the artifact's bytes, its recorded status, and its accepted version stay as they were.
+      const status = await statusOf(source.scope, address);
+      const withdrawn = withdrawApproval(status.record, operation.withdrawal);
+      setStatus(status.target, file, withdrawn.record);
+      artifacts.push({ path: file, scope: source.scope, version: source.record.version, gate: withdrawn.gate });
     } else if (operation.op === "accept_at_ship") {
       const status = await statusOf(source.scope, address);
       const accepted = acceptAtShip(status.record, decode(contentOf(file, source.record), file), { ...operation.ship, versionOf: (text: string) => artifactVersion(Buffer.from(text, "utf8")) });
@@ -1662,6 +1677,24 @@ export async function answerArtifactApproval(projectRoot: string, { path: file, 
 }
 
 /**
+ * Withdraw a person's pending approval gate of a requirement or ADR without an answer: it closes as withdrawn with who withdrew it, by { name, host },
+ * and the artifact, its recorded status, and its accepted version stay as they were; entry is the review app's history entry of the gate.withdraw action.
+ * Returns the artifact's entry: { path, scope, version, gate } with the closed gate.
+ */
+export async function withdrawArtifactApproval(projectRoot: string, { path: file, scope, component, id, by, entry = null }: { path: any; scope: any; component?: any; id: string; by: any; entry?: any }) {
+  return refusing(async () => {
+    const { config, kinds } = await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    const item = checkOperation(config, kinds, { op: "withdraw_approval", path: file, ...namedScope(seen, scope, component), withdrawal: { id, by, entry } });
+    return withArtifactStoreLock(seen, async () => {
+      const holding = (await seenPendingGates(seen)).filter((gate) => gate.id === id);
+      if (holding.length > 1) throw fail("approval_ambiguous", ambiguousApprovalMessage(id, holding), { holders: holding.map((gate) => gate.artifact) });
+      return (await applyOperations(seen, [item])).artifacts[0];
+    });
+  });
+}
+
+/**
  * The refusal message of an approval id that more than one pending gate holds, naming each artifact's path and scope label,
  * since an answer to it cannot tell which file the person approves.
  */
@@ -1685,6 +1718,32 @@ export async function pendingApprovalGates(projectRoot: string) {
   return refusing(async () => {
     await configuration(projectRoot);
     return seenPendingGates(await seenScopes(projectRoot));
+  });
+}
+
+// An answered approval gate stays a target and an Attention item for its continuation this long after its answer.
+export const ANSWERED_APPROVAL_KEPT_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Every answered approval gate of the requirements and ADRs that the checkout sees whose answer is at most 7 days old and after which
+ * no newer approval of the same artifact was asked, newest answer first, in the shape pendingApprovalGates gives with the gate's answer.
+ */
+export async function answeredApprovalGates(projectRoot: string, now = Date.now()) {
+  return refusing(async () => {
+    await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    const gates = [];
+    const resolve = manyReads(seen);
+    for (const entry of await statusHoldings(seen)) {
+      const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path), resolve);
+      const asked = (gate: any) => Date.parse(gate?.askedAt ?? "") || 0;
+      const latest = Math.max(0, ...[...record.pending, ...record.closed].map(asked));
+      const current = record.closed.filter((gate: any) => gate.answer && asked(gate) === latest && now - (Date.parse(gate.answer.answeredAt ?? "") || 0) <= ANSWERED_APPROVAL_KEPT_MS);
+      if (!current.length) continue;
+      const stored = await readStored(entry.target).catch(() => null);
+      for (const gate of current) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope }, recorded: record.status, current: stored?.version ?? null, changed: stored?.version !== gate.version });
+    }
+    return gates.sort((left: any, right: any) => (Date.parse(right.answer.answeredAt) || 0) - (Date.parse(left.answer.answeredAt) || 0));
   });
 }
 
@@ -1803,7 +1862,7 @@ export async function approvalGatesWithIds(projectRoot: string, ids: any) {
     const resolve = manyReads(seen);
     for (const entry of await statusHoldings(seen)) {
       const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path), resolve);
-      for (const gate of waitableGates(record)) if (wanted.has(gate.id)) gates.push({ artifact: { path: entry.path, scope: entry.scope }, gate: { ...gate, artifact: entry.path } });
+      for (const gate of waitableGates(record)) if (wanted.has(gate.id) && !gate.withdrawn) gates.push({ artifact: { path: entry.path, scope: entry.scope }, gate: { ...gate, artifact: entry.path } });
     }
     return gates;
   });

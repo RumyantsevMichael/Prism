@@ -123,7 +123,44 @@ function gateHead(item: any, ctx: any, time: any) {
   const where = location(item, ctx);
   return `<div class="gate-chips">${tag}${kindChip(item)}${when(time, "attention-time gate-time")}</div>
     <h3 class="gate-question">${escapeHtml(item.question)}</h3>
+    ${gateAsker(item)}
+    ${gateWithdraw(item)}
     ${where ? `<p class="attention-where gate-where">${where}</p>` : ""}`;
+}
+
+// The state of the session that asked, as the state chip names it and the tone it takes.
+const ASKER_STATES: Record<string, { label: string; tone: string }> = {
+  waiting: { label: "Waits for your answer", tone: "success" },
+  open: { label: "Open, not waiting", tone: "info" },
+  "not-running": { label: "Not running", tone: "neutral" },
+  unknown: { label: "Prism cannot tell", tone: "warning" }
+};
+
+// An unanswered question whose asker no wait holds and no open session can read can be withdrawn; the shared action renderer draws its
+// gate.withdraw listing into this place once the page is drawn, and the server's listing stays the backstop.
+function gateWithdraw(item: any) {
+  if (item.answer || item.unavailable || !item.asker || item.asker.state === "waiting" || item.asker.state === "open") return "";
+  return `<div class="gate-withdraw" data-gate="${escapeHtml(item.id)}" data-withdraw-target="${escapeHtml(answerTarget(item))}"></div>`;
+}
+
+// The latest wake this computer sent to the cloud session that asked: when it was sent, or why Claude Code did not deliver it,
+// with its words beside the icon, so a long reason wraps under its own first line.
+function wakeLine(wake: any) {
+  if (wake.delivered) return `<p class="gate-asker-note" data-wake="delivered"><prism-icon name="check-circle" size="xs" tone="ok"></prism-icon><span>Wake sent ${liveTime(wake.at)}</span></p>`;
+  return `<p class="gate-asker-note" data-wake="not-delivered"><prism-icon name="warning" size="xs" tone="danger"></prism-icon><span>${escapeHtml(`Wake not delivered: ${wake.reason ?? "Claude Code gave no reason."}`)}</span></p>`;
+}
+
+// Who asked the question, where, and whether that session waits, is open, is not running, or is in a state Prism cannot tell, with how to reach an open one.
+function gateAsker(item: any) {
+  const asker = item.asker;
+  if (!asker) return "";
+  const who = asker.known
+    ? `Asked by ${asker.harness ?? "an unnamed harness"} on ${asker.machine ?? "an unnamed machine"} · ${asker.checkout ?? "an unnamed checkout"}${asker.cloud ? " · cloud session" : ""}`
+    : "Asked by an unknown session";
+  const look = ASKER_STATES[asker.state] ?? ASKER_STATES.unknown;
+  const state = chip(escapeHtml(look.label), { tone: look.tone, tip: asker.reason ?? "" });
+  const wake = asker.wake ? wakeLine(asker.wake) : "";
+  return `<div class="gate-asker"><p class="gate-asker-line"><span>${escapeHtml(who)}</span>${state}</p>${asker.reach ? `<p class="gate-asker-note">${escapeHtml(asker.reach)}</p>` : ""}${wake}</div>`;
 }
 
 // Whose work resumes once the gate is answered: the agent whose live claim holds the slice, for what, and how long the claim has left.
@@ -375,13 +412,40 @@ function answeredDetail(item: any, ctx: any) {
     className: `is-answered gate-${escapeHtml(item.kind)}`,
     head: `${kindChip(item)}<span class="attention-where">${location(item, ctx)}</span>${when(item.answer.answeredAt, "attention-time gate-time")}`,
     title: escapeHtml(item.question),
-    body: `<p class="gate-given">${given(item)}</p><p class="attention-footnote muted">An agent that is waiting for these answers resumes on its own shortly after your last answer. Any other agent receives them with your next message in its conversation, even a short one such as “go”.</p>`
+    body: `${gateAsker(item)}<p class="gate-given">${given(item)}</p>${gateContinue(item)}<p class="attention-footnote muted">An agent that is waiting for these answers resumes on its own shortly after your last answer. Any other agent receives them with your next message in its conversation, even a short one such as “go”.</p>`
   });
 }
 
-// A closed question shows the browser answer, or the reason the agent gave when it resolved the question without one.
+// An answered question whose asker cannot read the answer offers to continue the work; the shared action renderer draws its gate.continue
+// listing into this place, with each way that applies and why the others do not.
+function gateContinue(item: any) {
+  const asker = item.asker;
+  if (!asker || item.unavailable || asker.state === "waiting" || asker.state === "open" || asker.launched) return "";
+  return `<div class="gate-continue" data-gate="${escapeHtml(item.id)}" data-continue-target="${escapeHtml(answerTarget(item))}"></div>`;
+}
+
+// A continuation confirmed in a native dialog can wait on the person for a while, so its apply gets the dialog's time, and a wake
+// its 120 seconds after it.
+const CONTINUE_DEADLINE_MS = 330000;
+
+const CONTINUE_HINT = "Nothing starts until you confirm outside the browser.";
+const CONTINUE_PICK = "Pick a way to continue.";
+
+/** The form options of Withdraw for the shared action renderer: what it does beside its button. */
+export const withdrawFormOptions = {
+  wording: (action: any, form: any) => ({ submit: { label: action.label, variant: "ghost" }, hint: form.ready ? action.effect : form.hint, ready: false })
+};
+
+/** The form options of Continue for the shared action renderer: its ways as cards, and, when none applies, why each does not. */
+export const continueFormOptions = {
+  heading: "Continue the work",
+  wording: (_action: any, form: any) => ({ submit: { label: "Continue", variant: "primary" }, hint: form.ready ? CONTINUE_HINT : form.hint && CONTINUE_PICK, ready: form.ready }),
+  unavailable: (action: any) => (action.fields?.[0]?.options ?? []).filter((option: any) => option.reason).map((option: any) => `<p class="action-reason">${escapeHtml(`${option.label}: ${option.reason}`)}</p>`).join("")
+};
+
+// A closed question shows the browser answer, the person's withdrawal, or the reason the agent gave when it resolved the question without one.
 function closedDetail(item: any, ctx: any) {
-  const outcome = item.answer ? given(item) : badge("Closed by the agent");
+  const outcome = item.answer ? given(item) : badge(item.reason === "The person withdrew this question without an answer." ? "Withdrawn" : "Closed by the agent");
   return detailSheet({
     className: `is-closed gate-${escapeHtml(item.kind)}`,
     head: `${kindChip(item)}<span class="attention-where">${location(item, ctx)}</span>${when(item.closedAt, "attention-time gate-time")}`,
@@ -403,19 +467,21 @@ export function answerError(error: any) {
 // Each open gate's answer is the shared action renderer's form of its gate.answer listing; the person's unsent answer survives the page
 // drawing Attention again when live data changes, and the page gives focus back to the control that had it by its focus key.
 function mountAnswers(container: any, ctx: any, gates: any) {
-  if (!ctx.actionApi) return;
+  const lists: any[] = [];
+  if (!ctx.actionApi) return lists;
   const drafts = (ctx.state.answerDrafts ??= {});
   for (const slot of container.querySelectorAll(".gate-answer[data-answer-target]")) {
     const item = gates.find((gate: any) => gate.id === slot.dataset.gate && answerTarget(gate) === slot.dataset.answerTarget);
     if (!item) continue;
     const target = slot.dataset.answerTarget;
-    createActionList({
+    lists.push(createActionList({
       root: slot,
       targets: [target],
       api: ctx.actionApi,
       drafts,
       renderMarkdown: ctx.renderMarkdown ?? null,
       groups: ["Question"],
+      actions: ["gate.answer"],
       emptyText: "This question takes no answer here.",
       form: answerFormOptions(item),
       onApplied: () => {
@@ -428,8 +494,73 @@ function mountAnswers(container: any, ctx: any, gates: any) {
         if (refusal.rerender) queueMicrotask(() => ctx.rerender());
         return refusal.message;
       }
+    }));
+  }
+  return lists;
+}
+
+// Withdraw and Continue are the shared action renderer's forms of a gate's gate.withdraw and gate.continue listings, beside its answer.
+// A place whose listing offers neither stays empty and hidden, and a refusal shows in words beside the button.
+function mountGateActions(container: any, ctx: any) {
+  const lists: any[] = [];
+  if (!ctx.actionApi) return lists;
+  const drafts = (ctx.state.answerDrafts ??= {});
+  const refused = (fallback: string) => (_action: any, result: any) => {
+    const refusal = answerError({ code: result.code === "unknown_target" ? "unknown_gate" : result.code, message: result.reason ?? result.message ?? fallback });
+    if (refusal.rerender) queueMicrotask(() => ctx.rerender());
+    return refusal.message;
+  };
+  const mount = (slot: any, target: string, id: string, options: any) => {
+    slot.hidden = true;
+    lists.push(createActionList({
+      root: slot,
+      targets: [target],
+      drafts,
+      renderMarkdown: ctx.renderMarkdown ?? null,
+      groups: ["Question"],
+      actions: [id],
+      emptyText: "",
+      notice: false,
+      onRender: () => {
+        slot.hidden = !slot.querySelector("[data-action-key]");
+      },
+      ...options
+    }));
+  };
+  for (const slot of container.querySelectorAll(".gate-withdraw[data-withdraw-target]")) {
+    mount(slot, slot.dataset.withdrawTarget, "gate.withdraw", {
+      api: ctx.actionApi,
+      form: withdrawFormOptions,
+      onApplied: () => {
+        ctx.showToast("Question withdrawn. No session starts, and a session that comes back to it learns that it was withdrawn.");
+        ctx.rerender();
+      },
+      onRefused: refused("The question was not withdrawn.")
     });
   }
+  // A continuation waits on the person's confirmation outside the browser, so its apply gets the dialog's time; the page keeps one such API,
+  // so a redrawn Continue starts from its last listing rather than showing again only once its listing is read.
+  const api = continueApi(ctx.actionApi);
+  for (const slot of container.querySelectorAll(".gate-continue[data-continue-target]")) {
+    mount(slot, slot.dataset.continueTarget, "gate.continue", {
+      api,
+      form: continueFormOptions,
+      onApplied: (_action: any, _input: any, result: any) => {
+        const wake = result?.wake;
+        ctx.showToast(wake ? (wake.delivered ? "The wake was sent. The cloud session reads your answer from Prism's records." : `The wake was not delivered: ${wake.reason ?? "Claude Code gave no reason."}`) : "The work continues. The new session acts first on your answer.");
+        ctx.rerender();
+      },
+      onRefused: refused("Nothing started.")
+    });
+  }
+  return lists;
+}
+
+const continueApis = new WeakMap();
+
+function continueApi(actionApi: any) {
+  if (!continueApis.has(actionApi)) continueApis.set(actionApi, { ...actionApi, apply: (request: any) => actionApi.apply(request, { deadlineMs: CONTINUE_DEADLINE_MS }) });
+  return continueApis.get(actionApi);
 }
 
 // A host's permission request: the session waits until the person allows it, after a native confirmation, or refuses it.
@@ -996,7 +1127,9 @@ export function render(container: any, entity: any, ctx: any) {
     lists.find((list) => list.value)?.focus();
   });
   bindLinks(container, ctx);
-  mountAnswers(container, ctx, gates);
+  // The page is built out of sight and shows once drawn, so it waits for the first listing of each question's answer, Withdraw, and Continue,
+  // which would otherwise move the page under the person when they arrive.
+  const actionLists = [...mountAnswers(container, ctx, gates), ...mountGateActions(container, ctx)];
   // A failed format migration run runs again from its sheet, after the person confirms it.
   for (const button of container.querySelectorAll("[data-migration-rerun]")) {
     button.addEventListener("click", async () => {
@@ -1013,4 +1146,7 @@ export function render(container: any, entity: any, ctx: any) {
   container.querySelector("[data-notify]")?.addEventListener("click", () => {
     void Notification.requestPermission().finally(() => ctx.rerender());
   });
+  // A redraw of Attention over itself does not wait, since the page built out of sight would lie beside the page showing, with the same forms,
+  // for as long as a listing takes to read; a Withdraw or Continue that a redraw adds shows in place once read.
+  return ctx.redrawing ? undefined : Promise.all(actionLists.map((list: any) => list.loaded));
 }

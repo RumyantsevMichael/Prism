@@ -58,7 +58,7 @@ import { proposeMigration } from "./workflow/format-migrations.mjs";
 import { failMigrationRun, finishMigrationRun, getMigrationRun, launchRunSession, setRunLauncher } from "./workflow/migration-runs.mjs";
 import { migrationProjectOf, migrationScopeOf, scopedCheckoutArtifact, scopedProjectRoot, scopeRefusal, scopedTools } from "./workflow/migration-scope.mjs";
 import { ARTIFACT_TYPES } from "./workflow/artifact-formats.mjs";
-import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
+import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, peekWithdrawn, waitForUserGates, withdrawnText } from "./workflow/gate-wait.mjs";
 import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
 import { callAgent, callAgentRole, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
@@ -67,6 +67,9 @@ import { ACP_HOST_PATTERN } from "./session/acp-agents.mjs";
 import { acpLaunch, acpToken, markToolsListed, unmarkToolsListed } from "./session/options-read-marker.mjs";
 import { GET_SKILL_TOOL, getSkill, SkillFileError } from "./workflow/skill-files.mjs";
 import { HOSTS } from "./session/launch-hosts.mjs";
+import { environmentSessionLink } from "./session/session-links.mjs";
+import { LAUNCH_ID_PATTERN } from "./session/launch-records.mjs";
+import { withGateAsker } from "./workflow/gate-askers.mjs";
 import { EFFORT_PATTERN, MODEL_PATTERN, PROVIDER_PATTERN, RUN_KINDS } from "./session/run-options.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
@@ -938,7 +941,7 @@ const tools = [
   },
   {
     name: "get_coordination_state",
-    description: "Read an initiative's coordination state record with its revision. Reads never create the record. Its settings.host names the supported host that launches run on, and settings.models keeps, per host, a provider and the coordinator's, designImplementation's, codeReview's, securityReview's, and gateSummary's { model, effort, typed }, each part left out for the host default; an earlier models value reads migrated, host defaults as {} and named models as typed choices of every host, except that a name breaking the model rule is kept alone as { earlier } on that agent kind, which reads as the host default and is never passed to a host. childAgents: { host, kinds } names the calling client's host, or null for a client of no supported host, and for each agent kind, designImplementation, codeReview, securityReview, and gateSummary, the { model, effort } to start that kind of child agent with on that host, null leaving the host default. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
+    description: "Read an initiative's coordination state record with its revision. Reads never create the record. state.closed lists the recently closed gates, each with closedAt and its reason, where a gate the person withdrew in the review browser has the reason The person withdrew this question without an answer. and no answer, so never act on it as answered. Its settings.host names the supported host that launches run on, and settings.models keeps, per host, a provider and the coordinator's, designImplementation's, codeReview's, securityReview's, and gateSummary's { model, effort, typed }, each part left out for the host default; an earlier models value reads migrated, host defaults as {} and named models as typed choices of every host, except that a name breaking the model rule is kept alone as { earlier } on that agent kind, which reads as the host default and is never passed to a host. childAgents: { host, kinds } names the calling client's host, or null for a client of no supported host, and for each agent kind, designImplementation, codeReview, securityReview, and gateSummary, the { model, effort } to start that kind of child agent with on that host, null leaving the host default. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
     inputSchema: {
       type: "object",
       properties: {
@@ -966,7 +969,7 @@ const tools = [
   },
   {
     name: "wait_for_user_gate",
-    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, changed with the person's new history entries when the person changes the initiative in the review app, whether here or through a store sync, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn. For the approval gates that update_artifact ask_approval records on a requirement or ADR, pass artifact, its project-relative path, and scope when two scopes hold it, in place of initiative; an answered approval gate needs no resolve.",
+    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, changed with the person's new history entries when the person changes the initiative in the review app, whether here or through a store sync, resolved when the gate was removed (answered in the conversation or withdrawn), withdrawn with withdrawn [{ id, at, by: { name } }] when the person withdrew a gate in the review browser without an answer, which is never an answer to act on, timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn. For the approval gates that update_artifact ask_approval records on a requirement or ADR, pass artifact, its project-relative path, and scope when two scopes hold it, in place of initiative; an answered approval gate needs no resolve.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1131,6 +1134,8 @@ const endingWaits = new Set();
 const DEFERRED_HOLD_MS = 2 * 60000;
 let clientName: any = null;
 let clientVersion: any = null;
+// The harness the client names itself, by title or name, for a gate asker of a client that maps to no launch host.
+let clientHarness: string | null = null;
 
 function olderThan(version: any, minimum: any) {
   const parts = String(version ?? "").split(/[.-]/).slice(0, 3).map(Number);
@@ -1201,7 +1206,7 @@ async function callGateWait(argumentsValue: any, metadata: any, requestId: any) 
     // The gates stay held for a short lease, which the polls of the hook's wait, under the same wait id, renew.
     const waitId = randomBytes(16).toString("hex");
     const held = notices && { ...notices, waitId, hold: Date.now() + DEFERRED_HOLD_MS };
-    value = await waitForUserGates({ projectRoot, ...source, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, notices: held, watchChanges: coordinates });
+    value = await waitForUserGates({ projectRoot, ...source, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, notices: held, watchChanges: coordinates, holdAskers: false });
     if (value.status === "timeout") {
       const maxWaitMinutes = Math.min(argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES, HOOK_WAIT_MINUTES);
       const { replaced } = await recordWaitRequest({ sessionId: hookSession, agent: currentCallAgent(), projectRoot, ...source, gateIds: value.gateIds, maxWaitMinutes, knownEntries, coordinates, ...(held ? { waitId } : {}) });
@@ -1210,7 +1215,8 @@ async function callGateWait(argumentsValue: any, metadata: any, requestId: any) 
       value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
     }
   } else if (unsupported) {
-    value = { status: "unsupported_host", gateIds, client: clientName, reason: unsupported };
+    // A gate the person withdrew is told at once, even where the host cannot wait.
+    value = await peekWithdrawn({ projectRoot, ...source, gateIds }) ?? { status: "unsupported_host", gateIds, client: clientName, reason: unsupported };
   } else {
     const controller = new AbortController();
     if (requestId !== undefined) pendingWaits.set(requestId, controller);
@@ -1244,6 +1250,7 @@ async function callGateWait(argumentsValue: any, metadata: any, requestId: any) 
     changed: () => changedText(value),
     answered: () => [...value.answered.map(answerText), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n"),
     resolved: () => source.artifact ? `Approval gates ${list} of ${source.artifact} closed without an answer: a later ask_approval replaced them, or the artifact was removed or left the scopes this checkout sees.` : `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
+    withdrawn: () => withdrawnText(value),
     timeout: () => `No answer arrived for user gates ${list} before the wait ended.`,
     unknown_gate: () => `No pending user gate has any of the ids ${list}.`,
     deferred: () => `This host cannot wait during a tool call, so Prism waits after this turn ends: end your turn now, and the session continues with the answer when the user answers user gates ${list} in the review browser within ${value.maxWaitMinutes} minutes. If it does not continue, the user's next message delivers any browser answer.`,
@@ -1259,6 +1266,19 @@ async function withRecordStore(projectRoot: string, value: any) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const recordStore = await recordStoreSummary(projectRoot).catch(() => null);
   return recordStore ? { ...value, recordStore } : value;
+}
+
+/**
+ * The session a tool call asks gates as: the launch host's label that the client maps to, else the client's own harness name, the
+ * host session id, which Claude Code gives in the server's environment and Codex in each call's metadata, the cloud session the
+ * environment names, and the launch PRISM_LAUNCH names.
+ */
+function gateAsker(metadata: any) {
+  const host = clientHost();
+  const label = HOSTS.find((entry) => entry.host === host)?.label ?? clientHarness;
+  const sessionId = host === "claude-code" ? (process.env.CLAUDE_CODE_SESSION_ID?.trim() || null) : host === "codex" ? callSessionId(metadata) : null;
+  const launch = typeof process.env.PRISM_LAUNCH === "string" && LAUNCH_ID_PATTERN.test(process.env.PRISM_LAUNCH) ? process.env.PRISM_LAUNCH : null;
+  return { harness: label, host, sessionId, cloud: environmentSessionLink(), launch };
 }
 
 // The calling client's host: the first supported host whose label's first word, such as Claude or Codex, the client's name contains.
@@ -1315,8 +1335,8 @@ async function callStateTool(name: string, argumentsValue: any) {
     throw new Error(`Unknown state tool: ${name}`);
   }
   if (name === "get_coordination_state" || name === "update_coordination_state") resultValue = await withRecordStore(projectRoot, resultValue);
-  // Closed gates are history for the review browser; agents never need them.
-  if (resultValue?.state?.closed) {
+  // Closed gates are history for the review browser, which a read keeps so an agent can tell a question the person withdrew; an update leaves them out.
+  if (name !== "get_coordination_state" && resultValue?.state?.closed) {
     const { closed, ...state } = resultValue.state;
     resultValue = { ...resultValue, state };
   }
@@ -2016,7 +2036,8 @@ input.on("line", async (line) => {
       clientName = typeof request.params?.clientInfo?.name === "string" ? request.params.clientInfo.name : null;
       clientVersion = typeof request.params?.clientInfo?.version === "string" ? request.params.clientInfo.version : null;
       // The harness the client names itself is what each claim this server takes records as its host.
-      configureClaims({ host: harnessName(request.params?.clientInfo) });
+      clientHarness = harnessName(request.params?.clientInfo);
+      configureClaims({ host: clientHarness });
       result(request.id, {
         protocolVersion: request.params?.protocolVersion ?? "2025-06-18",
         capabilities: { tools: {} },
@@ -2035,12 +2056,12 @@ input.on("line", async (line) => {
       callNames.set(request.id, name);
       const started = performance.now(), done = log.doing(`call:${request.id}`, String(name));
       const call = toolCallContext();
-      const value: any = await withToolCall(call, () => withCallSession(meta, async () => {
+      const value: any = await withToolCall(call, () => withGateAsker(gateAsker(meta), () => withCallSession(meta, async () => {
         const agent = await callAgent(meta).catch(() => undefined);
         // A claim records the session's main agent model only when the call is positively that agent's.
         const role = await callAgentRole(meta).catch(() => "unknown");
         return withCallAgent(agent, () => withClaimAgent(role === "main", async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id))));
-      })).finally(done);
+      }))).finally(done);
       log.debug("tool_call", { tool: name, ms: Math.round(performance.now() - started), ...(value?.isError ? { isError: true } : {}) });
       // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
       if (value.structuredContent?.status === "cancelled" || cancelledCalls.has(request.id)) return;
