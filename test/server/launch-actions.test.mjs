@@ -52,6 +52,8 @@ const history = async (root, initiative = INITIATIVE) => {
 };
 
 // Asks a gate as the launched session's own Prism server would: its environment names the launch.
+// A test that asks during a run holds that run's turn with { hold: "release" } and releases it after asking, as a real session asks before its host exits.
+// A turn that ends on a timer can end first on a busy machine, and Prism then asks its own no-result gate while the test writes the coordination state.
 async function askAsLaunch(root, launchId, question = "Which retention window?") {
   const { updateCoordinationState, readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
   const read = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
@@ -221,10 +223,11 @@ test("the person's resume runs the session again, confirming outside the page on
 });
 
 test("a gate that the launched session asks shows the session waiting, while it runs and after it ends", { skip: posixOnly }, async (t) => {
-  const s = await setup(t, { plans: { claude: [{ hold: 1500 }] } });
+  const s = await setup(t, { plans: { claude: [{ hold: "release" }] } });
   const id = (await launch(s)).json.launch.id;
   await askAsLaunch(s.root, id);
   assert.equal((await s.launchView(id)).state, "waiting");
+  await s.release();
   const ended = await waitFor(async () => {
     const view = await s.launchView(id);
     return view?.resumeCommand ? view : null;
@@ -233,9 +236,10 @@ test("a gate that the launched session asks shows the session waiting, while it 
 });
 
 test("an answer given here to the ended session's gate resumes it headless without asking", { skip: posixOnly }, async (t) => {
-  const s = await setup(t, { plans: { claude: [{ hold: 50 }, { hold: 50 }] } });
+  const s = await setup(t, { plans: { claude: [{ hold: "release" }, { hold: 50 }] } });
   const id = (await launch(s)).json.launch.id;
   const gateId = await askAsLaunch(s.root, id);
+  await s.release();
   await waitFor(async () => (await s.launchView(id))?.resumeCommand, { what: "the run to end" });
   await s.setDialog({ code: 1 });
   const answered = await answer(s, gateId);
@@ -249,11 +253,12 @@ test("an answer given here to the ended session's gate resumes it headless witho
 });
 
 test("an answer given while the session runs reaches it there, and resumes it once if the run then ends with the gate open", { skip: posixOnly }, async (t) => {
-  const s = await setup(t, { plans: { claude: [{ hold: 1200 }, { hold: 50 }, { hold: 50 }] } });
+  const s = await setup(t, { plans: { claude: [{ hold: "release" }, { hold: 50 }, { hold: 50 }] } });
   const id = (await launch(s)).json.launch.id;
   const gateId = await askAsLaunch(s.root, id);
   const answered = await answer(s, gateId);
   assert.deepEqual(answered.json.launch, { id, resumed: false, reason: "The session is running and receives the answer there." });
+  await s.release();
   await waitFor(() => s.runs("claude").length === 2, { what: "the one resume after the run ended" });
   await s.settled(id, ["ended-without-result"]);
   await pause(800, "no second resume may follow, and a change that must not happen leaves nothing to wait for");
@@ -261,9 +266,10 @@ test("an answer given while the session runs reaches it there, and resumes it on
 });
 
 test("an answer that another launched session of the initiative would contend with starts nothing", { skip: posixOnly }, async (t) => {
-  const s = await setup(t, { plans: { claude: [{ hold: 50 }], codex: [{ hold: "forever" }] } });
+  const s = await setup(t, { plans: { claude: [{ hold: "release" }], codex: [{ hold: "forever" }] } });
   const id = (await launch(s)).json.launch.id;
   const gateId = await askAsLaunch(s.root, id);
+  await s.release();
   await waitFor(async () => (await s.launchView(id))?.resumeCommand, { what: "the run to end" });
   assert.equal((await launch(s, "codex")).status, 200);
   const answered = await answer(s, gateId);
@@ -292,9 +298,10 @@ test("an answer that arrives from another machine through the store waits for a 
 });
 
 test("no record that can reach the shared store holds the host session id", { skip: posixOnly }, async (t) => {
-  const s = await setup(t, { plans: { claude: [{ hold: 50 }, { hold: 50 }] } });
+  const s = await setup(t, { plans: { claude: [{ hold: "release" }, { hold: 50 }] } });
   const id = (await launch(s)).json.launch.id;
   const gateId = await askAsLaunch(s.root, id);
+  await s.release();
   await waitFor(async () => (await s.launchView(id))?.resumeCommand, { what: "the run to end" });
   await answer(s, gateId);
   await waitFor(() => s.runs("claude").length === 2, { what: "the resumed run" });

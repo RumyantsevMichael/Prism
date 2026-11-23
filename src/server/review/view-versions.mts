@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { watch } from "node:fs";
+import { EventEmitter } from "node:events";
+import { lstatSync, readdirSync, watch } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -127,7 +128,89 @@ export type Targets = { folders: string[]; files: string[]; gitRoots: string[] }
  */
 // On Windows a watcher holds its folder open, so neither this process nor another, such as the review app replacing a store's clone or removing a workspace,
 // could delete or rename the folder while it is watched; there the listings alone notice changes: its folders at every read, and every file at the short interval.
-const defaultWatch: typeof watch = process.platform === "win32" ? (() => { throw new Error("Folders are not watched on Windows."); }) as any : watch;
+const defaultWatch: typeof watch = process.platform === "win32" ? (() => { throw new Error("Folders are not watched on Windows."); }) as any
+  : process.platform === "linux" ? ((target: string, options: any, listener: any) => (options?.recursive ? watchFolderTree(target, listener) : watch(target, options, listener))) as any
+    : watch;
+
+// Node's recursive watcher on Linux watches each file on its own and reports a folder's events only as names it has not seen, so once a write replaced a file
+// by a rename, as every write Prism and Git make does, later replacements of that file report nothing and a view shows the change only at the next full listing.
+// There every folder of the tree gets its own watcher instead, which reports each name added, removed, renamed over, or written in it.
+// A folder that shows later gets its watchers as its name is reported, and every name found below it is reported too, so a file written there first is counted.
+// Git's data and the store's sync state, which no view reads, get no watcher.
+function watchFolderTree(root: string, listener: (event: string, name: string | null) => void) {
+  const tree = new EventEmitter() as EventEmitter & { close: () => void; unref: () => void; ref: () => void };
+  const watchers = new Map<string, ReturnType<typeof watch>>();
+  let closed = false;
+  let started = false;
+  const fail = (error: unknown) => {
+    if (!started) throw error;
+    tree.emit("error", error);
+  };
+  const forget = (relative: string) => {
+    for (const [folder, watcher] of watchers) {
+      if (folder !== relative && !folder.startsWith(`${relative}${path.sep}`)) continue;
+      try { watcher.close(); } catch {}
+      watchers.delete(folder);
+    }
+  };
+  // Watches a folder of the tree and every folder below it; with report, also reports each name found, for a folder that showed after the watcher started.
+  const add = (relative: string, report: boolean) => {
+    if (closed || watchers.has(relative) || (relative && skipped(relative))) return;
+    const folder = path.join(root, relative);
+    let watcher;
+    try {
+      watcher = watch(folder, { persistent: false }, (event, name) => {
+        if (closed) return;
+        const child = name === null || name === undefined ? null : relative ? path.join(relative, String(name)) : String(name);
+        listener(event, child);
+        if (child !== null && event === "rename") settle(child);
+      });
+    } catch (error: any) {
+      // A folder removed before its watcher started needs none; any other refusal, such as the system's watch limit, leaves the tree to the listings.
+      if (relative && (error?.code === "ENOENT" || error?.code === "ENOTDIR")) return;
+      fail(error);
+      return;
+    }
+    watcher.on("error", (error) => {
+      if (relative) forget(relative);
+      else tree.emit("error", error);
+    });
+    watchers.set(relative, watcher);
+    let entries;
+    try { entries = readdirSync(folder, { withFileTypes: true }); }
+    catch { return; }
+    for (const entry of entries) {
+      const child = relative ? path.join(relative, entry.name) : entry.name;
+      if (report && !skipped(child)) listener("rename", child);
+      if (entry.isDirectory()) add(child, report);
+    }
+  };
+  // A name that a folder's watcher reported added, removed, or renamed: a folder there gets watchers, and a name gone takes its folders' watchers away.
+  const settle = (relative: string) => {
+    let info;
+    try { info = lstatSync(path.join(root, relative)); }
+    catch {
+      forget(relative);
+      return;
+    }
+    if (info.isDirectory()) add(relative, true);
+    else forget(relative);
+  };
+  tree.close = () => {
+    closed = true;
+    for (const watcher of watchers.values()) { try { watcher.close(); } catch {} }
+    watchers.clear();
+  };
+  try { add("", false); }
+  catch (error) {
+    tree.close();
+    throw error;
+  }
+  started = true;
+  tree.unref = () => {};
+  tree.ref = () => {};
+  return tree;
+}
 
 // The nearest folder above a missing target that exists, and the name in it that leads to the target, or null when none can be found.
 async function nearestExisting(target: string) {
