@@ -13,6 +13,8 @@ const DIRECTORY = "call-agents";
 export const CALL_AGENT_TTL_MS = 24 * 60 * 60000;
 export const MAIN_AGENT = "main";
 const current = new AsyncLocalStorage();
+/** The agent that a Codex sub-agent thread is, named by its thread id, as tool call metadata and the SubagentStop hook's agent_id name it. */
+export const threadAgent = (thread: string) => `thread:${thread}`;
 
 export function callAgentDirectory(env = process.env) {
   return path.join(reviewAppDirectory(env), DIRECTORY);
@@ -72,7 +74,7 @@ function turnMetadata(meta: any) {
 export async function callAgent(meta: any, { session = claimHolder(), directory = callAgentDirectory(), now = Date.now() }: any = {}) {
   const turn = turnMetadata(meta);
   const thread = text(turn?.thread_id) ?? text(meta?.threadId);
-  if (turn && thread && (text(turn.parent_thread_id) || turn.thread_source === "subagent")) return `thread:${thread}`;
+  if (turn && thread && (text(turn.parent_thread_id) || turn.thread_source === "subagent")) return threadAgent(thread);
   if (turn || text(meta?.threadId)) return MAIN_AGENT;
   const toolUseId = text(meta?.["claudecode/toolUseId"]);
   const agentId = toolUseId ? (await recordedUse(session, toolUseId, directory, now))?.agentId : null;

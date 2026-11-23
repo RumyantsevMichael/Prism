@@ -69,6 +69,8 @@ test("packages compatible capacity and trace hooks at the default plugin path", 
     assert.deepEqual([answerHook.timeout, answerHook.additionalContextLimit], [5, 4000], event);
   }
   assert.deepEqual(hookManifest.hooks.Stop.flatMap((group) => group.hooks), [{ type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/wait-for-gate-answers.mjs\"", statusMessage: "Prism: waiting for answers to open questions", timeout: 3600 }, { type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-runs-to-a-result.mjs\"", statusMessage: "Prism: checking that the launched run has a result", timeout: 10 }]);
+  // Codex continues a sub-agent's deferred gate wait from SubagentStop, as it continues the root agent's from Stop.
+  assert.deepEqual(hookManifest.hooks.SubagentStop.flatMap((group) => group.hooks)[0], { type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/wait-for-gate-answers.mjs\"", statusMessage: "Prism: waiting for answers to open questions", timeout: 3600 });
   // Each hook carries a short name of what it does, which Claude Code and Codex show instead of its command line.
   for (const hook of Object.values(hookManifest.hooks).flat().flatMap((group) => group.hooks)) assert.match(hook.statusMessage ?? "", /^Prism: [a-z]/, hook.command);
   for (const event of ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PreCompact", "SubagentStart", "SubagentStop", "SessionEnd"]) {

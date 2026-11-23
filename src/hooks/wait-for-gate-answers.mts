@@ -4,6 +4,7 @@ import { answerText, changedText, HOOK_WAIT_MINUTES, waitForUserGates, withdrawn
 import { NOTICE_FOLDER } from "../server/workflow/change-notices.mjs";
 import { sessionHolder } from "../server/workflow/slice-claims.mjs";
 import { takeWaitRequest } from "../server/workflow/gate-wait-requests.mjs";
+import { MAIN_AGENT, threadAgent } from "../server/workflow/call-agent.mjs";
 
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 
@@ -21,13 +22,16 @@ async function readHookInput(input: any) {
 
 // A host that cannot wait during a tool call, such as Codex, gets the wait here: wait_for_user_gate recorded it for this session,
 // and blocking the stop with the answers continues the turn as if the tool call had returned them.
+// Codex runs Stop when the root agent's turn ends and SubagentStop, naming the sub-agent's thread as agent_id, when a sub-agent's does, so each continues only its own agent's wait.
 // Without a recorded wait, as always under Claude Code, the hook returns at once and lets the turn stop.
 export async function waitForGateAnswers({ input = process.stdin, directory, pollMs, settleMs }: any = {}) {
   const hookInput = JSON.parse(await readHookInput(input));
-  if (hookInput.hook_event_name && hookInput.hook_event_name !== "Stop") return null;
+  const subagent = hookInput.hook_event_name === "SubagentStop";
+  if (hookInput.hook_event_name && hookInput.hook_event_name !== "Stop" && !subagent) return null;
   const sessionId = typeof hookInput.session_id === "string" ? hookInput.session_id : null;
-  if (!sessionId) return null;
-  const request = await takeWaitRequest({ sessionId, ...(directory ? { directory } : {}) });
+  const agentId = typeof hookInput.agent_id === "string" && hookInput.agent_id.trim() ? hookInput.agent_id.trim() : null;
+  if (!sessionId || (subagent && !agentId)) return null;
+  const request = await takeWaitRequest({ sessionId, agent: subagent ? threadAgent(agentId as string) : MAIN_AGENT, ...(directory ? { directory } : {}) });
   if (!request) return null;
   const maxWaitMinutes = Math.min(Number(request.maxWaitMinutes) || HOOK_WAIT_MINUTES, HOOK_WAIT_MINUTES);
   // A wait its session's coordinator asked ends on the person's changes that no other result of the session showed; it goes on holding the gates that the asking call held, under the same wait id.

@@ -1,6 +1,7 @@
-import { lstat, mkdir, readFile, readlink, symlink, writeFile, chmod, copyFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readlink, symlink, writeFile, chmod, copyFile } from "node:fs/promises";
 import path from "node:path";
 import { crc32, gunzipSync, inflateRawSync } from "node:zlib";
+import { Bzip2Error, bunzip2InWorker } from "./bzip2.mjs";
 
 // Unpacking a registry agent's archive into its version folder with Node's own zlib, running nothing from it.
 // Every entry is read and checked before the first one is written: an absolute path, a `..` part, a link that leads outside the folder,
@@ -218,6 +219,40 @@ export async function extractTarGz(file: string, folder: string) {
     throw refuse(error?.code === "ERR_BUFFER_TOO_LARGE" ? "The archive unpacks to more than 2 GiB." : "The archive is not a valid gzip file.");
   }
   await writeEntries(tarEntries(tar), folder);
+}
+
+/** Unpacks a .tar.bz2 or .tbz2 file into folder, refusing any entry that would land outside it. */
+export async function extractTarBz2(file: string, folder: string) {
+  let tar: Buffer;
+  try {
+    tar = await bunzip2InWorker(await readFile(file), MAX_UNPACKED_BYTES);
+  } catch (error) {
+    if (!(error instanceof Bzip2Error)) throw error;
+    throw refuse(/limit/.test(error.message) ? "The archive unpacks to more than 2 GiB." : `The archive is not a valid bzip2 file: ${error.message}`);
+  }
+  await writeEntries(tarEntries(tar), folder);
+}
+
+/** Places a download that is the program itself, not an archive, into folder under the plain file name `name`, as an executable. */
+export async function placeBinary(file: string, folder: string, name: string) {
+  const parts = entryParts(name);
+  if (parts.length !== 1) throw refuse(`The program ${JSON.stringify(name)} of a download that is not an archive must be a plain file name.`);
+  await writeEntries([{ name: parts[0], kind: "file", mode: 0o755, data: await readFile(file) }], folder);
+}
+
+/** The form of a download, read from its first bytes: a gzip, bzip2, or zip archive, or otherwise the program itself. */
+export async function downloadForm(file: string): Promise<"gzip" | "bzip2" | "zip" | "binary"> {
+  const handle = await open(file, "r");
+  try {
+    const head = Buffer.alloc(4);
+    const { bytesRead } = await handle.read(head, 0, 4, 0);
+    if (bytesRead >= 2 && head[0] === 0x1f && head[1] === 0x8b) return "gzip";
+    if (bytesRead >= 4 && head.subarray(0, 3).toString("latin1") === "BZh" && head[3] >= 0x31 && head[3] <= 0x39) return "bzip2";
+    if (bytesRead >= 4 && head.readUInt32LE(0) === 0x04034b50) return "zip";
+    return "binary";
+  } finally {
+    await handle.close();
+  }
 }
 
 // ---- zip ----
