@@ -51,6 +51,16 @@ export async function recordWaitRequest({ sessionId, agent = MAIN_AGENT, project
   return { replaced: typeof replaced?.waitId === "string" && typeof replaced.initiative === "string" && typeof replaced.projectRoot === "string" ? { waitId: replaced.waitId, initiative: replaced.initiative, projectRoot: replaced.projectRoot } : null };
 }
 
+// Whether the agent's request for the wait waitId still waits for its hook: not yet taken, replaced, or expired.
+export async function waitRequestPending({ sessionId, agent = MAIN_AGENT, waitId, directory = gateWaitDirectory(), now = Date.now() }: { sessionId: string; agent?: string; waitId: string; directory?: string; now?: number }) {
+  try {
+    const request = parseStoreJson(await readFile(requestFile(directory, sessionId, agent), "utf8"));
+    return request.waitId === waitId && now - Date.parse(request.requestedAt) <= WAIT_REQUEST_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
 // The hook takes the request by moving it away first, so two Stop hooks of one session never both wait on it.
 export async function takeWaitRequest({ sessionId, agent = MAIN_AGENT, directory = gateWaitDirectory(), now = Date.now() }: { sessionId: string; agent?: string; directory?: string; now?: number }) {
   const file = requestFile(directory, sessionId, agent);
