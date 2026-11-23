@@ -184,7 +184,7 @@ export async function startMigrationLaunch({ projectRoot, migrationRun, host, co
   if (!choice) throw refuse("invalid_choice", INVALID_CHOICE);
   if (typeof migrationRun !== "string" || !/^run-[0-9a-f]{16}$/.test(migrationRun)) throw refuse("unknown_migration_run", `No format migration run ${String(migrationRun)} exists.`);
   const checkout = await realpath(projectRoot);
-  return launchSession({ checkout, subject: { initiative: null, migrationRun }, host, coordinator: choice, access: access === "full" ? "full" : "read-only", readRoots: host === "codex" ? await migrationReadRoots(checkout, host, env) : [], env });
+  return launchSession({ checkout, subject: { initiative: null, migrationRun }, host, coordinator: choice, access: access === "full" ? "full" : "read-only", readRoots: host === "codex" ? await migrationReadRoots(checkout, host, env, (await resolveHost(host, env))?.executable ?? null) : [], env });
 }
 
 // The folder this Prism runs from, which holds its skills.
@@ -195,11 +195,12 @@ const PRISM_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
  * where the host keeps the skills it runs, each by its real path when it exists and is not the checkout, inside it, or holding it.
  * A run's Claude Code session adds no folder, since it has no built-in tool and takes the format reference from get_migration_run.
  */
-export async function migrationReadRoots(checkout: string, host: string, env: NodeJS.ProcessEnv = process.env) {
+export async function migrationReadRoots(checkout: string, host: string, env: NodeJS.ProcessEnv = process.env, executable: string | null = null) {
   const home = os.homedir();
   const hostHome = host === "codex" ? (env.CODEX_HOME || path.join(home, ".codex")) : (env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"));
   const roots: string[] = [];
-  for (const candidate of [PRISM_ROOT, path.join(hostHome, "plugins", "cache")]) {
+  const install = executable ? await installFolder(executable) : null;
+  for (const candidate of [PRISM_ROOT, path.join(hostHome, "plugins", "cache"), ...(install ? [install] : [])]) {
     let real;
     try {
       real = await realpath(candidate);
@@ -212,6 +213,23 @@ export async function migrationReadRoots(checkout: string, host: string, env: No
     if (!inside(checkout) && !holds(checkout) && !roots.some(inside)) roots.push(real);
   }
   return roots;
+}
+
+/**
+ * The folder that holds the host's own program, which its sandbox runs again inside itself on Linux: for a program that a package manager installed,
+ * the scope folder above its package, which also holds its platform binary, and otherwise the folder of the program itself, or null when it cannot be read.
+ */
+async function installFolder(executable: string) {
+  let real;
+  try {
+    real = await realpath(executable);
+  } catch {
+    return null;
+  }
+  const parts = real.split(path.sep);
+  const modules = parts.lastIndexOf("node_modules");
+  if (modules >= 0 && parts[modules + 1]?.startsWith("@")) return parts.slice(0, modules + 2).join(path.sep);
+  return path.dirname(real);
 }
 
 async function launchSession({ checkout, subject, host, coordinator, access = "full", readRoots = [], answeredGate = null, env }: { checkout: string; subject: LaunchSubject; host: string; coordinator: any; access?: string; readRoots?: string[]; answeredGate?: string | null; env: NodeJS.ProcessEnv }) {

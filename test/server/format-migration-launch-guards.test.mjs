@@ -60,14 +60,16 @@ test("a run's Claude Code session works in its own folder with no built-in tool 
   assert.equal(started.env.PRISM_MIGRATION_PROJECT, checkout, "and takes its project from the launch");
 });
 
-test("a run's Codex thread runs in the read-only sandbox, readable only in its folders, and never asks to leave it", { skip: posixOnly }, async (context) => {
+test("a run's Codex thread runs under a read-only permission profile, readable only in its folders, and never asks to leave it", { skip: posixOnly }, async (context) => {
   const { root, call, hosts } = await runCheckout(context, BROKEN, { hosts: ["codex"] });
   const run = await runFor(call, PATHS.requirements);
   await running(call, run);
   // A read of Codex's model list runs first in an app server of its own, so the run's own app server is the one that opens a thread.
   const started = await waitFor(() => hosts.runs("codex").find((entry) => hosts.inputs(entry.pid).some((message) => message.method === "thread/start")) ?? null, { what: "the thread start" });
   const thread = hosts.inputs(started.pid).find((message) => message.method === "thread/start");
-  assert.equal(thread.params.sandbox, "read-only");
+  // Codex restricts reads only through a named permission profile, which the thread's own configuration defines and which takes the place of a sandbox mode.
+  assert.equal("sandbox" in thread.params, false);
+  assert.equal(thread.params.permissions, "prism-read-only");
   assert.equal(thread.params.approvalPolicy, "never");
   // The thread's configuration names Prism's scoped server as its only MCP server.
   assert.deepEqual(Object.keys(thread.params.config.mcp_servers), ["prism-run"]);
@@ -75,14 +77,16 @@ test("a run's Codex thread runs in the read-only sandbox, readable only in its f
   assert.equal(thread.params.config.mcp_servers["prism-run"].env.PRISM_MIGRATION_PROJECT, await realpath(root));
   assert.equal("approvalsReviewer" in thread.params, false, "no automatic reviewer lets a command out of the sandbox");
   const turn = await waitFor(() => hosts.inputs(started.pid).find((message) => message.method === "turn/start") ?? null, { what: "the turn start" });
-  const { type, access } = turn.params.sandboxPolicy;
-  assert.equal(type, "readOnly");
-  assert.equal(access.type, "restricted");
+  assert.equal("sandboxPolicy" in turn.params, false, "the turn keeps the thread's profile");
+  const { filesystem, network } = thread.params.config.permissions["prism-read-only"];
+  assert.deepEqual(network, { enabled: false });
+  assert.ok(Object.values(filesystem).every((access) => access === "read"), JSON.stringify(filesystem));
+  const readable = Object.keys(filesystem).filter((key) => !key.startsWith(":"));
   const launch = await launchRecord(hosts, (await readRun(call, run)).launch.id);
   assert.equal(thread.params.cwd, launch.workdir);
-  assert.equal(access.readableRoots[0], launch.workdir);
-  assert.ok(access.readableRoots.includes(PRISM_ROOT));
-  assert.equal(access.readableRoots.includes(await realpath(root)), false);
+  assert.equal(readable[0], launch.workdir);
+  assert.ok(readable.includes(PRISM_ROOT));
+  assert.equal(readable.includes(await realpath(root)), false);
   assert.equal(started.env.PRISM_MIGRATION_RUN, run);
   assert.equal(started.env.PRISM_MIGRATION_PROJECT, await realpath(root));
 });
