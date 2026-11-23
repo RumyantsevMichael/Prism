@@ -39,6 +39,9 @@ The browser follows the operating system's light or dark setting and changes wit
 It shows compact density by default.
 The review app keeps the theme and density for you, so every project and every later session shows the same choice.
 The **Settings** button, the gear at the start of the status bar, or Ctrl+, (Cmd+, on a Mac) opens Settings, and the same key closes it.
+Settings lists its sections down its left side in groups: **You** (Appearance, Layout, Personal), **This workspace** (Record store), **This computer** (Prism's own runs, Coding agents), and **Prism** (About Prism).
+It keeps one size whichever section shows, and a section longer than the dialog scrolls inside it.
+On a phone Settings fills the window and opens on its list of sections; choosing one shows that section, and **All settings** returns to the list.
 **Appearance** offers the themes System, Light, and Dark and the densities Compact and Comfortable.
 A choice applies at once, and System follows the operating system again.
 **Layout** shows or hides the sidebar on windows wider than 1100 pixels and returns the sidebar to its default width.

@@ -1229,6 +1229,8 @@ function requireApp() {
 // person's preference, as the appearance menu's did; Prism's own runs is this computer's action, drawn by the action list and applied with its own button.
 // The person's own settings live on this machine beside Prism's application data, so the section reads them again each time Settings opens.
 const settingsDialog = document.getElementById("settings-dialog");
+// The phone layout, where Settings fills the window and shows one pane at a time.
+const PHONE = matchMedia("(max-width: 720px)");
 const PRISM_RUNS_TARGET = "machine:prism-runs";
 let prismRunsList: any = null;
 let prismRunsShown = false;
@@ -1287,9 +1289,19 @@ function startSettings() {
     for (const section of settingsDialog!.querySelectorAll(".settings-section")) (section as any).hidden = (section as any).dataset.section !== name || !ready;
     for (const item of sections!.querySelectorAll("prism-tree-item")) item.toggleAttribute("selected", item.getAttribute("value") === name);
   };
+  // On a phone Settings shows the list of sections or one section; choosing a section opens it, and All settings goes back to the list.
+  const panes = settingsDialog!.querySelector<HTMLElement>(".settings")!;
+  const back = document.getElementById("settings-back")!;
   sections!.addEventListener("prism-select", (event) => {
     const value = (event as any).detail?.value;
-    if (value) showSection(value);
+    if (!value) return;
+    showSection(value);
+    panes.dataset.pane = "section";
+    if (PHONE.matches) back.focus();
+  });
+  back.addEventListener("click", () => {
+    panes.dataset.pane = "list";
+    sections!.querySelector<HTMLElement>("prism-tree-item[selected]")?.focus();
   });
   document!.getElementById("settings-button")!.addEventListener("click", () => openSettings());
   const root = document.documentElement;
@@ -1335,6 +1347,8 @@ function openSettings() {
   document!.getElementById("settings-store-state")!.textContent = store!.hidden ? "This workspace keeps no records yet." : (store!.getAttribute("tip") ?? "").split("\n")[0];
   document!.getElementById("settings-store-open")!.hidden = store!.hidden;
   if (settingsDialog!.querySelector('.settings-section[data-section="agents"]:not([hidden])')) void codingAgents?.refresh();
+  // On a phone Settings opens on its list of sections.
+  settingsDialog!.querySelector<HTMLElement>(".settings")!.dataset.pane = "list";
   (settingsDialog! as any).show();
   showPersonalAccess();
   loadPersonalSettings();
