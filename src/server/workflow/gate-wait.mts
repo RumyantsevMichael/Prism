@@ -131,7 +131,7 @@ function outcome(initiative: string, gateIds: any, state: any, history: any, sho
 }
 
 // Each poll renews the wait's hold on its gates for this long, at least ten polls, so the hold of a wait whose process stopped lapses soon.
-const HOLD_LEASE_MS = 15000;
+export const HOLD_LEASE_MS = 15000;
 
 // The wait reads the coordination state record, or an artifact's status record, rather than server memory, so an answer recorded by any review server process ends it.
 // After the first answer it keeps polling briefly, because a user often answers several gates in one visit.

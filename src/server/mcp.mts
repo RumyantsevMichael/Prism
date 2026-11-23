@@ -58,10 +58,10 @@ import { proposeMigration } from "./workflow/format-migrations.mjs";
 import { failMigrationRun, finishMigrationRun, getMigrationRun, launchRunSession, setRunLauncher } from "./workflow/migration-runs.mjs";
 import { migrationProjectOf, migrationScopeOf, scopedCheckoutArtifact, scopedProjectRoot, scopeRefusal, scopedTools } from "./workflow/migration-scope.mjs";
 import { ARTIFACT_TYPES } from "./workflow/artifact-formats.mjs";
-import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, peekWithdrawn, waitForUserGates, withdrawnText } from "./workflow/gate-wait.mjs";
+import { DEFAULT_WAIT_MINUTES, HOLD_LEASE_MS, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, peekWithdrawn, waitForUserGates, withdrawnText } from "./workflow/gate-wait.mjs";
 import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
 import { callAgent, callAgentRole, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
-import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
+import { recordWaitRequest, waitRequestPending } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { ACP_HOST_PATTERN } from "./session/acp-agents.mjs";
 import { acpLaunch, acpToken, markToolsListed, unmarkToolsListed } from "./session/options-read-marker.mjs";
@@ -1130,8 +1130,33 @@ const DEFAULT_BACKGROUND_MS = 120000;
 const pendingWaits = new Map();
 // The gate waits that run, so closing awaits each one letting go of its gates.
 const endingWaits = new Set();
-// A deferred wait's gates stay held this long for the Stop hook's wait to start and renew them.
-const DEFERRED_HOLD_MS = 2 * 60000;
+// A deferred wait's gates stay held for this lease, which this process renews while the wait's request waits for the Stop hook,
+// however long the turn runs, and the hook's wait renews once it takes the request; a process that stopped renews nothing, so its hold soon lapses.
+const DEFERRED_HOLD_MS = Number(process.env.PRISM_DEFERRED_HOLD_MS) || HOLD_LEASE_MS;
+// The renewals of the deferred waits whose requests wait for their hooks, which closing stops.
+const deferredHolds = new Set<ReturnType<typeof setInterval>>();
+
+function keepDeferredHold({ projectRoot, initiative, session, waitId, sessionId, agent }: { projectRoot: string; initiative: string; session: any; waitId: string; sessionId: string; agent: any }) {
+  let renewing = false;
+  const timer = setInterval(async () => {
+    if (renewing) return;
+    renewing = true;
+    try {
+      if (await waitRequestPending({ sessionId, agent, waitId })) await endGateWait({ projectRoot, initiative, session, waitId, hold: Date.now() + DEFERRED_HOLD_MS });
+      else stopDeferredHold(timer);
+    } catch {
+    } finally {
+      renewing = false;
+    }
+  }, Math.max(50, Math.floor(DEFERRED_HOLD_MS / 3)));
+  timer.unref();
+  deferredHolds.add(timer);
+}
+
+function stopDeferredHold(timer: ReturnType<typeof setInterval>) {
+  clearInterval(timer);
+  deferredHolds.delete(timer);
+}
 let clientName: any = null;
 let clientVersion: any = null;
 // The harness the client names itself, by title or name, for a gate asker of a client that maps to no launch host.
@@ -1203,15 +1228,17 @@ async function callGateWait(argumentsValue: any, metadata: any, requestId: any) 
   const knownEntries = Array.isArray(start.known) ? start.known : undefined;
   if (unsupported && hookSession) {
     // Codex names its session in the call's metadata, and its Stop hook for that session waits once this turn ends.
-    // The gates stay held for a short lease, which the polls of the hook's wait, under the same wait id, renew.
+    // The gates stay held for a short lease, which this process renews until the hook takes the request, and the polls of the hook's wait, under the same wait id, renew after that.
     const waitId = randomBytes(16).toString("hex");
-    const held = notices && { ...notices, waitId, hold: Date.now() + DEFERRED_HOLD_MS };
+    const session = claimHolder();
+    const held = notices && { ...notices, session, waitId, hold: Date.now() + DEFERRED_HOLD_MS };
     value = await waitForUserGates({ projectRoot, ...source, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, notices: held, watchChanges: coordinates, holdAskers: false });
     if (value.status === "timeout") {
       const maxWaitMinutes = Math.min(argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES, HOOK_WAIT_MINUTES);
       const { replaced } = await recordWaitRequest({ sessionId: hookSession, agent: currentCallAgent(), projectRoot, ...source, gateIds: value.gateIds, maxWaitMinutes, knownEntries, coordinates, ...(held ? { waitId } : {}) });
       // The request this one replaced never reaches the hook, so its wait lets go of its gates.
       if (replaced) await endGateWait({ ...replaced, cancelled: true }).catch(() => {});
+      if (held) keepDeferredHold({ projectRoot, initiative, session, waitId, sessionId: hookSession, agent: currentCallAgent() });
       value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
     }
   } else if (unsupported) {
@@ -2115,6 +2142,7 @@ async function stop(reason: string) {
     for (const controller of pendingWaits.values()) controller.abort();
     cancelVerifications();
     stopClaimRenewals();
+    for (const timer of [...deferredHolds]) stopDeferredHold(timer);
     await Promise.all([nativeSemanticRuntime.close(), reviewServers.close(), Promise.allSettled([...endingWaits])]);
     // A write that the cleanup finished has its sync handed off too.
     handOffRecordSyncs();

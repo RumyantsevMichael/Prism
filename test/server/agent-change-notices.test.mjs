@@ -48,8 +48,8 @@ async function dataDirectory(context) {
   return directory;
 }
 
-function server(context, root, { data, sessionId = null, clientName = "claude-code", version = "2.1.296" }) {
-  const env = isolatedEnv({ PRISM_REVIEW_APP_DIR: path.join(root, ".app"), PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_GATE_WAIT_HEARTBEAT_MS: "200", PRISM_GATE_WAIT_SETTLE_MS: "300", CLAUDE_PROJECT_DIR: root, PLUGIN_DATA: data });
+function server(context, root, { data, sessionId = null, clientName = "claude-code", version = "2.1.296", env: extra = {} }) {
+  const env = isolatedEnv({ PRISM_REVIEW_APP_DIR: path.join(root, ".app"), PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_GATE_WAIT_HEARTBEAT_MS: "200", PRISM_GATE_WAIT_SETTLE_MS: "300", CLAUDE_PROJECT_DIR: root, PLUGIN_DATA: data, ...extra });
   for (const name of ["MCP_TOOL_TIMEOUT", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "CLAUDE_CODE_SESSION_ID"]) delete env[name];
   if (sessionId) env.CLAUDE_CODE_SESSION_ID = sessionId;
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
@@ -60,7 +60,7 @@ function server(context, root, { data, sessionId = null, clientName = "claude-co
     for (const listener of listeners) listener();
   });
   const stop = async () => {
-    if (child.exitCode === null) {
+    if (child.exitCode === null && child.signalCode === null) {
       child.stdin.end();
       await new Promise((resolve) => child.once("exit", resolve));
     }
@@ -100,7 +100,7 @@ function server(context, root, { data, sessionId = null, clientName = "claude-co
     if (message.error) throw Object.assign(new Error(message.error.message), { data: message.error.data });
     return message.result;
   };
-  return { call, start, response, ready, stop, messages };
+  return { call, start, response, ready, stop, messages, child };
 }
 
 // Claude Code runs Prism's PreToolUse hook for each of its tool uses before it sends the call, with agent_id only for a sub-agent's tool use.
@@ -235,6 +235,44 @@ test("the Stop hook ends a deferred wait with the person's change", async (conte
   assert.equal(blocked?.decision, "block");
   assert.match(blocked.reason, NOTICE);
   assert.match(blocked.reason, /initiative\.continuation/);
+});
+
+// Codex calls a turn's tools after a deferred wait for as long as the turn runs, and its Stop hook starts only when the turn ends.
+test("a Codex deferred wait's answer reaches the session once, though the turn outlasts the deferred call's hold", async (context) => {
+  const { root, gateIds } = await actionProject(context);
+  const data = await dataDirectory(context);
+  const directory = path.join(root, ".app", "gate-waits");
+  const mcp = server(context, root, { data, clientName: "codex-mcp-client", version: "0.170.0", env: { PRISM_DEFERRED_HOLD_MS: "1000" } });
+  const meta = codexMeta("codex-session");
+  await mcp.call("get_coordination_state", { initiative: INITIATIVE }, meta);
+  const deferred = await mcp.call("wait_for_user_gate", { initiative: INITIATIVE, gateIds: [gateIds.review] }, meta);
+  assert.equal(deferred.structuredContent.status, "deferred");
+  await pause(3000, "the turn goes on for longer than the deferred call's hold, and no event marks time passing");
+  await person(root, "gate.answer", { choice: "approve" }, { actionTarget: `gate:${INITIATIVE}/${gateIds.review}` });
+  const read = await mcp.call("get_initiative", { initiative: INITIATIVE }, meta);
+  assert.deepEqual((changesOf(read) ?? []).map((entry) => entry.action), [], "a result of the turn leaves the answer for the wait that goes on after it");
+  const blocked = await waitForGateAnswers({ input: Readable.from([JSON.stringify({ hook_event_name: "Stop", session_id: "codex-session" })]), directory, pollMs: 50, settleMs: 0 });
+  assert.equal(blocked?.decision, "block");
+  assert.match(blocked.reason, /^The user answered while Prism's wait_for_user_gate call waited after your turn/);
+  const after = await mcp.call("get_initiative", { initiative: INITIATIVE }, meta);
+  assert.deepEqual(changesOf(after) ?? [], [], "the answer the Stop hook returned is not shown again");
+});
+
+test("the hold of a Codex deferred wait whose server process was killed lapses after its lease", async (context) => {
+  const { root, gateIds } = await actionProject(context);
+  const data = await dataDirectory(context);
+  const env = { PRISM_DEFERRED_HOLD_MS: "1000" };
+  const meta = codexMeta("codex-session");
+  const first = server(context, root, { data, clientName: "codex-mcp-client", version: "0.170.0", env });
+  await first.call("get_coordination_state", { initiative: INITIATIVE }, meta);
+  assert.equal((await first.call("wait_for_user_gate", { initiative: INITIATIVE, gateIds: [gateIds.review] }, meta)).structuredContent.status, "deferred");
+  first.child.kill("SIGKILL");
+  await new Promise((resolve) => first.child.once("exit", resolve));
+  await pause(2500, "the killed process renews nothing, and the test is about its hold lapsing after the lease");
+  await person(root, "gate.answer", { choice: "approve" }, { actionTarget: `gate:${INITIATIVE}/${gateIds.review}` });
+  const second = server(context, root, { data, clientName: "codex-mcp-client", version: "0.170.0", env });
+  const read = await second.call("get_initiative", { initiative: INITIATIVE }, meta);
+  assert.deepEqual((changesOf(read) ?? []).map((entry) => entry.action), ["gate.answer"], "the answer reaches the session once nothing holds it");
 });
 
 test("an agent's settings write keeps every setting the person changed and reports what it kept", async (context) => {
