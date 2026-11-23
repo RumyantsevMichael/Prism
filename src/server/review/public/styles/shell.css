@@ -465,18 +465,38 @@ body {
   flex: none;
 }
 
-/* Settings: its sections down the start edge, the chosen section's settings beside them. */
+/* Settings: its sections, grouped by whose settings they are, down the start edge, and the chosen section's settings beside them.
+   The dialog keeps one height, so the sections stay put and only the chosen section scrolls. */
 .settings {
   display: grid;
   grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
-  align-items: start;
+  grid-template-rows: minmax(0, 1fr);
   gap: var(--prism-space-6);
+  height: 100%;
   min-width: 0;
-  min-height: calc(var(--prism-space-8) * 8);
+  min-height: 0;
+}
+
+.settings-sections {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.settings-sections > .prism-group-heading:first-child {
+  margin-top: 0;
 }
 
 .settings-body {
   min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* All settings leads back to the list of sections on a phone only, where a section takes the whole window. */
+.settings-back {
+  display: none;
 }
 
 .settings-section[hidden] {
@@ -572,9 +592,20 @@ body {
   display: none;
 }
 
+/* On a phone Settings fills the window and shows either the list of sections or one section, which All settings leaves. */
 @media (max-width: 720px) {
   .settings {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings[data-pane="list"] > .settings-body,
+  .settings[data-pane="section"] > .settings-sections {
+    display: none;
+  }
+
+  .settings-back {
+    display: inline-flex;
+    margin-bottom: var(--prism-space-4);
   }
 }
 
