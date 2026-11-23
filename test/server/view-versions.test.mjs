@@ -29,7 +29,10 @@ test("a watched change to a store file gives the root a new version at once, and
   await settled(() => versions.current(root), (version) => version !== first);
 });
 
-test("a watched file that another write replaces by a rename, again and again, gives the root a new version each time without a listing", async (t) => {
+// Windows watches no folder, so there only the listings that the tests below check notice changes.
+const watchedOnly = process.platform === "win32" ? "folders are not watched on Windows" : false;
+
+test("a watched file that another write replaces by a rename, again and again, gives the root a new version each time without a listing", { skip: watchedOnly }, async (t) => {
   const root = await folder(t);
   const clock = 1000;
   // The clock stands still, so no listing runs and only the watcher can change the version.
@@ -48,7 +51,7 @@ test("a watched file that another write replaces by a rename, again and again, g
   }
 });
 
-test("a folder made after the watcher started is watched too, and a file written into it at once is counted", async (t) => {
+test("a folder made after the watcher started is watched too, and a file written into it at once is counted", { skip: watchedOnly }, async (t) => {
   const root = await folder(t);
   const clock = 1000;
   const versions = createViewVersions({ targetsOf: async () => ({ folders: [path.join(root, "store")], files: [], gitRoots: [] }), isEventless: async () => false, now: () => clock });
