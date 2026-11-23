@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.32.0](https://github.com/RumyantsevMichael/Prism/compare/v0.31.1...v0.32.0) (2026-11-23)
+
+
+### Added
+
+* check artifacts against versioned formats and migrate them ([#421](https://github.com/RumyantsevMichael/Prism/issues/421)) ([a092bad](https://github.com/RumyantsevMichael/Prism/commit/a092badb0ea4b10df923809ed63d8f98bd292969)), closes [#59](https://github.com/RumyantsevMichael/Prism/issues/59)
+* **launch:** never leave a launched run waiting on a question that no person sees ([#420](https://github.com/RumyantsevMichael/Prism/issues/420)) ([16953f2](https://github.com/RumyantsevMichael/Prism/commit/16953f2816be044b9d48ed60421cc78e0dde878c))
+* **review:** say in the store's details which folders are checked instead of watched ([#434](https://github.com/RumyantsevMichael/Prism/issues/434)) ([17bdd88](https://github.com/RumyantsevMichael/Prism/commit/17bdd8857f58533789ebc4ea907b98e70427a04a)), closes [#418](https://github.com/RumyantsevMichael/Prism/issues/418)
+
+
+### Fixed
+
+* **launch:** fix ACP agent problems found in a macOS test of every registry agent ([#435](https://github.com/RumyantsevMichael/Prism/issues/435)) ([2bbda84](https://github.com/RumyantsevMichael/Prism/commit/2bbda84a90f63461d722f7eb305c5e2a1740a4b0)), closes [#429](https://github.com/RumyantsevMichael/Prism/issues/429) [#430](https://github.com/RumyantsevMichael/Prism/issues/430) [#431](https://github.com/RumyantsevMichael/Prism/issues/431) [#432](https://github.com/RumyantsevMichael/Prism/issues/432) [#433](https://github.com/RumyantsevMichael/Prism/issues/433)
+* **launch:** show a sign-in reason once and find ACP agents' Prism tools on every platform ([#426](https://github.com/RumyantsevMichael/Prism/issues/426)) ([47fd78c](https://github.com/RumyantsevMichael/Prism/commit/47fd78c6f4d598544f3dc05060f9a96fffdd8ace))
+* **review:** keep watching a project whose configuration names a missing path ([#427](https://github.com/RumyantsevMichael/Prism/issues/427)) ([972d153](https://github.com/RumyantsevMichael/Prism/commit/972d15326509edac390e8fb72678efbd748c2f39)), closes [#418](https://github.com/RumyantsevMichael/Prism/issues/418)
+* **review:** refresh open pages when the records change instead of polling ([#423](https://github.com/RumyantsevMichael/Prism/issues/423)) ([9508246](https://github.com/RumyantsevMichael/Prism/commit/95082464680d80ba183862299c22f050ab18450d)), closes [#418](https://github.com/RumyantsevMichael/Prism/issues/418)
+* **review:** render gate answers with the shared action renderer ([#428](https://github.com/RumyantsevMichael/Prism/issues/428)) ([dc97a63](https://github.com/RumyantsevMichael/Prism/commit/dc97a63757b270ff86efb8e21e8c5d5cb9f74fd9)), closes [#152](https://github.com/RumyantsevMichael/Prism/issues/152)
+* **server:** keep each Codex agent's deferred gate wait ([#436](https://github.com/RumyantsevMichael/Prism/issues/436)) ([8b765ec](https://github.com/RumyantsevMichael/Prism/commit/8b765ecae357ee2644ff40847c6374c735e909c0)), closes [#145](https://github.com/RumyantsevMichael/Prism/issues/145)
+
 ## [0.31.1](https://github.com/RumyantsevMichael/Prism/compare/v0.31.0...v0.31.1) (2026-11-22)
 
 
