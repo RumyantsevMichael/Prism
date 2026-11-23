@@ -120,7 +120,9 @@ Commit this to `.claude/settings.json` so Claude Code offers Prism to everyone i
 
 ## Contribute
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Propose a feature in an issue before writing code for it, and sign off every commit.
+[CONTRIBUTING.md](CONTRIBUTING.md) has the rules, [GOVERNANCE.md](GOVERNANCE.md) says who decides, and the [code of conduct](CODE_OF_CONDUCT.md) applies everywhere in the project.
+Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes.
 
 ## License
 

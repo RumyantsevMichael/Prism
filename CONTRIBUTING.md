@@ -4,6 +4,46 @@ prism is a Claude Code and Codex plugin whose workflow behavior is almost entire
 It also includes a Node.js MCP review server and a vendored browser renderer.
 A change to Markdown changes agent behavior at task time.
 
+## Contributing from outside
+
+Prism has one maintainer, who decides what lands, as [GOVERNANCE.md](GOVERNANCE.md) describes.
+Everyone in the project follows the [code of conduct](CODE_OF_CONDUCT.md), and vulnerabilities are reported privately, as [SECURITY.md](SECURITY.md) describes.
+The rest of this file is the maintainer's manual for working in the repository, and outside contributors follow it too.
+
+### Propose before you build
+
+A feature or a change in behavior starts as a [proposal issue](https://github.com/RumyantsevMichael/Prism/issues/new?template=proposal.yml).
+Do not open a pull request for it until the maintainer has accepted the proposal by adding the `accepted` label.
+An accepted proposal is designed through Prism's own workflow, and the pull request then implements that design.
+A feature pull request without an accepted proposal is closed.
+Bug fixes, documentation fixes, and typo fixes can come straight in as pull requests, and a [bug report](https://github.com/RumyantsevMichael/Prism/issues/new?template=bug.yml) first is welcome.
+
+### Sign off every commit
+
+Every commit in an outside pull request carries a `Signed-off-by` line with the commit author's name and email, which `git commit -s` adds.
+The sign-off certifies the [Developer Certificate of Origin](https://developercertificate.org/): you wrote the change or have the right to submit it under Prism's license.
+Prism is licensed under Apache 2.0, and a contribution is licensed under the same terms, as section 5 of the license states.
+
+### Say who owns the contribution
+
+An employer or client often owns code that its employees or contractors write, sometimes even in their own time, and a sign-off cannot license code that someone else owns.
+So every pull request answers the ownership question in its description.
+When an employer or client may own the change, or you are not sure, a non-trivial change needs their signed [authorization](docs/contributing/employer-authorization.md) before it can merge.
+A change is trivial when it is not a feature and adds at most 20 lines, not counting tests and generated files.
+Every feature counts as non-trivial at any size, and the proposal form asks the ownership question too, so authorization can be settled before you write code.
+The maintainer adds the `employer-authorized` label once the signed letter arrives.
+
+### Contributions written with AI tools
+
+You may write a contribution with an AI coding agent, and Prism itself is built that way.
+You are still its author: read and understand every line, be ready to explain it in review, and make sure it reproduces no code under another license.
+Your sign-off covers the whole change, whoever or whatever typed it.
+
+### What the check enforces
+
+The `Contribution rules` check runs on every pull request from outside and fails until each commit is signed off, exactly one ownership box is checked, a feature links an accepted proposal, and a change that needs authorization carries the `employer-authorized` label.
+The maintainer's own pull requests and bot pull requests are exempt, because the maintainer already holds the rights in their own work.
+
 ## Repository layout
 
 ```
