@@ -79,6 +79,7 @@ const ACTIVE_KEYS = /* @__PURE__ */ new Set(["slice", "activity", "label", "work
 const GATE_KINDS = /* @__PURE__ */ new Set(["visual-review", "correctness", "decision", "assistance"]);
 const GATE_KEYS = /* @__PURE__ */ new Set(["id", "kind", "slice", "question", "context", "artifacts", "options", "recommended", "askedAt", "standing", "answer"]);
 const ASK_KEYS = ["op", "kind", "slice", "question", "context", "artifacts", "options", "recommended"];
+const DECIDE_KEYS = ["op", "slice", "question", "context", "artifacts", "options", "recommended", "choice", "reason"];
 const OPTION_KEYS = /* @__PURE__ */ new Set(["id", "label", "consequence"]);
 const RECOMMENDED_KEYS = /* @__PURE__ */ new Set(["option", "reason"]);
 const CONTEXT_LIMIT = 8e3;
@@ -535,7 +536,7 @@ function droppedGates(before, replacement) {
   }
   return dropped.map((gate) => closedGate(gate, null));
 }
-function applyGateOperations(pending, operations, standing = null) {
+function applyGateOperations(pending, operations, standing = null, autonomy = "conservative") {
   const next = [...pending];
   const opened = [];
   const closed = [];
@@ -581,6 +582,8 @@ function applyGateOperations(pending, operations, standing = null) {
       }
       next.push(gate);
       opened.push({ id: gate.id, kind: gate.kind, slice: gate.slice ?? null });
+    } else if (operation.op === "decide") {
+      closed.push(decidedGate(operation, index, autonomy));
     } else if (operation.op === "resolve") {
       const unknown = Object.keys(operation).filter((key) => !["op", "id", "reason", "choice"].includes(key));
       if (unknown.length) {
@@ -606,10 +609,46 @@ function applyGateOperations(pending, operations, standing = null) {
       closed.push(closedGate(next[position], reason, operation.choice));
       next.splice(position, 1);
     } else {
-      throw error("invalid_changes", `gateOperations[${index}].op must be ask or resolve.`);
+      throw error("invalid_changes", `gateOperations[${index}].op must be ask, decide, or resolve.`);
     }
   });
   return { pending: next, opened, closed, superseded: superseded.sort() };
+}
+function decidedGate(operation, index, autonomy) {
+  if (autonomy !== "full") {
+    throw error("autonomy_not_full", `gateOperations[${index}] decides by itself, which only full autonomy allows; the effective autonomy is ${autonomy}, so ask the person with an ask operation.`);
+  }
+  const unknown = Object.keys(operation).filter((key) => !DECIDE_KEYS.includes(key));
+  if (unknown.length) {
+    throw error("invalid_changes", `gateOperations[${index}] has unsupported fields: ${unknown.join(", ")}.`);
+  }
+  const gate = {
+    id: `gate-${randomBytes(6).toString("hex")}`,
+    kind: "decision",
+    ...operation.slice === void 0 ? {} : { slice: operation.slice },
+    question: operation.question,
+    ...operation.context === void 0 ? {} : { context: operation.context },
+    artifacts: operation.artifacts ?? [],
+    ...operation.options === void 0 ? {} : { options: operation.options },
+    ...operation.recommended === void 0 ? {} : { recommended: operation.recommended },
+    askedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  const errors = [];
+  validateGate(gate, `gateOperations[${index}]`, errors);
+  const problems = errors.length ? [] : askProblems(gate);
+  if (problems.length) {
+    throw error("gate_context_missing", `The decision cannot be recorded yet: ${problems.join("; ")}.`, { errors: problems });
+  }
+  if (errors.length) {
+    throw error("invalid_changes", `The decision is invalid: ${errors.join("; ")}.`, { errors });
+  }
+  if (typeof operation.choice !== "string" || !(gate.options ?? []).some((option) => option?.id === operation.choice)) {
+    throw error("invalid_changes", `gateOperations[${index}].choice must be the id of one of the decision's options.`);
+  }
+  if (!boundedText(operation.reason, REASON_LIMIT)) {
+    throw error("invalid_changes", `gateOperations[${index}].reason must be a non-empty reason of at most ${REASON_LIMIT} characters.`);
+  }
+  return { ...gate, closedAt: gate.askedAt, reason: operation.reason.trim(), choice: operation.choice };
 }
 function assertAnsweredGatesUnchanged(before, after, opened) {
   const previous = new Map(before.filter(isRecord).map((gate) => [gate.id, gate]));
@@ -1026,7 +1065,7 @@ async function applyStateChange(resolved, expectedRevision, changes, standing = 
     const activeResult = await applyActiveOperations(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? []);
     if (Array.isArray(changes.pending)) assertAnsweredGatesUnchanged(before.pending, changes.pending, []);
     const dropped = droppedGates(before.pending, changes.pending);
-    const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? [], standing);
+    const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? [], standing, effectiveSettings(before).autonomy);
     assertAnsweredGatesUnchanged(before.pending, gateResult.pending, gateResult.opened);
     const closed = [...before.closed ?? [], ...dropped, ...gateResult.closed].slice(-CLOSED_LIMIT);
     const requested = changes.settings === void 0 ? null : keepPersonSettings(before, changes.settings);
@@ -1227,7 +1266,16 @@ async function checkpointPause({ projectRoot, initiative, expectedRevision, acti
     }
   }, error));
   await markLaunchedGates(projectRoot, initiative, paused.openedGates);
+  await markLaunchedPause(projectRoot, initiative);
   return paused;
+}
+async function markLaunchedPause(projectRoot, initiative) {
+  if (typeof process.env.PRISM_LAUNCH !== "string" || !process.env.PRISM_LAUNCH) return;
+  try {
+    const { markLaunchPause } = await import("../session/launched-sessions.mjs");
+    await markLaunchPause({ projectRoot, initiative, env: process.env });
+  } catch {
+  }
 }
 export {
   CoordinationStateError,

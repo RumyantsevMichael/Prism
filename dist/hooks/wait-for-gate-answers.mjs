@@ -5,6 +5,7 @@ import { answerText, changedText, HOOK_WAIT_MINUTES, waitForUserGates } from "..
 import { NOTICE_FOLDER } from "../server/workflow/change-notices.mjs";
 import { sessionHolder } from "../server/workflow/slice-claims.mjs";
 import { takeWaitRequest } from "../server/workflow/gate-wait-requests.mjs";
+import { MAIN_AGENT, threadAgent } from "../server/workflow/call-agent.mjs";
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 async function readHookInput(input) {
   const chunks = [];
@@ -19,10 +20,12 @@ async function readHookInput(input) {
 }
 async function waitForGateAnswers({ input = process.stdin, directory, pollMs, settleMs } = {}) {
   const hookInput = JSON.parse(await readHookInput(input));
-  if (hookInput.hook_event_name && hookInput.hook_event_name !== "Stop") return null;
+  const subagent = hookInput.hook_event_name === "SubagentStop";
+  if (hookInput.hook_event_name && hookInput.hook_event_name !== "Stop" && !subagent) return null;
   const sessionId = typeof hookInput.session_id === "string" ? hookInput.session_id : null;
-  if (!sessionId) return null;
-  const request = await takeWaitRequest({ sessionId, ...directory ? { directory } : {} });
+  const agentId = typeof hookInput.agent_id === "string" && hookInput.agent_id.trim() ? hookInput.agent_id.trim() : null;
+  if (!sessionId || subagent && !agentId) return null;
+  const request = await takeWaitRequest({ sessionId, agent: subagent ? threadAgent(agentId) : MAIN_AGENT, ...directory ? { directory } : {} });
   if (!request) return null;
   const maxWaitMinutes = Math.min(Number(request.maxWaitMinutes) || HOOK_WAIT_MINUTES, HOOK_WAIT_MINUTES);
   const session = sessionHolder({ CLAUDE_CODE_SESSION_ID: sessionId });

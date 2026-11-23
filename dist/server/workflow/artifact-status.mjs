@@ -95,14 +95,21 @@ const latestAnsweredGate = (record) => record.closed.findLast((gate) => gate.ans
 const answerFields = (gate) => ({ gate: gate.id, status: gate.status, choice: gate.answer.choice, note: gate.answer.note ?? null, answeredAt: gate.answer.answeredAt ?? null, by: gate.answer.by ?? null, entry: typeof gate.answer.entry === "string" ? gate.answer.entry : null });
 function statusFields(kind, record, version) {
   const answered = latestAnsweredGate(record);
+  const from = acceptedFrom(record);
   return {
     ...hasStatus(kind) ? { status: record.status } : {},
     acceptedVersion: record.acceptedVersion,
     changedSinceAccepted: record.acceptedVersion !== version,
+    ...from ? { acceptedFrom: from } : {},
     ...record.approval ? { approval: record.approval } : {},
     ...record.acceptance ? { acceptance: record.acceptance } : {},
     ...answered ? { latestAnswer: answerFields(answered) } : {}
   };
+}
+function acceptedFrom(record) {
+  if (record.acceptedVersion === null) return null;
+  const item = [...record.history].reverse().find((entry) => isRecord(entry) && entry.acceptedVersion === record.acceptedVersion);
+  return item?.event === "migrated" && typeof item.migration === "string" ? { migration: item.migration, at: typeof item.at === "string" ? item.at : null } : null;
 }
 function statusMismatch(kind, file, text, record) {
   if (!hasStatus(kind)) return null;

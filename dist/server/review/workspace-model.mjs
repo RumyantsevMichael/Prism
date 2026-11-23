@@ -5,6 +5,8 @@ import path from "node:path";
 import { readInitiativeRecordRunTotals } from "../session/run-totals.mjs";
 import { storeLocation } from "../session/launch-records.mjs";
 import { pendingRequests } from "../session/permission-requests.mjs";
+import { listLaunches } from "../session/launched-sessions.mjs";
+import { hostDefinition } from "../session/launch-hosts.mjs";
 import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workflow/initiative.mjs";
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
@@ -21,6 +23,10 @@ import { appliedArtifactActions, pendingApprovalGates, readStoreArtifactAt, stor
 import { servedWorkItem } from "../workflow/artifact-status.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
+import { checkArtifacts } from "../workflow/artifact-check.mjs";
+import { ARTIFACT_FORMATS } from "../workflow/artifact-formats.mjs";
+import { entriesFor, recommendedChoice, statementMap } from "../workflow/format-migrations.mjs";
+import { RUN_ID, allRuns, followedRun, followingRun, readRun, shownRun } from "../workflow/migration-runs.mjs";
 import { recordChanges } from "./record-changes.mjs";
 import { relativeLinkTargets } from "./artifact-links.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
@@ -83,8 +89,18 @@ async function remember(projectRoot, raw, compute) {
   validUntil(hit.until);
   return value;
 }
+async function prime(projectRoot, raw, value) {
+  const key = `${inWorkspaceView() ? "workspace" : "checkout"}|${raw}`;
+  memo.set(key, { version: await versions.current(projectRoot), until: Date.now() + MAX_AGE_MS, value: Promise.resolve(value) });
+}
 function rememberView(projectRoot, name, compute) {
   return remember(projectRoot, `${name}:${projectRoot}`, compute);
+}
+function viewWatching(projectRoot) {
+  return versions.watching(projectRoot);
+}
+function viewVersion(projectRoot) {
+  return versions.current(projectRoot);
 }
 function recheckViews(projectRoot) {
   versions.recheck(projectRoot);
@@ -92,6 +108,31 @@ function recheckViews(projectRoot) {
 function forgetWorkspace() {
   memo.clear();
   versions.bump();
+}
+const formatMark = (artifact) => !artifact || artifact.conforms ? null : { rules: [...new Set(artifact.findings.map((finding) => finding.rule))].sort(), findings: artifact.findings };
+const scopeKey = (scope) => scope === null || scope === void 0 ? "" : typeof scope === "string" ? scope : scope.label ?? "";
+function markLookup(artifacts) {
+  const marks = new Map(artifacts.map((artifact) => [`${scopeKey(artifact.scope)}\0${artifact.path}`, formatMark(artifact)]));
+  return (file, scope = null) => marks.get(`${scopeKey(scope)}\0${file}`) ?? null;
+}
+const marksKey = (projectRoot) => `format-marks:${projectRoot}`;
+function loadFormatMarks(projectRoot) {
+  return remember(projectRoot, marksKey(projectRoot), async () => {
+    try {
+      return markLookup((await checkArtifacts({ projectRoot, startRuns: false })).artifacts);
+    } catch {
+      return () => null;
+    }
+  });
+}
+async function loadFormatMark(projectRoot, file, scope = null) {
+  try {
+    const label = scopeKey(scope);
+    const [artifact] = (await checkArtifacts({ projectRoot, paths: [label ? { path: file, scope: label } : file], startRuns: false })).artifacts;
+    return formatMark(artifact);
+  } catch {
+    return null;
+  }
 }
 const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "code", "agents"]);
 const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", code: "Code", agents: "Agents" });
@@ -616,6 +657,8 @@ async function computeLibrary(projectRoot, kind) {
   await walk(projectRoot, directory, 4, (name) => name.endsWith(".md") && name.toLowerCase() !== "readme.md", files, LIBRARY_LIMIT);
   const { references, decisions } = await initiativeReferences(projectRoot, config);
   const recorded = await recordedStatuses(projectRoot, directory);
+  const scopes = await storeScopes(projectRoot, directory);
+  const markOf = await loadFormatMarks(projectRoot);
   const entries = [];
   for (const file of files) {
     const source = await readText(projectRoot, file);
@@ -628,7 +671,8 @@ async function computeLibrary(projectRoot, kind) {
       status: recorded?.has(file) ? recorded.get(file) : fields.status,
       created: fields.created,
       approved: fields.approved,
-      topic: relative.includes("/") ? relative.split("/")[0] : null
+      topic: relative.includes("/") ? relative.split("/")[0] : null,
+      format: markOf(file, scopes?.get(file) ?? null)
     };
     if (kind === "requirements") {
       entry.requirements = (source ?? "").match(/^## \d+\b/gm)?.length ?? 0;
@@ -646,9 +690,17 @@ async function computeLibrary(projectRoot, kind) {
   }
   return { kind, directory, entries };
 }
+async function storeScopes(projectRoot, directory) {
+  const stored = await listStoreArtifacts(projectRoot, directory).catch(() => null);
+  if (!stored) return null;
+  const byPath = /* @__PURE__ */ new Map();
+  for (const entry of stored) if (!byPath.has(entry.path)) byPath.set(entry.path, entry.scope);
+  return byPath;
+}
 async function scopedLibrary(projectRoot, kind, directory, config, { entries: listed, own }) {
   const { references, decisions } = await initiativeReferences(projectRoot, config);
   const requirements = kind === "decisions" ? (await scopedArtifacts(projectRoot, "requirements", (name) => name.endsWith(".md")))?.entries ?? [] : [];
+  const markOf = await loadFormatMarks(projectRoot);
   const takes = (entry) => entry.path !== null && refAt(listed, own, entry.path) === entry.ref;
   const entries = [];
   for (const item of listed) {
@@ -661,7 +713,9 @@ async function scopedLibrary(projectRoot, kind, directory, config, { entries: li
       status: item.status ?? fields.status,
       created: fields.created,
       approved: fields.approved,
-      topic: item.rest?.includes("/") ? item.rest.split("/")[0] : null
+      topic: item.rest?.includes("/") ? item.rest.split("/")[0] : null,
+      // A file that breaks its format carries its mark, by its checkout path and its scope.
+      format: item.path ? markOf(item.path, item.label) : null
     };
     if (kind === "requirements") {
       entry.requirements = (source ?? "").match(/^## \d+\b/gm)?.length ?? 0;
@@ -702,7 +756,8 @@ async function loadGlossary(projectRoot) {
     return { path: glossaryPath, exists: glossaries.length > 0, content: mine, glossaries };
   }
   const content = glossaryPath ? await readText(projectRoot, glossaryPath) : null;
-  return { path: glossaryPath, exists: content !== null, content };
+  const format = content === null || !glossaryPath ? null : (await loadFormatMarks(projectRoot))(glossaryPath, (await storeScopes(projectRoot, path.posix.dirname(glossaryPath)))?.get(glossaryPath) ?? null);
+  return { path: glossaryPath, exists: content !== null, content, format };
 }
 async function isFile(root, relative) {
   try {
@@ -742,8 +797,159 @@ function gateOrder(left, right) {
   return newestFirst(left.askedAt, right.askedAt);
 }
 async function loadAttention(projectRoot) {
-  const [attention, permissions] = await Promise.all([remember(projectRoot, `attention:${projectRoot}`, () => computeAttention(projectRoot)), launchPermissions(projectRoot)]);
-  return { ...attention, permissions, gateCount: attention.gateCount + permissions.length };
+  const [attention, formats, runs, permissions] = await Promise.all([remember(projectRoot, `attention:${projectRoot}`, () => computeAttention(projectRoot)), loadFormats(projectRoot), runItems(projectRoot), launchPermissions(projectRoot)]);
+  const items = formats.filter((entry) => entry.count > 0).map((entry) => ({ type: "format-findings", artifactType: entry.type, label: entry.label, count: entry.count, earlier: entry.earlier, artifacts: entry.artifacts }));
+  const questions = runs.needsYou.filter((item) => item.type === "migration-question").length;
+  const launched = await withLaunchQuestions(projectRoot, attention.needsYou);
+  return { ...attention, needsYou: [...runs.needsYou, ...launched, ...items], watch: [...attention.watch, ...runs.watch], formats, permissions, gateCount: attention.gateCount + questions + permissions.length };
+}
+async function withLaunchQuestions(projectRoot, needsYou) {
+  if (!needsYou.some((item) => item.type === "gate" && item.kind === "assistance")) return needsYou;
+  const { launches } = await listLaunches({ projectRoot }).catch(() => ({ launches: [] }));
+  const asked = /* @__PURE__ */ new Map();
+  for (const launch of launches) {
+    if (typeof launch.questionGate !== "string") continue;
+    const label = hostDefinition(launch.host)?.label ?? launch.hostLabel ?? launch.host;
+    asked.set(`${launch.initiative}/${launch.questionGate}`, { id: launch.id, host: { id: launch.host, label }, launchedAt: launch.launchedAt, endedAt: launch.endedAt, state: launch.state });
+  }
+  if (!asked.size) return needsYou;
+  return needsYou.map((item) => {
+    const launch = item.type === "gate" && item.kind === "assistance" ? asked.get(`${item.initiative?.id}/${item.id}`) : void 0;
+    return launch ? { ...item, launch } : item;
+  });
+}
+async function runItems(projectRoot) {
+  const runs = await allRuns(projectRoot).catch(() => []);
+  const needsYou = [];
+  const watch = [];
+  for (const run of [...runs].reverse()) {
+    const base = { run: run.id, artifactType: run.set.type, label: FORMAT_LABELS[run.set.type] ?? run.set.type, scope: run.set.scope ?? null, files: run.set.artifacts.length };
+    if (run.status === "asking") {
+      const points = (run.question?.points ?? []).filter((point) => isRecord(point));
+      const byFile = /* @__PURE__ */ new Map();
+      for (const point of points) {
+        const key = JSON.stringify([point.artifact?.path, point.artifact?.scope?.label ?? null]);
+        const entry = byFile.get(key) ?? { path: point.artifact?.path ?? null, scope: point.artifact?.scope ?? null, points: 0, kinds: [] };
+        entry.points += 1;
+        if (!entry.kinds.includes(point.kind)) entry.kinds.push(point.kind);
+        byFile.set(key, entry);
+      }
+      needsYou.push({ type: "migration-question", ...base, points: points.length, asking: [...byFile.values()], askedAt: run.question?.askedAt ?? null });
+    } else if (run.status === "failed" && !followedRun(runs, run)) {
+      needsYou.push({ type: "migration-failed", ...base, reason: run.failure?.reason ?? null, at: run.failure?.at ?? run.endedAt ?? null, artifacts: run.set.artifacts.map(({ path: file, scope }) => ({ path: file, scope: scope ?? null })) });
+    } else if (run.status === "waiting-for-host") {
+      watch.push({ type: "migration-waiting", ...base, reason: typeof run.reason === "string" ? run.reason : null, at: run.startedAt ?? null });
+    }
+  }
+  return { needsYou, watch };
+}
+const FORMAT_LABELS = Object.freeze({ requirements: "Requirements", adr: "Decisions", glossary: "Glossary", feature: "Feature files" });
+const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const RUN_ATTENTION_PAGES = Object.freeze({ asking: "questions", failed: "failed", "waiting-for-host": "problems" });
+const migrationRunTitle = (record) => `Format migration \xB7 ${FORMAT_LABELS[record.set.type] ?? record.set.type}`;
+async function migrationRunContext(projectRoot, ref, id) {
+  const record = await readRun(projectRoot, id).catch(() => null);
+  const page = record ? RUN_ATTENTION_PAGES[record.status] : null;
+  const trail = [placeCrumb("attention", "attention"), ...page ? [{ ref: `attention:${page}`, label: PLACE_PAGE_LABELS.attention[page] }] : [], { ref, label: record ? migrationRunTitle(record) : "Format migration" }];
+  return { trail, scope: { kind: "global" }, place: "attention" };
+}
+function runPoint(point, { number, answers, conflicts, sourceEntries, contentEntries, sourceLines }) {
+  const { id, kind, settled, asked, ...detail } = point;
+  const recommendation = asked?.recommendation ?? null;
+  const extra = {};
+  if (kind === "leftover") extra.sourceLine = sourceLines?.get(id) ?? null;
+  if (kind === "entry") {
+    extra.sourceText = sourceEntries.find((entry) => entry.id === point.entry)?.text ?? null;
+    extra.targetText = contentEntries.find((entry) => entry.id === point.entry)?.text ?? null;
+  }
+  if (kind === "conflict") {
+    const conflict = conflicts.find((entry) => entry.entry === point.entry);
+    extra.sourceText = conflict?.source ?? null;
+    extra.targetText = conflict?.target ?? null;
+  }
+  return {
+    id,
+    kind,
+    ...detail,
+    ...extra,
+    number: number ?? null,
+    settled: settled ? { reason: settled.reason } : null,
+    asked: asked ? { recommendation, recommended: recommendedChoice(kind, recommendation) } : null,
+    answer: answers?.[id] ?? null
+  };
+}
+async function loadMigrationRunView(projectRoot, id) {
+  const record = await readRun(projectRoot, id);
+  if (!record) throw Object.assign(new Error("The format migration run no longer exists in this project."), { code: "ENOENT" });
+  const shown = await shownRun(projectRoot, record);
+  const answers = record.answers ?? null;
+  const asked = record.migrations.flatMap((migration) => (migration.points ?? []).filter((point) => point.asked));
+  const numbers = new Map(asked.map((point, index) => [point.id, index + 1]));
+  const migrations = record.migrations.map((migration) => {
+    const sourceEntries = typeof migration.sourceText === "string" ? entriesFor(migration.type, migration.sourceText) : [];
+    const contentEntries = typeof migration.content === "string" ? entriesFor(migration.type, migration.content) : [];
+    const map = statementMap(migration, { answers: answers ?? {} });
+    const sourceLines = new Map((map?.statements ?? []).filter((statement) => statement.landed?.kind === "leftover" && statement.landed.point).map((statement) => [statement.landed.point, statement.line]));
+    return {
+      id: migration.id,
+      type: migration.type,
+      source: migration.source,
+      target: migration.target,
+      separateSource: migration.separateSource,
+      summary: migration.summary,
+      status: headerStatus(migration.content),
+      proposedAt: migration.proposedAt ?? null,
+      map,
+      points: (migration.points ?? []).map((point) => runPoint(point, { number: numbers.get(point.id), answers, conflicts: migration.conflicts ?? [], sourceEntries, contentEntries, sourceLines }))
+    };
+  });
+  const runs = record.status === "failed" ? await allRuns(projectRoot).catch(() => []) : [];
+  const answered = answers ? Object.values(answers).find((answer) => answer?.by) ?? null : null;
+  return {
+    id: record.id,
+    title: migrationRunTitle(record),
+    type: record.set.type,
+    typeLabel: FORMAT_LABELS[record.set.type] ?? record.set.type,
+    scope: record.set.scope ?? null,
+    formatVersion: record.set.formatVersion ?? null,
+    cause: record.cause,
+    status: record.status,
+    startedAt: record.startedAt ?? null,
+    endedAt: record.endedAt ?? null,
+    reason: typeof record.reason === "string" ? record.reason : null,
+    failure: record.failure ?? null,
+    launch: record.launch ?? null,
+    rerunOf: record.rerunOf ?? null,
+    by: record.by ?? null,
+    followedBy: record.status === "failed" ? followingRun(runs, record)?.id ?? null : null,
+    artifacts: shown.set.artifacts.map(({ path: file, scope, version, findings }) => ({ path: file, scope: scope ?? null, version, findings })),
+    askedAt: record.question?.askedAt ?? null,
+    points: asked.length,
+    answeredBy: answered ? { ...answered.by, at: answered.at ?? null } : null,
+    migrations
+  };
+}
+const headerStatus = (text) => typeof text === "string" ? /^Status:\s*(\S.*?)\s*$/m.exec(text.split(/\n## /)[0] ?? "")?.[1] ?? null : null;
+async function loadFormats(projectRoot) {
+  let artifacts = [];
+  try {
+    artifacts = (await checkArtifacts({ projectRoot })).artifacts;
+    await prime(projectRoot, marksKey(projectRoot), markLookup(artifacts));
+  } catch {
+    artifacts = [];
+  }
+  return ARTIFACT_FORMATS.map((format) => {
+    const broken = artifacts.filter((artifact) => artifact.type === format.type && !artifact.conforms);
+    return {
+      type: format.type,
+      label: FORMAT_LABELS[format.type],
+      version: format.version,
+      reference: format.reference,
+      count: broken.length,
+      earlier: broken.filter((artifact) => artifact.earlierFormat !== null).length,
+      artifacts: broken.map((artifact) => ({ path: artifact.path, scope: artifact.scope, findings: artifact.findings, earlierFormat: artifact.earlierFormat, migration: artifact.migration ?? null }))
+    };
+  });
 }
 async function launchPermissions(projectRoot) {
   const store = await storeLocation(await realpath(projectRoot)).catch(() => null);
@@ -919,7 +1125,7 @@ function recentlyAnswered(answered, closed) {
   entries.sort((left, right) => newestFirst(left.at, right.at));
   return entries.map(({ gate, at }) => ({ id: gate.id ?? null, kind: gate.kind ?? null, question: gate.question, initiative: gate.initiative, slice: gate.slice ?? null, answer: gate.answer ?? null, reason: gate.reason ?? null, at }));
 }
-const ATTENTION_KINDS = Object.freeze(["questions", "findings", "failed", "blocked", "ready", "problems"]);
+const ATTENTION_KINDS = Object.freeze(["questions", "findings", "failed", "blocked", "ready", "problems", "formats"]);
 const ATTENTION_KIND_OF = Object.freeze({
   gate: "questions",
   "pending-note": "questions",
@@ -932,7 +1138,11 @@ const ATTENTION_KIND_OF = Object.freeze({
   "roadmap-missing": "problems",
   unlisted: "problems",
   "open-question": "problems",
-  config: "problems"
+  config: "problems",
+  "format-findings": "formats",
+  "migration-question": "questions",
+  "migration-failed": "failed",
+  "migration-waiting": "problems"
 });
 const ATTENTION_WORK_SHOWN = 3;
 function attentionItems(attention) {
@@ -959,7 +1169,7 @@ async function attentionPage(projectRoot, page) {
   const shown = work ? items.filter(({ item }) => item.initiative?.id === work[1]) : page === "roadmap-questions" ? items.filter(({ item }) => item.type === "open-question") : items.filter((entry) => entry.kind === page);
   let label = PLACE_PAGE_LABELS.attention[page];
   if (work) label = shown[0]?.item.initiative.title ?? (await loadRoadmapView(projectRoot).catch(() => ({ items: [] }))).items.find((item) => item.id === work[1])?.title ?? work[1];
-  return { filter: { key: page, label, total: items.length, items: shown } };
+  return { filter: { key: page, label, total: items.length, items: shown }, ...page === "formats" ? { formats: attention.formats } : {} };
 }
 async function describeRecord(projectRoot, config, artifactPath, key, snapshot) {
   const json = async () => {
@@ -1008,7 +1218,7 @@ function glossaryEntries(content) {
       const entry = entries.get(term) ?? { term, text: "" };
       entry.text += ` ${row[2].replace(/\|/g, " ")}`;
       entries.set(term, entry);
-    } else if (open) open.text += ` ${line}`;
+    } else if (open && !/^(Source|Aliases|Not to be confused with):/.test(line) && !/^\s*<a id="[^"]*"><\/a>\s*$/.test(line)) open.text += ` ${line}`;
   }
   return [...entries.values()].slice(0, LIBRARY_LIMIT);
 }
@@ -1162,7 +1372,7 @@ async function searchIndex(projectRoot, config, roadmap, glossary, libraries = {
   for (const kind of ["requirements", "decisions"]) {
     const library = libraries[kind];
     if (library?.error) throw library.error;
-    for (const entry of (library ? library.value : await loadLibrary(projectRoot, kind)).entries) entries.push({ ref: entry.path, label: entry.title, kind: kind === "requirements" ? "requirement" : "decision", detail: entry.status ?? entry.path });
+    for (const entry of (library ? library.value : await loadLibrary(projectRoot, kind)).entries) entries.push({ ref: entry.path, label: entry.title, kind: kind === "requirements" ? "requirement" : "decision", detail: entry.status ?? entry.path, format: entry.format ?? null });
   }
   for (const term of glossaryTerms(glossary.content)) entries.push({ ref: "glossary", label: term, kind: "term", detail: "Glossary" });
   return entries;
@@ -1224,7 +1434,8 @@ async function computeNavigation(projectRoot) {
     roadmap: { exists: roadmap.exists ?? false, error: roadmap.error ?? null, valid: roadmap.valid ?? false },
     attention: { needsYou: attention.needsYou.length, gates: attention.gateCount, answered: attention.answered.length, watch: attention.watch.length },
     initiatives: listedInitiatives,
-    glossary: { path: glossary.path, exists: glossary.exists },
+    // The glossary's entry carries its format mark, as each requirement and decision of the index does, so every list marks a record by its ref.
+    glossary: { path: glossary.path, exists: glossary.exists, format: glossary.format ?? null },
     library: {
       ...Object.fromEntries(Object.entries(readable).map(([kind, library]) => [kind, library.entries.length])),
       terms: glossary.glossaries ? glossary.glossaries.reduce((sum, one) => sum + one.terms.length, 0) : glossaryTerms(glossary.content).length,
@@ -1317,7 +1528,7 @@ async function libraryScope(projectRoot, section) {
 }
 const PLACE_LABELS = Object.freeze({ attention: "Attention", work: "Work", roadmap: "Roadmap", knowledge: "Knowledge", history: "History" });
 const PLACE_PAGE_LABELS = Object.freeze({
-  attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", answered: "Answered in the last 7 days", "roadmap-questions": "Roadmap questions" },
+  attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", formats: "Format findings", answered: "Answered in the last 7 days", "roadmap-questions": "Roadmap questions" },
   knowledge: { touched: "Touched by my work", changed: "Changed this week", diagrams: "Diagrams" }
 });
 function placeCrumb(place, ref = null) {
@@ -1359,6 +1570,7 @@ async function entityContext(projectRoot, ref) {
   if (parsed?.kind === "code") return { trail: [placeCrumb("knowledge"), { ref, label: "Code" }], scope: { kind: "global" }, place: "knowledge" };
   if (parsed?.kind === "agents") return { trail: [{ ref, label: SECTION_LABELS.agents }], scope: { kind: "global" }, place: null };
   if (parsed?.kind === "initiative" || parsed?.kind === "slice") return initiativeContext(projectRoot, parsed.id, { slug: parsed.kind === "slice" ? parsed.slug : null });
+  if (parsed?.kind === "migration-run") return migrationRunContext(projectRoot, ref, parsed.id);
   if (typeof ref !== "string" || !ref) throw new Error("A tab reference is required.");
   const prefixed = /^(attention|knowledge):(.+)$/.exec(ref);
   if (prefixed) {
@@ -1414,7 +1626,7 @@ function parseEntityRef(ref) {
   if (ref === "launches") return { kind: "agents" };
   const group = /^agents:([a-z-]+)$/.exec(ref ?? "");
   if (group && AGENT_GROUP_PAGES.includes(group[1])) return { kind: "agents", page: group[1] };
-  let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  let match = /^attention:(questions|findings|failed|blocked|ready|problems|formats|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "attention", page: match[1] };
   match = /^knowledge:(diagrams|touched|changed)$/.exec(ref ?? "");
   if (match) return { kind: "knowledge", page: match[1] };
@@ -1422,12 +1634,15 @@ function parseEntityRef(ref) {
   if (match) return { kind: "initiative", id: match[1] };
   match = /^slice:([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "slice", id: match[1], slug: match[2] };
+  match = /^migration-run:(.+)$/.exec(ref ?? "");
+  if (match && RUN_ID.test(match[1])) return { kind: "migration-run", id: match[1] };
   return null;
 }
 async function entityExists(projectRoot, ref) {
   const parsed = parseEntityRef(ref);
   if (!parsed) return false;
   if (SECTION_REFS.includes(parsed.kind) || parsed.kind === "knowledge") return true;
+  if (parsed.kind === "migration-run") return await readRun(projectRoot, parsed.id).catch(() => null) !== null;
   if (parsed.kind === "initiative") {
     const roadmap = await loadRoadmapView(projectRoot);
     if (roadmap.items.some((item) => item.id === parsed.id) || roadmap.unlisted.includes(parsed.id)) return true;
@@ -1447,6 +1662,7 @@ async function initiativeCode(projectRoot, view) {
 async function loadEntity(projectRoot, ref, options = {}) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
+  if (parsed.kind === "migration-run") return { ref, kind: "migration-run", data: await loadMigrationRunView(projectRoot, parsed.id) };
   if (parsed.kind === "attention") return { ref, kind: "attention", data: parsed.page ? await attentionPage(projectRoot, parsed.page) : await loadAttentionView(projectRoot) };
   if (parsed.kind === "roadmap") return { ref, kind: "roadmap", data: await loadRoadmapView(projectRoot) };
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
@@ -1478,6 +1694,7 @@ export {
   entityContext,
   entityExists,
   forgetWorkspace,
+  formatMark,
   glossaryEntries,
   loadAttention,
   loadAttentionView,
@@ -1485,6 +1702,8 @@ export {
   loadDeclaredView,
   loadDiagrams,
   loadEntity,
+  loadFormatMark,
+  loadFormatMarks,
   loadGlossary,
   loadHeldClaims,
   loadInitiativeView,
@@ -1493,10 +1712,13 @@ export {
   loadRecordChanges,
   loadRoadmapView,
   loadSliceView,
+  migrationRunTitle,
   parseEntityRef,
   recheckViews,
   recordFiles,
   rememberView,
   searchRecords,
-  slicePresence
+  slicePresence,
+  viewVersion,
+  viewWatching
 };

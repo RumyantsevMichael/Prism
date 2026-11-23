@@ -3,14 +3,16 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
+import { MAIN_AGENT } from "./call-agent.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 const DIRECTORY = "gate-waits";
 const WAIT_REQUEST_TTL_MS = 30 * 6e4;
 function gateWaitDirectory(env = process.env) {
   return path.join(reviewAppDirectory(env), DIRECTORY);
 }
-function requestFile(directory, sessionId) {
-  return path.join(directory, `${createHash("sha256").update(sessionId, "utf8").digest("hex").slice(0, 32)}.json`);
+function requestFile(directory, sessionId, agent) {
+  const key = agent === MAIN_AGENT ? sessionId : `${sessionId}\0${agent}`;
+  return path.join(directory, `${createHash("sha256").update(key, "utf8").digest("hex").slice(0, 32)}.json`);
 }
 const ASKED_GATES_FILE = "asked-approval-gates.json";
 async function removeExpired(directory, now) {
@@ -21,20 +23,20 @@ async function removeExpired(directory, now) {
     if (info && now - info.mtimeMs > WAIT_REQUEST_TTL_MS) await rm(file, { force: true });
   }
 }
-async function recordWaitRequest({ sessionId, projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes, knownEntries, coordinates = false, waitId, directory = gateWaitDirectory(), now = Date.now() }) {
+async function recordWaitRequest({ sessionId, agent = MAIN_AGENT, projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes, knownEntries, coordinates = false, waitId, directory = gateWaitDirectory(), now = Date.now() }) {
   await mkdir(directory, { recursive: true });
   await removeExpired(directory, now);
-  const file = requestFile(directory, sessionId);
+  const file = requestFile(directory, sessionId, agent);
   const replaced = await readFile(file, "utf8").then((text) => parseStoreJson(text), () => null).catch(() => null);
   const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
   const source = artifact ? { artifact, ...scope === void 0 ? {} : { scope } } : { initiative, ...Array.isArray(knownEntries) ? { knownEntries } : {}, coordinates: coordinates === true, ...typeof waitId === "string" ? { waitId } : {} };
-  await writeFile(temporary, `${JSON.stringify({ sessionId, projectRoot, ...source, gateIds, maxWaitMinutes, requestedAt: new Date(now).toISOString() })}
+  await writeFile(temporary, `${JSON.stringify({ sessionId, agent, projectRoot, ...source, gateIds, maxWaitMinutes, requestedAt: new Date(now).toISOString() })}
 `);
   await rename(temporary, file);
   return { replaced: typeof replaced?.waitId === "string" && typeof replaced.initiative === "string" && typeof replaced.projectRoot === "string" ? { waitId: replaced.waitId, initiative: replaced.initiative, projectRoot: replaced.projectRoot } : null };
 }
-async function takeWaitRequest({ sessionId, directory = gateWaitDirectory(), now = Date.now() }) {
-  const file = requestFile(directory, sessionId);
+async function takeWaitRequest({ sessionId, agent = MAIN_AGENT, directory = gateWaitDirectory(), now = Date.now() }) {
+  const file = requestFile(directory, sessionId, agent);
   const taken = `${file}.${randomBytes(6).toString("hex")}.taken`;
   try {
     await rename(file, taken);
@@ -43,7 +45,7 @@ async function takeWaitRequest({ sessionId, directory = gateWaitDirectory(), now
   }
   try {
     const request = parseStoreJson(await readFile(taken, "utf8"));
-    if (request.sessionId !== sessionId || now - Date.parse(request.requestedAt) > WAIT_REQUEST_TTL_MS) return null;
+    if (request.sessionId !== sessionId || (request.agent ?? MAIN_AGENT) !== agent || now - Date.parse(request.requestedAt) > WAIT_REQUEST_TTL_MS) return null;
     const named = typeof request.initiative === "string" || typeof request.artifact === "string";
     if (!Array.isArray(request.gateIds) || !request.gateIds.length || !named || typeof request.projectRoot !== "string") return null;
     return request;

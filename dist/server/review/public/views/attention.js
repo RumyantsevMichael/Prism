@@ -6,6 +6,9 @@ import { isExpired } from "./claim-index.js";
 import { notifyControl } from "./attention-signal.js";
 import { currentPhase } from "./slice.js";
 import { timeLeft } from "../kit/claim-time.js";
+import { findingsList, formatBadge } from "./format-marks.js";
+import { POINT_KINDS, rerunRun, scopeWords, whereChip } from "./format-migration.js";
+import { createActionList } from "./actions.js";
 const GATE_LABELS = {
   "visual-review": "Visual review",
   correctness: "Correctness confirmation",
@@ -33,10 +36,6 @@ function location(item, ctx) {
   return parts.join('<span class="crumb-separator" aria-hidden="true">\u203A</span>');
 }
 const REVIEW_KINDS = /* @__PURE__ */ new Set(["visual-review", "correctness", "approval"]);
-const REVIEW_OUTCOMES = {
-  approve: "The agent goes on with the work as it stands.",
-  "request-changes": "The agent revises the work from your note before it goes on."
-};
 function choices(item) {
   if (REVIEW_KINDS.has(item.kind)) return [["approve", "Approve"], ["request-changes", "Request changes"]];
   if (item.kind === "assistance") return [];
@@ -46,6 +45,7 @@ function choiceLabel(item, choice) {
   if (item.kind === "assistance" && choice === "done") return "Done";
   return choices(item).find(([id]) => id === choice)?.[1] ?? (choice ? choice : "Free answer");
 }
+const NO_RESULT_PLACEHOLDER = "Answer the run's question, or say what it should do next";
 function answerState(item, draft = {}) {
   const options = choices(item);
   const choice = item.kind === "assistance" ? "done" : options.some(([id]) => id === draft.choice) ? draft.choice : null;
@@ -58,6 +58,7 @@ function answerState(item, draft = {}) {
     if (choice === "approve") return { choice, ready: true, ...optional, submitLabel: "Approve", hint: "" };
     return { choice, ready: false, ...optional, notePlaceholder: "Anything the agent should know; required if you request changes", submitLabel: "Send answer", hint: hasNote ? "Pick Approve or Request changes to send your note." : "Pick Approve or Request changes." };
   }
+  if (item.kind === "assistance" && item.launch) return { choice, ready: true, ...optional, noteLabel: "Your answer", notePlaceholder: NO_RESULT_PLACEHOLDER, submitLabel: "Answer and resume", hint: "" };
   if (item.kind === "assistance") return { choice, ready: true, ...optional, submitLabel: "Mark as done", hint: "" };
   if (options.length) {
     return { choice, ready: Boolean(choice) || hasNote, ...optional, notePlaceholder: "Add a note, or answer in your own words without picking an option", submitLabel: "Send answer", hint: choice || hasNote ? "" : "Pick an option or write your answer." };
@@ -68,9 +69,8 @@ function noteLabel(state) {
   const label = state.noteLabel === "Note" ? "Note for the agent" : state.noteLabel;
   return `${label} \xB7 ${state.noteRequired ? "required" : "optional"}`;
 }
-function readyText(item, state) {
-  if (state.hint) return state.hint;
-  if (!state.ready) return "";
+function readyText(item, words, ready, fallback) {
+  if (!ready) return words.hint || fallback;
   return liveHolder(item) ? `Ready to send. ${item.claim.label} resumes shortly after.` : "Ready to send.";
 }
 function when(time, className = "attention-time") {
@@ -169,22 +169,27 @@ function evidence(item) {
   }
   return tiles.length ? `<div class="gate-evidence" role="list" aria-label="Evidence">${tiles.map((tile) => `<span role="listitem">${tile}</span>`).join("")}</div>` : "";
 }
-function answerForm(item, draft) {
-  const options = choices(item);
-  const state = answerState(item, draft);
-  const key = escapeHtml(item.id);
-  const consequences = new Map((item.kind === "decision" ? item.options ?? [] : []).map((option) => [option.id, option.consequence]));
-  if (REVIEW_KINDS.has(item.kind)) for (const [id, text] of Object.entries(REVIEW_OUTCOMES)) consequences.set(id, text);
-  const optional = !REVIEW_KINDS.has(item.kind) && options.length > 0;
-  const choice = options.length ? `<div class="gate-choices"><div class="gate-choices-head"><p class="label-caps" aria-hidden="true">Your answer</p>${optional ? `<prism-button size="sm" variant="ghost" data-clear-choice tip="Unchoose the option to answer in your own words"${state.choice ? "" : " hidden"}><prism-icon name="close" size="xs"></prism-icon>Clear choice</prism-button>` : ""}</div><prism-choice aria-label="Your answer" data-choice${optional ? " clearable" : ""}${state.choice ? ` value="${escapeHtml(state.choice)}"` : ""}>${options.map(([id, label]) => `<prism-choice-option value="${escapeHtml(id)}"${id === "request-changes" ? ' tone="danger"' : ""}>${escapeHtml(label)}${id === item.recommended?.option ? ` ${badge("Recommended", "accent")}` : ""}${consequences.get(id) ? `<span slot="detail">${escapeHtml(consequences.get(id))}</span>` : ""}</prism-choice-option>`).join("")}</prism-choice></div>` : '<p class="label-caps">Your answer</p>';
-  const ready = readyText(item, state);
-  const target = item.kind === "approval" ? " data-approval" : ` data-initiative="${escapeHtml(item.initiative.id)}"`;
-  return `<div class="gate-answer" data-gate="${key}"${target}>
-    ${choice}
-    <prism-field class="gate-note" type="textarea" data-note label="${escapeHtml(noteLabel(state))}" placeholder="${escapeHtml(state.notePlaceholder)}"${state.noteRequired ? " required" : ""} value="${escapeHtml(draft.note ?? "")}"></prism-field>
-    <div class="gate-actions"><p class="gate-hint${state.ready && !state.hint ? " is-ready" : ""}" id="gate-hint-${key}" aria-live="polite"><prism-icon name="check-circle" size="sm"${state.ready && !state.hint ? "" : " hidden"}></prism-icon><span class="gate-hint-text">${escapeHtml(ready)}</span></p><prism-button variant="${state.choice === "request-changes" ? "danger" : "primary"}" data-submit${state.ready ? "" : " disabled"}>${escapeHtml(state.submitLabel)}</prism-button></div>
-    <p class="gate-error" id="gate-error-${key}" role="alert"${draft.error ? "" : " hidden"}>${escapeHtml(draft.error ?? "")}</p>
-  </div>`;
+const answerTarget = (item) => item.kind === "approval" ? `approval:${item.id}` : `gate:${item.initiative.id}/${item.id}`;
+function answerSlot(item) {
+  const owner = item.kind === "approval" ? " data-approval" : ` data-initiative="${escapeHtml(item.initiative.id)}"`;
+  return `<div class="gate-answer" data-gate="${escapeHtml(item.id)}"${owner} data-answer-target="${escapeHtml(answerTarget(item))}"><p class="muted action-loading">Loading\u2026</p></div>`;
+}
+const ARCHIVE_SESSION = (launch) => `<prism-button variant="ghost" data-archive-session data-launch="${escapeHtml(launch.id)}" text="Archive session"></prism-button>`;
+function answerFormOptions(item) {
+  return {
+    heading: "Your answer",
+    tone: (option) => option.value === "request-changes" ? "danger" : null,
+    trailing: () => item.launch ? ARCHIVE_SESSION(item.launch) : "",
+    wording: (_action, form) => {
+      const words = answerState(item, { choice: form.input.choice ?? null, note: form.input.note ?? "" });
+      return {
+        field: { note: { label: noteLabel(words), placeholder: words.notePlaceholder } },
+        submit: { label: words.submitLabel, variant: words.choice === "request-changes" ? "danger" : "primary" },
+        hint: readyText(item, words, form.ready, form.hint),
+        ready: form.ready
+      };
+    }
+  };
 }
 function servedWork(item, ctx) {
   const work = item.workItem;
@@ -211,7 +216,8 @@ function approvalSubject(item, ctx) {
 function unavailableAnswer(item) {
   return `<prism-banner class="gate-unavailable" tone="warning" heading="Cannot be answered"><p>${escapeHtml(item.unavailable)}</p></prism-banner>`;
 }
-function gateDetail(item, ctx, draft) {
+function gateDetail(item, ctx) {
+  if (item.kind === "assistance" && item.launch) return noResultDetail(item, ctx);
   if (item.kind === "approval") {
     return `<article class="gate attention-item gate-approval" aria-label="${escapeHtml(GATE_LABELS.approval)}">
     <header class="gate-head">
@@ -222,7 +228,7 @@ function gateDetail(item, ctx, draft) {
         ${approvalSubject(item, ctx)}
         ${gateContext(item, ctx)}
       </div>
-      ${answerForm(item, draft)}
+      ${answerSlot(item)}
     </div>
   </article>`;
   }
@@ -240,7 +246,47 @@ function gateDetail(item, ctx, draft) {
         ${inspectList(item, ctx)}
         ${item.stale ? `<p class="notice">Every file this question refers to is gone, so it may no longer apply. The agent that asked it withdraws it when it does not.</p>` : ""}
       </div>
-      ${item.unavailable ? unavailableAnswer(item) : answerForm(item, draft)}
+      ${item.unavailable ? unavailableAnswer(item) : answerSlot(item)}
+    </div>
+  </article>`;
+}
+const NO_RESULT_CHIP = "Run ended without a result";
+const NO_MESSAGE = "The run left no message.";
+const LAST_MESSAGE = "\n\nIts last message:\n\n";
+function lastMessage(context) {
+  const text = typeof context === "string" ? context : "";
+  const at = text.indexOf(LAST_MESSAGE);
+  return at === -1 ? null : text.slice(at + LAST_MESSAGE.length);
+}
+function dayTime(at) {
+  const time = Date.parse(at ?? "");
+  if (!Number.isFinite(time)) return "";
+  const date = new Date(time);
+  const day = date.toLocaleDateString(void 0, { day: "numeric", month: "short" });
+  const clock = date.toLocaleTimeString(void 0, { hour: "2-digit", minute: "2-digit" });
+  return `<time datetime="${escapeHtml(at)}">${escapeHtml(`${day} ${clock}`)}</time>`;
+}
+function noResultDetail(item, ctx) {
+  const launch = item.launch;
+  const host = launch.host?.label ?? launch.host?.id ?? "";
+  const message = lastMessage(item.context);
+  const body = message === null ? `<p class="gate-last-message-none muted">${NO_MESSAGE}</p>` : `<div class="gate-last-message gate-context">${ctx.renderMarkdown ? ctx.renderMarkdown(message) : `<p class="gate-context-plain">${escapeHtml(message)}</p>`}</div>`;
+  return `<article class="gate attention-item gate-assistance gate-no-result" aria-label="${NO_RESULT_CHIP}">
+    <header class="gate-head">
+      <div class="gate-chips">${badge(NO_RESULT_CHIP, "info")}<span class="attention-where">${escapeHtml(sessionPlace(item.initiative, launch.host))}</span>${when(item.askedAt, "attention-time gate-time")}</div>
+      <h3 class="gate-question">${escapeHtml(item.question)}</h3>
+    </header>
+    <div class="gate-body">
+      <div class="gate-main">
+        ${keyValues([
+    ["Initiative", escapeHtml(item.initiative?.title ?? item.initiative?.id ?? "")],
+    ["Host", escapeHtml(host)],
+    ["Launched", dayTime(launch.launchedAt)],
+    ["Ended", dayTime(launch.endedAt)]
+  ])}
+        <div class="gate-block"><p class="label-caps">Last message</p>${body}</div>
+      </div>
+      ${item.unavailable ? unavailableAnswer(item) : answerSlot(item)}
     </div>
   </article>`;
 }
@@ -279,97 +325,37 @@ function answerError(error) {
   if (error.code === "author_unknown") return { message: "Git names no user for this checkout, so the approval cannot record who gave it. Set one with git config user.name, then answer again.", rerender: false };
   return { message: error.message, rerender: false };
 }
-function bindAnswers(container, ctx, gates) {
-  const drafts = ctx.state.drafts ??= {};
-  for (const form of container.querySelectorAll(".gate-answer")) {
-    const id = form.dataset.gate;
-    const item = gates.find((gate) => gate.id === id);
-    const draft = drafts[id] ??= { choice: null, note: "" };
-    const field = form.querySelector("[data-note]");
-    const note = field.control ?? field.querySelector("textarea");
-    const failure = form.querySelector(".gate-error");
-    const submit = form.querySelector("[data-submit]");
-    const hint = form.querySelector(".gate-hint");
-    const hintText = hint.querySelector(".gate-hint-text");
-    const hintIcon = hint.querySelector("prism-icon");
-    const choice = form.querySelector("prism-choice[data-choice]");
-    const clear = form.querySelector("[data-clear-choice]");
-    note.rows = 3;
-    note.maxLength = 4e3;
-    note.setAttribute("aria-describedby", [note.getAttribute("aria-describedby"), hint.id, failure.id].filter(Boolean).join(" "));
-    let sending = false;
-    const refresh = () => {
-      const state = answerState(item, draft);
-      const ready = !sending && state.ready && !state.hint;
-      field.setAttribute("label", noteLabel(state));
-      field.setAttribute("placeholder", state.notePlaceholder);
-      field.toggleAttribute("required", state.noteRequired);
-      submit.textContent = state.submitLabel;
-      submit.setAttribute("variant", state.choice === "request-changes" ? "danger" : "primary");
-      submit.toggleAttribute("disabled", sending || !state.ready);
-      if (clear) clear.hidden = !draft.choice;
-      const text = readyText(item, state);
-      if (hintText.textContent !== text) hintText.textContent = text;
-      hint.classList.toggle("is-ready", ready);
-      hintIcon.hidden = !ready;
-    };
-    const clearFailure = () => {
-      draft.error = null;
-      failure.hidden = true;
-    };
-    choice?.addEventListener("change", () => {
-      draft.choice = choice.value || null;
-      clearFailure();
-      refresh();
-    });
-    clear?.addEventListener("click", () => {
-      choice.clear();
-      note.focus();
-    });
-    note.addEventListener("input", () => {
-      draft.note = note.value;
-      draft.selection = [note.selectionStart, note.selectionEnd];
-      clearFailure();
-      refresh();
-    });
-    note.addEventListener("focus", () => {
-      ctx.state.focus = id;
-    });
-    note.addEventListener("blur", () => {
-      if (ctx.state.focus === id) ctx.state.focus = null;
-    });
-    submit.addEventListener("click", async () => {
-      const state = answerState(item, draft);
-      if (!state.ready || sending) return;
-      sending = true;
-      clearFailure();
-      refresh();
-      try {
-        const target = form.hasAttribute("data-approval") ? { approval: true } : { initiative: form.dataset.initiative };
-        await ctx.answerGate({ ...target, id, choice: state.choice, note: draft.note });
-        delete drafts[id];
-        ctx.state.focus = null;
-        ctx.showToast("Answer recorded. An agent that is waiting resumes on its own; any other agent sees it with your next message.");
+function mountAnswers(container, ctx, gates) {
+  if (!ctx.actionApi) return;
+  const drafts = ctx.state.answerDrafts ??= {};
+  for (const slot of container.querySelectorAll(".gate-answer[data-answer-target]")) {
+    const item = gates.find((gate) => gate.id === slot.dataset.gate && answerTarget(gate) === slot.dataset.answerTarget);
+    if (!item) continue;
+    const target = slot.dataset.answerTarget;
+    createActionList({
+      root: slot,
+      targets: [target],
+      api: ctx.actionApi,
+      drafts,
+      renderMarkdown: ctx.renderMarkdown ?? null,
+      groups: ["Question"],
+      emptyText: "This question takes no answer here.",
+      form: answerFormOptions(item),
+      onApplied: () => {
+        ctx.showToast(item.launch ? "Answer recorded. The launched session resumes with it." : "Answer recorded. An agent that is waiting resumes on its own; any other agent sees it with your next message.");
         ctx.rerender();
-      } catch (error) {
-        const refusal = answerError(error);
-        draft.error = refusal.message;
-        failure.textContent = draft.error;
-        failure.hidden = false;
-        sending = false;
-        refresh();
-        if (refusal.rerender) ctx.rerender();
+      },
+      // The server stays the backstop: its refusal shows beside the form in words, and a question that changed under the page is read again.
+      onRefused: (_action, result) => {
+        const refusal = answerError({ code: result.code === "unknown_target" ? "unknown_gate" : result.code, message: result.reason ?? result.message ?? "The answer was not recorded." });
+        if (refusal.rerender) queueMicrotask(() => ctx.rerender());
+        return refusal.message;
       }
     });
-    if (ctx.state.focus === id) {
-      note.focus();
-      const [start, end] = draft.selection ?? [note.value.length, note.value.length];
-      note.setSelectionRange(start, end);
-    }
   }
 }
-function permissionWhere(item) {
-  return [item.initiative?.title ?? item.initiative?.id, item.host?.label ?? item.host?.id].filter(Boolean).join(" \xB7 ");
+function sessionPlace(initiative, host) {
+  return [initiative?.title ?? initiative?.id, host?.label ?? host?.id].filter(Boolean).join(" \xB7 ");
 }
 function permissionDetail(item, draft = {}) {
   const host = item.host?.label ?? item.host?.id ?? "The host";
@@ -377,7 +363,7 @@ function permissionDetail(item, draft = {}) {
   const busy = draft.sending ? " disabled" : "";
   return `<article class="gate attention-item gate-permission" aria-label="Permission">
     <header class="gate-head">
-      <div class="gate-chips">${badge("Permission", "warning")}<span class="attention-where">${escapeHtml(permissionWhere(item))}</span>${when(item.askedAt, "attention-time gate-time")}</div>
+      <div class="gate-chips">${badge("Permission", "warning")}<span class="attention-where">${escapeHtml(sessionPlace(item.initiative, item.host))}</span>${when(item.askedAt, "attention-time gate-time")}</div>
       <h3 class="gate-question">${escapeHtml(host)} asks you to allow: ${escapeHtml(item.action)}</h3>
     </header>
     <div class="gate-body">
@@ -407,6 +393,23 @@ function permissionError(code, message) {
   if (code === "unknown_request") return { message: "This request no longer waits: the session answered it, withdrew it, or ended.", rerender: true };
   if (typeof code === "string" && code.startsWith("confirmation_")) return { message: `The approval was not confirmed, so the request still waits. ${text}`, rerender: false };
   return { message: text, rerender: false };
+}
+function bindArchiveSession(container, ctx) {
+  container.querySelector(".attention-detail")?.addEventListener("click", async (event) => {
+    const button = event.target.closest?.("[data-archive-session]");
+    if (!button || button.hasAttribute("disabled")) return;
+    button.setAttribute("disabled", "");
+    const headers = { "Content-Type": "application/json", ...typeof ctx.writeHeaders === "function" ? ctx.writeHeaders() : {} };
+    const response = await fetch("./api/agents/archive", { method: "POST", headers, body: JSON.stringify({ launch: button.dataset.launch }) }).catch(() => null);
+    const json = response ? await response.json().catch(() => ({})) : { message: "The review app did not answer, so nothing changed. Try again in a moment." };
+    if (response?.status === 200) {
+      ctx.showToast("Archived. The Agents page keeps it under Archived.");
+      ctx.rerender();
+      return;
+    }
+    button.removeAttribute("disabled");
+    ctx.showToast(json?.message ?? "The session could not be archived.");
+  });
 }
 function bindPermissions(container, ctx) {
   const drafts = ctx.state.permissionDrafts ??= {};
@@ -525,12 +528,45 @@ function noteEntry(item, ctx) {
     "open-question": () => ({ kind: "Roadmap question", icon: "roadmap", tone: "neutral", title: escapeHtml(item.text), text: "", where: roadmapLink, meta: "Open question on the roadmap" }),
     "roadmap-missing": () => ({ kind: "No roadmap", icon: "warning", tone: "warning", title: "No roadmap", text: "No roadmap record exists yet. Ask the agent to run <code>setup</code>.", where: "", meta: "Roadmap" }),
     "roadmap-problem": () => ({ kind: "Roadmap problem", icon: "warning", tone: "danger", title: "The roadmap has a problem", text: messageHtml(item.message), where: roadmapLink, meta: "Roadmap problem" }),
-    config: () => ({ kind: "Workflow settings", icon: "warning", tone: "warning", title: "Check the workflow settings", text: messageHtml(item.message), where: "", meta: "Workflow settings" })
+    config: () => ({ kind: "Workflow settings", icon: "warning", tone: "warning", title: "Check the workflow settings", text: messageHtml(item.message), where: "", meta: "Workflow settings" }),
+    "format-findings": () => ({ kind: "Format findings", icon: "document", tone: "warning", title: formatTitle(item), text: `${escapeHtml(formatSummary(item))} ${artifactLink("attention:formats", ctx, "See the findings")}`, where: "", meta: "Format findings" })
   }[item.type];
+  if (item.type === "migration-question" || item.type === "migration-failed") return runEntry(item, ctx);
   const content = describe ? describe() : { kind: item.type, icon: "info", tone: "neutral", title: escapeHtml(item.type), text: "", where: "", meta: "" };
   return {
     row: { icon: content.icon, tone: content.tone, title: content.title, meta: escapeHtml(content.meta) },
     detail: detailSheet({ className: `note-${escapeHtml(item.type)}`, head: `${badge(content.kind)}<span class="attention-where">${content.where}</span>`, title: content.title, body: content.text ? `<p class="attention-note">${content.text}</p>` : "" })
+  };
+}
+const runRef = (item) => `migration-run:${item.run}`;
+const runTitle = (item) => `Format migration \xB7 ${item.label} ${scopeWords(item.scope)}`;
+const runCode = (path) => `<span class="run-code" data-code-subject>${escapeHtml(path)}</span>`;
+const openRun = (item, label, variant = "") => `<prism-button${variant ? ` variant="${variant}"` : ""} data-artifact="${escapeHtml(runRef(item))}">${escapeHtml(label)}</prism-button>`;
+function runEntry(item, ctx) {
+  const where2 = `<span class="attention-where">${whereChip(item.scope)}</span>`;
+  if (item.type === "migration-question") {
+    const files2 = item.asking ?? [];
+    const title2 = escapeHtml(runTitle(item));
+    const rows2 = `<div class="prism-rows" role="list" aria-label="Files that ask you">${files2.map((file) => `<prism-row icon="document" tone="accent">${runCode(file.path)}<span slot="description">${escapeHtml(file.kinds.map((kind) => POINT_KINDS[kind] ?? kind).join(", "))}</span><prism-badge slot="kind" tone="accent">${file.points}</prism-badge></prism-row>`).join("")}</div>`;
+    const note = `Prism could not settle ${plural(item.points, "point")} in ${files2.length} of the run's ${plural(item.files, "file")}. One answer on the run's page settles all of them, each prefilled with Prism's recommendation.`;
+    return {
+      row: { icon: "layers", tone: "accent", unread: true, title: title2, meta: escapeHtml(`${plural(item.points, "point")} in ${files2.length} of ${plural(item.files, "file")} \xB7 Format migration`), end: shortTime(item.askedAt) },
+      detail: detailSheet({ className: "note-migration-question", head: `${badge("Format migration asks you", "accent")}${where2}${when(item.askedAt, "attention-time gate-time")}`, title: title2, body: `<p class="attention-note">${escapeHtml(note)}</p>${rows2}<div class="gate-actions"><span></span>${openRun(item, "Answer on the run's page", "primary")}</div>` })
+    };
+  }
+  const title = escapeHtml(`${runTitle(item)} failed`);
+  const files = item.artifacts ?? [];
+  const rows = `<div class="prism-rows" role="list" aria-label="Files in the run">${files.map((file) => `<prism-row icon="document" tone="neutral">${runCode(file.path)}</prism-row>`).join("")}</div>`;
+  return {
+    row: { icon: "warning", tone: "danger", unread: true, title, meta: escapeHtml(`${item.reason ?? "The run failed"} \xB7 Failed`), end: shortTime(item.at) },
+    detail: detailSheet({ className: "note-migration-failed", head: `${badge("Format migration failed", "danger")}${where2}${when(item.at, "attention-time gate-time")}`, title, body: `<p class="attention-note run-reason">${escapeHtml(item.reason ?? "The run failed without a reason.")}</p><p class="muted">Nothing of the run was applied. Its ${plural(files.length, "file")} still ${files.length === 1 ? "breaks" : "break"} the format.</p>${rows}<div class="gate-actions">${openRun(item, "Open the run")}<prism-button variant="primary" data-migration-rerun="${escapeHtml(item.run)}">Run again</prism-button></div>` })
+  };
+}
+function waitingRunEntry(item) {
+  const title = escapeHtml(`${runTitle(item)} waits for a host`);
+  return {
+    row: { icon: "clock", tone: "warning", title, meta: escapeHtml(`${item.reason ?? "No host is available on this machine"} \xB7 Problem`) },
+    detail: detailSheet({ className: "watch-migration-waiting", head: `${badge("Waits for a host", "warning")}<span class="attention-where">${whereChip(item.scope)}</span>`, title, body: `<p class="watch-detail run-reason">${escapeHtml(item.reason ?? "No host is available on this machine.")}</p><div class="gate-actions"><span></span>${openRun(item, "Open the run")}</div>` })
   };
 }
 function recordName(path, ctx) {
@@ -538,6 +574,7 @@ function recordName(path, ctx) {
   return named.code ? null : named.kind;
 }
 function watchEntry(item, ctx) {
+  if (item.type === "migration-waiting") return waitingRunEntry(item);
   const where2 = location(item, ctx);
   const slice = item.slice?.title ?? item.initiative?.title ?? "";
   const describe = {
@@ -616,7 +653,11 @@ function filteredItem({ kind, item }, ctx) {
     "open-question": () => ({ icon: "roadmap", tone: "neutral", title: escapeHtml(item.text), ref: "roadmap", sub: "Open question on the roadmap", chip: ["Problem", "warning"] }),
     "roadmap-missing": () => ({ icon: "warning", tone: "warning", title: "No roadmap", ref: null, sub: "No roadmap record exists yet; ask the agent to run setup", chip: ["Problem", "warning"] }),
     "roadmap-problem": () => ({ icon: "warning", tone: "danger", title: "The roadmap has a problem", ref: "roadmap", sub: messageHtml(item.message ?? ""), chip: ["Problem", "danger"] }),
-    config: () => ({ icon: "warning", tone: "warning", title: "Check the workflow settings", ref: null, sub: messageHtml(item.message ?? ""), chip: ["Problem", "warning"] })
+    config: () => ({ icon: "warning", tone: "warning", title: "Check the workflow settings", ref: null, sub: messageHtml(item.message ?? ""), chip: ["Problem", "warning"] }),
+    "format-findings": () => ({ icon: "document", tone: "warning", title: formatTitle(item), ref: "attention:formats", sub: escapeHtml(formatSummary(item)), chip: ["Format findings", "warning"] }),
+    "migration-question": () => ({ icon: "layers", tone: "accent", title: escapeHtml(runTitle(item)), ref: runRef(item), sub: escapeHtml(`${plural(item.points, "point")} to answer \xB7 Format migration`), chip: ["Question", "accent"], at: item.askedAt, action: "Answer" }),
+    "migration-failed": () => ({ icon: "warning", tone: "danger", title: escapeHtml(`${runTitle(item)} failed`), ref: runRef(item), sub: escapeHtml(item.reason ?? "The run failed"), chip: ["Failed", "danger"], at: item.at }),
+    "migration-waiting": () => ({ icon: "clock", tone: "warning", title: escapeHtml(`${runTitle(item)} waits for a host`), ref: runRef(item), sub: escapeHtml(item.reason ?? "No host is available on this machine"), chip: ["Problem", "warning"] })
   }[item.type]?.() ?? { icon: "info", tone: "neutral", title: escapeHtml(item.type), ref: null, sub: "", chip: [kind, "neutral"] };
   const linked = look.ref && ctx.hasArtifact(look.ref);
   const select = look.select ? ` data-attention-select="${escapeHtml(look.select)}"` : "";
@@ -651,7 +692,34 @@ function renderAnswered(container, answered, ctx) {
   }).join("")}</div>`;
   bindLinks(container, ctx);
 }
+const formatTitle = (item) => `${escapeHtml(item.label)} \xB7 ${escapeHtml(plural(item.count, "file"))} ${item.count === 1 ? "breaks" : "break"} the format`;
+const formatSummary = (item) => item.earlier ? `${item.earlier} of them ${item.earlier === 1 ? "keeps" : "keep"} an earlier Prism format.` : "None of them keeps a Prism format.";
+function formatArtifact(artifact) {
+  const scope = artifact.scope?.label ?? null;
+  const mark = formatBadge({ rules: [...new Set((artifact.findings ?? []).map((finding) => finding.rule))].sort() });
+  const earlier = artifact.earlierFormat ? `Keeps format version ${artifact.earlierFormat.version}` : "Keeps no Prism format";
+  return `<prism-row wrap icon="document" tone="warning"><span data-code-subject>${escapeHtml(artifact.path)}</span> ${mark}<span slot="description">${escapeHtml(earlier)} \xB7 ${plural((artifact.findings ?? []).length, "finding")}</span><span slot="detail">${findingsList(artifact.findings)}</span><prism-chip slot="kind"${scope ? ' tip="The record store scope that holds this file"' : ' tip="A file in this checkout"'}>${escapeHtml(scope ? `Scope ${scope}` : "Checkout")}</prism-chip></prism-row>`;
+}
+function formatGroup(label, note, artifacts) {
+  if (!artifacts.length) return "";
+  return `<section class="format-group"><h4 class="format-group-label label-caps"><span>${escapeHtml(label)}</span> <prism-badge tone="warning">${artifacts.length}</prism-badge></h4><p class="format-group-note muted">${escapeHtml(note)}</p><div class="prism-rows" role="list" aria-label="${escapeHtml(label)}">${artifacts.map(formatArtifact).join("")}</div></section>`;
+}
+function formatPanel(entry) {
+  const earlier = entry.artifacts.filter((artifact) => artifact.earlierFormat);
+  const foreign = entry.artifacts.filter((artifact) => !artifact.earlierFormat);
+  return `<prism-panel class="view-section format-panel" heading="${escapeHtml(entry.label)}" level="3" eyebrow="${escapeHtml(`Format version ${entry.version} \xB7 ${plural(entry.count, "file")} to look at`)}">
+    ${formatGroup("Earlier Prism format", `These files keep an earlier version of the format; a format migration brings them to version ${entry.version}.`, earlier)}
+    ${formatGroup("No Prism format", "These files keep no version of the format; a format migration rewrites them into it, keeping every statement.", foreign)}
+  </prism-panel>`;
+}
+function renderFormats(container, data, ctx) {
+  const filter = data.filter;
+  filterLine(container, `${filter.label} \xB7 ${filter.items.length} of ${filter.total} ${filter.total === 1 ? "item" : "items"}`, ctx);
+  const shown = (data.formats ?? []).filter((entry) => entry.count);
+  container.innerHTML = shown.length ? `<div class="format-panels">${shown.map(formatPanel).join("")}</div>` : `<div class="attention-nothing">${emptyState("Every file keeps its format", "No requirement, decision, glossary, or feature file breaks its Prism format.")}</div>`;
+}
 function render(container, entity, ctx) {
+  if (entity.ref === "attention:formats" && entity.data.filter) return renderFormats(container, entity.data, ctx);
   if (entity.data.filter) return renderFiltered(container, entity.data.filter, ctx);
   if (entity.ref === "attention:answered") return renderAnswered(container, entity.data.answered ?? [], ctx);
   const data = entity.data;
@@ -660,7 +728,6 @@ function render(container, entity, ctx) {
     ctx.state.pane = "detail";
     pendingSelection = null;
   }
-  const drafts = ctx.state.drafts ??= {};
   const answered = data.answered ?? [];
   const earlier = data.earlier ?? [];
   const recent = data.recentChanges ?? [];
@@ -673,20 +740,20 @@ function render(container, entity, ctx) {
   const needs = [
     ...permissions.map((item) => ({
       key: `permission:${item.id}`,
-      row: { icon: "lock", tone: "warning", unread: true, title: escapeHtml(item.action), meta: escapeHtml(["Permission", permissionWhere(item)].filter(Boolean).join(" \xB7 ")), end: shortTime(item.askedAt) },
+      row: { icon: "lock", tone: "warning", unread: true, title: escapeHtml(item.action), meta: escapeHtml(["Permission", sessionPlace(item.initiative, item.host)].filter(Boolean).join(" \xB7 ")), end: shortTime(item.askedAt) },
       detail: permissionDetail(item, permissionDrafts[item.id] ?? {})
     })),
     ...gates.map((item) => ({
       key: `gate:${item.id}`,
-      row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" \xB7 ")), end: shortTime(item.askedAt) },
-      detail: gateDetail(item, ctx, drafts[item.id] ?? { choice: null, note: "" })
+      row: item.launch && item.kind === "assistance" ? { icon: "question", tone: "info", unread: true, title: escapeHtml(item.question), meta: escapeHtml([NO_RESULT_CHIP, sessionPlace(item.initiative, item.launch.host)].join(" \xB7 ")), end: shortTime(item.askedAt) } : { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" \xB7 ")), end: shortTime(item.askedAt) },
+      detail: gateDetail(item, ctx)
     })),
     ...notes.map((item, index) => ({ key: `note:${index}`, ...noteEntry(item, ctx) }))
   ];
   const shippedRows = (data.shippedGates ?? []).map((item) => ({
     key: `shipped:${item.id}`,
     row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: "neutral", title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, "Cannot be answered", item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" \xB7 ")), end: shortTime(item.askedAt) },
-    detail: gateDetail(item, ctx, {})
+    detail: gateDetail(item, ctx)
   }));
   const waiting = answered.map((item) => ({
     key: `answered:${item.id}`,
@@ -764,8 +831,16 @@ function render(container, entity, ctx) {
     lists.find((list) => list.value)?.focus();
   });
   bindLinks(container, ctx);
-  bindAnswers(container, ctx, gates);
+  mountAnswers(container, ctx, gates);
+  for (const button of container.querySelectorAll("[data-migration-rerun]")) {
+    button.addEventListener("click", async () => {
+      button.toggleAttribute("disabled", true);
+      if (await rerunRun(ctx, button.dataset.migrationRerun)) ctx.rerender();
+      else button.toggleAttribute("disabled", false);
+    });
+  }
   bindPermissions(container, ctx);
+  bindArchiveSession(container, ctx);
   const questions = new Map([...gates, ...data.shippedGates ?? [], ...answered, ...earlier].filter((item) => item.initiative?.id).map((item) => [`gate:${item.initiative.id}/${item.id}`, item.question]));
   followChanges(container, ctx, questions);
   container.querySelector("[data-notify]")?.addEventListener("click", () => {
@@ -773,14 +848,18 @@ function render(container, entity, ctx) {
   });
 }
 export {
+  NO_RESULT_CHIP,
   answerError,
+  answerFormOptions,
   answerState,
   changeHtml,
   failedReason,
   gateDetail,
   inspectLabel,
+  lastMessage,
   openQuestion,
   permissionDetail,
   permissionError,
-  render
+  render,
+  sessionPlace
 };

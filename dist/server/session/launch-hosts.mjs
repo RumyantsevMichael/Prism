@@ -2,9 +2,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { acpHostDefinition, acpHosts, isAcpHost } from "./acp-agents.mjs";
 import { isAgentModel } from "./agent-models.mjs";
 import { acpConversation } from "./host-adapters/acp.mjs";
+import { lastMessageOf } from "./run-result.mjs";
 import { shownForm } from "./permission-requests.mjs";
 const HOSTS = Object.freeze([
   Object.freeze({
@@ -40,6 +43,64 @@ const STRIPPED_VARIABLES = Object.freeze([
 ]);
 const CLAUDE_FLAGS = Object.freeze(["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "host", "--permission-prompt-tool", "stdio"]);
 const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" });
+const LAUNCH_ACCESS = Object.freeze(["full", "read-only"]);
+const MIGRATION_SCOPE_VARIABLE = "PRISM_MIGRATION_RUN";
+const MIGRATION_PROJECT_VARIABLE = "PRISM_MIGRATION_PROJECT";
+const MIGRATION_RUN_TOOLS = Object.freeze(["get_migration_run", "get_artifact", "propose_migration", "finish_migration_run", "fail_migration_run"]);
+const MIGRATION_SERVER = "prism-run";
+const PRISM_SERVER = fileURLToPath(new URL("../mcp.mjs", import.meta.url));
+function migrationServerDefinition({ run, project, launch, env = process.env }) {
+  const state = Object.fromEntries(["XDG_STATE_HOME", "LOCALAPPDATA"].filter((name) => typeof env[name] === "string" && env[name]).map((name) => [name, env[name]]));
+  return {
+    command: process.execPath,
+    args: [PRISM_SERVER],
+    env: { NODE_USE_ENV_PROXY: "1", [MIGRATION_SCOPE_VARIABLE]: run, [MIGRATION_PROJECT_VARIABLE]: project, PRISM_LAUNCH: launch, PRISM_REVIEW_APP_DIR: reviewAppDirectory(env), ...state }
+  };
+}
+const CLAUDE_READ_ONLY_TOOLS = MIGRATION_RUN_TOOLS.map((tool) => `mcp__${MIGRATION_SERVER}__${tool}`).join(",");
+const CLAUDE_NO_CONNECTORS = JSON.stringify({ disableClaudeAiConnectors: true });
+const claudeReadOnly = (denied, mcpConfig) => [
+  "--input-format",
+  "stream-json",
+  "--output-format",
+  "stream-json",
+  "--tools",
+  "",
+  "--allowedTools",
+  CLAUDE_READ_ONLY_TOOLS,
+  ...denied.length ? ["--disallowedTools", denied.flatMap(deniedReads).join(",")] : [],
+  "--mcp-config",
+  mcpConfig,
+  "--strict-mcp-config",
+  "--settings",
+  CLAUDE_NO_CONNECTORS,
+  "--permission-mode",
+  "dontAsk",
+  "--permission-prompts",
+  "none"
+];
+function deniedReads(folder) {
+  const windows = /^[A-Za-z]:[\\/]/.test(folder);
+  if (!(windows || path.posix.isAbsolute(folder))) throw new Error(`Prism cannot deny the reads of ${folder} to the session, so it does not start it.`);
+  const posix = windows ? `/${folder[0].toLowerCase()}/${folder.slice(3).replaceAll("\\", "/")}` : folder;
+  const absolute = `/${posix.replace(/^\/+/, "").replace(/\/+$/, "")}`;
+  if (/[,()*?[\]!\\]/.test(absolute)) throw new Error(`Prism cannot deny the reads of ${folder} to the session, so it does not start it.`);
+  return [`Read(/${absolute})`, `Read(/${absolute}/**)`];
+}
+function requiredConfig(file) {
+  if (typeof file !== "string" || !path.isAbsolute(file)) throw new Error("A format migration run's session has no MCP configuration of its own, so Prism does not start it.");
+  return file;
+}
+function requiredServer(server) {
+  if (!server || typeof server !== "object") throw new Error("A format migration run's session has no MCP server of its own, so Prism does not start it.");
+  return server;
+}
+const deniedOf = (folders) => Array.isArray(folders) ? folders.filter((folder) => typeof folder === "string" && (path.posix.isAbsolute(folder) || /^[A-Za-z]:[\\/]/.test(folder))) : [];
+const CODEX_READ_ONLY = Object.freeze({ approvalPolicy: "never", sandbox: "read-only" });
+const codexReadOnlySandbox = (folder, readRoots) => ({ type: "readOnly", access: { type: "restricted", includePlatformDefaults: true, readableRoots: [folder, ...readRoots] } });
+const rootsOf = (readRoots) => Array.isArray(readRoots) ? readRoots.filter((root) => typeof root === "string" && path.isAbsolute(root)) : [];
+const readOnly = (access2) => access2 === "read-only";
+const LAUNCH_NOTE = "Prism launched this run headless, so no person reads your messages or replies. When you need the person, ask only through a Prism gate: record it with update_coordination_state and wait for the answer with wait_for_user_gate. Where your autonomy lets you, decide by yourself and continue the work. Never end a turn with a question in your reply, because nobody sees it.";
 const CODEX_CLIENT = Object.freeze({ clientInfo: { name: "prism-launch", version: "1" }, capabilities: { experimentalApi: true } });
 const HOST_REQUEST_REFUSAL = Object.freeze({ code: -32601, message: "Prism answers no host requests." });
 const MAX_LINE_BYTES = 1024 * 1024;
@@ -155,29 +216,35 @@ function coordinatorOf(coordinator) {
   if (!checked) throw new Error("The coordinator's choice is not one Prism can pass to a host.");
   return checked;
 }
-function hostArguments({ host, hostSessionId, resume, coordinator = null, acp = null }) {
+function hostArguments({ host, hostSessionId, resume, coordinator = null, access: access2 = "full", deniedRoots = [], mcpConfig = null, acp = null }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
     const { model, effort } = coordinatorOf(coordinator);
-    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS, ...model === null ? [] : ["--model", model], ...effort === null ? [] : ["--effort", effort]];
+    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...readOnly(access2) ? claudeReadOnly(deniedOf(deniedRoots), requiredConfig(mcpConfig)) : [...CLAUDE_FLAGS, "--append-system-prompt", LAUNCH_NOTE], ...model === null ? [] : ["--model", model], ...effort === null ? [] : ["--effort", effort]];
   }
   if (host === "codex") return ["app-server"];
   if (acp) return [...acp.args];
   throw new Error(`Unknown host ${host}.`);
 }
-function claudePrompt(initiative) {
-  return { type: "user", message: { role: "user", content: `/prism:orchestrate ${initiative}` } };
+function runInvocation({ initiative = null, migrationRun = null }) {
+  return typeof migrationRun === "string" && migrationRun ? `prism:migrate-artifact ${migrationRun}` : `prism:orchestrate ${initiative}`;
 }
-function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null }) {
+function claudePrompt(subject) {
+  const invocation = subject !== null && typeof subject === "object" ? runInvocation(subject) : runInvocation({ initiative: subject });
+  return { type: "user", message: { role: "user", content: `/${invocation}` } };
+}
+function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null, access: access2 = "full", migrationServer = null }) {
   const { model, provider } = coordinatorOf(coordinator);
   const chosen = { ...model === null ? {} : { model }, ...provider === null ? {} : { modelProvider: provider } };
-  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY, ...chosen } };
+  const policy = readOnly(access2) ? { ...CODEX_READ_ONLY, config: { mcp_servers: { [MIGRATION_SERVER]: requiredServer(migrationServer) } } } : { ...CODEX_POLICY, developerInstructions: LAUNCH_NOTE };
+  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...policy, ...chosen } };
   if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
-  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY, ...chosen } };
+  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...policy, ...chosen } };
 }
-function codexTurnRequest({ threadId, initiative, coordinator = null }) {
+function codexTurnRequest({ threadId, initiative = null, migrationRun = null, coordinator = null, access: access2 = "full", checkout = null, readRoots = [] }) {
   const { effort } = coordinatorOf(coordinator);
-  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}` }], ...effort === null ? {} : { effort } } };
+  const sandbox = readOnly(access2) && typeof checkout === "string" ? { sandboxPolicy: codexReadOnlySandbox(checkout, rootsOf(readRoots)) } : {};
+  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$${runInvocation({ initiative, migrationRun })}` }], ...effort === null ? {} : { effort }, ...sandbox } };
 }
 const CODEX_APPROVALS = /* @__PURE__ */ new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"]);
 const isPlainObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -243,11 +310,12 @@ function resumeCommandOf(host, hostSessionId, env = process.env) {
 }
 function strippedEnvironment(env) {
   const result = { ...env };
-  for (const name of STRIPPED_VARIABLES) delete result[name];
+  for (const name of [...STRIPPED_VARIABLES, MIGRATION_SCOPE_VARIABLE, MIGRATION_PROJECT_VARIABLE]) delete result[name];
   return result;
 }
-function hostEnvironment(env, launchId, acp = null) {
-  return { ...strippedEnvironment(env), ...acp ? acp.env : {}, PRISM_LAUNCH: launchId };
+function hostEnvironment(env, launchId, migrationRun = null, project = null, acp = null) {
+  const scoped = typeof migrationRun === "string" && migrationRun ? { [MIGRATION_SCOPE_VARIABLE]: migrationRun, ENABLE_CLAUDEAI_MCP_SERVERS: "false", ...typeof project === "string" && project ? { [MIGRATION_PROJECT_VARIABLE]: project } : {} } : {};
+  return { ...strippedEnvironment(env), ...acp ? acp.env : {}, PRISM_LAUNCH: launchId, ...scoped };
 }
 function lineSplitter(onLine, maxBytes = MAX_LINE_BYTES) {
   let pending = [];
@@ -307,10 +375,10 @@ const claudeErrorText = (event) => text(event.result) || (Array.isArray(event.er
 const detached = (text2) => Buffer.from(text2, "utf16le").toString("utf16le");
 const digestKey = (id) => createHash("sha256").update(Buffer.from(id, "utf16le")).digest("base64");
 const REFUSED_ON_ATTENTION = "The person refused this on Attention.";
-function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {
+function hostConversation(host, { initiative = null, migrationRun = null, access: access2 = "full", readRoots = [], migrationServer = null, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {
 }, onModel = () => {
 }, acp = null, permissions = null }) {
-  const facts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, failure: null, usage: null };
+  const facts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, ownToolAllows: 0, hostError: null, failure: null, usage: null, lastMessage: null, stopReason: null };
   let modelSeen = false;
   const named = (value) => {
     if (modelSeen) return;
@@ -323,6 +391,10 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
   const redact = (value) => redactSessionId(redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId), facts.agentSessionId);
   const cut = (value) => detached(redact(value).slice(0, REFUSAL_REASON_MAX));
   const hostError = (value) => cut(value || HOST_ERROR_FALLBACK);
+  const replyText = (value) => {
+    const kept = lastMessageOf(value, redact);
+    return kept === null ? null : detached(kept);
+  };
   const toolName = (value, fallback) => typeof value === "string" && value ? detached(redact(value).slice(0, TOOL_NAME_MAX)) : fallback;
   const write = (message) => {
     if (inputOpen) send(message);
@@ -364,6 +436,7 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
     closeInput();
   };
   if (host !== "claude-code" && host !== "codex" && !acp) throw new Error(`Unknown host ${host}.`);
+  if (acp && typeof initiative !== "string") throw new Error("An ACP agent runs only an initiative's orchestration.");
   const handle = host === "claude-code" ? claudeHandler() : host === "codex" ? codexHandler() : acpConversation({
     label: acp.label,
     autoMode: acp.autoMode,
@@ -374,12 +447,12 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
     coordinator: coordinatorOf(coordinator),
     env: acp.env,
     launch: acp.launch,
-    agentPid: acp.agentPid,
     facts,
     write,
     close,
     inputOpen: () => inputOpen,
     cut,
+    replyText,
     named,
     onSessionId,
     ask
@@ -392,7 +465,7 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
     let interruptId = null;
     const waitingTools = /* @__PURE__ */ new Map();
     return {
-      start: () => write(claudePrompt(initiative)),
+      start: () => write(claudePrompt({ initiative, migrationRun })),
       interrupt() {
         if (interruptId !== null) return;
         interruptId = randomUUID();
@@ -458,6 +531,7 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
           return { tool, reason: reason || cut(`${tool} was refused.`) };
         });
         facts.hostError = event.is_error === true ? hostError(claudeErrorText(event)) : null;
+        if (event.is_error !== true) facts.lastMessage = replyText(event.result);
         if (tasks.size === 0 && untrackedTasks === 0) close();
       }
     };
@@ -482,6 +556,7 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
     let turnDone = false;
     let stopAsked = false;
     let interruptSent = false;
+    const earlyReplies = /* @__PURE__ */ new Map();
     const request = (method, params) => {
       const id = nextId++;
       pending.set(id, method);
@@ -501,7 +576,7 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
     const answered = (method, result) => {
       if (method === "initialize") {
         write({ jsonrpc: "2.0", method: "initialized", params: {} });
-        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, coordinator });
+        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, coordinator, access: access2, migrationServer });
         request(open, params);
         return;
       }
@@ -517,7 +592,7 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
           close();
           return;
         }
-        const { method: turn, params } = codexTurnRequest({ threadId, initiative, coordinator });
+        const { method: turn, params } = codexTurnRequest({ threadId, initiative, migrationRun, coordinator, access: access2, checkout, readRoots });
         turnRequested = true;
         request(turn, params);
         return;
@@ -529,6 +604,8 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
           return;
         }
         facts.turnId = id;
+        if (earlyReplies.has(digestKey(id))) facts.lastMessage = earlyReplies.get(digestKey(id)) ?? null;
+        earlyReplies.clear();
         if (completed.has(digestKey(id))) turnEnded(completed.get(digestKey(id)));
         else if (stopAsked) sendInterrupt();
       }
@@ -603,6 +680,15 @@ function hostConversation(host, { initiative, checkout, hostSessionId = null, re
           waitingApprovals.get(requestKey(params.requestId))?.dismiss();
           return;
         }
+        if (message.method === "item/completed" && params.item?.type === "agentMessage" && typeof params.turnId === "string" && !turnDone) {
+          if (facts.turnId === null) {
+            const key = digestKey(params.turnId);
+            earlyReplies.delete(key);
+            earlyReplies.set(key, typeof params.item.text === "string" ? replyText(params.item.text) : null);
+            if (earlyReplies.size > KEPT_EARLY_COMPLETIONS) earlyReplies.delete(earlyReplies.keys().next().value);
+          } else if (params.turnId === facts.turnId && typeof params.item.text === "string") facts.lastMessage = replyText(params.item.text);
+          return;
+        }
         if (message.method === "item/completed" && params.item?.status === "declined") {
           const tool = toolName(params.item.type, "an action");
           facts.refusalCount += 1;
@@ -665,7 +751,13 @@ export {
   HOST_SESSION_ID_PATTERN,
   KEPT_EARLY_COMPLETIONS,
   KEPT_FILE_CHANGES,
+  LAUNCH_ACCESS,
+  LAUNCH_NOTE,
   MAX_LINE_BYTES,
+  MIGRATION_PROJECT_VARIABLE,
+  MIGRATION_RUN_TOOLS,
+  MIGRATION_SCOPE_VARIABLE,
+  MIGRATION_SERVER,
   MODEL_PATTERN,
   PROVIDER_PATTERN,
   RECORDED_REFUSALS,
@@ -683,6 +775,7 @@ export {
   codexThreadRequest,
   codexTurnRequest,
   codexUnavailable,
+  deniedReads,
   hostArguments,
   hostAvailability,
   hostConversation,
@@ -690,10 +783,12 @@ export {
   hostDefinitions,
   hostEnvironment,
   lineSplitter,
+  migrationServerDefinition,
   redactSessionId,
   resolveDefinition,
   resolveHost,
   resumeCommandOf,
+  runInvocation,
   strippedEnvironment,
   validHostSessionId
 };

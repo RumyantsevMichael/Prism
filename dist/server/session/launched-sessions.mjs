@@ -1,7 +1,8 @@
 // Generated from src/server/session/launched-sessions.mts by scripts/native-build/compile.mjs.
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { withFileLock } from "../workflow/artifact-store.mjs";
@@ -20,6 +21,7 @@ import {
   writeArchiveMark,
   SUPERVISION_LOST,
   createLaunchFolder,
+  createLaunchWorkFolder,
   expired,
   GATE_ID_PATTERN,
   gateFacts,
@@ -32,6 +34,9 @@ import {
   listLaunchRecords,
   newLaunchId,
   readGateRecord,
+  readResultMarks,
+  noResultGates,
+  writeResultMarks,
   readStopRequest,
   prepareLaunchesDirectory,
   readLaunchRecord,
@@ -45,6 +50,7 @@ import {
   writeStopRequest
 } from "./launch-records.mjs";
 import { launchRequests } from "./permission-requests.mjs";
+import { isNoResultGate, noResultContext, noResultQuestion, runHasResult } from "./run-result.mjs";
 const SUPERVISOR = fileURLToPath(new URL("./launch-supervisor.mjs", import.meta.url));
 const START_TIMEOUT_MS = 15e3;
 const LOCK_TIMEOUT_MS = 3e4;
@@ -53,6 +59,9 @@ const FIRST_OUTPUT_WAIT_MS = 5e3;
 const STOP_SETTLE_MS = 5e3;
 const refuse = (code, message) => new LaunchError(code, message);
 const runningMessage = (initiative) => `A launched session of ${initiative} is running on this machine.`;
+const runRunningMessage = (run) => `A session of the format migration run ${run} is running on this machine.`;
+const subjectOf = (record) => ({ initiative: record.initiative ?? null, migrationRun: typeof record.migrationRun === "string" ? record.migrationRun : null });
+const subjectRunningMessage = (subject) => subject.migrationRun ? runRunningMessage(subject.migrationRun) : runningMessage(subject.initiative);
 async function initiativeExists(projectRoot, initiative) {
   if (typeof initiative !== "string" || !SLUG_PATTERN.test(initiative)) return false;
   const { loaded } = await readRoadmap(projectRoot).catch(() => ({ loaded: null }));
@@ -64,19 +73,20 @@ async function withLaunchLock(env, action, timeoutMs = LOCK_TIMEOUT_MS) {
   await prepareLaunchesDirectory(env);
   return withFileLock(path.join(launchesDirectory(env), "launches"), action, (code, message) => refuse(code === "lock_timeout" ? "launch_failed" : code, message), { timeoutMs });
 }
-async function otherRunning(env, { initiative, store, except = null }) {
+async function otherRunning(env, { initiative = null, migrationRun = null, store, except = null }) {
   const now = Date.now();
   for (const { record } of await listLaunchRecords(env)) {
     if (!record || record.id === except) continue;
-    if (record.initiative === initiative && record.store === store && launchRunning(record, now)) return true;
+    const subject = subjectOf(record);
+    if (subject.initiative === initiative && subject.migrationRun === migrationRun && record.store === store && launchRunning(record, now)) return true;
   }
   return false;
 }
 async function startRun({ folder, record, env, cause }) {
   const token = randomBytes(8).toString("hex");
   const supervisor = spawn(process.execPath, [SUPERVISOR, folder, cause, token], {
-    cwd: record.checkout,
-    env: hostEnvironment(env, record.id),
+    cwd: record.workdir ?? record.checkout,
+    env: hostEnvironment(env, record.id, record.migrationRun ?? null, record.migrationRun ? record.checkout : null),
     detached: true,
     stdio: "ignore",
     windowsHide: true
@@ -135,29 +145,67 @@ async function startLaunch({ projectRoot, initiative, host, coordinator = null, 
   if (!choice) throw refuse("invalid_choice", INVALID_CHOICE);
   const checkout = await realpath(projectRoot);
   if (!await initiativeExists(checkout, initiative)) throw refuse("unknown_initiative", `No initiative ${String(initiative)} exists in this checkout.`);
+  return launchSession({ checkout, subject: { initiative, migrationRun: null }, host, coordinator: choice, env });
+}
+async function startMigrationLaunch({ projectRoot, migrationRun, host, coordinator = null, access = "read-only", env = process.env }) {
+  if (!hostDefinition(host)) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code and codex.`);
+  const choice = checkedCoordinator(coordinator);
+  if (!choice) throw refuse("invalid_choice", INVALID_CHOICE);
+  if (typeof migrationRun !== "string" || !/^run-[0-9a-f]{16}$/.test(migrationRun)) throw refuse("unknown_migration_run", `No format migration run ${String(migrationRun)} exists.`);
+  const checkout = await realpath(projectRoot);
+  return launchSession({ checkout, subject: { initiative: null, migrationRun }, host, coordinator: choice, access: access === "full" ? "full" : "read-only", readRoots: host === "codex" ? await migrationReadRoots(checkout, host, env) : [], env });
+}
+const PRISM_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
+async function migrationReadRoots(checkout, host, env = process.env) {
+  const home = os.homedir();
+  const hostHome = host === "codex" ? env.CODEX_HOME || path.join(home, ".codex") : env.CLAUDE_CONFIG_DIR || path.join(home, ".claude");
+  const roots = [];
+  for (const candidate of [PRISM_ROOT, path.join(hostHome, "plugins", "cache")]) {
+    let real;
+    try {
+      real = await realpath(candidate);
+      if (!(await stat(real)).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    const inside = (folder) => real === folder || real.startsWith(`${folder}${path.sep}`);
+    const holds = (folder) => folder.startsWith(`${real}${path.sep}`);
+    if (!inside(checkout) && !holds(checkout) && !roots.some(inside)) roots.push(real);
+  }
+  return roots;
+}
+async function launchSession({ checkout, subject, host, coordinator, access = "full", readRoots = [], env }) {
   const resolved = await resolveHost(host, env);
   if (!resolved.available) throw refuse("host_unavailable", resolved.reason);
   const store = await storeLocation(checkout);
   return withLaunchLock(env, async () => {
-    if (await otherRunning(env, { initiative, store })) throw refuse("launch_running", runningMessage(initiative));
+    if (await otherRunning(env, { ...subject, store })) throw refuse("launch_running", subjectRunningMessage(subject));
     const id = newLaunchId();
     const folder = await createLaunchFolder(env, id);
+    let workdir = null;
+    try {
+      if (subject.migrationRun) workdir = await createLaunchWorkFolder(env, id, checkout);
+    } catch (error) {
+      await removeLaunchFolder(folder);
+      throw error;
+    }
     const record = {
       id,
-      initiative,
+      initiative: subject.initiative,
+      ...subject.migrationRun ? { migrationRun: subject.migrationRun, access, readRoots, workdir } : {},
       host,
       checkout,
       store,
       createdAt: (/* @__PURE__ */ new Date()).toISOString(),
       hostSessionId: host === "claude-code" ? randomUUID() : null,
-      coordinator: choice,
+      coordinator,
       runs: []
     };
     await writeLaunchRecord(folder, record);
     try {
       return { launch: await startRun({ folder, record, env, cause: "launch" }) };
     } catch (error) {
-      await removeLaunchFolder(folder);
+      await removeLaunchFolder(folder, record);
       throw error;
     }
   });
@@ -167,7 +215,7 @@ async function resumeLocked(env, folder, id, cause) {
   const record = await readLaunchRecord(folder);
   if (!record) throw unknownLaunch(id);
   if (launchRunning(record)) throw refuse("launch_running", "The session is running.");
-  if (await otherRunning(env, { initiative: record.initiative, store: record.store, except: id })) throw refuse("launch_running", runningMessage(record.initiative));
+  if (await otherRunning(env, { ...subjectOf(record), store: record.store, except: id })) throw refuse("launch_running", subjectRunningMessage(subjectOf(record)));
   if (!validHostSessionId(record.hostSessionId)) throw refuse("no_host_session", "The session never reported its host session id, so it cannot be resumed.");
   if (!launchCoordinator(record)) throw refuse("invalid_choice", RECORDED_CHOICE_INVALID);
   const resolved = await resolveHost(record.host, env);
@@ -185,7 +233,7 @@ async function resumeRefusal({ id, env = process.env }) {
   const record = folder ? await readLaunchRecord(folder) : null;
   if (!record) return unknownLaunch(id).message;
   if (launchRunning(record)) return "The session is running.";
-  if (await otherRunning(env, { initiative: record.initiative, store: record.store, except: id })) return runningMessage(record.initiative);
+  if (await otherRunning(env, { ...subjectOf(record), store: record.store, except: id })) return subjectRunningMessage(subjectOf(record));
   if (!validHostSessionId(record.hostSessionId)) return "The session never reported its host session id, so it cannot be resumed.";
   if (!launchCoordinator(record)) return RECORDED_CHOICE_INVALID;
   const resolved = await resolveHost(record.host, env);
@@ -199,6 +247,22 @@ async function launchRunStatus({ id, env = process.env }) {
 async function initiativeRunning({ projectRoot, initiative, env = process.env }) {
   const store = await storeLocation(await realpath(projectRoot));
   return otherRunning(env, { initiative, store });
+}
+async function launchEndReason({ id, env = process.env }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return null;
+  const record = await readLaunchRecord(launchFolder(env, id));
+  if (!record) return null;
+  const status = lastRunStatus(record);
+  if (status === "lost") return SUPERVISION_LOST;
+  if (status !== "ended") return null;
+  const view = launchView(record);
+  const run = record.runs.at(-1);
+  const exit = run.exit?.signal ? `signal ${run.exit.signal}` : `exit code ${run.exit?.code ?? "unknown"}`;
+  return view.reason ?? (view.state === "stopped" ? `${view.hostLabel} was stopped.` : `${view.hostLabel} ended with ${exit}.`);
+}
+async function migrationRunRunning({ projectRoot, migrationRun, env = process.env }) {
+  const store = await storeLocation(await realpath(projectRoot));
+  return otherRunning(env, { migrationRun, store });
 }
 async function launchOf(env, id, { projectRoot, initiative }) {
   if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return null;
@@ -215,12 +279,145 @@ async function markLaunchGates({ projectRoot, initiative, gates, env = process.e
   if (!found) return false;
   return withLaunchLock(env, async () => {
     if (!await readLaunchRecord(found.folder)) return false;
-    const current = await readGateRecord(found.folder);
-    const at = (/* @__PURE__ */ new Date()).toISOString();
-    const known = new Set(current.marks.map((mark) => mark.gate));
-    await writeGateRecord(found.folder, { ...current, marks: [...current.marks, ...ids.filter((gate) => !known.has(gate)).map((gate) => ({ gate, at }))] });
+    await addGateMarks(found.folder, ids);
     return true;
   });
+}
+async function addGateMarks(folder, ids) {
+  const current = await readGateRecord(folder);
+  const at = (/* @__PURE__ */ new Date()).toISOString();
+  const known = new Set(current.marks.map((mark) => mark.gate));
+  await writeGateRecord(folder, { ...current, marks: [...current.marks, ...ids.filter((gate) => !known.has(gate)).map((gate) => ({ gate, at }))] });
+}
+async function markLaunchPause({ projectRoot, initiative, env = process.env }) {
+  const found = await launchOf(env, env.PRISM_LAUNCH, { projectRoot, initiative });
+  if (!found) return false;
+  return withLaunchLock(env, async () => {
+    if (!await readLaunchRecord(found.folder)) return false;
+    const marks = await readResultMarks(found.folder);
+    await writeResultMarks(found.folder, { ...marks, pauses: [...marks.pauses, { at: (/* @__PURE__ */ new Date()).toISOString() }] });
+    return true;
+  });
+}
+async function markResultCheck({ id, token, env = process.env }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return;
+  const folder = launchFolder(env, id);
+  await withLaunchLock(env, async () => {
+    const marks = await readResultMarks(folder);
+    await writeResultMarks(folder, { ...marks, checks: [...marks.checks.filter((check) => check.run !== token), { run: token, pid: process.pid, at: (/* @__PURE__ */ new Date()).toISOString() }] });
+  });
+}
+const NEWER_RUN = "A newer run of this launched session ended without a result.";
+const SUPERSEDED = "A newer run of this launched session started before Prism recorded this question.";
+async function changeGates(record, operationsOf) {
+  const { readCoordinationState: read, updateCoordinationState } = await import("../workflow/state.mjs");
+  let failure = "The coordination state kept changing.";
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const current = await read({ projectRoot: record.checkout, initiative: record.initiative });
+      const pending = current.valid && Array.isArray(current.state?.pending) ? current.state.pending : [];
+      const result = await updateCoordinationState({ projectRoot: record.checkout, initiative: record.initiative, expectedRevision: current.revision ?? null, changes: { gateOperations: operationsOf(pending) } });
+      return { opened: Array.isArray(result.openedGates) ? result.openedGates : [] };
+    } catch (error) {
+      failure = typeof error?.message === "string" && error.message ? error.message : String(error);
+      if (error?.code !== "revision_conflict") break;
+    }
+  }
+  return { failure };
+}
+async function askNoResultGate(record, earlier, lastMessage, env) {
+  const label = hostDefinition(record.host, env)?.label ?? record.host;
+  const ask = { op: "ask", kind: "assistance", question: noResultQuestion(label, record.initiative), context: noResultContext(lastMessage), artifacts: [] };
+  const changed = await changeGates(record, (pending) => [
+    ...pending.filter((gate2) => gate2 && earlier.includes(gate2.id) && !gate2.answer && isNoResultGate(gate2)).map((gate2) => ({ op: "resolve", id: gate2.id, reason: NEWER_RUN })),
+    ask
+  ]);
+  if ("failure" in changed) return { failure: changed.failure };
+  const gate = changed.opened.at(-1)?.id;
+  return typeof gate === "string" && GATE_ID_PATTERN.test(gate) ? { gate } : { failure: "The coordination state named no new gate." };
+}
+const ARCHIVED = "The person archived the launched session.";
+const RUNS_AGAIN = "The launched session runs again.";
+async function withdrawNoResultGates(folder, record, reason) {
+  const gates = new Set(noResultGates(await readResultMarks(folder)));
+  if (!gates.size) return;
+  const unanswered = (pending) => pending.filter((gate) => gate && gates.has(gate.id) && !gate.answer);
+  const read = await readCoordinationState({ projectRoot: record.checkout, initiative: record.initiative }).catch(() => null);
+  if (!unanswered(read?.valid && Array.isArray(read.state?.pending) ? read.state.pending : []).length) return;
+  await changeGates(record, (pending) => unanswered(pending).map((gate) => ({ op: "resolve", id: gate.id, reason })));
+}
+async function withdrawRunQuestions({ id, env = process.env }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return;
+  const folder = launchFolder(env, id);
+  const record = await readLaunchRecord(folder);
+  if (record) await withdrawNoResultGates(folder, record, RUNS_AGAIN);
+}
+async function withdrawSessionQuestions({ sessionId, env = process.env }) {
+  if (!validHostSessionId(sessionId)) return false;
+  let found = false;
+  for (const { folder, record } of await listLaunchRecords(env)) {
+    if (!record || record.host !== "claude-code" && record.host !== "codex" || record.hostSessionId !== sessionId) continue;
+    found = true;
+    await withdrawNoResultGates(folder, record, RUNS_AGAIN);
+  }
+  return found;
+}
+async function rememberHostGate(record, gate, env) {
+  if (record.host !== "claude-code" && record.host !== "codex" || !validHostSessionId(record.hostSessionId)) return;
+  const { noticeDirectory, rememberAskedGates } = await import("../workflow/change-notices.mjs");
+  const { holderOf } = await import("../workflow/slice-claims.mjs");
+  await rememberAskedGates({ projectRoot: record.checkout, initiative: record.initiative, gateIds: [gate], session: holderOf(record.hostSessionId), directory: noticeDirectory(env) }).catch(() => {
+  });
+}
+async function stillLastRun(folder, token) {
+  const record = await readLaunchRecord(folder);
+  const last = record?.runs.at(-1);
+  return Boolean(last && last.token === token && !last.stopRequestedAt) && (await readStopRequest(folder))?.token !== token;
+}
+async function settleRunResult({ id, token, normal, resumed, lastMessage, env = process.env }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return;
+  const folder = launchFolder(env, id);
+  let mark = null;
+  let settled = false;
+  try {
+    const record = await readLaunchRecord(folder);
+    const run = record?.runs.find((entry) => entry.token === token);
+    const ended = run && run === record.runs.at(-1) && run.endedAt && !run.stopRequestedAt && run.exit?.code === 0 && !run.exit?.signal && typeof run.failure !== "string" && typeof run.hostError !== "string" && !(Array.isArray(run.refusals) && run.refusals.length) && !(run.refusalCount > 0);
+    if (!normal || resumed || !ended || (await readStopRequest(folder))?.token === token) return;
+    const marks = await readResultMarks(folder);
+    if (await runHasResult({ checkout: record.checkout, initiative: record.initiative, since: run.startedAt, pauses: marks.pauses })) return;
+    const asked = await askNoResultGate(record, noResultGates(marks), lastMessage, env);
+    if (!("gate" in asked)) {
+      mark = { run: token, gate: null, failure: asked.failure, at: (/* @__PURE__ */ new Date()).toISOString() };
+      return;
+    }
+    const gate = asked.gate;
+    const current = await withLaunchLock(env, async () => {
+      const latest = await readResultMarks(folder);
+      const checks = latest.checks.filter((check) => check.run !== token);
+      if (!await stillLastRun(folder, token)) {
+        await writeResultMarks(folder, { ...latest, checks });
+        return false;
+      }
+      await rememberHostGate(record, gate, env);
+      const noResult = [...latest.noResult.filter((item) => item.run !== token), { run: token, gate, failure: null, at: (/* @__PURE__ */ new Date()).toISOString() }];
+      await writeResultMarks(folder, { ...latest, checks, noResult });
+      await addGateMarks(folder, [gate]);
+      return true;
+    });
+    settled = true;
+    if (!current) {
+      await changeGates(record, (pending) => pending.some((item) => item?.id === gate && !item.answer) ? [{ op: "resolve", id: gate, reason: SUPERSEDED }] : []);
+    }
+  } finally {
+    if (!settled) {
+      await withLaunchLock(env, async () => {
+        const marks = await readResultMarks(folder);
+        await writeResultMarks(folder, { ...marks, checks: marks.checks.filter((check) => check.run !== token), noResult: mark ? [...marks.noResult.filter((item) => item.run !== token), mark] : marks.noResult });
+      }).catch(() => {
+      });
+    }
+  }
 }
 async function markingLaunch(env, { projectRoot, initiative, gate }) {
   const store = await storeLocation(await realpath(projectRoot));
@@ -329,12 +526,17 @@ async function pageViewer(projectRoot, at) {
   const store = await storeLocation(checkout);
   const pendingOf = /* @__PURE__ */ new Map();
   const pending = (initiative) => {
+    if (typeof initiative !== "string") return Promise.resolve([]);
     if (!pendingOf.has(initiative)) {
       pendingOf.set(initiative, readCoordinationState({ projectRoot: checkout, initiative }).then((read) => read.valid ? read.state?.pending ?? [] : []).catch(() => []));
     }
     return pendingOf.get(initiative);
   };
-  const viewOf = async (folder, record) => launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative)), permission: (await launchRequests(folder, record, at))[0] ?? null });
+  const viewOf = async (folder, record) => {
+    const gates = await readGateRecord(folder);
+    const results = await readResultMarks(folder);
+    return launchView(record, { now: at, gates: gateFacts(gates, await pending(record.initiative), noResultGates(results)), permission: (await launchRequests(folder, record, at))[0] ?? null, results });
+  };
   return { checkout, store, viewOf };
 }
 const byLaunch = (left, right) => (right.launchedAt ?? "").localeCompare(left.launchedAt ?? "") || right.id.localeCompare(left.id);
@@ -357,7 +559,7 @@ async function listLaunches({ projectRoot, env = process.env, now = Date.now() }
     for (const { folder } of candidates) {
       const current = await readLaunchRecord(folder);
       if (!current) continue;
-      if (expired(current, at)) await removeLaunchFolder(folder);
+      if (expired(current, at)) await removeLaunchFolder(folder, current);
       else still.push({ folder, record: current });
     }
     return still;
@@ -387,13 +589,17 @@ async function archiveLocked(found, at) {
 }
 async function archiveLaunch({ projectRoot, id, env = process.env }) {
   const viewer = await pageViewer(projectRoot, Date.now());
-  return withLaunchLock(env, async () => {
+  const archived = await withLaunchLock(env, async () => {
     const at = Date.now();
     const found = await pageLaunch(env, id, viewer, at);
     if (!found) throw unknownLaunch(id);
     if (!launchEnded(found.view.state)) throw notEnded();
-    return { archived: await archiveLocked(found, at) ? [id] : [] };
+    return await archiveLocked(found, at) ? found : null;
   });
+  if (!archived) return { archived: [] };
+  await withdrawNoResultGates(archived.folder, archived.record, ARCHIVED).catch(() => {
+  });
+  return { archived: [id] };
 }
 async function unarchiveLaunch({ projectRoot, id, env = process.env }) {
   const viewer = await pageViewer(projectRoot, Date.now());
@@ -408,7 +614,7 @@ async function unarchiveLaunch({ projectRoot, id, env = process.env }) {
 }
 async function archiveEndedLaunches({ projectRoot, env = process.env }) {
   const viewer = await pageViewer(projectRoot, Date.now());
-  return withLaunchLock(env, async () => {
+  const archived = await withLaunchLock(env, async () => {
     const at = Date.now();
     const found = [];
     for (const { record } of await listLaunchRecords(env)) {
@@ -416,10 +622,13 @@ async function archiveEndedLaunches({ projectRoot, env = process.env }) {
       if (launch && launchEnded(launch.view.state)) found.push(launch);
     }
     found.sort((left, right) => (left.view.state === "failed" ? 0 : 1) - (right.view.state === "failed" ? 0 : 1) || byLaunch(left.view, right.view));
-    const archived = [];
-    for (const launch of found) if (await archiveLocked(launch, at)) archived.push(launch.record.id);
-    return { archived };
+    const archived2 = [];
+    for (const launch of found) if (await archiveLocked(launch, at)) archived2.push(launch);
+    return archived2;
   });
+  for (const launch of archived) await withdrawNoResultGates(launch.folder, launch.record, ARCHIVED).catch(() => {
+  });
+  return { archived: archived.map((launch) => launch.record.id) };
 }
 async function archivedLaunches({ launches, env = process.env }) {
   const archived = /* @__PURE__ */ new Set();
@@ -450,14 +659,23 @@ export {
   archivedLaunches,
   hostAvailability,
   initiativeRunning,
+  launchEndReason,
   launchRunStatus,
   runningMessage as launchRunningMessage,
   listLaunches,
   markLaunchGates,
+  markLaunchPause,
+  markResultCheck,
+  migrationReadRoots,
+  migrationRunRunning,
   resumeForAnswers,
   resumeLaunch,
   resumeRefusal,
+  settleRunResult,
   startLaunch,
+  startMigrationLaunch,
   stopLaunch,
-  unarchiveLaunch
+  unarchiveLaunch,
+  withdrawRunQuestions,
+  withdrawSessionQuestions
 };

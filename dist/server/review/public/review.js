@@ -4,6 +4,7 @@ import { renderView } from "./views/registry.js";
 import { closeEvidence, openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, KNOWLEDGE_PAGES, parseEntityRef, recordKind, recordLabel, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
+import { formatBadgeElement, formatBanner, migratedNote } from "./views/format-marks.js";
 import { highlight, highlightLines, languageOf } from "./views/highlight.js";
 import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, linkTargets, markCurrentSection, renderText, revealInDocument } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
@@ -73,6 +74,10 @@ let sessionInstance = null;
 let appVersion = null;
 let sessionConnected = false;
 let relay = null;
+let refreshIndex = null;
+const INDEX_CHECK_MS = 5e3;
+const INDEX_UNJOINED_MS = 1500;
+const ACTION_CHECK_MS = 4500;
 let saveQueue = Promise.resolve();
 const STORE_REF = "store:";
 const isStoreRef = (path) => typeof path === "string" && path.startsWith(STORE_REF);
@@ -135,7 +140,8 @@ const ATTENTION_KINDS = [
   ["failed", "Failed verifications", "flask"],
   ["blocked", "Blocked work", "warning"],
   ["ready", "Ready to ship", "check-circle"],
-  ["problems", "Problems", "warning"]
+  ["problems", "Problems", "warning"],
+  ["formats", "Format findings", "document"]
 ];
 const ATTENTION_MORE = "attention:more";
 let attentionMoreOpen = false;
@@ -948,6 +954,8 @@ function onStreamEvent(name, data) {
   } else if (name === "action") {
     document.dispatchEvent(new CustomEvent("prism:action", { detail: data }));
     if (data?.artifact?.path && data.artifact.path === selectedPath) void showArtifact(selectedPath);
+  } else if (name === "records") {
+    refreshIndex?.();
   } else if (name === "session") {
     sessionConnected = true;
     try {
@@ -1347,6 +1355,7 @@ function describe(path) {
   if (!record) return { label: fileName(path), kind: "File", owner: null, code: true };
   return { ...recordLabel(path, titleIndex()), code: false };
 }
+const runTitles = /* @__PURE__ */ new Map();
 function pageLabel(path) {
   const parsed = parseEntityRef(path);
   if (!parsed) {
@@ -1360,6 +1369,7 @@ function pageLabel(path) {
   const indexed = navigation.index?.find((entry) => entry.ref === path)?.label;
   if (indexed) return indexed;
   if (currentContext?.ref === path) return currentContext.value.trail.at(-1)?.label ?? path;
+  if (parsed.kind === "migration-run") return runTitles.get(path) ?? "Format migration";
   return parsed.kind === "slice" ? parsed.slug : parsed.id;
 }
 function attentionPageLabel(path, page) {
@@ -1839,7 +1849,10 @@ function knowledgeMatches(query) {
     if (!group?.results.length) continue;
     const results = group.results.filter((result) => !isStoreRef(result.ref) || scopeShown(scopeOfRef(result.ref)));
     if (!results.length) continue;
-    const rows = results.map((result) => treeItem(result.ref, result.title, { selected: kind !== "glossary-term" && selectedPath === result.ref, start: [navIcon(icon)], tip: result.title }));
+    const rows = results.map((result) => {
+      const mark = kind === "glossary-term" ? null : formatBadgeElement(formatOf(result.ref));
+      return treeItem(result.ref, result.title, { selected: kind !== "glossary-term" && selectedPath === result.ref, start: [navIcon(icon)], end: mark ? [mark] : [], tip: result.title });
+    });
     parts.push(section(label), tree(label, rows));
   }
   return parts;
@@ -1935,6 +1948,7 @@ async function refreshContext(path) {
   }
   contextSnapshot = snapshot;
   currentContext = { ref: path, value };
+  if (parseEntityRef(path)?.kind === "migration-run") runTitles.set(path, value.trail?.at(-1)?.label ?? "Format migration");
   renderNavigation();
   pageBar.setTrail(trailOf(path), path);
   const history2 = artifact.querySelector("[data-shipped-history]");
@@ -2134,8 +2148,14 @@ function swapIn(memory) {
   if (memory.focusKey && !artifact.contains(document.activeElement)) {
     const found = keyed(memory.focusKey) ?? (comment ? keyed("more-comments") : null);
     if (found?.dataset.commentId !== void 0) found.tabIndex = -1;
-    if (found) found.focus({ preventScroll: true });
-    else if (more) {
+    if (found) {
+      const control = found.control ?? found;
+      control.focus({ preventScroll: true });
+      if (memory.selection && "setSelectionRange" in control) try {
+        control.setSelectionRange(...memory.selection);
+      } catch {
+      }
+    } else if (more) {
       const list = artifact.querySelector("[data-comment-list]");
       const listed = [...list?.querySelectorAll("[data-comment-id]") ?? []];
       const before = state.moreBefore ?? new Set(listed.slice(0, -1).map((item) => item.dataset.commentId));
@@ -2406,6 +2426,8 @@ async function showArtifact(path) {
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
     </header>
+    ${formatBanner(data.format)}
+    ${migratedNote(data.artifact)}
     ${view ? viewNoteHtml(view, "view-note view-header-note") : ""}
     ${artifactReviewHtml(data, state)}
     <div class="document-history" data-shipped-history>${documentHistoryHtml(path)}</div>
@@ -2472,6 +2494,7 @@ function viewContext(path, state) {
     lane: pendingLane?.path === path ? pendingLane.lane : null,
     // Touched by my work reads the slice in the selected tab, or else the one selected last, and passes its answer back for the sidebar's count.
     touchedSlice: () => lastSlice,
+    formatOf,
     fetchTouched: async (slice) => (await touchedAnswer(slice)).answer,
     onTouched: (slice, answer) => noteTouched(slice, answer),
     escapeHtml,
@@ -2531,34 +2554,17 @@ function viewContext(path, state) {
       }
       if (path === selectedPath) decorateMaximize(path);
     },
-    // A gate answer is the gate's answer action, applied against the revision its listing shows.
-    // An approval gate of a requirement or ADR is the target approval:<id>, since the artifact's status record in the store holds it, and its revision is the artifact's version.
-    async answerGate({ initiative, approval, id, choice, note }) {
-      if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
-      const target = approval ? `approval:${id}` : `gate:${initiative}/${id}`;
-      const unanswered = () => {
-        throw new Error("The review app did not answer, so the answer was not recorded. Try again in a moment.");
-      };
-      const listed = await appFetch(`./api/actions?target=${encodeURIComponent(target)}`, { headers: writeHeaders() }).catch(unanswered);
-      const listing = await listed.json().catch(() => ({}));
-      if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The answer was not recorded."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
-      const action = (listing.actions ?? []).find((item) => item.id === "gate.answer");
-      if (action && !action.available) throw Object.assign(new Error(action.reason ?? "The answer was not recorded."), { code: "action_unavailable" });
-      const names = new Set((action?.fields ?? []).map((field) => field.name));
-      const input = Object.fromEntries([["choice", choice], ["note", note]].filter(([name, value]) => names.has(name) && value !== null && value !== void 0 && value !== ""));
-      const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
-      const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
-      if (!response.ok) {
-        const code = result.code === "unknown_target" ? "unknown_gate" : result.code;
-        throw Object.assign(new Error(result.reason ?? result.message ?? "The answer was not recorded."), { code });
-      }
-      return result;
-    },
     rerender() {
       lastSnapshot = "";
       void showArtifact(path);
     }
   };
+}
+function formatOf(ref) {
+  if (!ref) return null;
+  const glossary = navigation.glossary ?? {};
+  if (glossary.path === ref) return glossary.format ?? null;
+  return (navigation.index ?? []).find((entry) => entry.ref === ref && (entry.kind === "requirement" || entry.kind === "decision"))?.format ?? null;
 }
 const unavailableLinks = (data) => Array.isArray(data.links) ? data.links.filter((item) => item.resolved === null).length : 0;
 function paletteEntries() {
@@ -3049,9 +3055,10 @@ async function initialize() {
     renderTabs();
     await showArtifact(selectedPath);
   }
-  let polls = 0;
-  const indexPoller = createPoller({ interval: 1500, run: async () => {
-    if (++polls % 3 === 0 && connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
+  void createPoller({ interval: ACTION_CHECK_MS, run: () => {
+    if (connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
+  } }).start();
+  const indexPoller = createPoller({ interval: () => sessionConnected ? INDEX_CHECK_MS : INDEX_UNJOINED_MS, run: async () => {
     try {
       const refreshed = await appFetch("./api/index", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);
       const answered = refreshed?.ok ? await refreshed.json().catch(() => null) : null;
@@ -3087,7 +3094,8 @@ async function initialize() {
     } catch {
     }
   } });
-  setTimeout(() => void indexPoller.start(), 1500);
+  setTimeout(() => void indexPoller.start(), INDEX_UNJOINED_MS);
+  refreshIndex = () => indexPoller.now();
   void createPoller({ interval: ATTENTION_WATCH_MS, whileHidden: true, run: async () => {
     const response = await appFetch("./api/attention", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);
     const answer = response?.ok ? await response.json().catch(() => null) : null;

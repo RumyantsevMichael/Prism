@@ -1,6 +1,7 @@
 // Generated from src/server/review/public/views/library.ts by scripts/native-build/compile.mjs.
 import { preference, setPreference } from "../kit/preferences.js";
 import { artifactChip, artifactLink, bindLinks, card, documentTitle, emptyState, escapeHtml, pageSub, plural, recordStatus, setPageSub, shortDate } from "./util.js";
+import { formatBadge, formatBanner } from "./format-marks.js";
 const GROUPINGS = Object.freeze({
   requirements: [["scope", "Scope"], ["status", "Status"], ["area", "Area"], ["initiative", "Initiative"], ["none", "None"]],
   decisions: [["scope", "Scope"], ["area", "Area"], ["status", "Status"], ["initiative", "Initiative"], ["none", "None"]],
@@ -21,8 +22,8 @@ const head = (columns) => `<div class="prism-lib-row is-head" aria-hidden="true"
 const groupHead = (name, count, source = "") => `<div class="prism-lib-group"><h2 class="prism-lib-group-name">${name} <prism-badge tone="neutral">${count}</prism-badge></h2>${source ? `<span class="prism-lib-group-source">${escapeHtml(source)}</span>` : ""}</div>`;
 const cell = (html, className = "") => `<span class="prism-lib-cell${className ? ` ${className}` : ""}">${html}</span>`;
 const quiet = (text) => cell(escapeHtml(text), "muted");
-function titleCell(path, ctx, title, icon, detail = "", scope = null) {
-  return `<span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${artifactLink(path, ctx, title)}${scopeChip(path, ctx, scope)}${detail ? `<span class="prism-lib-cell is-detail">${escapeHtml(detail)}</span>` : ""}</span></span>`;
+function titleCell(path, ctx, title, icon, detail = "", scope = null, format = null) {
+  return `<span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${artifactLink(path, ctx, title)}${scopeChip(path, ctx, scope)}${detail ? `<span class="prism-lib-cell is-detail">${escapeHtml(detail)}</span>` : ""}</span>${formatBadge(format)}</span>`;
 }
 function linkChip(ref, ctx, label, meta = "") {
   const chip = artifactChip(ref, ctx, label);
@@ -44,7 +45,7 @@ function assigned(entry, ctx) {
   return cell([...slices].map(([key, { use, anchors }]) => linkChip(`slice:${key}`, ctx, use.title, anchors.length ? `req ${anchors.join(", ")}` : "")).join(""), "chip-row");
 }
 function requirementRow(entry, ctx) {
-  return `<div class="prism-lib-row" data-library-row>${titleCell(entry.path, ctx, entry.title, "list", entry.requirements ? plural(entry.requirements, "requirement") : "", entry.scope)}${cell(recordStatus(entry.status ?? ""))}${cell(escapeHtml(dated(entry, false)))}${assigned(entry, ctx)}</div>`;
+  return `<div class="prism-lib-row" data-library-row>${titleCell(entry.path, ctx, entry.title, "list", entry.requirements ? plural(entry.requirements, "requirement") : "", entry.scope, entry.format ?? null)}${cell(recordStatus(entry.status ?? ""))}${cell(escapeHtml(dated(entry, false)))}${assigned(entry, ctx)}</div>`;
 }
 function decisionRow(entry, ctx, titles) {
   const named = (paths) => paths.map((path) => titles.get(path) ?? documentTitle(path, ctx)).join(", ");
@@ -53,7 +54,7 @@ function decisionRow(entry, ctx, titles) {
     ...(entry.requirementLinks ?? []).map((link) => linkChip(link.path, ctx, documentTitle(link.path, ctx), link.anchors.length ? `req ${link.anchors.join(", ")}` : "")),
     ...(entry.initiatives ?? []).map((use) => linkChip(`initiative:${use.initiative}`, ctx, use.title, "initiative"))
   ];
-  return `<div class="prism-lib-row" data-library-row>${titleCell(entry.path, ctx, entry.title, "scale", detail, entry.scope)}${cell(recordStatus(entry.status ?? ""))}${cell(escapeHtml(dated(entry, true)))}${applies.length ? cell(applies.join(""), "chip-row") : quiet("Nothing linked")}</div>`;
+  return `<div class="prism-lib-row" data-library-row>${titleCell(entry.path, ctx, entry.title, "scale", detail, entry.scope, entry.format ?? null)}${cell(recordStatus(entry.status ?? ""))}${cell(escapeHtml(dated(entry, true)))}${applies.length ? cell(applies.join(""), "chip-row") : quiet("Nothing linked")}</div>`;
 }
 function diagramRow(diagram, about, ctx) {
   const facts = about[diagram.path] ?? {};
@@ -175,7 +176,8 @@ function renderLibrary(container, kind, data, ctx) {
   const all = narrowed ? every.filter((entry) => !entry.scope || ctx.scopeShown(entry.scope)) : every;
   const count = narrowed ? `${all.length} of ${plural(every.length, NOUNS[kind])}` : `${plural(every.length, NOUNS[kind])}${scopes.length > 1 ? ` in ${plural(scopes.length, "scope")}` : ""}`;
   const note = narrowed ? `<p class="library-narrowed muted" data-library-narrowed>Narrowed to ${escapeHtml(andList(narrowed))}. <a href="#" data-show-all-scopes>Show all scopes</a></p>` : "";
-  const sub = pageSub(escapeHtml(library.sub(count)));
+  const broken = all.filter((entry) => entry.format).length;
+  const sub = pageSub(`${escapeHtml(library.sub(count))}${broken ? ` \xB7 <b>${broken} of ${all.length}</b> ${broken === 1 ? "breaks its" : "break their"} format` : ""}`);
   const bindNarrowed = () => container.querySelector("[data-show-all-scopes]")?.addEventListener("click", (event) => {
     event.preventDefault();
     ctx.showAllScopes?.();
@@ -231,7 +233,7 @@ function render(container, entity, ctx) {
     return;
   }
   if (entity.kind === "glossary") {
-    container.innerHTML = data.exists ? `<section class="view-section document-sheet"><prism-doc class="document-content">${ctx.renderMarkdown(data.content, data.path)}</prism-doc></section>` : card("No glossary yet", data.path ? `<p>The configured glossary does not exist yet.</p><p class="muted">Run <code>setup</code> or <code>ideate</code> to create it.</p>` : "<p>The workflow settings turn the glossary off.</p>", { eyebrow: "Glossary" });
+    container.innerHTML = data.exists ? `${formatBanner(data.format)}<section class="view-section document-sheet"><prism-doc class="document-content">${ctx.renderMarkdown(data.content, data.path)}</prism-doc></section>` : card("No glossary yet", data.path ? `<p>The configured glossary does not exist yet.</p><p class="muted">Run <code>setup</code> or <code>ideate</code> to create it.</p>` : "<p>The workflow settings turn the glossary off.</p>", { eyebrow: "Glossary" });
     return;
   }
   renderLibrary(container, entity.kind, data, ctx);

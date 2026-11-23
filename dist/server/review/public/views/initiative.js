@@ -275,18 +275,24 @@ function mountLaunch(container, data, ctx, endRoot, refreshLatest) {
     const option = options.find((item) => item.value === shown) ?? null;
     const text = option ? `Launch with ${option.label ?? option.value}` : "Launch";
     if (confirmLabel.textContent !== text) confirmLabel.textContent = text;
+    const hostReason = (host) => options.find((item) => item.value === host)?.reason ?? list.reportReason(host);
+    const shownReason = option ? hostReason(shown) : null;
+    let blocked = Boolean(shownReason);
     const reasons = [];
     if (launch && !launch.available) {
-      const hostReason = options.find((item) => item.value === hostAction?.value)?.reason ?? null;
-      const cleared = hostReason !== null && launch.reason === hostReason && option && !option.reason && shown !== hostAction.value;
-      if (!cleared) reasons.push(launch.reason ?? "");
+      const storedReason = hostAction ? hostReason(hostAction.value) : null;
+      const cleared = storedReason !== null && launch.reason === storedReason && option && !shownReason && shown !== hostAction.value;
+      if (!cleared) {
+        blocked = true;
+        if (launch.reason !== shownReason) reasons.push(launch.reason ?? "");
+      }
     }
-    if (option?.reason && !reasons.includes(option.reason)) reasons.push(`Host: ${option.reason}`);
     const held = list.held();
     reasons.push(...held.reasons.map((item) => `${item.label}: ${item.reason}`));
-    lines(hold, reasons.filter(Boolean));
-    lines(failure, refused ? [refused] : []);
-    confirm.toggleAttribute("disabled", sending || !launch || !list.writable() || reasons.length > 0 || held.reading);
+    const holding = reasons.filter(Boolean);
+    lines(hold, holding);
+    lines(failure, refused && refused !== shownReason && !holding.includes(refused) ? [refused] : []);
+    confirm.toggleAttribute("disabled", sending || !launch || !list.writable() || blocked || reasons.length > 0 || held.reading);
   };
   list = createActionList({ root: dialog.querySelector("[data-launch-settings]"), targets: [`initiative:${data.id}`], api: ctx.actionApi, drafts: ctx.state.launchDrafts ??= {}, renderMarkdown: ctx.renderMarkdown ?? null, batch: true, groups: ["Initiative settings"], sections: LAUNCH_SECTIONS, emptyText: "This initiative has no settings to change.", onRender: () => sync() });
   sync();

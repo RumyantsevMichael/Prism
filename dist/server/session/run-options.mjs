@@ -447,10 +447,11 @@ function buildAcpReport(definition, { purpose, model, effort, typed }, raw, exec
   const listed = model === null ? null : models.find((entry) => entry.value === model) ?? null;
   let modelChoice;
   if (model === null || listed) modelChoice = offered(model);
-  else if (typed && coordinator) modelChoice = { value: model, state: "typed", reason: choiceReasons.typed(label) };
+  else if (!coordinator) modelChoice = notOffered(model, acpReasons.childModel(label, model));
+  else if (typed) modelChoice = { value: model, state: "typed", reason: choiceReasons.typed(label) };
   else modelChoice = notOffered(model, choiceReasons.model(label, model));
   const modelName = listed?.name ?? model ?? (ready ? raw.model?.current : null) ?? "The host's default model";
-  const effortChoice = effort === null || efforts.some((entry) => entry.value === effort) ? offered(effort) : notOffered(effort, choiceReasons.effort(modelName, effort));
+  const effortChoice = effort === null || efforts.some((entry) => entry.value === effort) ? offered(effort) : notOffered(effort, coordinator ? choiceReasons.effort(modelName, effort) : acpReasons.childEffort(label, effort));
   const options = [
     { id: "model", name: "Model", kind: "model", values: [hostDefault(coordinator ? ready ? raw.model?.current ?? "" : "" : childNote), ...models], chosen: modelChoice, reportedNone: ready && coordinator && models.length === 0 },
     { id: "effort", name: "Effort", kind: "effort", values: [hostDefault(coordinator ? ready && raw.effort?.current ? `${raw.effort.current}, the agent's current effort.` : "" : childNote), ...efforts], chosen: effortChoice }

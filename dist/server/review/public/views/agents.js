@@ -12,6 +12,7 @@ const STATES = Object.freeze({
   blocked: ["Blocked", "warning"],
   finished: ["Finished", "success"],
   failed: ["Failed", "danger"],
+  "ended-without-result": ["Ended without a result", "info"],
   stopped: ["Stopped", "neutral"],
   working: ["Working", "info"],
   expired: ["Expired", "neutral"]
@@ -25,7 +26,7 @@ const SHOWS = Object.freeze([
   ["expired", "Expired", "expired", ["expired"]],
   ["archived", "Archived", "archived", ["archived"]]
 ]);
-const ENDED_STATES = Object.freeze(["finished", "failed", "stopped", "blocked"]);
+const ENDED_STATES = Object.freeze(["finished", "failed", "stopped", "blocked", "ended-without-result"]);
 function archivable(entry) {
   return entry.kind === "launch" && entry.group !== "archived" && ENDED_STATES.includes(entry.state);
 }
@@ -33,7 +34,9 @@ function archivedText(count) {
   if (count === 1) return "Archived 1 session. The Archived filter keeps it.";
   return count ? `Archived ${count} sessions. The Archived filter keeps them.` : "No ended session was left to archive.";
 }
-const groupAfterUnarchive = (entry) => entry.state === "failed" || entry.state === "waiting" ? "needs-you" : "launched";
+const NEEDS_YOU_STATES = ["failed", "ended-without-result", "waiting"];
+const groupAfterUnarchive = (entry) => NEEDS_YOU_STATES.includes(entry.state) ? "needs-you" : "launched";
+const needsRank = (state) => NEEDS_YOU_STATES.includes(state) ? NEEDS_YOU_STATES.indexOf(state) : NEEDS_YOU_STATES.length;
 const READ_ONLY_TIP = "This tab can only read.";
 const EXPIRED_IN_ALL_MS = 24 * 60 * 60 * 1e3;
 function runningText(ms) {
@@ -96,7 +99,7 @@ function order(left, right) {
   const groups = GROUPS.map(([group2]) => group2);
   const group = groups.indexOf(left.group) - groups.indexOf(right.group);
   if (group) return group;
-  if (left.group === "needs-you" && left.state !== right.state) return left.state === "failed" ? -1 : right.state === "failed" ? 1 : 0;
+  if (left.group === "needs-you" && left.state !== right.state) return needsRank(left.state) - needsRank(right.state);
   if (left.kind === "launch") return at(right.launch?.launchedAt) - at(left.launch?.launchedAt) || right.id.localeCompare(left.id);
   if (left.group === "other") return at(left.expiresAt) - at(right.expiresAt) || left.id.localeCompare(right.id);
   return at(right.expiresAt) - at(left.expiresAt) || left.id.localeCompare(right.id);
@@ -119,7 +122,7 @@ function countsOf(entries, now = Date.now()) {
 const KIND_ICONS = { launch: "play", claim: "agent", expired: "clock" };
 function titleHtml(entry, ctx) {
   const icon = entry.kind === "launch" ? KIND_ICONS.launch : entry.group === "expired" ? KIND_ICONS.expired : KIND_ICONS.claim;
-  const ref = entry.kind === "launch" ? `initiative:${entry.initiative?.id}` : entry.slice?.ref ?? `initiative:${entry.initiative?.id}`;
+  const ref = entry.kind === "launch" ? entry.launch?.migrationRun ? `migration-run:${entry.launch.migrationRun}` : `initiative:${entry.initiative?.id}` : entry.slice?.ref ?? `initiative:${entry.initiative?.id}`;
   const facts = entry.kind === "launch" ? launchFacts(entry.launch) : "";
   const link = ref && ctx.hasArtifact(ref) ? `<a href="./review?artifact=${encodeURIComponent(ref)}" data-artifact="${escapeHtml(ref)}">${escapeHtml(entry.name ?? "")}</a>` : `<span>${escapeHtml(entry.name ?? "")}</span>`;
   return `<prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${link}${facts ? `<span class="prism-lib-cell is-detail">${escapeHtml(facts)}</span>` : ""}</span>`;
@@ -133,8 +136,9 @@ function sessionLinkHtml(session) {
 }
 function actionHtml(entry, writable) {
   if (entry.kind === "claim") return sessionLinkHtml(entry.session);
-  if (entry.action === "answer") return '<prism-button size="sm" variant="primary" data-agent-action="answer" text="Answer"></prism-button>';
   const lock = writable ? "" : ` disabled tip="${READ_ONLY_TIP}"`;
+  const answer = '<prism-button size="sm" variant="primary" data-agent-action="answer" text="Answer"></prism-button>';
+  if (entry.action === "answer") return archivable(entry) ? `${answer}<prism-button size="sm" variant="ghost" data-agent-action="archive" text="Archive"${lock}></prism-button>` : answer;
   if (entry.action === "stop") return `<prism-button size="sm" variant="ghost" data-agent-action="stop" text="Stop"${lock}></prism-button>`;
   const open = entry.action === "open" ? '<prism-button size="sm" variant="ghost" data-agent-action="open" text="Open"></prism-button>' : "";
   if (entry.kind === "launch" && entry.group === "archived") return `${open}<prism-button size="sm" variant="ghost" data-agent-action="unarchive" text="Unarchive"${lock}></prism-button>`;
@@ -483,7 +487,7 @@ async function render(container, entity, ctx) {
     const row = rows.get(button.closest("[data-agent]")?.dataset.agent);
     if (!row) return;
     const what = button.dataset.agentAction;
-    if (what === "answer") return openQuestion(ctx, row.entry.launch?.waitingGate ?? null);
+    if (what === "answer") return openQuestion(ctx, row.entry.launch?.waitingGate ?? row.entry.launch?.questionGate ?? null);
     if (what === "open") {
       state.openAgents = isOpen(row) ? state.openAgents.filter((id) => id !== row.entry.id) : [...state.openAgents, row.entry.id];
       return paint(row);

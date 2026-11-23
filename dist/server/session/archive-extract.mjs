@@ -1,7 +1,8 @@
 // Generated from src/server/session/archive-extract.mts by scripts/native-build/compile.mjs.
-import { lstat, mkdir, readFile, readlink, symlink, writeFile, chmod, copyFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readlink, symlink, writeFile, chmod, copyFile } from "node:fs/promises";
 import path from "node:path";
 import { crc32, gunzipSync, inflateRawSync } from "node:zlib";
+import { Bzip2Error, bunzip2InWorker } from "./bzip2.mjs";
 const MAX_UNPACKED_BYTES = 2 * 1024 * 1024 * 1024 - 1;
 const MAX_ENTRIES = 2e5;
 class ArchiveError extends Error {
@@ -201,6 +202,34 @@ async function extractTarGz(file, folder) {
   }
   await writeEntries(tarEntries(tar), folder);
 }
+async function extractTarBz2(file, folder) {
+  let tar;
+  try {
+    tar = await bunzip2InWorker(await readFile(file), MAX_UNPACKED_BYTES);
+  } catch (error) {
+    if (!(error instanceof Bzip2Error)) throw error;
+    throw refuse(/limit/.test(error.message) ? "The archive unpacks to more than 2 GiB." : `The archive is not a valid bzip2 file: ${error.message}`);
+  }
+  await writeEntries(tarEntries(tar), folder);
+}
+async function placeBinary(file, folder, name) {
+  const parts = entryParts(name);
+  if (parts.length !== 1) throw refuse(`The program ${JSON.stringify(name)} of a download that is not an archive must be a plain file name.`);
+  await writeEntries([{ name: parts[0], kind: "file", mode: 493, data: await readFile(file) }], folder);
+}
+async function downloadForm(file) {
+  const handle = await open(file, "r");
+  try {
+    const head = Buffer.alloc(4);
+    const { bytesRead } = await handle.read(head, 0, 4, 0);
+    if (bytesRead >= 2 && head[0] === 31 && head[1] === 139) return "gzip";
+    if (bytesRead >= 4 && head.subarray(0, 3).toString("latin1") === "BZh" && head[3] >= 49 && head[3] <= 57) return "bzip2";
+    if (bytesRead >= 4 && head.readUInt32LE(0) === 67324752) return "zip";
+    return "binary";
+  } finally {
+    await handle.close();
+  }
+}
 const S_IFMT = 61440;
 const S_IFLNK = 40960;
 const S_IFDIR = 16384;
@@ -271,8 +300,11 @@ async function extractZip(file, folder) {
 export {
   ArchiveError,
   MAX_UNPACKED_BYTES,
+  downloadForm,
+  extractTarBz2,
   extractTarGz,
   extractZip,
+  placeBinary,
   tarEntries,
   zipEntries
 };

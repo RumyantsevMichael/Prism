@@ -102,7 +102,7 @@ function handOffRecordSyncs() {
 }
 const GENERATED_VIEW = Buffer.from("This file is a generated view of ");
 const isRegistrationFile = (relative) => /^repositories\/[^/]+\.json$/.test(relative);
-const isRecordFile = (relative) => relative === "roadmap.json" || relative.startsWith("initiatives/") || isRegistrationFile(relative);
+const isRecordFile = (relative) => relative === "roadmap.json" || relative.startsWith("initiatives/") || relative.startsWith("format-migrations/") || relative.startsWith("format-findings/") || isRegistrationFile(relative);
 const isClaimFile = (relative) => /^initiatives\/[^/]+\/claims\/[^/]+\.json$/.test(relative);
 const isQuietConflict = (relative) => isClaimFile(relative) || isRegistrationFile(relative);
 const isArtifactFile = (relative) => relative.startsWith(`${ARTIFACTS}/`);
@@ -567,6 +567,15 @@ async function syncRecordStoreNow(base, options = {}) {
     scheduled.delete(base);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+}
+async function commitStoreFiles(base, { message, files }) {
+  await mkdir(syncPath(base), { recursive: true });
+  return withFileLock(syncPath(base, "sync"), async () => {
+    const top = await git(base, ["rev-parse", "--show-toplevel"]);
+    if (!top.ok || path.resolve(top.text) !== path.resolve(base) || await gitTooOld()) return false;
+    const run = { own: { message, files: new Set(files) }, lockTried: true };
+    return commitLocal(base, await identity(base), run);
+  }, void 0, { ...syncLockOptions(), timeoutMs: SETTINGS.gitTimeoutMs });
 }
 async function readSyncStatus(base) {
   try {
@@ -1054,6 +1063,15 @@ async function commitLocal(base, author, run) {
     if (shared.has(file)) files.set(file, shared.get(file));
     else files.delete(file);
   }
+  const own = run.own ?? null;
+  if (own) {
+    for (const file of /* @__PURE__ */ new Set([...files.keys(), ...shared.keys()])) {
+      if (own.files.has(file)) continue;
+      if (shared.has(file)) files.set(file, shared.get(file));
+      else files.delete(file);
+    }
+  }
+  const message = own?.message ?? "prism: update records";
   const { treeFilesMax } = await storeLayout();
   for (; ; ) {
     const entries = besides(files, other);
@@ -1065,7 +1083,7 @@ async function commitLocal(base, author, run) {
     const listed = changed.slice(0, COMMIT_LIST).join("\n") + (changed.length > COMMIT_LIST ? `
 \u2026 and ${changed.length - COMMIT_LIST} more` : "");
     const tree = await writeTree(base, entries);
-    const commit = (await required(base, [...author, "commit-tree", tree, ...previous ? ["-p", previous] : [], "-m", "prism: update records", "-m", listed])).text;
+    const commit = (await required(base, [...author, "commit-tree", tree, ...previous ? ["-p", previous] : [], "-m", message, "-m", listed])).text;
     const refused = await refusedObjects(base, commit, previous ? [previous] : [], { pushing: false });
     if (refused) {
       const culprits = changed.filter((file) => files.has(file) && refused.objects.includes(files.get(file).object) && (refused.places.get(files.get(file).object)?.includes(file) ?? true));
@@ -1086,7 +1104,7 @@ async function commitLocal(base, author, run) {
       run.pending = { commit, from: previous, files: entries.size, entries };
       return false;
     }
-    await moveBranch(base, commit, previous, "prism: update records");
+    await moveBranch(base, commit, previous, message);
     run.made = previous && run.made?.to === previous ? { from: run.made.from, to: commit } : { from: previous, to: commit };
     return true;
   }
@@ -1598,6 +1616,15 @@ async function sync(base, options) {
     return writeStatus(base, restoredIn(withheldIn({ state: "merge_failed", message: await pastTreeRefusal(pastTree, kept), conflicts, ...await counts(base) }, null), run.restored));
   };
   const locked = () => ({ state: "skipped" });
+  if (options.commit) {
+    run.own = { message: options.commit.message, files: new Set(options.commit.files) };
+    try {
+      await commitLocal(base, author, run);
+    } finally {
+      run.own = null;
+    }
+    if (run.lockBusy) return locked();
+  }
   await commitLocal(base, author, run);
   if (run.lockBusy) return locked();
   let upstream = await upstreamOf(base);
@@ -2890,6 +2917,7 @@ export {
   GIT_MINIMUM,
   SYNC_DIRECTORY,
   cancelRecordSyncs,
+  commitStoreFiles,
   configureRecordSync,
   confirmSavedConflicts,
   describeOversizedEntry,

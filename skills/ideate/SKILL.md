@@ -31,8 +31,7 @@ In a project with a store, ideation reads and writes the glossary and requiremen
 ## 3. Write requirements
 
 1. Group surviving obligations by coherent product capability, using separate files when capabilities can change independently.
-2. Use `write-requirements` to author and review the files through its approval procedure.
-3. If a necessary new product term appears, update the glossary.
+2. Use `write-requirements` to author and review the files through its approval procedure, which adds their new terms to the glossary with the approval.
 
 Existing capabilities use amendments under the requirement supersession rules.
 External constraints can be requirements, but internal technology choices are design decisions.

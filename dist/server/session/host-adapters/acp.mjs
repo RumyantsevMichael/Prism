@@ -2,8 +2,8 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pluginPath } from "../../plugin-root.mjs";
-import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, lineSplitter, MODEL_PATTERN, strippedEnvironment, validHostSessionId } from "../launch-hosts.mjs";
-import { toolsListed } from "../options-read-marker.mjs";
+import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, LAUNCH_NOTE, lineSplitter, MODEL_PATTERN, strippedEnvironment, validHostSessionId } from "../launch-hosts.mjs";
+import { acpLaunchArgument, acpTokenArgument, newAcpToken, toolsListed } from "../options-read-marker.mjs";
 const ACP_PROTOCOL_VERSION = 1;
 const AUTH_REQUIRED_CODE = -32e3;
 const MAX_STDOUT_BYTES = 4 * 1024 * 1024;
@@ -14,6 +14,7 @@ const NAME_MAX = 100;
 const DESCRIPTION_MAX = 300;
 const MAX_VALUES = 1e3;
 const KEPT_TOOL_CALLS = 64;
+const HELD_REPLY_CHARS = 64 * 1024;
 class AcpError extends Error {
   constructor(message, code = null) {
     super(message);
@@ -21,14 +22,15 @@ class AcpError extends Error {
     this.code = code;
   }
 }
-function prismMcpServer({ env = process.env, launch = null, optionsRead = false } = {}) {
+const PRISM_SERVER = "prism";
+function prismMcpServer({ env = process.env, token, launch = null, optionsRead = false }) {
   const variables = [
     { name: "NODE_USE_ENV_PROXY", value: "1" },
     ...launch ? [{ name: "PRISM_LAUNCH", value: launch }] : [],
     ...optionsRead ? [{ name: "PRISM_OPTIONS_READ", value: "1" }] : [],
     ...env.PRISM_REVIEW_APP_DIR ? [{ name: "PRISM_REVIEW_APP_DIR", value: env.PRISM_REVIEW_APP_DIR }] : []
   ];
-  return { name: "prism", command: process.execPath, args: [pluginPath("dist", "server", "mcp.mjs")], env: variables };
+  return { name: PRISM_SERVER, command: process.execPath, args: [pluginPath("dist", "server", "mcp.mjs"), ...launch ? [acpLaunchArgument(launch)] : [], acpTokenArgument(token)], env: variables };
 }
 function acpClient({ command, args, env, cwd, onRequest = () => void 0, onNotification = () => {
 } }) {
@@ -190,21 +192,31 @@ function acpConfigChoices(options) {
 }
 const acpReasons = Object.freeze({
   version: (label, version) => `${label} speaks ACP version ${String(version)}, and Prism speaks version ${ACP_PROTOCOL_VERSION}.`,
-  signIn: (label, methods) => `${label} needs you to sign in before it can run: ${signInMethods(methods)}.`,
-  noTools: (label) => `${label} did not start Prism's tools, so it cannot run Prism's workflow.`,
-  childModels: (label) => `${label} chooses the models of its own child agents.`
+  // An agent that needs sign-in opens no session, so whether it starts Prism's tools is known only once the person has signed in.
+  signIn: (label, methods) => `${label} needs you to sign in before it can run: ${signInMethods(methods)}. Prism checks that it starts Prism's tools once you have signed in.`,
+  noTools: (label) => `${label} did not start Prism's tools, so it cannot run Prism's workflow: it ignores the tool servers that Prism names when it opens a session, or starts them later than Prism waits.`,
+  childModels: (label) => `${label} chooses the models of its own child agents.`,
+  childModel: (label, model) => `${label} chooses the models of its own child agents, so Prism cannot give them ${model}.`,
+  childEffort: (label, effort) => `${label} chooses the effort of its own child agents, so Prism cannot give them ${effort}.`
 });
 function signInMethods(methods) {
   const named = (Array.isArray(methods) ? methods : []).filter((method) => isObject(method) && text(method.name).trim()).map((method) => {
     const name = text(method.name).replace(/\s+/g, " ").trim().slice(0, NAME_MAX);
     const description = text(method.description).replace(/\s+/g, " ").trim().slice(0, DESCRIPTION_MAX).replace(/\.+$/, "");
-    return description ? `${name} (${description})` : name;
+    return description && addsToName(name, description) ? `${name} (${description})` : name;
   });
   return named.length ? named.join(", ") : "sign in with the agent's own command";
+}
+const LINKING_WORDS = /* @__PURE__ */ new Set(["a", "an", "the", "and", "or", "to", "of", "for", "with", "by", "via", "on", "in", "your", "you", "use", "using"]);
+const wordsOf = (value) => value.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+function addsToName(name, description) {
+  const own = new Set(wordsOf(name));
+  return new Set(wordsOf(description).filter((word) => !own.has(word) && !LINKING_WORDS.has(word))).size >= 2;
 }
 async function readAcpOptions(definition, { checkout, env, model = null, timeoutMs }) {
   const { label } = definition;
   const deadline = Date.now() + timeoutMs;
+  const token = newAcpToken();
   const client = acpClient({
     command: definition.command,
     args: [...definition.prefix, ...definition.acp.args],
@@ -232,14 +244,14 @@ async function readAcpOptions(definition, { checkout, env, model = null, timeout
     canClose = isObject(initialized?.agentCapabilities?.sessionCapabilities?.close);
     let opened;
     try {
-      opened = await within(client.request("session/new", { cwd: checkout, mcpServers: [prismMcpServer({ env, optionsRead: true })] }));
+      opened = await within(client.request("session/new", { cwd: checkout, mcpServers: [prismMcpServer({ env, token, optionsRead: true })] }));
     } catch (error) {
       if (error instanceof AcpError && error.code === AUTH_REQUIRED_CODE && !timedOut) return { state: "sign-in", reason: acpReasons.signIn(label, initialized?.authMethods) };
       throw error;
     }
     sessionId = typeof opened?.sessionId === "string" && opened.sessionId ? opened.sessionId : null;
     if (!sessionId) return { state: "failed", message: "it named no session" };
-    const listed = client.pid !== null && await toolsListed({ env, agentPid: client.pid, deadline, stopped: () => client.hasExited() });
+    const listed = await toolsListed({ env, token, deadline, stopped: () => client.hasExited() });
     if (!listed) return { state: "failed", reason: acpReasons.noTools(label) };
     let options = opened.configOptions;
     const before = acpConfigChoices(options);
@@ -315,10 +327,22 @@ function acpPermission(label, params, known = {}) {
     }
   };
 }
+function prismToolAllow(params, tools, known = {}) {
+  const values = isObject(params) ? params : {};
+  const sent = isObject(values.toolCall) ? values.toolCall : {};
+  const title = typeof sent.title === "string" ? sent.title : typeof known.title === "string" ? known.title : "";
+  const rawInput = isSet(sent.rawInput) ? sent.rawInput : known.rawInput;
+  if (isSet(rawInput) && !isObject(rawInput)) return null;
+  const match = /^(?:mcp__prism__|prism(?:\/|__|\.|:))([A-Za-z0-9_-]+)$/.exec(title.trim());
+  if (!match || !tools.has(match[1])) return null;
+  const allow = (Array.isArray(values.options) ? values.options : []).find((option) => isObject(option) && option.kind === "allow_once" && typeof option.optionId === "string" && option.optionId);
+  return allow ? { outcome: { outcome: "selected", optionId: allow.optionId } } : null;
+}
 function acpConversation(options) {
   const { label, initiative, checkout, hostSessionId, resume, coordinator, env, launch, facts, write, close, cut } = options;
   const pending = /* @__PURE__ */ new Map();
   const toolCalls = /* @__PURE__ */ new Map();
+  let prismTools = /* @__PURE__ */ new Set();
   const waitingPermissions = /* @__PURE__ */ new Map();
   const permissionKey = (id) => `${typeof id}:${String(id)}`;
   let nextId = 1;
@@ -334,6 +358,9 @@ function acpConversation(options) {
   let stopAsked = false;
   let cancelSent = false;
   const usage = { tokens: null, context: null, cost: null };
+  let reply = "";
+  let replyId = void 0;
+  let replyStarted = false;
   const request = (method, params) => {
     const id = nextId++;
     pending.set(id, method);
@@ -344,7 +371,8 @@ function acpConversation(options) {
     facts.failure = cut(reason);
     close();
   };
-  const server = () => prismMcpServer({ env, launch });
+  const token = newAcpToken();
+  const server = () => prismMcpServer({ env, token, launch });
   const plan = () => {
     const steps2 = [];
     const mode = automaticMode(configOptions, options.autoMode);
@@ -380,8 +408,7 @@ function acpConversation(options) {
     void awaitTools();
   };
   const awaitTools = async () => {
-    const pid = options.agentPid();
-    const listed = pid !== null && await toolsListed({ env, agentPid: pid, deadline: Date.now() + TOOLS_WAIT_MS, stopped: () => stopAsked || !options.inputOpen() });
+    const listed = await toolsListed({ env, token, deadline: Date.now() + TOOLS_WAIT_MS, stopped: () => stopAsked || !options.inputOpen() });
     if (stopAsked || !options.inputOpen()) {
       close();
       return;
@@ -390,6 +417,7 @@ function acpConversation(options) {
       fail(acpReasons.noTools(label));
       return;
     }
+    prismTools = new Set(listed);
     let skill;
     try {
       skill = readFileSync(pluginPath("skills", "orchestrate", "SKILL.md"), "utf8");
@@ -399,7 +427,7 @@ function acpConversation(options) {
     }
     const first = embedded ? { type: "resource", resource: { uri: SKILL_URI, mimeType: "text/markdown", text: skill } } : { type: "text", text: skill };
     prompting = true;
-    request("session/prompt", { sessionId, prompt: [first, { type: "text", text: launchInstruction(initiative) }] });
+    request("session/prompt", { sessionId, prompt: [first, { type: "text", text: launchInstruction(initiative) }, { type: "text", text: LAUNCH_NOTE }] });
   };
   const opened = (method, result) => {
     const id = method === "session/new" ? result?.sessionId : hostSessionId;
@@ -458,6 +486,8 @@ function acpConversation(options) {
       usage.tokens = finiteTokens(result?.usage);
       facts.usage = { ...usage };
       const stopReason = text(result?.stopReason);
+      facts.stopReason = stopReason || null;
+      facts.lastMessage = options.replyText(reply);
       if (FAILING_STOPS.has(stopReason)) facts.failure = cut(acpRunReasons.stopped(label, stopReason));
       close();
     }
@@ -481,6 +511,12 @@ function acpConversation(options) {
         if (message.method === "session/request_permission") {
           const { id } = message;
           const callId = message.params?.toolCall?.toolCallId;
+          const own = prismToolAllow(message.params, prismTools, typeof callId === "string" ? toolCalls.get(callId) : void 0);
+          if (own) {
+            facts.ownToolAllows += 1;
+            write({ jsonrpc: "2.0", id, result: own });
+            return;
+          }
           const permission = acpPermission(label, message.params, typeof callId === "string" ? toolCalls.get(callId) : void 0);
           const key = permissionKey(id);
           let answered2 = false;
@@ -529,7 +565,18 @@ function acpConversation(options) {
         if (isObject(update.cost) && Number.isFinite(update.cost.amount) && typeof update.cost.currency === "string" && /^[A-Za-z]{1,8}$/.test(update.cost.currency)) usage.cost = { amount: update.cost.amount, currency: update.cost.currency };
         facts.usage = { ...usage };
       } else if (update.sessionUpdate === "config_option_update" && Array.isArray(update.configOptions)) configOptions = update.configOptions;
-      else if ((update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") && typeof update.toolCallId === "string" && update.toolCallId) {
+      else if (update.sessionUpdate === "agent_message_chunk") {
+        if (!prompting || promptDone || !isObject(update.content) || update.content.type !== "text" || typeof update.content.text !== "string") return;
+        if (replyStarted && update.messageId !== replyId) reply = "";
+        replyStarted = true;
+        replyId = update.messageId;
+        if (reply.length < HELD_REPLY_CHARS) reply = `${reply}${update.content.text}`.slice(0, HELD_REPLY_CHARS);
+      }
+      if ((update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") && prompting && !promptDone) {
+        reply = "";
+        replyStarted = false;
+      }
+      if ((update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") && typeof update.toolCallId === "string" && update.toolCallId) {
         const key = update.toolCallId;
         const kept = { ...toolCalls.get(key) };
         for (const field of TOOL_CALL_FIELDS) if (isSet(update[field])) kept[field] = update[field];
@@ -556,5 +603,6 @@ export {
   automaticMode,
   launchInstruction,
   prismMcpServer,
+  prismToolAllow,
   readAcpOptions
 };

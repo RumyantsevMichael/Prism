@@ -33,7 +33,7 @@ function createAgentsMenu({ button, popover, onOpen, onAnswer, onOpenAgent, fetc
   let fetchedAt = Date.now();
   let rendered = "";
   function paintButton() {
-    for (const [name, value] of [["working", counts.working], ["failed", counts.failed], ["waiting", counts.waiting], ["expired", counts.expired], ["needs", counts.needsYou]]) {
+    for (const [name, value] of [["working", counts.working], ["failed", counts.failed], ["no-result", counts.endedWithoutResult], ["waiting", counts.waiting], ["expired", counts.expired], ["needs", counts.needsYou]]) {
       const text = String(Number(value) || 0);
       if (button.getAttribute(name) !== text) button.setAttribute(name, text);
     }
@@ -41,7 +41,7 @@ function createAgentsMenu({ button, popover, onOpen, onAnswer, onOpenAgent, fetc
   function paintMenu() {
     const now = Date.now();
     const needs = agents.filter((entry) => entry.group === "needs-you");
-    const key = JSON.stringify([needs.map((entry) => [entry.id, entry.name, entry.state, entry.action, entry.harness, entry.model, entry.activity, entry.slice?.title, entry.reason, entry.launch?.endedAt, entry.launch?.waitingGate]), COUNT_LINKS.map(([, count]) => counts[count] ?? 0)]);
+    const key = JSON.stringify([needs.map((entry) => [entry.id, entry.name, entry.state, entry.action, entry.harness, entry.model, entry.activity, entry.slice?.title, entry.reason, entry.launch?.endedAt, entry.launch?.waitingGate, entry.launch?.questionGate]), COUNT_LINKS.map(([, count]) => counts[count] ?? 0)]);
     if (key === rendered) return paintTimes(now);
     rendered = key;
     const group = needs.length ? `<p class="agents-menu-group">Needs you <prism-badge tone="neutral" size="sm">${needs.length}</prism-badge></p><div class="prism-rows agents-menu-rows" role="list" aria-label="Needs you">${needs.map((entry) => rowHtml(entry, now)).join("")}</div>` : "";
@@ -85,7 +85,7 @@ function createAgentsMenu({ button, popover, onOpen, onAnswer, onOpenAgent, fetc
     if (target.dataset.agentsRef) return onOpen(target.dataset.agentsRef);
     const entry = agents.find((item) => item.id === target.closest("[data-menu-agent]")?.dataset.menuAgent);
     if (!entry) return;
-    if (target.dataset.menuAction === "answer") return onAnswer(entry.launch?.waitingGate ?? null);
+    if (target.dataset.menuAction === "answer") return onAnswer(entry.launch?.waitingGate ?? entry.launch?.questionGate ?? null);
     return onOpenAgent(entry.id);
   });
   popover.addEventListener("prism-open", () => void poller.now());

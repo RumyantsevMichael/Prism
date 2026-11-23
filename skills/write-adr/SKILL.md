@@ -27,46 +27,7 @@ In a project with a store, ADRs are [store artifacts](../workflow/SKILL.md#commo
   2. Keep related decisions in the same topic.
   3. For supersession, link the replacement and original without changing the original status.
 
-New ADRs use this shape:
-
-```markdown
-# <Decision title>
-
-Status: Proposed
-Created: <YYYY-MM-DD>
-
-## Requirements
-
-<Direct links to applicable Approved requirements>
-
-## Problem
-
-<The architecture problem>
-
-## Decision
-
-<Selected architecture and invariants>
-
-## Rationale
-
-<Why this option>
-
-## Alternatives
-
-<Rejected options and reasons>
-
-## Consequences
-
-<Positive and negative effects>
-
-## Mechanism
-
-<How the architecture works, without code-level detail>
-
-## Decision Log
-
-<Dated clarifications after acceptance>
-```
+The [ADR format](references/adr-format.md) states the rules that `check_artifacts` checks and a complete example, which new ADRs follow.
 
 Invariants use `MUST`/`MUST NOT` for absolute rules and `SHOULD` for justified exceptions.
 Architecture rules do not use code names, paths, or task identifiers.

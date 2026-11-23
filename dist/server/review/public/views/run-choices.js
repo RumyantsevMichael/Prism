@@ -331,7 +331,7 @@ function createRunChoices({ read, choose, changed = null }) {
     const runFields = view.fields.filter(isRunField);
     placed(runFields, (state) => state.field.kind === "run-choice" || Boolean(optionIn(state.reportHost === view.host ? state.report : null, state.field.option)));
     const current = [...pickers.values()].filter((state) => state.reportHost === view.host && state.reportKey === state.key);
-    const reasons = [...new Set(current.map((state) => state.report?.reason).filter(Boolean))];
+    const reasons = [...new Set(current.map((state) => state.report?.reason).filter((reason) => reason && reason !== view.shownReason))];
     setText(note, reasons.join(" "));
     note.hidden = !reasons.length;
     const sources = [...new Set(current.map((state) => sourceText(state.report)).filter(Boolean))];

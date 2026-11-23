@@ -1,80 +1,86 @@
 // Generated from src/server/session/options-read-marker.mts by scripts/native-build/compile.mjs.
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
-const MAX_ANCESTORS = 16;
 const POLL_MS = 50;
+const TOKEN_FLAG = "--prism-acp-token=";
+const TOKEN_PATTERN = /^[0-9a-f]{32}$/;
+const LAUNCH_FLAG = "--prism-launch=";
+const LAUNCH_PATTERN = /^launch-[0-9a-f]{16}$/;
 const optionsReadFolder = (env = process.env) => path.join(reviewAppDirectory(env), "options-reads");
-const marking = (env) => env.PRISM_OPTIONS_READ === "1" || /^launch-[0-9a-f]{16}$/.test(env.PRISM_LAUNCH ?? "");
-const markerFile = (env, pid) => path.join(optionsReadFolder(env), `${pid}.json`);
-function ancestors() {
-  const found = [process.ppid];
-  let pid = process.ppid;
-  for (let depth = 1; depth < MAX_ANCESTORS && pid > 1; depth += 1) {
-    let stat;
-    try {
-      stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    } catch {
-      break;
-    }
-    const parent = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
-    if (!Number.isSafeInteger(parent) || parent <= 1) break;
-    found.push(parent);
-    pid = parent;
-  }
-  return found;
+const markerFile = (env, token) => path.join(optionsReadFolder(env), `${token}.json`);
+const newAcpToken = () => randomBytes(16).toString("hex");
+const acpTokenArgument = (token) => `${TOKEN_FLAG}${token}`;
+const acpLaunchArgument = (launch) => `${LAUNCH_FLAG}${launch}`;
+function acpLaunch(argv = process.argv) {
+  const argument = argv.slice(2).find((item) => item.startsWith(LAUNCH_FLAG));
+  const launch = argument?.slice(LAUNCH_FLAG.length) ?? "";
+  return LAUNCH_PATTERN.test(launch) ? launch : null;
 }
-function markToolsListed(env = process.env) {
-  if (!marking(env)) return;
+function acpToken(argv = process.argv) {
+  for (const argument of argv.slice(2)) {
+    if (!argument.startsWith(TOKEN_FLAG)) continue;
+    const token = argument.slice(TOKEN_FLAG.length);
+    return TOKEN_PATTERN.test(token) ? token : null;
+  }
+  return null;
+}
+function markToolsListed(env = process.env, argv = process.argv, tools = []) {
+  const token = acpToken(argv);
+  if (!token) return;
   try {
     mkdirSync(optionsReadFolder(env), { recursive: true, mode: 448 });
-    writeFileSync(markerFile(env, process.pid), JSON.stringify({ pid: process.pid, ancestors: ancestors(), at: (/* @__PURE__ */ new Date()).toISOString() }), { mode: 384 });
+    writeFileSync(markerFile(env, token), JSON.stringify({ pid: process.pid, tools, at: (/* @__PURE__ */ new Date()).toISOString() }), { mode: 384 });
   } catch {
   }
 }
-function unmarkToolsListed(env = process.env) {
-  if (!marking(env)) return;
+function unmarkToolsListed(env = process.env, argv = process.argv) {
+  const token = acpToken(argv);
+  if (!token) return;
   try {
-    rmSync(markerFile(env, process.pid), { force: true });
+    rmSync(markerFile(env, token), { force: true });
   } catch {
   }
 }
-function takeMarker(env, agentPid) {
-  let names;
+const TOOL_NAME = /^[A-Za-z0-9_-]{1,128}$/;
+function takeMarker(env, token) {
+  const file = markerFile(env, token);
   try {
-    names = readdirSync(optionsReadFolder(env)).filter((name) => /^\d+\.json$/.test(name));
+    statSync(file);
   } catch {
-    return false;
+    return null;
   }
-  for (const name of names) {
-    const file = path.join(optionsReadFolder(env), name);
-    let marker;
-    try {
-      marker = JSON.parse(readFileSync(file, "utf8"));
-    } catch {
-      continue;
-    }
-    if (!Array.isArray(marker?.ancestors) || !marker.ancestors.includes(agentPid)) continue;
-    try {
-      rmSync(file, { force: true });
-    } catch {
-    }
-    return true;
+  let tools = [];
+  try {
+    const listed = JSON.parse(readFileSync(file, "utf8"))?.tools;
+    if (Array.isArray(listed)) tools = listed.filter((name) => typeof name === "string" && TOOL_NAME.test(name));
+  } catch {
   }
-  return false;
+  try {
+    rmSync(file, { force: true });
+  } catch {
+  }
+  return tools;
 }
-function toolsListed({ env, agentPid, deadline, stopped }) {
+function toolsListed({ env, token, deadline, stopped }) {
   return new Promise((resolve) => {
     const check = () => {
-      if (takeMarker(env, agentPid)) resolve(true);
-      else if (stopped() || Date.now() >= deadline) resolve(false);
+      const tools = takeMarker(env, token);
+      if (tools) resolve(tools);
+      else if (stopped() || Date.now() >= deadline) resolve(null);
       else setTimeout(check, POLL_MS);
     };
     check();
   });
 }
 export {
+  acpLaunch,
+  acpLaunchArgument,
+  acpToken,
+  acpTokenArgument,
   markToolsListed,
+  newAcpToken,
   optionsReadFolder,
   toolsListed,
   unmarkToolsListed

@@ -1,4 +1,5 @@
 // Generated from src/server/review/public/views/util.ts by scripts/native-build/compile.mjs.
+import { formatBadge } from "./format-marks.js";
 const EVIDENCE_ID = /^[a-f0-9]{64}$/;
 function escapeHtml(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -66,7 +67,7 @@ function status(value, { label = "", variant = "", glyphOnly = false, attributes
   return `<prism-status value="${escapeHtml(value ?? "")}"${label ? ` label="${escapeHtml(label)}"` : ""}${variant ? ` variant="${escapeHtml(variant)}"` : ""}${glyphOnly ? " glyph-only" : ""}${attributes}></prism-status>`;
 }
 function recordStatus(text) {
-  const written = String(text ?? "").trim();
+  const written = String(text ?? "").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").trim();
   const [word = "", ...rest] = written.split(/\s+/);
   return status(word, { label: rest.length ? written : "" });
 }
@@ -155,12 +156,16 @@ function documentTitle(path, ctx) {
   return ctx.recordTitle?.(path) ?? words(String(path).split("/").pop() ?? "");
 }
 function requirementLinks(references, ctx, { icon = null } = {}) {
+  const marked = /* @__PURE__ */ new Set();
   return references.map((reference) => {
     const [file, anchor] = reference.split("#");
+    const format = marked.has(file) ? null : ctx.formatOf?.(file) ?? null;
+    marked.add(file);
+    const mark = format ? ` ${formatBadge(format)}` : "";
     const title = documentTitle(file, ctx);
     const label = anchor ? `Requirement ${anchor} \xB7 ${title}` : `${title} \xB7 Requirements`;
     const glyph = icon ? `<prism-icon name="${escapeHtml(icon)}" size="xs"></prism-icon> ` : "";
-    return ctx.hasArtifact(file) ? `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(file)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}>${glyph}${escapeHtml(label)}</prism-chip>` : `<prism-chip>${glyph}${escapeHtml(label)}</prism-chip>`;
+    return ctx.hasArtifact(file) ? `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(file)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}>${glyph}${escapeHtml(label)}</prism-chip>${mark}` : `<prism-chip>${glyph}${escapeHtml(label)}</prism-chip>${mark}`;
   }).join(" ");
 }
 function requirementGroups(references, ctx) {

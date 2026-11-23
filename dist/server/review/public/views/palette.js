@@ -1,5 +1,6 @@
 // Generated from src/server/review/public/views/palette.ts by scripts/native-build/compile.mjs.
 import { claimElement } from "./claim-index.js";
+import { formatBadgeElement } from "./format-marks.js";
 const KIND_ORDER = ["action", "place", "slice", "initiative", "requirement", "decision", "record", "term", "file", "code"];
 const GROUP_OF = { requirement: "document", decision: "document", record: "document" };
 const GROUPS = { action: "Settings on this page", place: "Places", initiative: "Initiatives", slice: "Slices", document: "Documents", term: "Glossary terms", file: "Files", text: "Text matches", code: "Code in indexed components" };
@@ -162,8 +163,10 @@ function createPalette({ dialog, field, results, preview, scopes = null, count =
     } else item.append(...highlighted(entry.label, tokens()));
     const claim = entry.kind === "slice" ? claimFor(entry.ref) : null;
     const detail = [detailOf(entry), claim ? claim.label : ""].filter(Boolean).join(" \xB7 ");
-    if (detail) {
+    const mark = entry.kind === "requirement" || entry.kind === "decision" ? formatBadgeElement(entry.format) : null;
+    if (detail || mark) {
       const line = node("span", "palette-detail", detail);
+      if (mark) line.prepend(mark, " ");
       line.slot = "detail";
       if (entry.kind === "file") line.dataset.codeSubject = "";
       item.append(line);

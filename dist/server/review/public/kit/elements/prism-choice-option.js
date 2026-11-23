@@ -4,7 +4,7 @@ class PrismChoiceOption extends Base {
   static tag = "prism-choice-option";
   static observedAttributes = ["value", "disabled", "tone"];
   static catalog = {
-    purpose: 'One option of a prism-choice: a native radio input, drawn by an indicator, with its title and a description from slot="detail".',
+    purpose: 'One option of a prism-choice: a native radio input, or a checkbox in a choice of several, drawn by an indicator, with its title and a description from slot="detail".',
     options: [
       { name: "value", values: ["text"], default: "", description: "The value the choice takes when this option is chosen." },
       { name: "tone", values: ["neutral", "danger"], default: "neutral", description: "danger marks an option that rejects or removes." },
@@ -12,7 +12,7 @@ class PrismChoiceOption extends Base {
       { name: 'slot="detail"', values: ["children"], default: "", description: "A description shown below the title." }
     ],
     states: ["unchecked", "checked", "danger", "disabled", "detail"],
-    keyboard: ["Inside a prism-choice, the arrow keys move the choice to the next or previous enabled option."]
+    keyboard: ["Inside a prism-choice, the arrow keys move the choice to the next or previous enabled option.", "Inside a prism-choice with multiple, Space chooses or clears the option."]
   };
   connectedCallback() {
     if (!this.input) this.build();
@@ -66,6 +66,7 @@ class PrismChoiceOption extends Base {
     const input = this.input;
     if (!input) return;
     const choice = this.closest("prism-choice");
+    input.type = choice?.hasAttribute("multiple") ? "checkbox" : "radio";
     let name = choice?.getAttribute("name");
     if (choice && !name) {
       name = uniqueId("prism-choice");

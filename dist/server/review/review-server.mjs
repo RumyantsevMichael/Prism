@@ -22,7 +22,7 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, loadAttention, loadClaims, loadDeclaredView, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, viewWatching, loadAttention, loadClaims, loadDeclaredView, loadFormatMark, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { frozenTestFile, verificationLog } from "./verification-view.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
@@ -49,6 +49,7 @@ const EVIDENCE_ARRAY_LIMIT = 200;
 const TRUSTED_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "localhost"]);
 const VIEWER_OPEN_RETRY_MS = 10 * 1e3;
 const FRESHNESS_CHECK_MS = 30 * 1e3;
+const RECORDS_CHECK_MS = 1e3;
 const backgroundPreparation = () => import("../repository-intelligence/background-preparation.mjs");
 const REBUILD_QUIET_MS = 60 * 1e3;
 const REBUILD_GAP_MS = 5 * 60 * 1e3;
@@ -449,8 +450,8 @@ async function readReviewed(projectRoot, file) {
 async function reviewedStoreArtifact(projectRoot, file, options) {
   const stored = await reviewStoreArtifact(projectRoot, file, options);
   if (stored === null) throw Object.assign(new Error(`${file} is not in the record store.`), { code: "ENOENT" });
-  const { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } = stored;
-  return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, artifact: { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } };
+  const { scope, version, accepted, changed, acceptedFrom, comments, totalComments, nextCommentOffset } = stored;
+  return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, artifact: { scope, version, accepted, changed, acceptedFrom, comments, totalComments, nextCommentOffset } };
 }
 async function loadArtifact(projectRoot, artifactPath, { commentOffset = 1 } = {}) {
   if (await inArtifactStore(projectRoot, artifactPath)) {
@@ -648,8 +649,15 @@ const ACTION_STATUS = {
   confirmation_required: 409,
   artifact_changed: 409,
   approval_ambiguous: 409,
+  artifact_nonconforming: 409,
   author_unknown: 409,
   comment_limit: 409,
+  already_answered: 409,
+  // A format migration run's answer and rerun are refused by the run's state.
+  run_not_asking: 409,
+  run_not_failed: 409,
+  migration_run_conforming: 409,
+  migration_run_closed: 409,
   invalid_input: 400,
   // The refusals of a launch, a stop, and a resume, and of the confirmation outside the page that comes before a start.
   confirmation_pending: 409,
@@ -680,7 +688,7 @@ const ACTION_STATUS = {
   install_failed: 500,
   agent_running: 409
 };
-const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
+const ACTION_FIELDS = ["current", "reason", "field", "accepted", "artifacts"];
 const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 function sendJson(response, statusCode, body) {
   send(response, statusCode, JSON.stringify(body), "application/json; charset=utf-8");
@@ -878,6 +886,7 @@ function createProjectReview({
     try {
       const env = process.env;
       const result = ended ? await archiveEndedLaunches({ projectRoot, env }) : archiving ? await archiveLaunch({ projectRoot, id: body.launch, env }) : await unarchiveLaunch({ projectRoot, id: body.launch, env });
+      forgetWorkspace();
       sendJson(response, 200, result);
     } catch (error) {
       if (error?.code === "unknown_launch") sendJson(response, 404, { code: error.code, message: error.message });
@@ -925,9 +934,34 @@ function createProjectReview({
       }
     }
   }
+  let recordsWatch = null;
+  let recordsVersion = null;
+  function watchRecords() {
+    if (recordsWatch) return;
+    let checking = false;
+    recordsWatch = setInterval(async () => {
+      if (viewers.size + hub.count(hubKey) === 0) {
+        clearInterval(recordsWatch);
+        recordsWatch = null;
+        recordsVersion = null;
+        return;
+      }
+      if (checking) return;
+      checking = true;
+      try {
+        const version = await viewVersion(projectRoot).catch(() => null);
+        if (version !== null && recordsVersion !== null && version !== recordsVersion) notify("records", {});
+        if (version !== null) recordsVersion = version;
+      } finally {
+        checking = false;
+      }
+    }, RECORDS_CHECK_MS);
+    recordsWatch.unref?.();
+  }
   function openViewerStream(response, writable) {
     const heartbeat = openEventStream(response, () => removeViewer(response));
     viewers.set(response, { heartbeat, writable });
+    watchRecords();
     reportViewers();
     if (writable) clearViewerOpenLease();
     writeEvent(response, "session", sessionSnapshot());
@@ -935,6 +969,7 @@ function createProjectReview({
   }
   function joinHub(stream, tab, writable) {
     if (!hub.join(stream, tab, hubKey, writable)) return false;
+    watchRecords();
     reportViewers();
     if (writable) clearViewerOpenLease();
     hub.send(stream, hubKey, "session", sessionSnapshot());
@@ -1143,9 +1178,9 @@ function createProjectReview({
     const held = new Set((stored?.entries ?? []).map((entry) => entry.location));
     const content = read.bytes.toString("utf8");
     const links = location.toLowerCase().endsWith(".md") ? resolveLinks({ content, location, ...await linkContext(read.scope), has: (candidate) => held.has(candidate) }) : [];
-    const { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } = read;
+    const { scope, version, accepted, changed, acceptedFrom, comments, totalComments, nextCommentOffset } = read;
     const below = location.slice(scopePrefix(scope).length);
-    const artifact = { scope, version, accepted, changed, comments, totalComments, nextCommentOffset, target: `artifact:${scope.label}:${below}` };
+    const artifact = { scope, version, accepted, changed, acceptedFrom, comments, totalComments, nextCommentOffset, target: `artifact:${scope.label}:${below}` };
     const answer = { ref, path: ref, location, scope, content, modifiedAt: read.modifiedAt, artifact, links, unresolvedLinks: links.filter((link) => link.resolved === false).length };
     if (path.posix.extname(location).toLowerCase() === ".json") Object.assign(answer, { diagrams: [] }, await loadJsonArtifact(projectRoot, location, content));
     else answer.diagrams = await storeDiagrams(location, content, links, held);
@@ -1300,6 +1335,8 @@ function createProjectReview({
   }
   function closeViewerStreams() {
     clearViewerOpenLease();
+    if (recordsWatch) clearInterval(recordsWatch);
+    recordsWatch = null;
     if (!sharedHub) hub.close();
     for (const response of viewers.keys()) {
       removeViewer(response);
@@ -1346,7 +1383,7 @@ function createProjectReview({
       const checkout = workspace && await isStoreWithoutCheckout(projectRoot) ? null : await readWorkspaceIdentity(projectRoot);
       const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null, repositories: await codeRepositories() } : { workspace: checkout };
       const scoped = storeIndex ? { artifactScopes: storeIndex.artifactScopes, scopes: storeIndex.scopes, ...storeIndex.scopeFilter ? { scopeFilter: storeIndex.scopeFilter, unknownScopes: storeIndex.unknownScopes } : {}, notes: storeIndex.notes } : { artifactScopes: await listArtifactScopes(projectRoot) };
-      send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, version: appVersion ?? pluginVersion(), ...privateServer ? { privateServer } : {} }), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store), watching: await viewWatching(projectRoot).catch(() => null) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, version: appVersion ?? pluginVersion(), ...privateServer ? { privateServer } : {} }), "application/json; charset=utf-8");
     } else if (["/api/code/tree", "/api/code/compare", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
       await serveCode(response, route, url);
     } else if (route === "/api/slice-files" && request.method === "GET") {
@@ -1448,7 +1485,7 @@ function createProjectReview({
       send(response, 200, JSON.stringify(await entityContext(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
     } else if (route === "/api/entity") {
       const ref = url.searchParams.get("ref");
-      if (["initiative", "slice"].includes(parseEntityRef(ref)?.kind) && !await entityExists(projectRoot, ref)) {
+      if (["initiative", "slice", "migration-run"].includes(parseEntityRef(ref)?.kind) && !await entityExists(projectRoot, ref)) {
         send(response, 404, "The item no longer exists in this project.");
         return;
       }
@@ -1525,6 +1562,7 @@ function createProjectReview({
         send(response, 404, "The file is not available for review.");
         return;
       }
+      loaded = { ...loaded, format: await loadFormatMark(projectRoot, artifactPath, loaded.artifact?.scope ?? null) };
       const view = await loadDeclaredView(projectRoot, artifactPath).catch(() => null);
       send(response, 200, JSON.stringify(view ? { ...loaded, view } : loaded), "application/json; charset=utf-8");
     } else if (wantsPage(request) && !/^\/(api|kit|styles|views|vendor)\//.test(route)) {

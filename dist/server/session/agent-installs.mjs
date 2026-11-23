@@ -10,7 +10,7 @@ import { pipeline } from "node:stream/promises";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { ACP_HOST_PREFIX, ACP_ID_PATTERN, agentsFolder, launchRule, readInstalls } from "./acp-agents.mjs";
 import { downloadUrlRefusal, npxPackage, readRegistry, uvxPackage } from "./acp-registry.mjs";
-import { ArchiveError, extractTarGz, extractZip } from "./archive-extract.mjs";
+import { ArchiveError, downloadForm, extractTarBz2, extractTarGz, extractZip, placeBinary } from "./archive-extract.mjs";
 import { resolveDefinition } from "./launch-hosts.mjs";
 import { LaunchError, launchRunInUse, launchStarting, listLaunchRecords, processAlive } from "./launch-records.mjs";
 const LOCK_FILE = ".install.lock";
@@ -303,10 +303,12 @@ async function prepare(agent, from, env, staging) {
         if (found !== expected) {
           throw refuse("install_mismatch", `The download of ${label} has the SHA-256 checksum ${found}, but the registry lists ${expected}, so Prism installed nothing.`);
         }
-        const name = new URL(distribution.archive).pathname.toLowerCase();
         try {
-          if (name.endsWith(".zip")) await extractZip(archive, folder);
-          else await extractTarGz(archive, folder);
+          const form = await downloadForm(archive);
+          if (form === "zip") await extractZip(archive, folder);
+          else if (form === "gzip") await extractTarGz(archive, folder);
+          else if (form === "bzip2") await extractTarBz2(archive, folder);
+          else await placeBinary(archive, folder, distribution.cmd);
         } catch (error) {
           if (error instanceof ArchiveError) throw refuse("install_refused", `Prism did not install ${label}: ${error.message}`);
           throw error;

@@ -9,6 +9,7 @@ import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { checkedCoordinator, hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts.mjs";
 import { isAgentModel } from "./agent-models.mjs";
 import { isAcpHost } from "./acp-agents.mjs";
+import { isNoResultGate } from "./run-result.mjs";
 import { sessionHolder } from "../workflow/slice-claims.mjs";
 const LAUNCH_ID_PATTERN = /^launch-[0-9a-f]{16}$/;
 const RECORD_FILE = "launch.json";
@@ -45,6 +46,14 @@ function launchesDirectory(env = process.env) {
 function launchFolder(env, id) {
   return path.join(launchesDirectory(env), id);
 }
+const WORK_FOLDERS = "launch-work";
+function launchWorkDirectory(env = process.env) {
+  return path.join(reviewAppDirectory(env), WORK_FOLDERS);
+}
+const touches = (folder, other) => {
+  const inside = (child, parent) => child === parent || child.startsWith(`${parent}${path.sep}`);
+  return inside(folder, other) || inside(other, folder);
+};
 async function privateDirectory(directory) {
   await mkdir(directory, { recursive: true, mode: 448 });
   const info = await lstat(directory);
@@ -63,6 +72,19 @@ async function createLaunchFolder(env, id) {
   const folder = launchFolder(env, id);
   await mkdir(folder, { mode: 448 });
   if (process.platform !== "win32") await chmod(folder, 448);
+  return folder;
+}
+async function createLaunchWorkFolder(env, id, checkout) {
+  await prepareLaunchesDirectory(env);
+  await privateDirectory(launchWorkDirectory(env));
+  const created = path.join(launchWorkDirectory(env), id);
+  await mkdir(created, { mode: 448 });
+  if (process.platform !== "win32") await chmod(created, 448);
+  const folder = await realpath(created);
+  if (touches(folder, checkout)) {
+    await rm(created, { recursive: true, force: true });
+    throw new LaunchError("launch_failed", `The working folder ${folder} of a format migration run's session would reach the checkout ${checkout}; keep the review app folder outside the project.`);
+  }
   return folder;
 }
 const RUN_START_LOCK = "run-start";
@@ -121,26 +143,56 @@ async function readGateRecord(folder) {
   const answers = list(value?.answers).filter((answer) => answer && typeof answer.entry === "string" && ENTRY_ID_PATTERN.test(answer.entry) && typeof answer.gate === "string" && GATE_ID_PATTERN.test(answer.gate) && (answer.run === null || typeof answer.run === "string" && TOKEN_PATTERN.test(answer.run))).map((answer) => ({ entry: answer.entry, gate: answer.gate, run: answer.run, resumed: answer.resumed === true }));
   return { marks, answers };
 }
+const RESULTS_FILE = "results.json";
+const FAILURE_MAX = 1e3;
+const CHECK_STALE_MS = 10 * 60 * 1e3;
+const NO_RESULT_UNRECORDED = (message) => `Prism could not record a question for this run: ${message}`;
+const NO_RESULT_MARKS = Object.freeze({ pauses: [], checks: [], noResult: [] });
+async function readResultMarks(folder) {
+  let value = null;
+  try {
+    const info = await lstat(path.join(folder, RESULTS_FILE));
+    if (info.isFile() && info.size <= 1024 * 1024) value = JSON.parse(await readFile(path.join(folder, RESULTS_FILE), "utf8"));
+  } catch {
+    value = null;
+  }
+  const list = (items) => (Array.isArray(items) ? items : []).slice(-GATES_KEPT);
+  const at = (item) => typeof item?.at === "string" && item.at.length <= 40;
+  const pauses = list(value?.pauses).filter(at).map((item) => ({ at: item.at }));
+  const checks = list(value?.checks).filter((item) => at(item) && typeof item.run === "string" && TOKEN_PATTERN.test(item.run) && validPid(item.pid)).map((item) => ({ run: item.run, pid: item.pid, at: item.at }));
+  const noResult = list(value?.noResult).filter((item) => at(item) && typeof item.run === "string" && TOKEN_PATTERN.test(item.run) && (item.gate === null || typeof item.gate === "string" && GATE_ID_PATTERN.test(item.gate)) && (item.failure === null || typeof item.failure === "string")).map((item) => ({ run: item.run, gate: item.gate, failure: item.failure === null ? null : String(item.failure).slice(0, FAILURE_MAX), at: item.at }));
+  return { pauses, checks, noResult };
+}
+async function writeResultMarks(folder, { pauses, checks, noResult }) {
+  const value = { pauses: pauses.slice(-GATES_KEPT), checks: checks.slice(-GATES_KEPT), noResult: noResult.slice(-GATES_KEPT) };
+  await writeAtomically(path.join(folder, RESULTS_FILE), `${JSON.stringify(value, null, 2)}
+`, { mode: 384 });
+}
+const noResultGates = (marks) => (marks?.noResult ?? []).map((mark) => mark.gate).filter((gate) => gate !== null);
 async function writeGateRecord(folder, { marks, answers }) {
   const value = { marks: marks.slice(-GATES_KEPT), answers: answers.slice(-GATES_KEPT) };
   await writeAtomically(path.join(folder, GATES_FILE), `${JSON.stringify(value, null, 2)}
 `, { mode: 384 });
 }
-function gateFacts(gates, pending) {
+function gateFacts(gates, pending, noResult = []) {
   const byId = /* @__PURE__ */ new Map();
   for (const gate of Array.isArray(pending) ? pending : []) {
     if (gate && typeof gate === "object" && typeof gate.id === "string") byId.set(gate.id, gate);
   }
   const recorded = new Set(gates.answers.map((answer) => answer.entry));
+  const questions = new Set(noResult);
   let waitingGate = null;
   let elsewhere = false;
   for (const id of new Set(gates.marks.map((mark) => mark.gate))) {
     const gate = byId.get(id);
     if (!gate) continue;
-    if (!gate.answer) waitingGate ??= id;
-    else if (!(typeof gate.answer.entry === "string" && recorded.has(gate.answer.entry))) elsewhere = true;
+    if (!gate.answer) {
+      if (!questions.has(id) && !isNoResultGate(gate)) waitingGate ??= id;
+    } else if (!(typeof gate.answer.entry === "string" && recorded.has(gate.answer.entry))) elsewhere = true;
   }
-  return { waiting: waitingGate !== null, waitingGate, answerWaits: elsewhere };
+  const latest = noResult.at(-1) ?? null;
+  const questionGate = latest !== null && byId.has(latest) && !byId.get(latest).answer ? latest : null;
+  return { waiting: waitingGate !== null, waitingGate, answerWaits: elsewhere, questionGate };
 }
 async function listLaunchRecords(env) {
   const directory = launchesDirectory(env);
@@ -220,7 +272,7 @@ function lastEnd(record, status) {
   return null;
 }
 const asksToAllow = (action) => `Asks you to allow: ${action}.`;
-function stateOf(record, status, label, gates, permission) {
+function stateOf(record, status, label, gates, permission, results, now) {
   const run = record.runs.at(-1);
   if (status === "running" && permission) return { state: "waiting", reason: asksToAllow(permission.action) };
   if (status === "running") return { state: gates.waiting ? "waiting" : "running", reason: null };
@@ -240,13 +292,16 @@ function stateOf(record, status, label, gates, permission) {
     const more = count > 1 ? ` (and ${count - 1} more)` : "";
     return { state: "blocked", reason: gates.answerWaits ? ANSWER_WAITS : `${label} refused ${first.tool}: ${first.reason}${more}` };
   }
+  if (results.checks.some((check) => check.run === run.token && processAlive(check.pid) && now - time(check.at) <= CHECK_STALE_MS)) return { state: "running", reason: null };
+  const noResult = results.noResult.find((mark) => mark.run === run.token);
+  if (noResult) return { state: "ended-without-result", reason: noResult.failure !== null ? NO_RESULT_UNRECORDED(noResult.failure) : gates.answerWaits ? ANSWER_WAITS : null, question: noResult.gate };
   return { state: "finished", reason: gates.answerWaits ? ANSWER_WAITS : null };
 }
-function launchView(record, { now = Date.now(), gates = null, permission = null } = {}) {
+function launchView(record, { now = Date.now(), gates = null, permission = null, results = null } = {}) {
   const status = lastRunStatus(record, now);
   const label = hostDefinition(record.host)?.label ?? record.host;
   const facts = { waiting: gates?.waiting === true, answerWaits: status !== "running" && gates?.answerWaits === true };
-  const { state, reason: hostText } = stateOf(record, status, label, facts, permission);
+  const { state, reason: hostText, question = null } = stateOf(record, status, label, facts, permission, results ?? NO_RESULT_MARKS, now);
   const reason = redactSessionId(hostText, record.hostSessionId);
   const runningMs = record.runs.reduce((sum, run, index) => {
     const start = time(run.startedAt);
@@ -264,7 +319,9 @@ function launchView(record, { now = Date.now(), gates = null, permission = null 
   const resumeCommand = command ? { command, cwd: record.checkout } : null;
   return {
     id: record.id,
-    initiative: record.initiative,
+    initiative: record.initiative ?? null,
+    // Only a format migration run's session names its run, so an initiative's view keeps its fields.
+    ...typeof record.migrationRun === "string" ? { migrationRun: record.migrationRun } : {},
     host: record.host,
     hostLabel: label,
     model: isAgentModel(last?.model) ? last.model : null,
@@ -280,6 +337,7 @@ function launchView(record, { now = Date.now(), gates = null, permission = null 
     resumeCommand,
     waitingGate: state === "waiting" && typeof gates?.waitingGate === "string" ? gates.waitingGate : null,
     answerWaits: facts.answerWaits,
+    questionGate: question !== null && gates?.questionGate === question ? question : null,
     ...isAcpHost(record.host) ? { usage: runUsage(last) } : {}
   };
 }
@@ -300,7 +358,7 @@ function expired(record, now = Date.now()) {
   return Number.isFinite(end) && now - end > RETENTION_MS;
 }
 const ARCHIVE_FILE = "archive.json";
-const ENDED_STATES = /* @__PURE__ */ new Set(["finished", "failed", "stopped", "blocked"]);
+const ENDED_STATES = /* @__PURE__ */ new Set(["finished", "ended-without-result", "failed", "stopped", "blocked"]);
 function launchEnded(state) {
   return typeof state === "string" && ENDED_STATES.has(state);
 }
@@ -328,7 +386,9 @@ async function removeArchiveMark(folder) {
 function archivedNow(mark, record, state) {
   return mark !== null && Array.isArray(record?.runs) && record.runs.length === mark.runs && launchEnded(state);
 }
-async function removeLaunchFolder(folder) {
+async function removeLaunchFolder(folder, record = null) {
+  const work = record?.workdir;
+  if (typeof work === "string" && path.isAbsolute(work) && path.basename(work) === record.id && path.basename(path.dirname(work)) === WORK_FOLDERS) await rm(work, { recursive: true, force: true });
   await rm(folder, { recursive: true, force: true });
 }
 export {
@@ -340,11 +400,14 @@ export {
   HEARTBEAT_STALE_MS,
   LAUNCH_ID_PATTERN,
   LaunchError,
+  NO_RESULT_MARKS,
+  NO_RESULT_UNRECORDED,
   RETENTION_MS,
   SUPERVISION_LOST,
   archivedNow,
   asksToAllow,
   createLaunchFolder,
+  createLaunchWorkFolder,
   expired,
   gateFacts,
   lastRunStatus,
@@ -355,14 +418,17 @@ export {
   launchRunning,
   launchStarting,
   launchView,
+  launchWorkDirectory,
   launchesDirectory,
   listLaunchRecords,
   newLaunchId,
+  noResultGates,
   prepareLaunchesDirectory,
   processAlive,
   readArchiveMark,
   readGateRecord,
   readLaunchRecord,
+  readResultMarks,
   readStopRequest,
   removeArchiveMark,
   removeLaunchFolder,
@@ -374,5 +440,6 @@ export {
   writeArchiveMark,
   writeGateRecord,
   writeLaunchRecord,
+  writeResultMarks,
   writeStopRequest
 };

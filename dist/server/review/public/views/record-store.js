@@ -39,6 +39,34 @@ function syncItem(store, status, now = Date.now(), workspace = null) {
   const problem = Object.hasOwn(PROBLEMS, status.state);
   return { label: `${STATES[status.state] ?? status.state}${when ? `${problem ? " \xB7 " : " "}${when}` : ""}`, tone: problem ? status.state === "conflicts" ? "warn" : "danger" : "ok", problem };
 }
+const CHECK_SECONDS = 5;
+const COUNTS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
+const REASONS = {
+  wsl: "A Windows drive seen from WSL, which reports no changes made from Windows",
+  virtual: "A virtual machine's shared folder, which reports no changes made outside it",
+  network: "A network drive, which reports no changes made on other computers",
+  unwatchable: "Prism could not watch this folder"
+};
+function outsideChanges(watching) {
+  if (!watching || !Array.isArray(watching.unwatched)) return null;
+  const unwatched = watching.unwatched;
+  if (unwatched.length === 0) return { row: "Shown at once", message: null, folders: [] };
+  if (unwatched.every((item) => item.reason === "windows")) {
+    return { row: `Checked every ${CHECK_SECONDS} seconds`, message: `On Windows, a folder that Prism watches can't be moved or deleted, so Prism checks this workspace's folders instead. A change made by another app can take up to ${CHECK_SECONDS} seconds to show. Changes made through Prism show at once.`, folders: [] };
+  }
+  const count = unwatched.length < COUNTS.length ? COUNTS[unwatched.length] : String(unwatched.length);
+  const noun = unwatched.length === 1 ? "folder" : "folders";
+  const all = unwatched.length >= watching.targets;
+  return {
+    row: all ? `Checked every ${CHECK_SECONDS} seconds` : `Shown at once, except ${count.toLowerCase()} ${noun} checked every ${CHECK_SECONDS} seconds`,
+    message: `${count} ${noun} can't be watched, so Prism checks ${unwatched.length === 1 ? "it" : "them"} every ${CHECK_SECONDS} seconds instead. A change made there by another app or computer can take up to ${CHECK_SECONDS} seconds to show. Changes made through Prism show at once.`,
+    folders: unwatched.map((item) => ({ path: String(item.path), reason: REASONS[item.reason] ?? REASONS.unwatchable }))
+  };
+}
+function outsideFoldersHtml(outside) {
+  if (!outside?.folders.length) return "";
+  return `<section class="store-unwatched"><h3>Folders checked instead of watched</h3>${keyValues(outside.folders.map((folder) => ["Folder", `<code>${escapeHtml(folder.path)}</code><br><span class="muted">${escapeHtml(folder.reason)}</span>`]))}</section>`;
+}
 function storeFacts(store, status, workspace = null) {
   const where = store.kind === "project" ? `In this checkout, <code>${escapeHtml(store.label)}</code>` : `${store.kind === "remote" ? "Remote store" : "Store folder"} <code>${escapeHtml(store.label)}</code>`;
   return keyValues([
@@ -49,7 +77,8 @@ function storeFacts(store, status, workspace = null) {
     ["Last fetched", workspace ? workspace.lastSyncedAt ? `<prism-time datetime="${escapeHtml(workspace.lastSyncedAt)}"></prism-time> <span class="muted">(${escapeHtml(formatTime(workspace.lastSyncedAt))})</span>` : "Not yet" : null],
     ["Next fetch", workspace?.nextFetchAt ? escapeHtml(formatTime(workspace.nextFetchAt)) : null],
     ["Ahead", status?.ahead ? plural(status.ahead, "local commit") : null],
-    ["Behind", status?.behind ? plural(status.behind, "upstream commit") : null]
+    ["Behind", status?.behind ? plural(status.behind, "upstream commit") : null],
+    ["Outside changes", outsideChanges(store.watching)?.row ? escapeHtml(outsideChanges(store.watching).row) : null]
   ]);
 }
 function recordName(path, describe) {
@@ -100,12 +129,15 @@ function createRecordStoreStatus({ storeButton, storeLabel, syncPart, syncLabel,
     if (!store) return;
     const sync = syncItem(store, status, Date.now(), workspace);
     const problem = sync?.problem;
+    const outside = outsideChanges(store.watching);
     content.innerHTML = `<div class="store-details-body">
         ${store.unavailable ? `<p class="store-message is-danger">${escapeHtml(store.unavailable)}</p>` : ""}
         ${store.awaitingMove?.message ? `<p class="store-message is-warn">${escapeHtml(store.awaitingMove.message)}</p>` : ""}
         ${store.keptInCheckout?.message ? `<p class="store-message" data-kept-in-checkout>${escapeHtml(store.keptInCheckout.message)}</p>` : ""}
         ${sync?.message ? `<p class="store-message is-danger" data-unreachable>${escapeHtml(sync.message)}</p>` : problem && status?.message ? `<p class="store-message ${status.state === "conflicts" ? "is-warn" : "is-danger"}">${escapeHtml(status.message)}</p>` : ""}
+        ${outside?.message ? `<p class="store-message" data-outside-changes>${escapeHtml(outside.message)}</p>` : ""}
         ${storeFacts(store, status, workspace)}
+        ${outsideFoldersHtml(outside)}
         ${store.kind === "project" ? "" : `<section class="store-conflicts"><h3>Saved conflicts</h3>
           <p class="muted">When two checkouts change the same record, the sync keeps the upstream version and saves the local one. Compare them to redo a lost change through an agent.</p>
           ${unsavedHtml(status, describe)}<div data-conflicts><p class="muted">Loading\u2026</p></div></section>`}
@@ -154,6 +186,7 @@ function createRecordStoreStatus({ storeButton, storeLabel, syncPart, syncLabel,
 }
 export {
   createRecordStoreStatus,
+  outsideChanges,
   storeItem,
   syncItem
 };

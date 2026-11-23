@@ -1538,6 +1538,11 @@ a.code-link:hover {
   --prism-lib-columns: minmax(0, 2fr) 120px 140px minmax(0, 1fr);
 }
 
+/* The Requirements library: a title wide enough for a format mark beside it, then status, created date, and the slices that cite the file. */
+.knowledge-table.is-library {
+  --prism-lib-columns: minmax(0, 2.4fr) 150px 110px minmax(0, 1fr);
+}
+
 .knowledge-table.is-undated {
   --prism-lib-columns: minmax(0, 1fr) 120px;
 }

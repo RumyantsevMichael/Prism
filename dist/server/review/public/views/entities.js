@@ -22,7 +22,8 @@ const VIEWS = {
   agents: () => import("./agents.js"),
   diagrams: () => import("./library.js"),
   touched: () => import("./knowledge.js"),
-  changed: () => import("./knowledge.js")
+  changed: () => import("./knowledge.js"),
+  "migration-run": () => import("./format-migration.js")
 };
 const KNOWLEDGE_PAGES = Object.freeze({ diagrams: "Diagrams", touched: "Touched by my work", changed: "Changed this week" });
 function parseEntityRef(ref) {
@@ -30,7 +31,7 @@ function parseEntityRef(ref) {
   if (ref === "launches") return { kind: "agents" };
   const group = /^agents:(needs-you|this-computer|other|expired|archived)$/.exec(ref ?? "");
   if (group) return { kind: "agents", page: group[1] };
-  let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  let match = /^attention:(questions|findings|failed|blocked|ready|problems|formats|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "attention", page: match[1] };
   match = /^knowledge:(diagrams|touched|changed)$/.exec(ref ?? "");
   if (match) return { kind: "knowledge", page: match[1] };
@@ -38,6 +39,8 @@ function parseEntityRef(ref) {
   if (match) return { kind: "initiative", id: match[1] };
   match = /^slice:([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "slice", id: match[1], slug: match[2] };
+  match = /^migration-run:(run-[0-9a-f]{16})$/.exec(ref ?? "");
+  if (match) return { kind: "migration-run", id: match[1] };
   return null;
 }
 const RECORD_KINDS = [
@@ -89,6 +92,7 @@ function entityLabel(entity) {
   if (entity.kind === "roadmap") return { eyebrow: "Roadmap", title: "Roadmap", lead: data.serves || null, subtitle: data.recordPath ?? null };
   if (entity.kind === "initiative") return { eyebrow: "Initiative", title: data.roadmapItem?.title ?? data.id, subtitle: data.recordPath };
   if (entity.kind === "slice") return { eyebrow: `Slice \xB7 ${data.initiativeTitle}`, title: data.slice.title, subtitle: data.artifacts?.folder ?? null };
+  if (entity.kind === "migration-run") return { eyebrow: "Format migration", title: `${data.title} ${data.scope?.label ? `in scope ${data.scope.label}` : "in this checkout"}`, lead: null, subtitle: null };
   if (entity.kind === "agents") return { title: ENTITY_LABELS.agents, lead: "Every agent working on this workspace, and every session launched on this computer.", subtitle: null };
   if (entity.kind === "glossary") return { eyebrow: "Library", title: "Glossary", subtitle: data.path };
   if (entity.kind === "code") return { eyebrow: "Library", title: "Code", subtitle: null };

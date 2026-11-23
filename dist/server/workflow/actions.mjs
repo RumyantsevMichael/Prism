@@ -14,6 +14,8 @@ import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { readRoadmap } from "./roadmap.mjs";
 import { shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction, validEarlierName } from "./state.mjs";
+import { recommendedChoice } from "./format-migrations.mjs";
+import { RUN_ID, allRuns, answerMigrationRun, continueMigrationRun, failContinuation, followedRun, readRun, rerunMigration, settledRunLaunches } from "./migration-runs.mjs";
 import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
@@ -59,6 +61,7 @@ function field(name, kind, label, extra = {}) {
   return { name, kind, label, options: null, required: false, requiredWhen: null, maxLength: null, multiline: null, ...extra };
 }
 const choice = (name, label, options, extra = {}) => field(name, "choice", label, { options, ...extra });
+const choices = (name, label, options, extra = {}) => field(name, "choices", label, { options, ...extra });
 const toggle = (name, label, off, on) => field(name, "toggle", label, { options: [option("off", "Off", off), option("on", "On", on)], required: true });
 const text = (name, label, maxLength, extra = {}) => field(name, "text", label, { maxLength, multiline: false, ...extra });
 const MACHINE_TARGETS = ["machine:prism-runs"];
@@ -76,6 +79,8 @@ function parseTarget(reference) {
   if (match && SCOPE_LABEL.test(match[1])) return { kind: "artifact", reference, scope: match[1], path: match[2] };
   match = /^launch:(.+)$/.exec(reference);
   if (match && LAUNCH_ID_PATTERN.test(match[1])) return { kind: "launch", reference, launch: match[1] };
+  match = /^migration-run:(.+)$/.exec(reference);
+  if (match && RUN_ID.test(match[1])) return { kind: "migration-run", reference, run: match[1] };
   match = /^index:([^/]+)\/([^/]+)$/.exec(reference);
   if (match && REPOSITORY_NAME.test(match[1]) && REPOSITORY_NAME.test(match[2])) return { kind: "index", reference, identity: `${match[1]}/${match[2]}` };
   match = /^agent:(.+)$/.exec(reference);
@@ -127,6 +132,15 @@ async function seenArtifact(projectRoot, parsed) {
   });
 }
 async function readTarget(projectRoot, parsed, indexer, state = void 0, env = process.env, checkouts = null, readOptions = null) {
+  if (parsed.kind === "migration-run") {
+    const root = await realpath(projectRoot);
+    const record2 = await readRun(root, parsed.run).catch((error) => {
+      throw typeof error?.code === "string" ? storeRefusal(error) : error;
+    });
+    if (!record2) throw unknownTarget(parsed.reference);
+    const followed = record2.status === "failed" ? followedRun(await allRuns(root).catch(() => []), record2) : false;
+    return { ...parsed, runRecord: record2, followed };
+  }
   if (parsed.kind === "artifact") {
     const artifact = await seenArtifact(projectRoot, parsed);
     if (!artifact) throw unknownTarget(parsed.reference);
@@ -277,7 +291,7 @@ function modelsFields(context) {
     ...RUN_KINDS.map(({ kind, label, purpose }) => field(kind, "run-choice", label, { for: purpose, hint: RUN_CHOICE_HINTS[kind] }))
   ];
 }
-async function checkHostChoices(context, { host, provider, choices, ownRuns = false }, refuse) {
+async function checkHostChoices(context, { host, provider, choices: choices2, ownRuns = false }, refuse) {
   const label = hostLabel(context, host);
   const missing = hostOptions(context, () => "", { ownRuns }).find((item) => item.value === host)?.reason;
   if (missing) throw refuse("host", missing);
@@ -288,7 +302,7 @@ async function checkHostChoices(context, { host, provider, choices, ownRuns = fa
     if (base.state === "failed") throw refuse("provider", base.reason);
     if (!optionOf(base, "provider")?.values.some((item) => item.value === provider)) throw refuse("provider", choiceReasons.provider(label, provider));
   }
-  for (const { name, purpose, choice: choice2 } of choices) {
+  for (const { name, purpose, choice: choice2 } of choices2) {
     if (choice2.earlier !== void 0) throw refuse(name, earlierReason(label, choice2.earlier));
     if (choice2.typed && choice2.model === null) throw refuse(name, "Only a model name can be typed.");
     const breach = nameRuleBreach({ model: choice2.model, effort: choice2.effort });
@@ -304,8 +318,8 @@ async function checkHostChoices(context, { host, provider, choices, ownRuns = fa
 const refuseChoice = (name, message) => invalid(name, "A value that the host reports, the host default, or a model name typed as such.", message);
 async function checkedModels(values, context) {
   const { host, provider } = values;
-  const choices = RUN_KINDS.map(({ kind, purpose }) => ({ name: kind, purpose, choice: values[kind] ?? HOST_DEFAULT_CHOICE }));
-  await checkHostChoices(context, { host, provider, choices }, refuseChoice);
+  const choices2 = RUN_KINDS.map(({ kind, purpose }) => ({ name: kind, purpose, choice: values[kind] ?? HOST_DEFAULT_CHOICE }));
+  await checkHostChoices(context, { host, provider, choices: choices2 }, refuseChoice);
   const after = modelsOf(context);
   after[host] = { provider, ...Object.fromEntries(RUN_KINDS.map(({ kind }) => [kind, values[kind] ?? { ...HOST_DEFAULT_CHOICE }])) };
   return after;
@@ -391,7 +405,10 @@ const SETTING_ACTIONS = SETTING_DEFINITIONS.filter((definition) => INITIATIVE_SE
 function gateFields(gate) {
   const note = (extra) => text("note", "Note", NOTE_LIMIT, { multiline: true, ...extra });
   if (gate.kind === "visual-review" || gate.kind === "correctness" || gate.kind === "approval") {
-    return [choice("choice", "Answer", [option("approve", "Approve"), option("request-changes", "Request changes")], { required: true }), note({ requiredWhen: { field: "choice", values: ["request-changes"] } })];
+    return [choice("choice", "Answer", [
+      option("approve", "Approve", "The agent goes on with the work as it stands."),
+      option("request-changes", "Request changes", "The agent revises the work from your note before it goes on.")
+    ], { required: true }), note({ requiredWhen: { field: "choice", values: ["request-changes"] } })];
   }
   if (gate.kind === "decision" && Array.isArray(gate.options) && gate.options.length) {
     return [choice("choice", "Answer", gate.options.map((item) => option(item.id, item.label, typeof item.consequence === "string" ? item.consequence : null))), note({ requiredWhen: { field: "choice", values: [null] } })];
@@ -577,6 +594,88 @@ const LAUNCH_RESUME = {
     return { launch, after: { launch: launch.id, run: launch.runs }, initiative: context.initiative, started: launch.id };
   }
 };
+const POINT_TEXT_MAX = 500;
+const askedPoints = (context) => (context.runRecord.question?.points ?? []).filter((point) => isRecord(point) && typeof point.id === "string");
+const answeredPoints = (context) => askedPoints(context).filter((point) => point.kind !== "remove-source");
+const pointNumber = (context, point) => askedPoints(context).indexOf(point) + 1;
+const ENTRY_OPTIONS = [
+  option("same", "They mean the same", "The target keeps its words, and the source's text counts as kept."),
+  option("target", "They differ: keep the target's", "The target's entry stays as it is."),
+  option("source", "They differ: take the source's", "The source's text replaces the target's entry.")
+];
+const CONFLICT_OPTIONS = [option("target", "Keep the target's definition", "The target's entry stays as it is."), option("source", "Take the source's definition", "The source's version replaces the target's entry.")];
+function pointField(context, point) {
+  const label = `Point ${pointNumber(context, point)}`;
+  if (point.kind === "entry") return choice(point.id, label, ENTRY_OPTIONS, { required: true, point: point.kind });
+  if (point.kind === "conflict") return choice(point.id, label, CONFLICT_OPTIONS, { required: true, point: point.kind });
+  return text(point.id, label, POINT_TEXT_MAX, { required: true, multiline: point.kind === "leftover", point: point.kind, ...point.kind === "unknown" ? { allowsUnknown: point.allowsUnknown === true } : {} });
+}
+function pointDefault(point) {
+  if (point.kind === "entry" || point.kind === "conflict") return recommendedChoice(point.kind, point.recommendation);
+  return typeof point.recommendation === "string" ? point.recommendation : null;
+}
+const RUN_NOT_ASKING = (record) => `The format migration run is ${record.status === "waiting-for-host" ? "waiting for a host" : record.status}, so it asks nothing to answer.`;
+const answerRefusal = (record) => record.answers !== null && record.answers !== void 0 ? "The format migration run already has its answers." : record.status !== "asking" ? RUN_NOT_ASKING(record) : null;
+const MIGRATION_RUN_ANSWER = {
+  id: "migration-run.answer",
+  kinds: ["migration-run"],
+  label: "Send answers",
+  group: "Format migration",
+  effect: "Records your answers, and Prism continues the run with them; it then applies every file of the run together, or none of them.",
+  target: (context) => context.reference,
+  fields: (context) => answeredPoints(context).map((point) => pointField(context, point)),
+  value: (context) => Object.fromEntries(answeredPoints(context).map((point) => [point.id, pointDefault(point)])),
+  // Every answer is recorded, also one that takes each recommendation as it stands.
+  stored: () => null,
+  context: () => null,
+  recommended: () => null,
+  confirm: () => ({ field: null, values: [], message: "Prism continues the run with your answers and applies every file of the run together, or none of them. You cannot change the answers afterwards." }),
+  revision: (context) => context.runRecord.question?.askedAt ?? context.runRecord.status,
+  unavailable: (context) => answerRefusal(context.runRecord),
+  unavailableCode: (context) => context.runRecord.answers !== null && context.runRecord.answers !== void 0 ? "already_answered" : "run_not_asking",
+  after(values, context) {
+    const answers = {};
+    for (const point of askedPoints(context)) {
+      if (point.kind === "remove-source") {
+        answers[point.id] = { choice: "remove", value: null };
+        continue;
+      }
+      const given = values[point.id];
+      const label = `Point ${pointNumber(context, point)}`;
+      if (point.kind === "entry" || point.kind === "conflict") {
+        answers[point.id] = { choice: given, value: null };
+        continue;
+      }
+      if (point.kind === "unknown") {
+        if (/[\r\n]/.test(given)) throw invalid(point.id, "One line of 1 to 500 characters.", `${label} is one line: write the missing value without a line break.`);
+        if (given.toLowerCase() === "unknown" && point.allowsUnknown !== true) throw invalid(point.id, "A value other than unknown.", `${label} needs a real value: this file is decided, so unknown cannot stay in it.`);
+        answers[point.id] = { choice: "value", value: given };
+        continue;
+      }
+      answers[point.id] = { choice: null, value: given };
+    }
+    return answers;
+  }
+};
+const runNotFailed = (context) => context.runRecord.status !== "failed" ? `The format migration run is ${context.runRecord.status === "waiting-for-host" ? "waiting for a host" : context.runRecord.status}, and only a failed run runs again.` : context.followed ? "A later format migration run already follows this one." : null;
+const MIGRATION_RUN_RERUN = {
+  id: "migration-run.rerun",
+  kinds: ["migration-run"],
+  label: "Run again",
+  group: "Format migration",
+  effect: "Starts this format migration again for the files of the run that still break their format, apart from every other task.",
+  target: (context) => context.reference,
+  fields: () => [],
+  value: () => null,
+  stored: () => null,
+  context: () => null,
+  recommended: () => null,
+  confirm: () => ({ field: null, values: [], message: "Prism starts a new run of this format migration on this computer for the files that still break their format." }),
+  revision: (context) => context.runRecord.endedAt ?? context.runRecord.status,
+  unavailable: runNotFailed,
+  unavailableCode: () => "run_not_failed",
+  after: () => ({ rerun: true })
+};
 const LAUNCH_PERMISSION = {
   ...launchBase,
   id: "launch.permission",
@@ -648,7 +747,7 @@ const AGENT_REMOVE = {
     return { launch: null, after: { agent: removed.id, removed: true }, initiative: null, started: null, record: false };
   }
 };
-const AUTOMATIC_ONLY_DEFAULTS = "Any available host takes only the host's default model.";
+const AUTOMATIC_ONLY_DEFAULTS = "Any available host chooses its model itself.";
 const UNREADABLE_PRISM_RUNS = "The stored choice could not be read, so each run starts on the first host Prism finds with its default model until you apply a host.";
 const prismRunsValue = (context) => {
   const { state, choice: choice2 } = context.prismRuns;
@@ -665,7 +764,7 @@ const MACHINE_PRISM_RUNS = {
   target: (context) => context.reference,
   fields: (context) => [
     choice("host", "Host", [
-      { value: AUTOMATIC, label: AUTOMATIC_LABEL, consequence: "Each run starts on the first host Prism finds on this computer, with its default model.", reason: null },
+      { value: AUTOMATIC, label: AUTOMATIC_LABEL, consequence: "Each run starts with Codex and its GPT-6 Luna model where Codex lists it, and otherwise on the first host Prism finds on this computer with a small model.", reason: null },
       ...hostOptions(context, (label) => `${label} runs Prism's own runs.`, { ownRuns: true })
     ], { required: true, ...context.prismRuns.state === "unreadable" ? { hint: UNREADABLE_PRISM_RUNS } : {} }),
     field("provider", "run-option", "Provider", { for: "coordinator", option: "provider", hint: PROVIDER_HINT, fixedWhen: { field: "host", values: [AUTOMATIC] } }),
@@ -690,7 +789,7 @@ const MACHINE_PRISM_RUNS = {
     return { host, provider, run: { model: run.model, effort: run.effort, typed: run.typed } };
   }
 };
-const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, AGENT_INSTALL, AGENT_UPDATE, AGENT_REMOVE, MACHINE_PRISM_RUNS];
+const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, MIGRATION_RUN_ANSWER, MIGRATION_RUN_RERUN, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, AGENT_INSTALL, AGENT_UPDATE, AGENT_REMOVE, MACHINE_PRISM_RUNS];
 const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
 function view(definition, context) {
   const reason = context.shipped && !definition.ownsShipped ? shippedActionReason(context.shipped) : definition.unavailable(context);
@@ -746,6 +845,12 @@ function readInput(fields, input, ignores = () => []) {
     const raw = input[item.name];
     if (item.kind === "run-option" || item.kind === "run-choice") {
       values[item.name] = item.kind === "run-option" ? runOptionInput(item, raw) : runChoiceInput(item, raw);
+    } else if (item.kind === "choices") {
+      const accepted = optionValues(item);
+      if (raw !== void 0 && raw !== null && (!Array.isArray(raw) || raw.some((value) => typeof value !== "string" || !accepted.includes(value)) || new Set(raw).size !== raw.length)) {
+        throw invalid(item.name, accepted, `${item.label} must be a list of distinct values among ${accepted.join(", ") || "none"}.`);
+      }
+      values[item.name] = Array.isArray(raw) && raw.length ? accepted.filter((value) => raw.includes(value)) : null;
     } else if (item.kind === "text") {
       ignored ??= new Set(ignores(values));
       if (ignored.has(item.name)) {
@@ -825,7 +930,7 @@ async function check(definition, context, { revision, input, confirmed }) {
   const after = await definition.after(values, context);
   const unchanged = definition.stored ? definition.stored(context) : current.value;
   if (unchanged !== null && sameValue(after, unchanged)) return null;
-  if (current.confirm && current.confirm.values.includes(values[current.confirm.field] ?? null) && confirmed !== true) {
+  if (current.confirm && (current.confirm.field === null || current.confirm.values.includes(values[current.confirm.field] ?? null)) && confirmed !== true) {
     throw fail("confirmation_required", current.confirm.message, { confirm: current.confirm });
   }
   return { current, after };
@@ -862,6 +967,7 @@ async function applyAction({ projectRoot, target, action, input, revision, confi
       if (error?.code === "artifact_changed") throw fail("artifact_changed", APPROVAL_CHANGED);
       if (error?.code === "invalid_answer") throw fail("invalid_input", error.message, { field: null });
       if (error?.code === "approval_ambiguous") throw fail("approval_ambiguous", error.message, { reason: error.message });
+      if (error?.code === "artifact_nonconforming") throw fail("artifact_nonconforming", error.message, { reason: error.message, artifacts: error.artifacts });
       throw storeRefused(error) ? storeRefusal(error) : error;
     });
   } else if (parsed.kind === "artifact") {
@@ -875,6 +981,30 @@ async function applyAction({ projectRoot, target, action, input, revision, confi
       if (error?.code === "version_conflict") throw fail("stale_revision", "The file changed since the page read it.", { current: view(definition, { ...read, artifact: { ...artifact, version: error.version ?? null } }) });
       throw storeRefused(error) ? storeRefusal(error) : error;
     });
+  } else if (parsed.kind === "migration-run") {
+    const reason = definition.unavailable(read);
+    if (reason) throw fail(definition.unavailableCode(read), reason, { reason });
+    const checked = await check(definition, read, request);
+    applied = await entryOf(checked, read);
+    if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the answer cannot record who gave it; set one with git config user.name and answer again.");
+    const runRefusal = (error) => {
+      if (["already_answered", "run_not_asking", "run_not_failed", "migration_run_conforming", "migration_run_closed"].includes(error?.code)) throw fail(error.code, error.message, { reason: error.message });
+      if (error?.code === "migration_run_unknown") throw unknownTarget(target);
+      throw typeof error?.code === "string" && error.name === "FormatMigrationError" ? storeRefusal(error) : error;
+    };
+    if (definition.id === "migration-run.answer") {
+      const by = { name: applied.by.name, email: applied.by.email, checkout: applied.by.checkout };
+      const answers = Object.fromEntries(Object.entries(checked.after).map(([id, answer]) => [id, { ...answer, by, at: applied.at }]));
+      await answerMigrationRun(projectRoot, parsed.run, answers, { askedAt: read.runRecord.question?.askedAt }).catch(runRefusal);
+      await continueMigrationRun(projectRoot, parsed.run, { env }).catch(async (error) => {
+        if (error?.code === "migration_run_closed") return;
+        await failContinuation(projectRoot, parsed.run, error?.message || String(error)).catch(() => {
+        });
+      });
+    } else {
+      await rerunMigration(projectRoot, parsed.run, { name: applied.by.name, email: applied.by.email }, { env }).catch(runRefusal);
+      await settledRunLaunches(await realpath(projectRoot));
+    }
   } else if (parsed.kind === "machine") {
     const checked = await check(definition, read, request);
     if (checked) {

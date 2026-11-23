@@ -2,12 +2,13 @@
 // Generated from src/server/session/launch-supervisor.mts by scripts/native-build/compile.mjs.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
-import { launchCoordinator, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
+import { launchCoordinator, launchView, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
 import { isAcpHost } from "./acp-agents.mjs";
-import { hostArguments, hostConversation, hostEnvironment, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { hostArguments, hostConversation, hostEnvironment, migrationServerDefinition, MIGRATION_SERVER, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 import { approvalText, confirmApproval } from "./launch-confirmation.mjs";
 import { permissionBroker, shownForm } from "./permission-requests.mjs";
 const STDERR_KEEP = 64 * 1024;
@@ -84,11 +85,42 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
   }
   const acp = resolved.acp ?? null;
   const agentVersion = acp?.install ? path.basename(acp.install.folder) : null;
-  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator, acp });
+  const workFolder = typeof record.migrationRun === "string" ? record.workdir : record.checkout;
+  if (typeof workFolder !== "string" || !workFolder) {
+    await failStart("The format migration run's launch has no working folder of its own, so its session cannot start.");
+    return;
+  }
+  const migration = typeof record.migrationRun === "string";
+  const migrationServer = migration ? migrationServerDefinition({ run: record.migrationRun, project: record.checkout, launch: record.id, env }) : null;
+  let mcpConfig = null;
+  if (migration) {
+    mcpConfig = path.join(folder2, "mcp-config.json");
+    await writeFile(mcpConfig, `${JSON.stringify({ mcpServers: { [MIGRATION_SERVER]: migrationServer } }, null, 2)}
+`, { mode: 384 });
+  }
+  let args;
+  try {
+    args = hostArguments({
+      host: record.host,
+      hostSessionId: record.hostSessionId,
+      resume,
+      coordinator,
+      access: record.access ?? "full",
+      readRoots: record.readRoots ?? [],
+      // A format migration run's Claude Code session is denied every read of the checkout, whatever the person's own settings allow.
+      deniedRoots: migration ? [record.checkout] : [],
+      mcpConfig,
+      acp
+    });
+  } catch (error) {
+    await failStart(error.message);
+    return;
+  }
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
   let stderrTrimmed = false;
+  let ending = null;
   const watch = (child) => {
     child.stdin.on("error", () => {
     });
@@ -102,9 +134,13 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
     });
     const conversation = hostConversation(record.host, {
       permissions,
-      acp: acp && { label: resolved.label, autoMode: acp.autoMode ?? null, env, launch: record.id, agentPid: () => child.pid ?? null },
+      acp: acp && { label: resolved.label, autoMode: acp.autoMode ?? null, env, launch: record.id },
       initiative: record.initiative,
-      checkout: record.checkout,
+      migrationRun: record.migrationRun ?? null,
+      access: record.access ?? "full",
+      readRoots: record.readRoots ?? [],
+      migrationServer,
+      checkout: workFolder,
       hostSessionId: record.hostSessionId,
       resume,
       coordinator,
@@ -233,12 +269,16 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
         const kept = keptStderr(stderr, stderrTrimmed, [record.hostSessionId, facts.hostSessionId, facts.agentSessionId]);
         await writeAtomically(path.join(folder2, `run-${number}.stderr`), kept, { mode: 384 }).catch(() => {
         });
+        ending = { normal: acp ? facts.settled && facts.stopReason === "end_turn" : true, lastMessage: facts.lastMessage };
+        const { markResultCheck } = await import("./launched-sessions.mjs");
+        await markResultCheck({ id: record.id, token: token2, env }).catch(() => {
+        });
         await update((current) => {
           if (!current.hostSessionId && facts.hostSessionId) current.hostSessionId = facts.hostSessionId;
           const run = current.runs.find((entry) => entry.token === token2);
           if (!run) return;
           const last = lastReasonLine(redactSessionId(kept, current.hostSessionId));
-          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, failure: facts.failure, stderr: last?.slice(0, STDERR_LINE_MAX) ?? null, ...acp ? { usage: facts.usage, settled: facts.settled } : {} });
+          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, failure: facts.failure, stderr: last?.slice(0, STDERR_LINE_MAX) ?? null, ...acp ? { usage: facts.usage, settled: facts.settled, ownToolAllows: facts.ownToolAllows } : {} });
           if (!run.stopRequestedAt && request) run.stopRequestedAt = new Date(requestTime(request)).toISOString();
         });
         resolve();
@@ -255,7 +295,7 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
     }
     let child;
     try {
-      child = spawn(resolved.command, [...resolved.prefix, ...args], { cwd: record.checkout, env: acp ? hostEnvironment(env, record.id, acp) : env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      child = spawn(resolved.command, [...resolved.prefix, ...args], { cwd: workFolder, env: acp ? hostEnvironment(env, record.id, null, null, acp) : env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     } catch (error) {
       await failStart(`${resolved.label} could not be started: ${error.message}`);
       return null;
@@ -267,17 +307,39 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
   if (!started) await update((current) => {
     if (current.starting?.token === token2) delete current.starting;
   });
-  if (started) await started.ended;
+  if (started) {
+    const { withdrawRunQuestions } = await import("./launched-sessions.mjs");
+    await withdrawRunQuestions({ id: record.id, env }).catch(() => {
+    });
+    await started.ended;
+  }
   await queue;
   if (started && agentVersion !== null) {
     const { sweepUnusedVersions } = await import("./agent-installs.mjs");
     await sweepUnusedVersions(env, [acp.id]);
   }
+  if (started && typeof record.migrationRun === "string") {
+    await reportRunEnd(folder2, token2).catch(() => {
+    });
+    return;
+  }
   if (started) {
-    const { resumeForAnswers } = await import("./launched-sessions.mjs");
-    await resumeForAnswers({ id: record.id, token: token2, env }).catch(() => {
+    const { resumeForAnswers, settleRunResult } = await import("./launched-sessions.mjs");
+    const resumed = await resumeForAnswers({ id: record.id, token: token2, env }).catch(() => false);
+    const ended = ending;
+    await settleRunResult({ id: record.id, token: token2, normal: ended?.normal === true, resumed, lastMessage: ended?.lastMessage ?? null, env }).catch(() => {
     });
   }
+}
+async function reportRunEnd(folder2, token2) {
+  const record = await readLaunchRecord(folder2);
+  const run = record?.runs.find((entry) => entry.token === token2);
+  if (!run?.endedAt || record.runs.at(-1) !== run) return;
+  const view = launchView(record);
+  const exit = run.exit?.signal ? `signal ${run.exit.signal}` : `exit code ${run.exit?.code ?? "unknown"}`;
+  const reason = view.reason ?? (view.state === "stopped" ? `${view.hostLabel} was stopped.` : `${view.hostLabel} ended with ${exit}.`);
+  const { sessionEnded } = await import("../workflow/migration-runs.mjs");
+  await sessionEnded(record.checkout, record.migrationRun, { launch: record.id, reason, endedAt: run.endedAt });
 }
 const [folder, cause, token] = process.argv.slice(2);
 if (folder && process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

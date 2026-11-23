@@ -22,6 +22,12 @@ const RECORD_FILES = Object.freeze({ initiative: "initiative.json", state: "stat
 const SLICE_KINDS = /* @__PURE__ */ new Set(["review", "change-map", "design-view", "frozen-tests", "runs"]);
 const LEGACY_CHANGE_MAP = "concept-delta.json";
 const CLAIMS = "claims";
+const FORMAT_MIGRATIONS = "format-migrations";
+const FORMAT_MIGRATION_ID = /^(?:migration-[0-9a-f]{8,64}|run-[0-9a-f]{16})$/;
+const FORMAT_MIGRATION_FILE = /^(?:migration-[0-9a-f]{8,64}|run-[0-9a-f]{16})\.json$/;
+const FORMAT_FINDINGS = "format-findings";
+const FORMAT_FINDING_ID = /^finding-[0-9a-f]{16,64}$/;
+const FORMAT_FINDING_FILE = /^finding-[0-9a-f]{16,64}\.json$/;
 const HOUSEKEEPING = Object.freeze({
   ".gitattributes": "# Prism writes these records through its MCP tools; hosts collapse them in pull request diffs.\n/roadmap.json linguist-generated=true gitlab-generated\n/initiatives/** linguist-generated=true gitlab-generated\n",
   ".gitignore": "# Transient lock and write files of Prism records, and the store's sync state.\n*.lock\n.*.tmp\n/.prism-sync/\n"
@@ -58,6 +64,14 @@ function requireSlug(value, label) {
 }
 function recordPath(key) {
   if (key?.kind === "roadmap") return ROADMAP_RECORD;
+  if (key?.kind === "format-migration") {
+    if (typeof key.id !== "string" || !FORMAT_MIGRATION_ID.test(key.id)) throw fail("invalid_path", "A format migration record id is run- and 16 hexadecimal digits, or migration- and hexadecimal digits.");
+    return `${RECORD_DIRECTORY}/${FORMAT_MIGRATIONS}/${key.id}.json`;
+  }
+  if (key?.kind === "format-finding") {
+    if (typeof key.id !== "string" || !FORMAT_FINDING_ID.test(key.id)) throw fail("invalid_path", "A format finding id is finding- and hexadecimal digits.");
+    return `${RECORD_DIRECTORY}/${FORMAT_FINDINGS}/${key.id}.json`;
+  }
   const initiative = requireSlug(key?.initiative, "initiative");
   if (key.kind === "initiative" || key.kind === "state") return `${INITIATIVES}/${initiative}/${RECORD_FILES[key.kind]}`;
   if (key.kind === "claim") return `${INITIATIVES}/${initiative}/${CLAIMS}/${requireSlug(key.slice, "slice")}.json`;
@@ -82,7 +96,7 @@ function parseRecordPath(relative) {
   return null;
 }
 function isManagedRecordFile(relative) {
-  if (relative === ROADMAP_RECORD || relative.startsWith(`${INITIATIVES}/`)) return true;
+  if (relative === ROADMAP_RECORD || relative.startsWith(`${INITIATIVES}/`) || relative.startsWith(`${RECORD_DIRECTORY}/${FORMAT_MIGRATIONS}/`) || relative.startsWith(`${RECORD_DIRECTORY}/${FORMAT_FINDINGS}/`)) return true;
   return relative.startsWith(`${RECORD_DIRECTORY}/`) && Object.hasOwn(HOUSEKEEPING, relative.slice(RECORD_DIRECTORY.length + 1));
 }
 const MIGRATION_FILE = /^(?:\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{8}|[0-9a-f]{40,64})\.json$/;
@@ -99,6 +113,8 @@ function isStoreFile(relative) {
   if (names[0] === ARTIFACT_IDENTITY) return names.length > 1 && names.slice(1).every(wellFormedName) && locationArtifact(names.slice(1).join("/")) !== null;
   if (names[0] === "migrations") return names.length === 2 && MIGRATION_FILE.test(names[1]);
   if (names[0] === ARTIFACT_MIGRATIONS) return names.length === 2 && ARTIFACT_LEDGER_FILE.test(names[1]);
+  if (names[0] === FORMAT_MIGRATIONS) return names.length === 2 && FORMAT_MIGRATION_FILE.test(names[1]);
+  if (names[0] === FORMAT_FINDINGS) return names.length === 2 && FORMAT_FINDING_FILE.test(names[1]);
   if (names[0] === REPOSITORIES) return names.length === 2 && names[1].endsWith(".json") && portableRepositoryName(names[1].slice(0, -".json".length));
   if (names[0] !== "initiatives") return false;
   const key = parseRecordPath(`${RECORD_DIRECTORY}/${relative}`);
@@ -114,6 +130,8 @@ const STORE_FILE_BOUNDS = Object.freeze({
   comment: 64 * KiB,
   ledger: 16 * MiB,
   migration: 16 * MiB,
+  "format-migration": 16 * MiB,
+  "format-finding": 64 * KiB,
   registration: 64 * KiB,
   roadmap: MiB,
   initiative: MiB,
@@ -137,13 +155,13 @@ function storeFileBound(relative) {
   if (typeof relative === "string" && Object.hasOwn(HOUSEKEEPING, relative)) return STORE_FILE_BOUNDS["root-git"];
   if (typeof relative !== "string" || !isStoreFile(relative)) return null;
   const top = relative.split("/")[0];
-  const kind = { [ARTIFACTS]: "artifact", [ARTIFACT_ACCEPTED]: "accepted", [ARTIFACT_STATUS]: "status", [ARTIFACT_IDENTITY]: "identity", [ARTIFACT_COMMENTS]: "comment", [ARTIFACT_MIGRATIONS]: "ledger", migrations: "migration", [REPOSITORIES]: "registration" }[top] ?? parseRecordPath(`${RECORD_DIRECTORY}/${relative}`)?.kind;
+  const kind = { [ARTIFACTS]: "artifact", [ARTIFACT_ACCEPTED]: "accepted", [ARTIFACT_STATUS]: "status", [ARTIFACT_IDENTITY]: "identity", [ARTIFACT_COMMENTS]: "comment", [ARTIFACT_MIGRATIONS]: "ledger", migrations: "migration", [FORMAT_MIGRATIONS]: "format-migration", [FORMAT_FINDINGS]: "format-finding", [REPOSITORIES]: "registration" }[top] ?? parseRecordPath(`${RECORD_DIRECTORY}/${relative}`)?.kind;
   return STORE_FILE_BOUNDS[kind] ?? null;
 }
 function isStoreFolder(relative) {
   if (typeof relative !== "string") return false;
   const names = relative.split("/");
-  if (names.length === 1) return ["initiatives", ARTIFACTS, ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, "migrations", REPOSITORIES].includes(names[0]);
+  if (names.length === 1) return ["initiatives", ARTIFACTS, ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, "migrations", FORMAT_MIGRATIONS, FORMAT_FINDINGS, REPOSITORIES].includes(names[0]);
   if (names[0] === ARTIFACTS || names[0] === ARTIFACT_STATUS || names[0] === ARTIFACT_COMMENTS || names[0] === ARTIFACT_IDENTITY) return names.slice(1).every(wellFormedName);
   if (names[0] !== "initiatives" || !SLUG_PATTERN.test(names[1])) return false;
   if (names.length === 2) return true;
@@ -965,6 +983,38 @@ async function appendRecord(projectRootPath, key, id, entry) {
   if (store.sync) scheduleRecordSync(store.base);
   return appended;
 }
+async function listFormatMigrationRecords(projectRootPath) {
+  const { located } = await locate(projectRootPath, { kind: "format-migration", id: "migration-00000000" });
+  const folder = path.dirname(located.target);
+  let names = [];
+  try {
+    names = (await readdir(folder)).filter((name) => FORMAT_MIGRATION_FILE.test(name)).sort();
+  } catch (error) {
+    if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
+  }
+  const records = [];
+  for (const name of names) {
+    const bytes = await readBytes(path.join(folder, name), STORE_FILE_BOUNDS["format-migration"]).catch(() => null);
+    if (bytes !== null) records.push({ id: name.slice(0, -".json".length), bytes });
+  }
+  return records;
+}
+async function listFormatFindingRecords(projectRootPath) {
+  const { located } = await locate(projectRootPath, { kind: "format-finding", id: "finding-0000000000000000" });
+  const folder = path.dirname(located.target);
+  let names = [];
+  try {
+    names = (await readdir(folder)).filter((name) => FORMAT_FINDING_FILE.test(name)).sort();
+  } catch (error) {
+    if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
+  }
+  const records = [];
+  for (const name of names) {
+    const bytes = await readBytes(path.join(folder, name), STORE_FILE_BOUNDS["format-finding"]).catch(() => null);
+    if (bytes !== null) records.push({ id: name.slice(0, -".json".length), bytes });
+  }
+  return records;
+}
 async function listRecordEntries(projectRootPath, key, { maxBytes = STORE_FILE_BOUNDS.runs } = {}) {
   const { located } = await locate(projectRootPath, key);
   let names = [];
@@ -1272,6 +1322,8 @@ export {
   ARTIFACT_COMMENT_FILE,
   ARTIFACT_LEDGER_FILE,
   COMMENTS_PER_ARTIFACT_MAX,
+  FORMAT_FINDINGS,
+  FORMAT_MIGRATIONS,
   INERT_FILES,
   RECORD_DIRECTORY,
   RecordStoreError,
@@ -1296,6 +1348,8 @@ export {
   isStoreWithoutCheckout,
   keyOfPath,
   listClaimRecords,
+  listFormatFindingRecords,
+  listFormatMigrationRecords,
   listInitiatives,
   listRecordEntries,
   listRecordStoreConflicts,

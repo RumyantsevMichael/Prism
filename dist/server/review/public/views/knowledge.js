@@ -1,5 +1,6 @@
 // Generated from src/server/review/public/views/knowledge.ts by scripts/native-build/compile.mjs.
 import { artifactLink, bindLinks, emptyState, escapeHtml, pageSub, recordStatus, setPageSub } from "./util.js";
+import { formatBadge } from "./format-marks.js";
 const KINDS = Object.freeze({
   requirement: ["Requirement", "list"],
   decision: ["Decision", "scale"],
@@ -17,7 +18,8 @@ function statusChip(status) {
 }
 function titleCell(record, ctx) {
   const [, icon] = KINDS[record.kind] ?? ["", "file"];
-  return `<span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon>${artifactLink(record.ref, ctx, record.title)}</span>`;
+  const format = record.format !== void 0 ? record.format : ctx.formatOf?.(record.ref) ?? null;
+  return `<span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon>${artifactLink(record.ref, ctx, record.title)}${formatBadge(format)}</span>`;
 }
 const kindText = (record) => KINDS[record.kind]?.[0] ?? record.kind;
 function head(columns) {

@@ -5,7 +5,7 @@ const DEFAULT_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/la
 const REGISTRY_KEPT_MS = 10 * 60 * 1e3;
 const READ_TIMEOUT_MS = 3e4;
 const MAX_INDEX_BYTES = 16 * 1024 * 1024;
-const ARCHIVE_SUFFIXES = Object.freeze([".tar.gz", ".tgz", ".zip"]);
+const UNSUPPORTED_SUFFIXES = Object.freeze([".dmg", ".pkg", ".deb", ".rpm", ".msi", ".tar.xz", ".txz", ".xz", ".tar.zst", ".zst", ".7z", ".rar", ".tar"]);
 const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const NPM_NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
 const UV_PIN = /^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9._,-]+\])?==([A-Za-z0-9][A-Za-z0-9.+!_-]*)$/;
@@ -129,7 +129,7 @@ async function installRefusal(name, distribution, env) {
         return distribution.archive.toLowerCase();
       }
     })();
-    if (!ARCHIVE_SUFFIXES.some((suffix) => archive.endsWith(suffix))) return `The ${distribution.platform} archive of ${name} is not a .tar.gz, .tgz, or .zip file, so Prism cannot unpack it.`;
+    if (UNSUPPORTED_SUFFIXES.some((suffix) => archive.endsWith(suffix))) return `The ${distribution.platform} download of ${name} is not a .zip, .tar.gz, .tgz, .tar.bz2, or .tbz2 archive or the program itself, so Prism cannot unpack it.`;
     return null;
   }
   const tool = distribution.kind === "npx" ? "npm" : "uv";
