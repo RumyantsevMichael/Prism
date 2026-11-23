@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { git, storeProject, storeRead, storeWrite as writeInScope } from "./artifact-formats-store.mjs";
 import { answerGate, reviewBrowser } from "./workspace-artifacts.mjs";
 
@@ -7,6 +9,27 @@ export { storeRead };
 
 /** Write one store artifact through update_artifact, in the checkout's repository scope api unless another scope is named. */
 export const storeWrite = (call, file, content, options = {}) => writeInScope(call, file, content, { scope: "repository", ...options });
+
+// Store locations of the checkout api's repository scope, by the configured path each kind of artifact has in the checkout.
+const STORE_FOLDERS = Object.freeze([["docs/requirements/", "requirements/"], ["docs/ADRs/", "adrs/"]]);
+
+/**
+ * Place one requirement file or ADR in the repository scope api as another machine's sync brings it, without update_artifact,
+ * since every write through Prism refuses an artifact that breaks its format: its bytes, and with a status its status record.
+ * A file placed without a status reads as the status Prism gives an artifact it has no record of.
+ */
+export async function syncedFile(place, file, content, { status = null } = {}) {
+  const [prefix, folder] = STORE_FOLDERS.find(([configured]) => file.startsWith(configured)) ?? [];
+  if (!prefix) throw new Error(`syncedFile places requirement files and ADRs, not ${file}`);
+  const location = `repositories/api/${folder}${file.slice(prefix.length)}`;
+  const target = path.join(place.store, "artifacts", ...location.split("/"));
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, content);
+  if (status === null) return;
+  const record = path.join(place.store, "artifact-status", ...location.split("/"), "status.json");
+  await mkdir(path.dirname(record), { recursive: true });
+  await writeFile(record, `${JSON.stringify({ status, acceptedVersion: null, approval: null, pending: [], closed: [], history: [] })}\n`);
+}
 
 /** A conforming requirement file with one Active section, in the given status, whose statement is the given text. */
 export function requirementText(title, { status = "Draft", statement = "When a person asks, the system shall do the thing." } = {}) {

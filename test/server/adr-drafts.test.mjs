@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ADR } from "./fixtures/artifact-formats.mjs";
-import { DRAFT_ADR, OPTIONS, draftAdr, itemProject, storeRead, storeWrite } from "./fixtures/work-items.mjs";
+import { DRAFT_ADR, OPTIONS, draftAdr, itemProject, storeRead, storeWrite, syncedFile } from "./fixtures/work-items.mjs";
 
 // Draft ADRs: version 2 of the ADR format, the Draft status, and design's decision that makes a Draft ADR Proposed.
+// Every write through Prism refuses an ADR that breaks its format, so a broken ADR arrives as another machine's sync brings it.
 
 const PATH = "docs/ADRs/sync/change-delivery.md";
 
@@ -24,14 +25,14 @@ test("§33: check_artifacts reports the ADR format as version 2 and accepts a Dr
 });
 
 test("§33: a Draft ADR with fewer than two options, a decision, or an option without costs breaks the format under adr.sections", async (context) => {
-  const { call } = await project(context);
+  const { place, call } = await project(context);
   const cases = {
     "docs/ADRs/sync/one-option.md": draftAdr("One option", { options: [OPTIONS[0]] }),
     "docs/ADRs/sync/decided.md": draftAdr("Decided", { extra: "\n## Decision\n\nClients poll.\n" }),
     "docs/ADRs/sync/no-costs.md": draftAdr("No costs", { options: [OPTIONS[0], { ...OPTIONS[1], costs: "" }] }),
     "docs/ADRs/sync/bad-preference.md": draftAdr("Bad preference", { options: [OPTIONS[0], { ...OPTIONS[1], preferred: "Ada Reviewer" }] })
   };
-  for (const [file, text] of Object.entries(cases)) await storeWrite(call, file, text);
+  for (const [file, text] of Object.entries(cases)) await syncedFile(place, file, text, { status: "Draft" });
   for (const file of Object.keys(cases)) {
     const entry = await checkOne(call, file);
     assert.equal(entry.conforms, false, file);
@@ -39,8 +40,19 @@ test("§33: a Draft ADR with fewer than two options, a decision, or an option wi
   }
 });
 
+test("§33: a Declined ADR with options and no decision, as a declined Draft ADR is left, is checked by the Draft rules", async (context) => {
+  const { place, call } = await project(context);
+  const declined = "docs/ADRs/sync/declined.md";
+  const broken = "docs/ADRs/sync/declined-one-option.md";
+  await syncedFile(place, declined, draftAdr("Declined choice").replace("Status: Draft", "Status: Declined"), { status: "Declined" });
+  await syncedFile(place, broken, draftAdr("Declined one option", { options: [OPTIONS[0]] }).replace("Status: Draft", "Status: Declined"), { status: "Declined" });
+  const entry = await checkOne(call, declined);
+  assert.equal(entry.conforms, true, JSON.stringify(entry.findings));
+  assert.deepEqual(rules(await checkOne(call, broken)), ["adr.sections"]);
+});
+
 test("§34: an ADR that conformed to version 1 and is not Draft still conforms, and the format keeps version 1's rule ids", async (context) => {
-  const { call } = await project(context);
+  const { place, call } = await project(context);
   for (const status of ["Accepted", "Proposed", "Declined"]) {
     const file = `docs/ADRs/retries/v1-${status.toLowerCase()}.md`;
     await storeWrite(call, file, ADR.replace("Status: Accepted", `Status: ${status}`));
@@ -48,7 +60,7 @@ test("§34: an ADR that conformed to version 1 and is not Draft still conforms, 
     assert.equal(entry.conforms, true, `${status}: ${JSON.stringify(entry.findings)}`);
   }
   const broken = "docs/ADRs/retries/broken.md";
-  await storeWrite(call, broken, ADR.replace("## Mechanism\n\nThe client starts a deadline timer with the first attempt.\n\n", ""));
+  await syncedFile(place, broken, ADR.replace("## Mechanism\n\nThe client starts a deadline timer with the first attempt.\n\n", ""), { status: "Accepted" });
   assert.deepEqual(rules(await checkOne(call, broken)), ["adr.sections"]);
 });
 
@@ -100,7 +112,7 @@ test("§36: several decide operations in one update decide several Draft ADRs at
 });
 
 test("§37: decide refuses an ADR that is not Draft, an unknown option, and a Draft ADR that breaks its format, changing nothing", async (context) => {
-  const { call } = await project(context);
+  const { place, call } = await project(context);
   const proposed = "docs/ADRs/sync/plain.md";
   const plain = await storeWrite(call, proposed, ADR.replace("Status: Accepted", "Status: Proposed"));
   const notDraft = await call("update_artifact", { operations: [{ op: "decide", path: proposed, expectedVersion: plain.version, option: "Poll the server", rationale: "r", consequences: "c", mechanism: "m" }] });
@@ -110,7 +122,8 @@ test("§37: decide refuses an ADR that is not Draft, an unknown option, and a Dr
   assert.equal(unknown.value?.code, "option_unknown", unknown.text);
   assert.deepEqual(unknown.value.options, ["Poll the server", "Push over a socket"]);
   const broken = "docs/ADRs/sync/one-option.md";
-  const written = await storeWrite(call, broken, draftAdr("One option", { options: [OPTIONS[0]] }));
+  await syncedFile(place, broken, draftAdr("One option", { options: [OPTIONS[0]] }), { status: "Draft" });
+  const written = await storeRead(call, broken);
   const nonconforming = await call("update_artifact", { operations: [{ op: "decide", path: broken, expectedVersion: written.version, option: "Poll the server", rationale: "r", consequences: "c", mechanism: "m" }] });
   assert.equal(nonconforming.value?.code, "artifact_nonconforming", nonconforming.text);
   assert.equal((await storeRead(call, PATH)).version, before.version, "nothing changed");

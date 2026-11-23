@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { DRAFT_ADR, INPUT, OPTIONS, addEntries, answer, answeredRound, askRound, derivedEntry, draftAdr, gateOf, itemDone, itemProject, itemUpdate, question, storeRead, storeWrite, workItem } from "./fixtures/work-items.mjs";
+import { DRAFT_ADR, INPUT, OPTIONS, addEntries, answer, answeredRound, askRound, derivedEntry, draftAdr, gateOf, itemDone, itemProject, itemUpdate, question, storeRead, storeWrite, syncedFile, workItem } from "./fixtures/work-items.mjs";
 import { answerGate, browserRequest } from "./fixtures/workspace-artifacts.mjs";
 
 // A person confirms at a gate that an item is ready, readiness is refused while shaping is incomplete, and design refuses emerging items and Draft ADRs.
@@ -31,12 +31,13 @@ test("§23: request_ready opens a ready gate whose context lists each cited arti
 });
 
 test("§24, §25: request_ready is refused with every unmet condition in order, and opens no gate", async (context) => {
-  const { call, review } = await itemProject(context);
+  const { place, call, review } = await itemProject(context);
   const none = await itemUpdate(call, "sync", [{ op: "request_ready" }]);
   assert.equal(none.value?.code, "readiness_unmet", none.text);
   assert.deepEqual(codes(none.value.unmet), ["no_approved_requirement"]);
   await answeredRound(call, review, "sync");
-  await storeWrite(call, "docs/ADRs/sync/one-option.md", draftAdr("One option", { options: [OPTIONS[0]] }));
+  // Every write through Prism refuses an ADR that breaks its format, so the broken Draft arrives as another machine's sync brings it.
+  await syncedFile(place, "docs/ADRs/sync/one-option.md", draftAdr("One option", { options: [OPTIONS[0]] }), { status: "Draft" });
   await itemDone(call, "sync", [{ op: "cite", requirements: ["sync.md§1"], adrs: [DRAFT_ADR, "docs/ADRs/sync/one-option.md"] }]);
   await askRound(call, "sync", [question("Conflicts?"), question("Nice to have?", { blocking: false })]);
   const refused = await itemUpdate(call, "sync", [{ op: "request_ready" }]);
