@@ -141,10 +141,11 @@ function gateWithdraw(item: any) {
   return `<div class="gate-withdraw" data-gate="${escapeHtml(item.id)}" data-withdraw-target="${escapeHtml(answerTarget(item))}"></div>`;
 }
 
-// The latest wake this computer sent to the cloud session that asked: when it was sent, or why Claude Code did not deliver it.
+// The latest wake this computer sent to the cloud session that asked: when it was sent, or why Claude Code did not deliver it,
+// with its words beside the icon, so a long reason wraps under its own first line.
 function wakeLine(wake: any) {
-  if (wake.delivered) return `<p class="gate-asker-note" data-wake="delivered"><prism-icon name="check-circle" size="xs" tone="ok"></prism-icon> Wake sent ${liveTime(wake.at)}</p>`;
-  return `<p class="gate-asker-note" data-wake="not-delivered"><prism-icon name="warning" size="xs" tone="danger"></prism-icon> ${escapeHtml(`Wake not delivered: ${wake.reason ?? "Claude Code gave no reason."}`)}</p>`;
+  if (wake.delivered) return `<p class="gate-asker-note" data-wake="delivered"><prism-icon name="check-circle" size="xs" tone="ok"></prism-icon><span>Wake sent ${liveTime(wake.at)}</span></p>`;
+  return `<p class="gate-asker-note" data-wake="not-delivered"><prism-icon name="warning" size="xs" tone="danger"></prism-icon><span>${escapeHtml(`Wake not delivered: ${wake.reason ?? "Claude Code gave no reason."}`)}</span></p>`;
 }
 
 // Who asked the question, where, and whether that session waits, is open, is not running, or is in a state Prism cannot tell, with how to reach an open one.
@@ -426,6 +427,7 @@ function gateContinue(item: any) {
 const CONTINUE_DEADLINE_MS = 330000;
 
 const CONTINUE_HINT = "Nothing starts until you confirm outside the browser.";
+const CONTINUE_PICK = "Pick a way to continue.";
 
 /** The form options of Withdraw for the shared action renderer: what it does beside its button. */
 export const withdrawFormOptions = {
@@ -435,7 +437,7 @@ export const withdrawFormOptions = {
 /** The form options of Continue for the shared action renderer: its ways as cards, and, when none applies, why each does not. */
 export const continueFormOptions = {
   heading: "Continue the work",
-  wording: (_action: any, form: any) => ({ submit: { label: "Continue", variant: "primary" }, hint: form.ready ? CONTINUE_HINT : form.hint, ready: form.ready }),
+  wording: (_action: any, form: any) => ({ submit: { label: "Continue", variant: "primary" }, hint: form.ready ? CONTINUE_HINT : form.hint && CONTINUE_PICK, ready: form.ready }),
   unavailable: (action: any) => (action.fields?.[0]?.options ?? []).filter((option: any) => option.reason).map((option: any) => `<p class="action-reason">${escapeHtml(`${option.label}: ${option.reason}`)}</p>`).join("")
 };
 
@@ -463,13 +465,14 @@ export function answerError(error: any) {
 // Each open gate's answer is the shared action renderer's form of its gate.answer listing; the person's unsent answer survives the page
 // drawing Attention again when live data changes, and the page gives focus back to the control that had it by its focus key.
 function mountAnswers(container: any, ctx: any, gates: any) {
-  if (!ctx.actionApi) return;
+  const lists: any[] = [];
+  if (!ctx.actionApi) return lists;
   const drafts = (ctx.state.answerDrafts ??= {});
   for (const slot of container.querySelectorAll(".gate-answer[data-answer-target]")) {
     const item = gates.find((gate: any) => gate.id === slot.dataset.gate && answerTarget(gate) === slot.dataset.answerTarget);
     if (!item) continue;
     const target = slot.dataset.answerTarget;
-    createActionList({
+    lists.push(createActionList({
       root: slot,
       targets: [target],
       api: ctx.actionApi,
@@ -489,14 +492,16 @@ function mountAnswers(container: any, ctx: any, gates: any) {
         if (refusal.rerender) queueMicrotask(() => ctx.rerender());
         return refusal.message;
       }
-    });
+    }));
   }
+  return lists;
 }
 
 // Withdraw and Continue are the shared action renderer's forms of a gate's gate.withdraw and gate.continue listings, beside its answer.
 // A place whose listing offers neither stays empty and hidden, and a refusal shows in words beside the button.
 function mountGateActions(container: any, ctx: any) {
-  if (!ctx.actionApi) return;
+  const lists: any[] = [];
+  if (!ctx.actionApi) return lists;
   const drafts = (ctx.state.answerDrafts ??= {});
   const refused = (fallback: string) => (_action: any, result: any) => {
     const refusal = answerError({ code: result.code === "unknown_target" ? "unknown_gate" : result.code, message: result.reason ?? result.message ?? fallback });
@@ -505,7 +510,7 @@ function mountGateActions(container: any, ctx: any) {
   };
   const mount = (slot: any, target: string, id: string, options: any) => {
     slot.hidden = true;
-    createActionList({
+    lists.push(createActionList({
       root: slot,
       targets: [target],
       drafts,
@@ -518,7 +523,7 @@ function mountGateActions(container: any, ctx: any) {
         slot.hidden = !slot.querySelector("[data-action-key]");
       },
       ...options
-    });
+    }));
   };
   for (const slot of container.querySelectorAll(".gate-withdraw[data-withdraw-target]")) {
     mount(slot, slot.dataset.withdrawTarget, "gate.withdraw", {
@@ -531,8 +536,9 @@ function mountGateActions(container: any, ctx: any) {
       onRefused: refused("The question was not withdrawn.")
     });
   }
-  // A continuation waits on the person's confirmation outside the browser, so its apply gets the dialog's time.
-  const api = { ...ctx.actionApi, apply: (request: any) => ctx.actionApi.apply(request, { deadlineMs: CONTINUE_DEADLINE_MS }) };
+  // A continuation waits on the person's confirmation outside the browser, so its apply gets the dialog's time; the page keeps one such API,
+  // so a redrawn Continue starts from its last listing rather than showing again only once its listing is read.
+  const api = continueApi(ctx.actionApi);
   for (const slot of container.querySelectorAll(".gate-continue[data-continue-target]")) {
     mount(slot, slot.dataset.continueTarget, "gate.continue", {
       api,
@@ -545,6 +551,14 @@ function mountGateActions(container: any, ctx: any) {
       onRefused: refused("Nothing started.")
     });
   }
+  return lists;
+}
+
+const continueApis = new WeakMap();
+
+function continueApi(actionApi: any) {
+  if (!continueApis.has(actionApi)) continueApis.set(actionApi, { ...actionApi, apply: (request: any) => actionApi.apply(request, { deadlineMs: CONTINUE_DEADLINE_MS }) });
+  return continueApis.get(actionApi);
 }
 
 // A host's permission request: the session waits until the person allows it, after a native confirmation, or refuses it.
@@ -1031,8 +1045,9 @@ export function render(container: any, entity: any, ctx: any) {
     lists.find((list) => list.value)?.focus();
   });
   bindLinks(container, ctx);
-  mountAnswers(container, ctx, gates);
-  mountGateActions(container, ctx);
+  // The page is built out of sight and shows once drawn, so it waits for the first listing of each question's answer, Withdraw, and Continue,
+  // which would otherwise move the page under the person when they arrive.
+  const actionLists = [...mountAnswers(container, ctx, gates), ...mountGateActions(container, ctx)];
   bindPermissions(container, ctx);
   bindArchiveSession(container, ctx);
   // A change applied while the page is open names its question from the questions the page shows.
@@ -1041,4 +1056,5 @@ export function render(container: any, entity: any, ctx: any) {
   container.querySelector("[data-notify]")?.addEventListener("click", () => {
     void Notification.requestPermission().finally(() => ctx.rerender());
   });
+  return Promise.all(actionLists.map((list: any) => list.loaded));
 }

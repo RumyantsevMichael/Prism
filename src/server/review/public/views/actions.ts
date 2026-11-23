@@ -328,6 +328,7 @@ const lastListings = new WeakMap();
  * { field: { <name>: { label, placeholder } }, submit: { label, variant }, hint, ready } for the form's state. A form keeps the person's input when the record changed
  * under it, and sends once more against the current revision when the action is still available, since its input does not depend on the record's other values.
  * onApplied(action, input, result) replaces the toast of an applied change, and onRefused(action, result) may return the words to show for a refusal.
+ * The list's loaded promise settles once its first listing is drawn, so a page built out of sight can wait for it before it shows.
  */
 export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false, groups = null, actions = null, batch = false, sections = null, unavailableButtons = false, form = null, onApplied = null, onRefused = null }: any) {
   if (!lastListings.has(api)) lastListings.set(api, new Map());
@@ -885,7 +886,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
   document.addEventListener("prism:action", onChange);
   document.addEventListener("prism:poll", onChange);
   render();
-  void refresh();
+  (panel as any).loaded = refresh().catch(() => {});
   return panel;
 }
 

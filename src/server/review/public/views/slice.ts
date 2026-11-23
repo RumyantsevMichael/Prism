@@ -524,7 +524,7 @@ export async function render(container: any, entity: any, ctx: any) {
       <div data-initiative-settings></div>
     </prism-dialog>`;
   // A slice page changes its initiative's settings, so the card names the initiative they belong to.
-  mountInitiativeSettings(container.querySelector("[data-initiative-settings]"), { target: `slice:${data.id}/${data.slug}`, eyebrow: `Initiative: ${data.initiativeTitle}`, ctx });
+  const settings = mountInitiativeSettings(container.querySelector("[data-initiative-settings]"), { target: `slice:${data.id}/${data.slug}`, eyebrow: `Initiative: ${data.initiativeTitle}`, ctx });
   const details = container.querySelector("[data-slice-details]");
   // A link in the dialog opens its page, so the dialog closes first.
   details.addEventListener("click", (event: any) => {
@@ -602,6 +602,8 @@ export async function render(container: any, entity: any, ctx: any) {
   }
   if (artifacts.review && !artifacts.review.invalid) await mountReviewLedger(container, artifacts.review, ctx);
   if (tab === "views") await mountViews(container, views, ctx);
+  // The page shows once drawn, so its settings card's first listing is drawn before it does.
+  await (settings as any)?.loaded;
   if (clause) highlightClause(clause);
   // While the cards wait for unit locations, the notice follows the index chip, and a finished build redraws the page with the lines.
   if (container.querySelector("[data-index-notice]")) {

@@ -607,10 +607,35 @@
   overflow-wrap: anywhere;
 }
 
+/* A wake line keeps its icon on its first line and wraps a long reason beside it. */
+.gate-asker-note[data-wake] {
+  display: flex;
+  align-items: baseline;
+  gap: var(--prism-space-2);
+}
+
+.gate-asker-note[data-wake] > span {
+  min-width: 0;
+}
+
 /* Withdraw under the asker line and Continue on an answered question hold the shared action renderer's forms. */
 .gate-withdraw,
 .gate-continue {
   min-width: 0;
+}
+
+/* Withdraw reads as one line, what it does and then its quiet button at the end, and its button keeps its own width on a phone. */
+.gate-withdraw .action-submit.is-form {
+  flex-wrap: nowrap;
+}
+
+.gate-withdraw .action-hint.is-form {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.gate-withdraw .action-submit.is-form > :last-child {
+  flex: none;
 }
 
 /* The lifecycle keeps its six steps on one row, and takes two rows of three in a narrow sheet. */
