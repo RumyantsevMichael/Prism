@@ -40,8 +40,10 @@ const time = (value: unknown) => (typeof value === "string" ? Date.parse(value) 
  * Whether a launched run has a result now: the roadmap records its initiative as shipped, the initiative's coordination state holds a
  * pending gate without an answer that is no no-result gate, an approval gate that names the initiative has no answer, or a pause that
  * the launch marked is at or after `since`, the time the run started. A record that cannot be read counts as giving no result.
+ * With `until`, the time the run ended, a gate answered after it still counts as without an answer, so an answer that arrives while
+ * Prism checks an ended run does not take away the result that the run left.
  */
-export async function runHasResult({ checkout, initiative, since, pauses = [] }: { checkout: string; initiative: string; since: string; pauses?: { at: string }[] }) {
+export async function runHasResult({ checkout, initiative, since, until = null, pauses = [] }: { checkout: string; initiative: string; since: string; until?: string | null; pauses?: { at: string }[] }) {
   const start = time(since);
   if (pauses.some((pause) => Number.isFinite(time(pause.at)) && (!Number.isFinite(start) || time(pause.at) >= start))) return true;
   const { shippedDecision } = await import("../workflow/shipped-history.mjs");
@@ -49,7 +51,9 @@ export async function runHasResult({ checkout, initiative, since, pauses = [] }:
   const { readCoordinationState } = await import("../workflow/state.mjs");
   const read: any = await readCoordinationState({ projectRoot: checkout, initiative }).catch(() => null);
   const pending = read?.valid && Array.isArray(read.state?.pending) ? read.state.pending : [];
-  if (pending.some((gate: any) => gate && typeof gate === "object" && !gate.answer && !isNoResultGate(gate))) return true;
+  const end = time(until);
+  const openAtEnd = (gate: any) => !gate.answer || (Number.isFinite(end) && !(time(gate.answer.answeredAt) <= end));
+  if (pending.some((gate: any) => gate && typeof gate === "object" && openAtEnd(gate) && !isNoResultGate(gate))) return true;
   const { pendingApprovalGates } = await import("../workflow/store-artifacts.mjs");
   const approvals: any[] = await pendingApprovalGates(checkout).catch(() => []);
   return (Array.isArray(approvals) ? approvals : []).some((gate) => gate?.initiative === initiative || gate?.shipped?.initiative === initiative);

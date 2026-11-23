@@ -272,18 +272,20 @@ test("an answer that another launched session of the initiative would contend wi
 });
 
 test("an answer that arrives from another machine through the store waits for a resume here", { skip: posixOnly }, async (t) => {
-  const s = await setup(t, { plans: { claude: [{ hold: 50 }] } });
+  // The turn holds until the gate is asked, as a real session's Prism server asks before its host exits.
+  const s = await setup(t, { plans: { claude: [{ hold: "release" }] } });
   const id = (await launch(s)).json.launch.id;
   const gateId = await askAsLaunch(s.root, id);
+  await s.release();
   await waitFor(async () => (await s.launchView(id))?.resumeCommand, { what: "the run to end" });
   // A store sync brings the answer: it lands in the coordination state without passing through this machine's actions.
   const { recordPersonAction } = await import("../../dist/server/workflow/state.mjs");
   const at = new Date().toISOString();
   const entry = { id: randomBytes(16).toString("hex"), action: "gate.answer", target: `gate:${INITIATIVE}/${gateId}`, before: null, after: { choice: null, note: "Ninety days." }, at, by: { name: "Grace", email: "grace@example.invalid", checkout: "reports/main on build-2" }, via: "review-app" };
   await recordPersonAction({ projectRoot: s.root, initiative: INITIATIVE, prepare: async () => ({ entry, answer: { id: gateId, choice: null, note: "Ninety days." } }) });
-  const view = await s.launchView(id);
-  assert.equal(view.answerWaits, true);
+  const view = await s.settled(id, ["finished", "ended-without-result"]);
   assert.equal(view.state, "finished");
+  assert.equal(view.answerWaits, true);
   assert.equal(view.reason, "An answer given on another machine waits; resume this session here to continue.");
   await pause(500, "no resume may follow, and a change that must not happen leaves nothing to wait for");
   assert.equal(s.runs("claude").length, 1, "nothing resumes on an answer from another machine");
