@@ -976,7 +976,7 @@ const formatSummary = (item: any) => item.earlier ? `${item.earlier} of them ${i
 // One nonconforming artifact: its path with its format mark, the scope that holds it, and each broken rule with its message and line.
 function formatArtifact(artifact: any) {
   const scope = artifact.scope?.label ?? null;
-  const mark = formatBadge({ rules: [...new Set((artifact.findings ?? []).map((finding: any) => finding.rule))].sort() });
+  const mark = formatBadge({ rules: [...new Set((artifact.findings ?? []).map((finding: any) => finding.rule))].sort(), findings: artifact.findings ?? [] });
   const earlier = artifact.earlierFormat ? `Keeps format version ${artifact.earlierFormat.version}` : "Keeps no Prism format";
   return `<prism-row wrap icon="document" tone="warning"><span data-code-subject>${escapeHtml(artifact.path)}</span> ${mark}<span slot="description">${escapeHtml(earlier)} · ${plural((artifact.findings ?? []).length, "finding")}</span><span slot="detail">${findingsList(artifact.findings)}</span><prism-chip slot="kind"${scope ? ' tip="The record store scope that holds this file"' : ' tip="A file in this checkout"'}>${escapeHtml(scope ? `Scope ${scope}` : "Checkout")}</prism-chip></prism-row>`;
 }
