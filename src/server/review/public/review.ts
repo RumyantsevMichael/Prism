@@ -2964,6 +2964,8 @@ function viewContext(path: any, state: any) {
   return {
     path,
     state,
+    // The view draws again over itself showing, rather than in place of another page or none, so it shows what it has at once and fills in the rest in place.
+    redrawing: renderedPath === path,
     // The lane a lane link asks the Roadmap page to show.
     lane: pendingLane?.path === path ? pendingLane.lane : null,
     // Touched by my work reads the slice in the selected tab, or else the one selected last, and passes its answer back for the sidebar's count.

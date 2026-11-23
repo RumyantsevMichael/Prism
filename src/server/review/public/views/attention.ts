@@ -1146,5 +1146,7 @@ export function render(container: any, entity: any, ctx: any) {
   container.querySelector("[data-notify]")?.addEventListener("click", () => {
     void Notification.requestPermission().finally(() => ctx.rerender());
   });
-  return Promise.all(actionLists.map((list: any) => list.loaded));
+  // A redraw of Attention over itself does not wait, since the page built out of sight would lie beside the page showing, with the same forms,
+  // for as long as a listing takes to read; a Withdraw or Continue that a redraw adds shows in place once read.
+  return ctx.redrawing ? undefined : Promise.all(actionLists.map((list: any) => list.loaded));
 }

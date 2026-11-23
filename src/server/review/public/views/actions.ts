@@ -332,7 +332,7 @@ const lastListings = new WeakMap();
  * { field: { <name>: { label, placeholder } }, submit: { label, variant }, hint, ready } for the form's state. A form keeps the person's input when the record changed
  * under it, and sends once more against the current revision when the action is still available, since its input does not depend on the record's other values.
  * onApplied(action, input, result) replaces the toast of an applied change, and onRefused(action, result) may return the words to show for a refusal.
- * The list's loaded promise settles once its first listing is drawn, so a page built out of sight can wait for it before it shows.
+ * The list's loaded promise settles once its first listing is drawn, so a page built out of sight can wait for it before it shows; a list drawn from its targets' last listings is loaded at once.
  */
 export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false, groups = null, actions = null, batch = false, sections = null, unavailableButtons = false, form = null, onApplied = null, onRefused = null }: any) {
   if (!lastListings.has(api)) lastListings.set(api, new Map());
@@ -898,8 +898,12 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
   };
   document.addEventListener("prism:action", onChange);
   document.addEventListener("prism:poll", onChange);
+  // A list drawn from the last listings of all its targets, as when a page is drawn again, is drawn already, so it does not hold a page
+  // built out of sight, which would otherwise lie beside the page showing, with the same controls, for as long as the listings take to read.
+  const drawn = wanted.every((target) => listings.has(target));
   render();
-  (panel as any).loaded = refresh().catch(() => {});
+  const first = refresh().catch(() => {});
+  (panel as any).loaded = drawn ? Promise.resolve() : first;
   return panel;
 }
 
