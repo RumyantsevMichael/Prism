@@ -33,9 +33,10 @@ async function project(context, name) {
 async function appDirectory(context) {
   const parent = await mkdtemp(path.join(os.tmpdir(), "prism-app-state-"));
   const directory = path.join(parent, "prism");
+  // Windows can keep a file of the app's folder for a moment after the app has stopped, so the removal retries rather than fail a test whose assertions passed.
   defer(context, async () => {
     await shutdownApp(directory);
-    await rm(parent, { recursive: true, force: true });
+    await rm(parent, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   });
   return directory;
 }
