@@ -1111,7 +1111,9 @@ async function loadMigrationRunView(projectRoot: string, id: string) {
     const contentEntries = typeof migration.content === "string" ? entriesFor(migration.type, migration.content) : [];
     const map = statementMap(migration, { answers: answers ?? {} });
     // A leftover point names its statement only, so its source line comes from the same split of the source that the statement map shows.
-    const sourceLines = new Map((map?.statements ?? []).filter((statement: any) => statement.landed?.kind === "leftover" && statement.landed.point).map((statement: any) => [statement.landed.point, statement.line]));
+    // A leftover that spans several of the map's statements shows the line of its first one, where it starts, as the map does.
+    const sourceLines = new Map();
+    for (const statement of map?.statements ?? []) if (statement.landed?.kind === "leftover" && statement.landed.point && !sourceLines.has(statement.landed.point)) sourceLines.set(statement.landed.point, statement.line);
     return {
       id: migration.id, type: migration.type, source: migration.source, target: migration.target, separateSource: migration.separateSource, summary: migration.summary,
       status: headerStatus(migration.content), proposedAt: migration.proposedAt ?? null,
