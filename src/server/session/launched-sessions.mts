@@ -553,7 +553,7 @@ export async function settleRunResult({ id, token, normal, resumed, lastMessage,
       && typeof run.failure !== "string" && typeof run.hostError !== "string" && !(Array.isArray(run.refusals) && run.refusals.length) && !(run.refusalCount > 0);
     if (!normal || resumed || !ended || (await readStopRequest(folder))?.token === token) return;
     const marks = await readResultMarks(folder);
-    if (await runHasResult({ checkout: record.checkout, initiative: record.initiative, since: run.startedAt, pauses: marks.pauses })) return;
+    if (await runHasResult({ checkout: record.checkout, initiative: record.initiative, since: run.startedAt, until: run.endedAt, pauses: marks.pauses })) return;
     const asked = await askNoResultGate(record, noResultGates(marks), lastMessage, env);
     if (!("gate" in asked)) {
       mark = { run: token, gate: null, failure: asked.failure!, at: new Date().toISOString() };
