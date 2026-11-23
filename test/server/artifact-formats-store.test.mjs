@@ -118,3 +118,20 @@ test("clauses 53, 54: each glossary a checkout sees is checked on its own, and i
   assert.ok(!own.findings.some((finding) => finding.rule === "glossary.identity") && !shared.findings.some((finding) => finding.rule === "glossary.identity"), "one term id in two glossaries is no finding");
   assert.deepEqual((await checked(web.call, { type: "glossary" })).artifacts.map((entry) => entry.findings.map((finding) => finding.rule).sort()), [shared.findings.map((finding) => finding.rule).sort()], "the workspace glossary has the same findings in every checkout");
 });
+
+test("a workspace glossary page marks each scope's glossary that breaks its format with its findings, and a conforming one with none", async (context) => {
+  const { place, root, call } = await storeProject(context);
+  // api's first tool call moves its files into scope api, so the workspace's own glossary below is a second one.
+  await storeRead(call, PATHS.glossary);
+  await storeFile(place, "artifacts/glossary.md", GLOSSARY.replace("Terms used across the payments client.", "Terms used across the workspace."));
+  const saved = process.env.PRISM_REVIEW_APP_DIR;
+  process.env.PRISM_REVIEW_APP_DIR = place.app;
+  context.after(() => { if (saved === undefined) delete process.env.PRISM_REVIEW_APP_DIR; else process.env.PRISM_REVIEW_APP_DIR = saved; });
+  const { asWorkspaceView, loadGlossary } = await import("../../dist/server/review/workspace-model.mjs");
+  const glossary = await asWorkspaceView(() => loadGlossary(root));
+  const byScope = Object.fromEntries(glossary.glossaries.map((entry) => [entry.scope, entry.format]));
+  assert.deepEqual(Object.keys(byScope).sort(), ["api", "workspace"]);
+  assert.equal(byScope.api, null, "api's glossary keeps its format");
+  assert.ok(byScope.workspace && byScope.workspace.findings.length > 0, JSON.stringify(byScope.workspace));
+  assert.ok(byScope.workspace.findings.every((finding) => typeof finding.message === "string" && finding.message), "each finding says what breaks");
+});

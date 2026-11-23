@@ -12,10 +12,27 @@ export function findingsList(findings: any) {
   return `<ul class="format-findings">${lines}</ul>`;
 }
 
-/** The row mark of an artifact that breaks its format, naming its broken rules in its note, which the badge carries as its title, or nothing while it conforms. */
+// The most findings that a mark's note spells out; the rest it counts.
+const NOTE_FINDINGS = 3;
+// A finding's message as plain text, with the backticks of its code subjects left out.
+const plainMessage = (finding: any) => String(finding.message ?? "").replace(/`/g, "").trim();
+
+/**
+ * What a mark's note says: each finding's message with its line and rule, the first NOTE_FINDINGS of them, and how many more there are,
+ * or the broken rules for a mark that lists no findings.
+ */
+export function formatNote(format: any) {
+  const findings = (format?.findings ?? []).filter((finding: any) => finding && typeof finding.message === "string" && finding.message);
+  if (!findings.length) return (format?.rules ?? []).join(", ");
+  const lines = findings.slice(0, NOTE_FINDINGS).map((finding: any) => `${Number.isInteger(finding.line) ? `Line ${finding.line}: ` : ""}${plainMessage(finding)}${finding.rule ? ` (${finding.rule})` : ""}`);
+  const more = findings.length - NOTE_FINDINGS;
+  return [...lines, ...(more > 0 ? [`and ${more} more`] : [])].join("\n");
+}
+
+/** The row mark of an artifact that breaks its format, saying what breaks in its note, which the badge carries as its title, or nothing while it conforms. */
 export function formatBadge(format: any) {
   if (!format) return "";
-  return `<prism-badge data-format-mark tone="warning" note="${escapeHtml((format.rules ?? []).join(", "))}">Breaks its format</prism-badge>`;
+  return `<prism-badge data-format-mark tone="warning" note="${escapeHtml(formatNote(format))}">Breaks its format</prism-badge>`;
 }
 
 /** The row mark as an element, for lists that the page builds from elements. */
@@ -24,15 +41,15 @@ export function formatBadgeElement(format: any) {
   const badge = document.createElement("prism-badge");
   badge.dataset.formatMark = "";
   badge.setAttribute("tone", "warning");
-  badge.setAttribute("note", (format.rules ?? []).join(", "));
+  badge.setAttribute("note", formatNote(format));
   badge.textContent = "Breaks its format";
   return badge;
 }
 
-/** The banner above the document of an artifact that breaks its format, one line per finding, or nothing while it conforms. */
-export function formatBanner(format: any) {
+/** The banner above the document of an artifact that breaks its format, one line per finding, or nothing while it conforms; heading names the file where a page shows several. */
+export function formatBanner(format: any, heading = "This file breaks its format") {
   if (!format) return "";
-  return `<div class="document-notice"><prism-banner data-format-mark tone="warning" heading="This file breaks its format">${findingsList(format.findings)}</prism-banner></div>`;
+  return `<div class="document-notice"><prism-banner data-format-mark tone="warning" heading="${escapeHtml(heading)}">${findingsList(format.findings)}</prism-banner></div>`;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

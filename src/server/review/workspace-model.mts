@@ -895,7 +895,7 @@ async function recordedStatuses(projectRoot: string, directory: string) {
 
 /**
  * The glossary: path, the configured path; exists and content, of the glossary this checkout reads; and in a workspace, glossaries,
- * each scope's glossary as { ref, scope, terms }, terms being { term, text } in the order the file defines them.
+ * each scope's glossary as { ref, scope, terms, format }, terms being { term, text } in the order the file defines them and format its mark or null.
  */
 export async function loadGlossary(projectRoot: string) {
   const config = await readWorkflowConfig(projectRoot);
@@ -903,9 +903,11 @@ export async function loadGlossary(projectRoot: string) {
   const scoped = await scopedArtifacts(projectRoot, "glossary", () => true);
   if (scoped) {
     const glossaries = [];
+    const markOf = await loadFormatMarks(projectRoot);
     for (const item of scoped.entries) {
       const content = await readText(projectRoot, item.ref);
-      if (content !== null) glossaries.push({ ref: item.ref, scope: item.label, terms: glossaryEntries(content).map(({ term, text }) => ({ term, text: text.replace(/\s+/g, " ").trim() })) });
+      // A scope's glossary that breaks its format carries its mark, by its checkout path and its scope, as one glossary does.
+      if (content !== null) glossaries.push({ ref: item.ref, scope: item.label, terms: glossaryEntries(content).map(({ term, text }) => ({ term, text: text.replace(/\s+/g, " ").trim() })), format: item.path ? markOf(item.path, item.label) : null });
     }
     const mine = glossaryPath ? await readText(projectRoot, glossaryPath) : null;
     return { path: glossaryPath, exists: glossaries.length > 0, content: mine, glossaries };

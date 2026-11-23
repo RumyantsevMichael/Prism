@@ -29,11 +29,11 @@ test("a run launches Codex with the model chosen for Prism's runs, though Claude
   assert.equal(hosts.runs("claude").length, 0);
   const thread = await waitFor(() => hosts.inputs(started.pid).find((message) => message.method === "thread/start") ?? null, { what: "the Codex thread" });
   assert.equal(thread.params.model, "gpt-5.5");
-  assert.equal(thread.params.sandbox, "read-only");
+  assert.equal(thread.params.permissions, "prism-read-only");
   assert.equal(thread.params.approvalPolicy, "never");
   const turn = await waitFor(() => hosts.inputs(started.pid).find((message) => message.method === "turn/start") ?? null, { what: "the Codex turn" });
   assert.equal(turn.params.effort, "low");
-  assert.equal(turn.params.sandboxPolicy.type, "readOnly");
+  assert.equal("sandboxPolicy" in turn.params, false);
   assert.deepEqual(turn.params.input, [{ type: "text", text: `$prism:migrate-artifact ${run}` }]);
 });
 

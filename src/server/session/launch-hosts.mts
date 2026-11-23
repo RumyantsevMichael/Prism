@@ -62,8 +62,9 @@ const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsRevi
 // A launch's access: "full" for an initiative's orchestration, and "read-only" for a format migration run, whose session reads artifact text that others wrote,
 // works in an empty folder of its own outside the checkout, and reads nothing of the checkout: it gets the run's sources, the project's paths, and the sources'
 // Git history, and the format reference through the run's own Prism tools. A read-only Claude Code run has no built-in tool and adds no folder, so it reads no file,
-// allows only the run's Prism tools and no shell, and denies every other call, since nothing asks; a read-only Codex thread runs in the read-only sandbox,
-// readable only in its working folder, Prism's own folder, Codex's plugin cache, and the platform's own, and never asks to run a command outside it.
+// allows only the run's Prism tools and no shell, and denies every other call, since nothing asks; a read-only Codex thread selects a permission profile of its own,
+// which reads only in its working folder, Prism's own folder, Codex's plugin cache and install folder, and the platform's minimal ones, writes nowhere,
+// has no network, and never asks to run a command outside it.
 // Prism's server, which the session starts with PRISM_MIGRATION_RUN naming the run and PRISM_MIGRATION_PROJECT naming the checkout,
 // lists and takes only the run's tools for that run's project and artifacts.
 export const LAUNCH_ACCESS = Object.freeze(["full", "read-only"]);
@@ -124,9 +125,17 @@ function requiredServer(server: unknown) {
   return server;
 }
 const deniedOf = (folders: unknown): string[] => (Array.isArray(folders) ? folders.filter((folder) => typeof folder === "string" && (path.posix.isAbsolute(folder) || /^[A-Za-z]:[\\/]/.test(folder))) : []);
-const CODEX_READ_ONLY = Object.freeze({ approvalPolicy: "never", sandbox: "read-only" });
-/** The sandbox of a read-only Codex turn: reads only in the run's working folder, the given folders, and the platform's own. */
-const codexReadOnlySandbox = (folder: string, readRoots: string[]) => ({ type: "readOnly", access: { type: "restricted", includePlatformDefaults: true, readableRoots: [folder, ...readRoots] } });
+/** The permission profile that a read-only Codex thread defines in its own configuration and selects, in place of a sandbox mode. */
+export const CODEX_READ_ONLY_PROFILE = "prism-read-only";
+/**
+ * The configuration and selection of that profile: reads only in the run's working folder, the given folders, and the platform's minimal ones,
+ * writes nowhere, and no network, since Codex now restricts reads only through a named permission profile.
+ */
+const codexReadOnly = (folder: string, readRoots: string[]) => ({
+  approvalPolicy: "never",
+  permissions: CODEX_READ_ONLY_PROFILE,
+  profile: { filesystem: Object.fromEntries([[":minimal", "read"], ...[folder, ...readRoots].map((root) => [root, "read"])]), network: { enabled: false } }
+});
 const rootsOf = (readRoots: unknown): string[] => (Array.isArray(readRoots) ? readRoots.filter((root) => typeof root === "string" && path.isAbsolute(root)) : []);
 const readOnly = (access: unknown) => access === "read-only";
 // The fixed start note of every launched run of an initiative, its launch and each resume: Claude Code reads it through --append-system-prompt,
@@ -377,12 +386,17 @@ export function claudePrompt(subject: string | { initiative?: string | null; mig
  * The Codex request that opens the run's thread: thread/start for a launch, thread/resume with the kept thread id for a resume,
  * each with the model and provider of the coordinator's choice, left out for the host default.
  */
-export function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null, access = "full", migrationServer = null }: { checkout: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string; migrationServer?: unknown }) {
+export function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null, access = "full", migrationServer = null, readRoots = [] }: { checkout: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string; migrationServer?: unknown; readRoots?: string[] }) {
   const { model, provider } = coordinatorOf(coordinator);
   const chosen = { ...(model === null ? {} : { model }), ...(provider === null ? {} : { modelProvider: provider }) };
-  // A read-only thread's configuration names Prism's scoped server as its only MCP server, in place of those of the person's own configuration.
+  // A read-only thread's configuration names Prism's scoped server as its only MCP server, in place of those of the person's own configuration,
+  // and defines the permission profile that the thread selects, on a launch and on each resume alike.
   // A migration run asks the person through its own tools, so its thread gets no start note, which names the gate tools that it cannot call.
-  const policy = readOnly(access) ? { ...CODEX_READ_ONLY, config: { mcp_servers: { [MIGRATION_SERVER]: requiredServer(migrationServer) } } } : { ...CODEX_POLICY, developerInstructions: LAUNCH_NOTE };
+  const readOnlyPolicy = () => {
+    const { profile, ...selected } = codexReadOnly(checkout, rootsOf(readRoots));
+    return { ...selected, config: { mcp_servers: { [MIGRATION_SERVER]: requiredServer(migrationServer) }, permissions: { [CODEX_READ_ONLY_PROFILE]: profile } } };
+  };
+  const policy = readOnly(access) ? readOnlyPolicy() : { ...CODEX_POLICY, developerInstructions: LAUNCH_NOTE };
   if (!resume) return { method: "thread/start", params: { cwd: checkout, ...policy, ...chosen } };
   if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
   return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...policy, ...chosen } };
@@ -390,14 +404,13 @@ export function codexThreadRequest({ checkout, hostSessionId, resume, coordinato
 
 /**
  * The Codex request that starts the run's one turn: the initiative's orchestrate, or the format migration run's migrate-artifact,
- * whose read-only turn reads only in its working folder, the given folders, and the platform's own, with the effort of the coordinator's
- * choice, left out for the host default; a turn that continues an answered gate or resumes its asker starts with that message instead.
+ * whose reads its thread's permission profile limits, with the effort of the coordinator's choice, left out for the host default;
+ * a turn that continues an answered gate or resumes its asker starts with that message instead.
  */
-export function codexTurnRequest({ threadId, initiative = null, migrationRun = null, coordinator = null, access = "full", checkout = null, readRoots = [], answeredGate = null, asker = null, askerAnswered = true }: { threadId: string; initiative?: string | null; migrationRun?: string | null; coordinator?: unknown; access?: string; checkout?: string | null; readRoots?: string[]; answeredGate?: string | null; asker?: AskerResume | null; askerAnswered?: boolean }) {
+export function codexTurnRequest({ threadId, initiative = null, migrationRun = null, coordinator = null, answeredGate = null, asker = null, askerAnswered = true }: { threadId: string; initiative?: string | null; migrationRun?: string | null; coordinator?: unknown; access?: string; checkout?: string | null; readRoots?: string[]; answeredGate?: string | null; asker?: AskerResume | null; askerAnswered?: boolean }) {
   const { effort } = coordinatorOf(coordinator);
-  const sandbox = readOnly(access) && typeof checkout === "string" ? { sandboxPolicy: codexReadOnlySandbox(checkout, rootsOf(readRoots)) } : {};
   const text = startText("$", initiative, answeredGate, asker, askerAnswered, migrationRun);
-  return { method: "turn/start", params: { threadId, input: [{ type: "text", text }], ...(effort === null ? {} : { effort }), ...sandbox } };
+  return { method: "turn/start", params: { threadId, input: [{ type: "text", text }], ...(effort === null ? {} : { effort }) } };
 }
 
 const CODEX_APPROVALS: ReadonlySet<string> = new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"]);
@@ -858,7 +871,7 @@ export function hostConversation(host: string, { initiative = null, migrationRun
     const answered = (method: string, result: any) => {
       if (method === "initialize") {
         write({ jsonrpc: "2.0", method: "initialized", params: {} });
-        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, coordinator, access, migrationServer });
+        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, coordinator, access, migrationServer, readRoots });
         request(open, params);
         return;
       }
@@ -874,7 +887,7 @@ export function hostConversation(host: string, { initiative = null, migrationRun
           close();
           return;
         }
-        const { method: turn, params } = codexTurnRequest({ threadId, initiative, migrationRun, coordinator, access, checkout, readRoots, answeredGate, asker, askerAnswered });
+        const { method: turn, params } = codexTurnRequest({ threadId, initiative, migrationRun, coordinator, answeredGate, asker, askerAnswered });
         turnRequested = true;
         request(turn, params);
         return;

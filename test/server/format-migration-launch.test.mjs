@@ -55,7 +55,7 @@ test("clauses 1, 2, 3, 4, 16: a new run launches Claude Code at once in an empty
   assert.equal(hosts.runs("claude").length, 1, "no second session starts while the run runs");
 });
 
-test("clauses 2, 3, 16: with only Codex available the run starts a Codex turn outside the checkout whose input is the migrate-artifact prompt, with Codex's default model when it lists no small one, and whose sandbox reads nothing of the checkout", { skip: posixOnly }, async (context) => {
+test("clauses 2, 3, 16: with only Codex available the run starts a Codex turn outside the checkout whose input is the migrate-artifact prompt, with Codex's default model when it lists no small one, and whose permission profile reads nothing of the checkout", { skip: posixOnly }, async (context) => {
   const { root, call, hosts } = await runCheckout(context, BROKEN, { hosts: ["codex"] });
   const run = await runFor(call, PATHS.requirements);
   const record = await statusOf(call, run, ["running"]);
@@ -67,8 +67,8 @@ test("clauses 2, 3, 16: with only Codex available the run starts a Codex turn ou
   const thread = hosts.inputs(started.pid).find((message) => message.method === "thread/start");
   assert.ok(thread && typeof thread.params.cwd === "string", JSON.stringify(thread));
   assert.equal(touches(thread.params.cwd, root), false, "the thread works outside the checkout");
-  const readable = turn.params.sandboxPolicy?.access?.readableRoots ?? [];
-  assert.ok(readable.length >= 1, JSON.stringify(turn.params.sandboxPolicy));
+  const readable = Object.keys(thread.params.config?.permissions?.[thread.params.permissions]?.filesystem ?? {}).filter((key) => !key.startsWith(":"));
+  assert.ok(readable.length >= 1, JSON.stringify(thread.params.config?.permissions));
   assert.equal(readable.some((folder) => touches(folder, root)), false, `no readable root reaches the checkout: ${readable.join(", ")}`);
   assert.equal("model" in thread.params, false, "the stub lists no model, so Codex uses its own default model");
   assert.equal("effort" in turn.params, false);
