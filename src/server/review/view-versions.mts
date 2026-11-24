@@ -48,7 +48,10 @@ function reasonOf(type: string | true, target: string): UnwatchedReason {
   return "network";
 }
 
-const skipped = (relative: string) => relative.split(/[\\/]/).some((segment) => SKIPPED.has(segment));
+// Prism's transient lock and write files, which a write creates and removes around the record it changes, as the store's .gitignore names them.
+// No view reads them, and the record's own rename shows the change, so they never change a version: a lock that a view's build takes would otherwise start the next build.
+export const transient = (name: string) => name.endsWith(".lock") || (name.startsWith(".") && name.endsWith(".tmp"));
+const skipped = (relative: string) => relative.split(/[\\/]/).some((segment) => SKIPPED.has(segment)) || transient(path.basename(relative));
 
 const gitHead = (root: string) => new Promise<string>((resolve) => {
   execFile("git", ["-C", root, "rev-parse", "--verify", "--quiet", "HEAD"], { timeout: 10000, windowsHide: true }, (error, stdout) => resolve(error ? "" : stdout.trim()));
@@ -64,7 +67,7 @@ async function listing(folder: string, lines: string[], relative = "") {
   }
   entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
   for (const entry of entries) {
-    if (SKIPPED.has(entry.name)) continue;
+    if (SKIPPED.has(entry.name) || (!entry.isDirectory() && transient(entry.name))) continue;
     const child = relative ? `${relative}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
       lines.push(`${folder}\0${child}\0d`);
@@ -76,24 +79,39 @@ async function listing(folder: string, lines: string[], relative = "") {
   }
 }
 
-// One line per folder below a folder with its modification time, which changes when a file in it is added, removed, or renamed,
+// One line per folder below a folder. A folder's modification time changes when a file in it is added, removed, or renamed,
 // as every write Prism and Git make is, since both write a new file and rename it into place; an edit in place leaves it unchanged.
-async function folderListing(folder: string, lines: string[], relative = "") {
-  const info = await lstat(path.join(folder, relative)).catch(() => null);
-  lines.push(`${folder}\0${relative}\0${info ? info.mtimeMs : "gone"}`);
+// A folder whose time changed is read again, its own files without the transient ones, so a lock taken and released leaves its line as it was;
+// details keeps each folder's time and line, so a folder whose time holds costs one look.
+async function folderListing(folder: string, lines: string[], details: Map<string, { mtime: number; line: string }>, relative = "") {
+  const absolute = path.join(folder, relative);
+  const info = await lstat(absolute).catch(() => null);
+  if (!info) { lines.push(`${folder}\0${relative}\0gone`); details.delete(absolute); return; }
   let entries;
-  try { entries = await readdir(path.join(folder, relative), { withFileTypes: true }); }
-  catch { return; }
-  entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
-  for (const entry of entries) {
-    if (entry.isDirectory() && !SKIPPED.has(entry.name)) await folderListing(folder, lines, relative ? `${relative}/${entry.name}` : entry.name);
+  try { entries = await readdir(absolute, { withFileTypes: true }); }
+  catch { lines.push(`${folder}\0${relative}\0unreadable`); return; }
+  const kept = details.get(absolute);
+  if (kept && kept.mtime === info.mtimeMs) lines.push(kept.line);
+  else {
+    const own: string[] = [];
+    for (const entry of entries) {
+      if (SKIPPED.has(entry.name) || entry.isDirectory() || transient(entry.name)) continue;
+      const file = await lstat(path.join(absolute, entry.name)).catch(() => null);
+      own.push(`${entry.name}\0${file ? `${file.size}\0${file.mtimeMs}` : "gone"}`);
+    }
+    const line = `${folder}\0${relative}\0${createHash("sha256").update(own.sort().join("\n")).digest("hex")}`;
+    details.set(absolute, { mtime: info.mtimeMs, line });
+    lines.push(line);
   }
+  const folders = entries.filter((entry) => entry.isDirectory() && !SKIPPED.has(entry.name)).map((entry) => entry.name).sort();
+  lines.push(`${folder}\0${relative}\0folders\0${folders.join("\0")}`);
+  for (const name of folders) await folderListing(folder, lines, details, relative ? `${relative}/${name}` : name);
 }
 
 // The folders of the targets and the target files, read where no watcher runs at every version read between full listings, so a write by another process shows at once.
-async function quickSignatureOf(targets: Targets) {
+async function quickSignatureOf(targets: Targets, details: Map<string, { mtime: number; line: string }> = new Map()) {
   const lines: string[] = [];
-  for (const folder of targets.folders) await folderListing(folder, lines);
+  for (const folder of targets.folders) await folderListing(folder, lines, details);
   for (const file of targets.files) {
     const info = await lstat(file).catch(() => null);
     lines.push(`file\0${file}\0${info ? `${info.size}\0${info.mtimeMs}` : "gone"}`);
@@ -317,7 +335,7 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
     state.targets = targets;
     const unwatched = anyUnwatched(state) ? unwatchedOf(state) : none();
     state.partialSignature = await signatureOf(unwatched);
-    state.quickSignature = await quickSignatureOf(unwatched);
+    state.quickSignature = await quickSignatureOf(unwatched, state.folderDetails);
     state.checkedAt = now();
     state.partialAt = state.checkedAt;
   }
@@ -330,11 +348,11 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
       const signature = await signatureOf(unwatched);
       if (state.partialSignature !== null && signature !== state.partialSignature) state.version += 1;
       state.partialSignature = signature;
-      state.quickSignature = await quickSignatureOf(unwatched);
+      state.quickSignature = await quickSignatureOf(unwatched, state.folderDetails);
       state.partialAt = now();
       return;
     }
-    const signature = await quickSignatureOf(unwatched);
+    const signature = await quickSignatureOf(unwatched, state.folderDetails);
     if (state.quickSignature !== null && signature !== state.quickSignature) state.version += 1;
     state.quickSignature = signature;
   }
@@ -343,7 +361,7 @@ export function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVer
   async function current(root: string) {
     let state = roots.get(root);
     if (!state) {
-      state = { version: 0, watchers: [], watched: new Set(), reasons: new Map(), targetsKey: null, targets: null, signature: null, partialSignature: null, quickSignature: null, checkedAt: -Infinity, partialAt: -Infinity, checking: null, targetsOf: () => targetsOf(root) };
+      state = { version: 0, watchers: [], watched: new Set(), reasons: new Map(), folderDetails: new Map(), targetsKey: null, targets: null, signature: null, partialSignature: null, quickSignature: null, checkedAt: -Infinity, partialAt: -Infinity, checking: null, targetsOf: () => targetsOf(root) };
       roots.set(root, state);
     }
     if (now() - state.checkedAt >= watchedVerifyMs || !state.targets) {

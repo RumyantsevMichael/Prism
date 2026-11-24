@@ -87,7 +87,10 @@ let refreshIndex: (() => unknown) | null = null;
 // How often a page whose event stream is joined reads its index for what no record holds, how often it reads it while the stream is down, and how often shown action lists check their listing.
 const INDEX_CHECK_MS = 5000;
 const INDEX_UNJOINED_MS = 1500;
+// Shown action lists are read again when the records change or an action is applied; this check covers what no record holds, such as a launched run,
+// often while the event stream is down and seldom while it is joined, since a list read costs the server a read of every record it names.
 const ACTION_CHECK_MS = 4500;
+const ACTION_JOINED_MS = 30000;
 let saveQueue = Promise.resolve();
 // A workspace's page names each store artifact by its store location, store:<location>, in its tabs, links, and URLs, never by a checkout's path:
 // a checkout path that a record view or an older link names opens as the store artifact it names.
@@ -1152,8 +1155,9 @@ function onStreamEvent(name: string, data: any) {
     document.dispatchEvent(new CustomEvent("prism:action", { detail: data }));
     if (data?.artifact?.path && data.artifact.path === selectedPath) void showArtifact(selectedPath);
   } else if (name === "records") {
-    // The project's records changed, so the index and the open view are read again now rather than at the next check.
+    // The project's records changed, so the index, the open view, and the shown action lists are read again now rather than at the next check.
     refreshIndex?.();
+    if (connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
   } else if (name === "session") {
     sessionConnected = true;
     try {
@@ -3619,8 +3623,8 @@ async function initialize() {
     renderTabs();
     await showArtifact(selectedPath);
   }
-  // Shown action lists check their listing every few seconds, so a change an agent made shows without a reload.
-  void createPoller({ interval: ACTION_CHECK_MS, run: () => {
+  // Shown action lists check their listing when the records change, and otherwise every 30 s while the event stream is joined and every few seconds while it is down.
+  void createPoller({ interval: () => sessionConnected ? ACTION_JOINED_MS : ACTION_CHECK_MS, run: () => {
     if (connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
   } }).start();
   // The page reads its project's index again when the server says the project's records changed, one read at a time and only while the tab is shown;
