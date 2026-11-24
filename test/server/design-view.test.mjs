@@ -85,7 +85,7 @@ test("the design view keeps only examples that cite a real clause and test, and 
   assert.deepEqual(view.changeProblems, []);
 });
 
-test("an accepted design limits examples to its frozen tests, and a changed contract or test marks the view stale", async (context) => {
+test("an accepted design limits examples to its frozen tests, and a changed contract marks the view stale while a later test edit does not", async (context) => {
   const root = await project(context);
   await writeFile(path.join(root, "tests", "other.rs"), "fn download_writes_bytes() {}\n");
   const current = await getInitiative({ projectRoot: root, initiative: INITIATIVE });
@@ -93,11 +93,29 @@ test("an accepted design limits examples to its frozen tests, and a changed cont
   await assert.rejects(updateDesignView({ projectRoot: root, initiative: INITIATIVE, slice: INITIATIVE, examples: [{ ...examples[0], file: "tests/other.rs" }] }), /not a frozen test/);
   await updateDesignView({ projectRoot: root, initiative: INITIATIVE, slice: INITIATIVE, examples });
 
+  // Work after the slice landed may edit its tests, and the examples still describe the tests the design froze.
   await writeFile(path.join(root, "tests", "report_download.rs"), `${TESTS}fn download_large() {}\n`);
+  assert.deepEqual((await loadDesignView(root, INITIATIVE, INITIATIVE)).stale, []);
+  await rm(path.join(root, "tests", "report_download.rs"));
+  assert.deepEqual((await loadDesignView(root, INITIATIVE, INITIATIVE)).stale, [], "a frozen test removed later is not stale either");
+
   await writeFile(path.join(root, "docs", "plans", INITIATIVE, "slice.md"), DESIGN.replace("exits 0", "exits 0 and flushes"));
   const view = await loadDesignView(root, INITIATIVE, INITIATIVE);
-  assert.equal(view.stale.length, 2);
+  assert.deepEqual(view.stale, ["The contract changed after the examples were written."]);
   assert.deepEqual(view.gaps, [], "a stale view claims no gaps");
+});
+
+test("examples written before the design froze a different version of a test stay stale after later edits", async (context) => {
+  const root = await project(context);
+  await updateDesignView({ projectRoot: root, initiative: INITIATIVE, slice: INITIATIVE, examples });
+  await writeFile(path.join(root, "tests", "report_download.rs"), `${TESTS}fn download_large() {}\n`);
+  assert.equal((await loadDesignView(root, INITIATIVE, INITIATIVE)).stale.length, 1, "before acceptance the work tree is the design being written");
+
+  const current = await getInitiative({ projectRoot: root, initiative: INITIATIVE });
+  await updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, operations: [{ op: "set_status", slug: INITIATIVE, status: "in-progress" }, { op: "accept_design", slug: INITIATIVE, frozenTests: ["tests/report_download.rs"], review: "none" }] });
+  assert.match((await loadDesignView(root, INITIATIVE, INITIATIVE)).stale.join(" "), /report_download\.rs changed after the examples were written, before the design froze it/);
+  await writeFile(path.join(root, "tests", "report_download.rs"), TESTS);
+  assert.equal((await loadDesignView(root, INITIATIVE, INITIATIVE)).stale.length, 1, "the frozen version is compared, not the work tree's");
 });
 
 test("a planned change to a missing file is flagged before implementation", async (context) => {

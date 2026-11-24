@@ -56,7 +56,8 @@ const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex
 // Git on Windows checks text out with CRLF line endings by default, so another checkout of the same commit holds the same frozen test with
 // other line endings. A text file is digested with CRLF read as LF, so a test changes only when its content does; a file holding a NUL byte
 // is binary and digested as it is.
-const frozenDigest = (bytes: Buffer) => sha256(bytes.includes(0) ? bytes : Buffer.from(bytes.toString("latin1").replaceAll("\r\n", "\n"), "latin1"));
+/** The digest a frozen test is recorded under: its SHA-256 with CRLF line ends read as LF, unless the file is binary. */
+export const frozenDigest = (bytes: Buffer) => sha256(bytes.includes(0) ? bytes : Buffer.from(bytes.toString("latin1").replaceAll("\r\n", "\n"), "latin1"));
 
 /** Digest each frozen test at design acceptance; a missing file cannot be frozen. */
 export async function digestFrozenTests(projectRoot: string, paths: string[]) {
