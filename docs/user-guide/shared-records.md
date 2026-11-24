@@ -100,6 +100,15 @@ Any later change to the item's shaping withdraws an open readiness question and 
 Design does not start on an emerging item: creating its initiative, or claiming it for design, is refused with `item_emerging`, naming what is missing.
 A design that links a Draft ADR is refused with `adr_draft` until design decides that ADR by choosing one of its options.
 
+When shaping finds that two emerging items are one, the agent asks you in Attention whether to merge them, naming both with what each holds and why.
+Answer with the item whose identifier survives, or keep both apart.
+The item you keep holds every input, question with your answer, finding, research gap, cited ADR, and requirement reference of both, and has to be confirmed ready again, while the other stays on the roadmap as merged into it, so anyone holding its identifier is led to the survivor.
+When one item holds two needs, the agent asks whether to split it, listing each part with what it takes, and every entry of the shaping record, requirement reference, and cited ADR goes to at least one part.
+Answer Split to add each part as a new roadmap entry right after the item in its band, with its share of the shaping record, and to record the item as split into them, or Keep whole to leave it as it is.
+Prism asks only while each item is emerging and has no initiative, no other pending proposal, and no unanswered question; if that stopped holding before you answered, your answer changes nothing and the agent can propose again.
+A merged or split entry leaves every band and appears under Merged context or Split context in the roadmap view, and the roadmap refuses to place or update it.
+A checkout of an earlier Prism version that shares the store reports the roadmap as invalid once it holds a merged or split entry, naming that entry's decision, until that checkout updates Prism.
+
 When an agent asks you to approve a requirement file or ADR, the question in Attention names each work item that cites the file, or says that no work item cites it.
 An agent cannot ask you to approve a requirement file that an emerging item cites until you have answered a question round about that item: the request is refused with `shaping_unasked`, naming the item.
 A requirement whose statement holds a code span or a file path may describe how the system is built rather than what you observe, so Prism warns about it when the file is written, edited, checked, or sent for approval, and the approval question names each such section, such as §1.

@@ -1511,7 +1511,8 @@ export async function applyAction({ projectRoot, target, action, input, revision
       const entry = await entryOf(checked, context);
       return { entry, ...definition.change(context, checked.after) };
     } })).entry;
-    // An answer to a work item's question is recorded on the question in the same action, so the shaping record holds what the person said.
+    // An answer to a work item's question is recorded on the question in the same action, so the shaping record holds what the person said,
+    // and an answer to a work item's ready, merge, or split gate applies its proposal in the same action, so no agent applies a choice the person did not make.
     applied = parsed.kind === "gate" && definition.id === "gate.answer"
       ? await recordWorkItemAnswer({ projectRoot, item: parsed.initiative, gate: parsed.gate, write: record })
       : await record();

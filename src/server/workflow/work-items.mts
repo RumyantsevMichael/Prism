@@ -3,11 +3,12 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { checkArtifactContent } from "./artifact-check.mjs";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
-import { normalizeRequirementReference } from "./initiative.mjs";
+import { SLUG_PATTERN } from "./initiative-graph.mjs";
+import { normalizeRequirementReference, readInitiative } from "./initiative.mjs";
 import { canonicalJson, mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, parseVersions } from "./record-merge.mjs";
-import { listWorkItemRecords, readRecord, readStoreFileBytes, STORE_FILE_BOUNDS, withRecordLock, writeRecord } from "./record-store.mjs";
+import { listWorkItemRecords, readRecord, readStoreFileBytes, removeRecord, STORE_FILE_BOUNDS, withRecordLock, writeRecord } from "./record-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { readRoadmapRecord, RoadmapError, updateRoadmap } from "./roadmap.mjs";
+import { applyWorkItemDecision, readRoadmapRecord, RoadmapError, updateRoadmap } from "./roadmap.mjs";
 import { readCoordinationState, updateCoordinationState } from "./state.mjs";
 import { storeArtifactComments, storeArtifactCopy, storeArtifactStatuses } from "./store-artifacts.mjs";
 import { parseStoreJson } from "./store-json.mjs";
@@ -45,6 +46,8 @@ const text = { type: "string", minLength: 1, maxLength: 4000 };
 const itemId = { type: "string", minLength: 1, maxLength: 120 };
 const link = { type: "string", minLength: 1, maxLength: 2000 };
 const paths = { type: "array", maxItems: 200, items: text };
+const entryIds = { type: "array", maxItems: 1000, items: { type: "string", minLength: 1, maxLength: 40 } };
+const PARTS_MAX = 20;
 const object = (properties: any, required = Object.keys(properties)) => ({ type: "object", additionalProperties: false, properties, required });
 
 export const GET_WORK_ITEM_SCHEMA = object({ projectRoot: text, item: itemId });
@@ -66,7 +69,11 @@ export const UPDATE_WORK_ITEM_SCHEMA = object({
       blocking: { type: "boolean" }
     }) } }),
     object({ op: { const: "withdraw_question" }, question: { type: "string", minLength: 1, maxLength: 40 } }),
-    object({ op: { const: "request_ready" } })
+    object({ op: { const: "request_ready" } }),
+    object({ op: { const: "propose_merge" }, with: itemId, recommended: { enum: ["keep-this", "keep-other"] }, reason: text }),
+    object({ op: { const: "propose_split" }, reason: text, parts: { type: "array", minItems: 2, maxItems: PARTS_MAX, items: object({
+      id: itemId, title: text, intent: text, inputs: entryIds, questions: entryIds, findings: entryIds, gaps: entryIds, requirements: paths, adrs: paths
+    }) } })
   ] } }
 }, ["projectRoot", "item", "expectedRevision", "operations"]);
 
@@ -226,6 +233,9 @@ function applyOperations(config: any, current: any, references: string[], operat
   const withdrawals: { id: string; reason: string }[] = [];
   const readyRequested = operations.some((operation) => operation.op === "request_ready");
   if (readyRequested && operations.length > 1) throw fail("validation_failed", "request_ready stands alone in its update, so the confirmation covers the record as it is; nothing changed.");
+  // A merge or split proposal stands alone too, so the person decides on the records as they are; its checks need the roadmap and the other items, so the update makes them.
+  const proposing = operations.find((operation) => operation.op === "propose_merge" || operation.op === "propose_split") ?? null;
+  if (proposing && operations.length > 1) throw fail("validation_failed", `${proposing.op} stands alone in its update, so the person decides on the records as they are; nothing changed.`);
   for (const operation of operations) {
     switch (operation.op) {
       case "add_input": {
@@ -281,6 +291,8 @@ function applyOperations(config: any, current: any, references: string[], operat
         break;
       }
       case "request_ready":
+      case "propose_merge":
+      case "propose_split":
         break;
       default:
         throw fail("validation_failed", `Unsupported operation ${operation.op}.`);
@@ -294,7 +306,7 @@ function applyOperations(config: any, current: any, references: string[], operat
       closeProposal(record, { outcome: "withdrawn", at });
     }
   }
-  return { record, requirements, added, asks, withdrawals, readyRequested };
+  return { record, requirements, added, asks, withdrawals, readyRequested, proposing };
 }
 
 // The gates of a proposal: its own, and for a kill the gate of each artifact.
@@ -563,6 +575,14 @@ export async function updateWorkItem(input: any) {
         applied.record.proposal = { kind: "ready", gate: GATE_PENDING };
         opening.push({ gate: readyGate(entry, cited), purpose: "ready" });
       }
+      if (applied.proposing) {
+        const readContext = citationContext(input.projectRoot, config, entries);
+        const proposed = applied.proposing.op === "propose_merge"
+          ? await mergeProposal(input.projectRoot, readContext, entries, entry, applied.record, applied.proposing)
+          : await splitProposal(input.projectRoot, config, readContext, entries, entry, applied.record, applied.proposing);
+        applied.record.proposal = proposed.proposal;
+        opening.push({ gate: proposed.gate, purpose: proposed.proposal.kind });
+      }
       const requirementsChanged = canonicalJson(applied.requirements) !== canonicalJson(held);
       // Requirement references live on the roadmap entry, so a change to them alone neither creates the shaping record nor rewrites it, except to clear a ready mark or a pending proposal.
       const recordChanged = canonicalJson({ ...applied.record, changedAt: null }) !== canonicalJson({ ...(current.record ?? emptyShapingRecord()), changedAt: null });
@@ -609,7 +629,7 @@ export async function updateWorkItem(input: any) {
           const question = record.questions.find((candidate: any) => candidate.id === asked.id);
           question.gate = opened[index].id;
         });
-        if (applied.readyRequested) record.proposal = { kind: "ready", gate: opened[applied.asks.length].id };
+        if (record.proposal?.gate === GATE_PENDING) record.proposal = { ...record.proposal, gate: opened[applied.asks.length].id };
         contents = serialize(record);
         try {
           await writeRecord(input.projectRoot, { kind: "work-item", initiative: entry.id }, contents);
@@ -690,6 +710,282 @@ export function describeUnmet(unmet: any[]) {
   }).join(" ");
 }
 
+// The questions of a shaping record that are neither answered nor withdrawn.
+const openQuestions = (record: any) => (record?.questions ?? []).filter((asked: any) => !asked.answer && !asked.withdrawn);
+
+/**
+ * Refuse a merge or split of items that a person could not decide on as they stand, in this order across the items: not_emerging for one that is decided or not emerging,
+ * design_started for one with an initiative record, proposal_pending for one with a pending proposal, and questions_open naming each open question.
+ * items is [{ entry, record }]; the refusal names what changed nothing, so the caller can throw it or record it as a stale proposal.
+ */
+async function proposalRefusal(projectRoot: string, context: any, items: { entry: any; record: any; pending?: boolean }[], action: string) {
+  for (const { entry, record } of items) {
+    const stage = entry.decision ? entry.decision.kind : (await describeItem(context, entry, record)).stage;
+    if (stage !== "emerging") return fail("not_emerging", `${entry.id} is ${stage === "ready" ? "a ready" : `a ${stage}`} work item, not an emerging one, so it cannot ${action}; nothing changed.`, { item: entry.id, stage });
+  }
+  for (const { entry } of items) {
+    let started = true;
+    try { started = (await readInitiative(projectRoot, entry.id)).loaded.exists; } catch { started = true; }
+    if (started) return fail("design_started", `${entry.id} has an initiative record, so design has started on it and it cannot ${action}; nothing changed.`, { item: entry.id });
+  }
+  for (const { entry, record, pending = true } of items) {
+    if (pending && record?.proposal) return fail("proposal_pending", `${entry.id} has a pending ${record.proposal.kind} proposal, so it cannot ${action} until the person answers its gate ${record.proposal.gate}; nothing changed.`, { item: entry.id, proposal: record.proposal });
+  }
+  const open = items.flatMap(({ entry, record }) => openQuestions(record).map((asked: any) => ({ item: entry.id, question: asked.id, text: asked.question })));
+  if (open.length) return fail("questions_open", `A work item cannot ${action} while a question of its shaping is neither answered nor withdrawn: ${open.map((asked: any) => `${asked.item} ${JSON.stringify(asked.text)} (${asked.question})`).join("; ")}. Wait for the person's answers or withdraw the questions; nothing changed.`, { questions: open });
+  return null;
+}
+
+// How much a shaping record holds, for a proposal gate's context.
+async function holdings(context: any, entry: any, record: any) {
+  const count = (key: string) => (record?.[key] ?? []).length;
+  const cited = new Set((await citedArtifacts(context, entry, record)).map((artifact: any) => `${artifact.kind}\0${artifact.path}`)).size;
+  return `${count("inputs")} inputs, ${count("questions")} questions, ${count("findings")} findings, ${count("gaps")} research gaps, and ${cited} cited artifacts`;
+}
+
+// Check a merge proposal and build its gate: { proposal, gate }, with the proposal's gate written once the gate opens.
+async function mergeProposal(projectRoot: string, context: any, entries: any[], entry: any, record: any, operation: any) {
+  if (operation.with === entry.id) throw fail("validation_failed", `${entry.id} cannot merge with itself; nothing changed.`);
+  const other = entries.find((candidate: any) => candidate.id === operation.with);
+  if (!other) throw fail("item_unknown", `The roadmap has no entry ${operation.with}, so it names no work item to merge with; nothing changed.`, { item: operation.with });
+  const otherRecord = (await readShapingRecord(projectRoot, other.id)).record;
+  const refusal = await proposalRefusal(projectRoot, context, [{ entry, record }, { entry: other, record: otherRecord }], "be merged");
+  if (refusal) throw refusal;
+  const describe = async (item: any, held: any) => `- ${item.title} (${item.id}): ${item.intent} It holds ${await holdings(context, item, held)}.`;
+  const gate = {
+    op: "ask",
+    kind: "decision",
+    question: `Should the work items ${entry.title} and ${other.title} become one?`,
+    context: [
+      "Shaping proposes merging two work items:",
+      `${await describe(entry, record)}\n${await describe(other, otherRecord)}`,
+      `Why: ${operation.reason}`,
+      "Merging keeps the chosen item under its own identifier with every input, question with its answer, finding, research gap, cited ADR, and requirement reference of both, and records the other as merged into it; keeping them apart changes nothing."
+    ].join("\n\n"),
+    artifacts: [],
+    options: [
+      { id: "keep-this", label: `Keep ${entry.title}`, consequence: `${entry.id} holds both items' shaping, and ${other.id} is recorded as merged into it.` },
+      { id: "keep-other", label: `Keep ${other.title}`, consequence: `${other.id} holds both items' shaping, and ${entry.id} is recorded as merged into it.` },
+      { id: "separate", label: "Keep both apart", consequence: "Both items stay as they are." }
+    ],
+    recommended: { option: operation.recommended, reason: `Shaping recommends keeping ${operation.recommended === "keep-this" ? entry.id : other.id}'s identifier.` }
+  };
+  return { proposal: { kind: "merge", gate: GATE_PENDING, with: other.id }, gate };
+}
+
+// The record lists a split part takes entries from, with the field that names them.
+const PART_LISTS = ENTRY_LISTS.map(([key]) => key);
+
+// Check a split proposal and build its gate: { proposal, gate }, where each part takes entries of the record and references of the entry, and every one goes to some part.
+async function splitProposal(projectRoot: string, config: any, context: any, entries: any[], entry: any, record: any, operation: any) {
+  const refusal = await proposalRefusal(projectRoot, context, [{ entry, record }], "be split");
+  if (refusal) throw refusal;
+  const held = record ?? emptyShapingRecord();
+  const references = [...(entry.requirements ?? [])];
+  const taken = new Set<string>();
+  const seenIds = new Set<string>();
+  const parts = operation.parts.map((part: any) => {
+    if (!SLUG_PATTERN.test(part.id)) throw fail("validation_failed", `The part identifier ${JSON.stringify(part.id)} uses something other than letters, digits, hyphens, or underscores; nothing changed.`);
+    if (entries.some((candidate: any) => candidate.id === part.id) || seenIds.has(part.id)) throw fail("validation_failed", `The part identifier ${part.id} is not a new roadmap identifier; give each part one that no entry or other part has; nothing changed.`);
+    seenIds.add(part.id);
+    if (!part.title.trim() || !part.intent.trim()) throw fail("validation_failed", `The part ${part.id} needs a title and an intent; nothing changed.`);
+    const normalized: Record<string, any> = { id: part.id, title: part.title, intent: part.intent };
+    for (const key of PART_LISTS) {
+      const known = new Set(held[key].map((candidate: any) => candidate.id));
+      const unknown = part[key].filter((value: string) => !known.has(value));
+      if (unknown.length) throw fail("validation_failed", `The part ${part.id} takes ${unknown.join(", ")}, which the shaping record's ${key} do not hold; nothing changed.`);
+      normalized[key] = held[key].map((candidate: any) => candidate.id).filter((value: string) => part[key].includes(value));
+      for (const value of normalized[key]) taken.add(`${key}\0${value}`);
+    }
+    const requirements = part.requirements.map((value: string) => requirementReference(config, value));
+    const unheld = requirements.filter((reference: string) => !references.includes(reference));
+    if (unheld.length) throw fail("validation_failed", `The part ${part.id} takes the requirement references ${unheld.join(", ")}, which ${entry.id} does not cite; nothing changed.`);
+    normalized.requirements = references.filter((reference) => requirements.includes(reference));
+    const adrs = part.adrs.map((value: string) => adrPath(config, value));
+    const uncited = adrs.filter((file: string) => !held.adrs.includes(file));
+    if (uncited.length) throw fail("validation_failed", `The part ${part.id} takes the ADRs ${uncited.join(", ")}, which ${entry.id} does not cite; nothing changed.`);
+    normalized.adrs = held.adrs.filter((file: string) => adrs.includes(file));
+    for (const reference of normalized.requirements) taken.add(`requirements\0${reference}`);
+    for (const file of normalized.adrs) taken.add(`adrs\0${file}`);
+    return normalized;
+  });
+  const left = [
+    ...PART_LISTS.flatMap((key) => held[key].map((candidate: any) => candidate.id).filter((value: string) => !taken.has(`${key}\0${value}`))),
+    ...references.filter((reference) => !taken.has(`requirements\0${reference}`)),
+    ...held.adrs.filter((file: string) => !taken.has(`adrs\0${file}`))
+  ];
+  if (left.length) throw fail("split_incomplete", `A split gives every entry of the shaping record, requirement reference, and cited ADR to some part, and no part takes ${left.join(", ")}; nothing changed.`, { missing: left });
+  const takes = (part: any) => {
+    const named = [...PART_LISTS.flatMap((key) => part[key]), ...part.requirements, ...part.adrs];
+    return named.length ? named.join(", ") : "nothing of the record";
+  };
+  const gate = {
+    op: "ask",
+    kind: "decision",
+    question: `Should the work item ${entry.title} be split into ${parts.length} items?`,
+    context: [
+      `Shaping proposes splitting the work item ${entry.title} (${entry.id}): ${entry.intent}`,
+      `Why: ${operation.reason}`,
+      `The parts, each a new roadmap entry after ${entry.id} in ${entry.band}:\n${parts.map((part: any) => `- ${part.title} (${part.id}): ${part.intent} It takes ${takes(part)}.`).join("\n")}`,
+      `Splitting records ${entry.id} as split into the parts; keeping it whole changes nothing.`
+    ].join("\n\n"),
+    artifacts: [],
+    options: [
+      { id: "split", label: "Split", consequence: `The parts become roadmap entries with what they take, and ${entry.id} is recorded as split into them.` },
+      { id: "keep-whole", label: "Keep whole", consequence: `${entry.id} stays as it is.` }
+    ],
+    recommended: { option: "split", reason: "Shaping found that the parts change independently." }
+  };
+  return { proposal: { kind: "split", gate: GATE_PENDING, parts }, gate };
+}
+
+// The entries of a merged record: the survivor's, then each of the other's that it does not hold, with a new identifier where one collides and its rounds after the survivor's.
+function mergedRecords(survivor: any, other: any) {
+  const merged = structuredClone(survivor);
+  const lastRound = Math.max(0, ...merged.questions.map((asked: any) => Number.isInteger(asked.round) ? asked.round : 0));
+  for (const [key, prefix] of ENTRY_LISTS) {
+    for (const source of other[key]) {
+      const copy = structuredClone(source);
+      if (ENTRY_LISTS.some(([list]) => merged[list].some((candidate: any) => candidate.id === copy.id))) copy.id = newId(merged, prefix);
+      if (key === "questions" && Number.isInteger(copy.round)) copy.round += lastRound;
+      merged[key].push(copy);
+    }
+  }
+  for (const file of other.adrs) if (!merged.adrs.includes(file)) merged.adrs.push(file);
+  merged.changedAt = [survivor.changedAt, other.changedAt].filter((value) => typeof value === "string").sort().at(-1) ?? null;
+  return merged;
+}
+
+// A record's bytes before an answer changes it, so a later step that fails can put it back: null when it had none.
+async function recordBytes(projectRoot: string, item: string) {
+  return (await readRecord(projectRoot, { kind: "work-item", initiative: item }, { maxBytes: RECORD_MAX_BYTES })).bytes;
+}
+
+async function restoreRecord(projectRoot: string, item: string, bytes: any) {
+  if (bytes === null) await removeRecord(projectRoot, { kind: "work-item", initiative: item });
+  else await writeRecord(projectRoot, { kind: "work-item", initiative: item }, bytes);
+}
+
+// Put the roadmap entries that an answer changed back as they were, removing the ones it added.
+async function restoreRoadmap(projectRoot: string, before: any, ids: string[], actor: string) {
+  const earlier = new Map(before.initiatives.map((candidate: any) => [candidate.id, candidate]));
+  await applyWorkItemDecision(projectRoot, { actor, operation: "restore_work_items", ids, change: (record: any) => {
+    record.initiatives = record.initiatives.filter((candidate: any) => earlier.has(candidate.id)).map((candidate: any) => ids.includes(candidate.id) ? structuredClone(earlier.get(candidate.id)) : candidate);
+  } });
+}
+
+// Write the records of an answer after its roadmap change, all or none: each { item, record }, written in order, with the roadmap and every written record put back when one fails.
+async function writeAnswerRecords(projectRoot: string, roadmap: { before: any; ids: string[]; actor: string }, writes: { item: string; record: any }[]) {
+  const written: { item: string; bytes: any }[] = [];
+  try {
+    for (const { item, record } of writes) {
+      const bytes = await recordBytes(projectRoot, item);
+      await writeRecord(projectRoot, { kind: "work-item", initiative: item }, serialize(record));
+      written.push({ item, bytes });
+    }
+  } catch (error) {
+    for (const { item, bytes } of written.reverse()) await restoreRecord(projectRoot, item, bytes).catch(() => {});
+    await restoreRoadmap(projectRoot, roadmap.before, roadmap.ids, roadmap.actor).catch(() => {});
+    throw error;
+  }
+}
+
+const personLabel = (by: any) => typeof by?.name === "string" && by.name ? by.name : "person";
+
+// A proposal that no longer fits the items when the person answers closes as stale with why, and changes nothing else.
+const staleOutcome = (error: any) => ({ outcome: "stale", code: error.code, message: error.message });
+
+/**
+ * Apply a confirmed merge under the proposing item's lock: the chosen item keeps its identifier with the union of both records and requirement references,
+ * and the other's entry records the merged decision, writing the roadmap and both records all or none.
+ * Returns { record, written }: the proposing item's record, and whether it is written, which it is not when the proposal closed as stale.
+ */
+async function applyMerge(projectRoot: string, item: string, record: any, proposal: any, choice: string, answer: any, closed: any) {
+  const other = proposal.with;
+  return withRecordLock(projectRoot, { kind: "work-item", initiative: other }, async () => {
+    const config = await readWorkflowConfig(projectRoot);
+    const roadmap = await readRoadmapRecord(projectRoot);
+    const entries = roadmap.valid ? roadmap.record?.initiatives ?? [] : [];
+    const thisEntry = entries.find((candidate: any) => candidate.id === item);
+    const otherEntry = entries.find((candidate: any) => candidate.id === other);
+    const otherRecord = (await readShapingRecord(projectRoot, other).catch(() => ({ record: null }))).record;
+    const context = citationContext(projectRoot, config, entries);
+    const refusal = !thisEntry || !otherEntry
+      ? fail("item_unknown", `The roadmap no longer holds ${!thisEntry ? item : other}, so the merge was not applied.`)
+      : await proposalRefusal(projectRoot, context, [{ entry: thisEntry, record, pending: false }, { entry: otherEntry, record: otherRecord }], "be merged");
+    if (refusal) {
+      closeProposal(record, { ...staleOutcome(refusal), ...closed });
+      return { record, written: false };
+    }
+    const [survivorId, mergedId] = choice === "keep-this" ? [item, other] : [other, item];
+    const records: Record<string, any> = { [item]: structuredClone(record), [other]: structuredClone(otherRecord ?? emptyShapingRecord()) };
+    const survivor = mergedRecords(records[survivorId], records[mergedId]);
+    survivor.merges = [...survivor.merges, { from: mergedId, gate: proposal.gate, at: answer.at }].slice(-MERGES_KEPT);
+    survivor.ready = null;
+    const merged = { ...records[mergedId], mergedInto: survivorId };
+    const next: Record<string, any> = { [survivorId]: survivor, [mergedId]: merged };
+    closeProposal(next[item], { outcome: choice, ...closed });
+    for (const held of Object.values(next)) if (Buffer.byteLength(serialize(held)) > RECORD_MAX_BYTES) {
+      closeProposal(record, { outcome: "stale", code: "artifact_too_large", message: "The merged shaping record would exceed its bound, so the merge was not applied.", ...closed });
+      return { record, written: false };
+    }
+    const actor = personLabel(answer.by);
+    const { before } = await applyWorkItemDecision(projectRoot, { actor, operation: "merge", ids: [survivorId, mergedId], change: (current: any) => {
+      const keep = current.initiatives.find((candidate: any) => candidate.id === survivorId);
+      const drop = current.initiatives.find((candidate: any) => candidate.id === mergedId);
+      if (!keep || !drop || keep.decision || drop.decision) throw fail("not_emerging", "An item of the merge was decided meanwhile, so the merge was not applied.");
+      keep.requirements = [...keep.requirements, ...drop.requirements.filter((reference: string) => !keep.requirements.includes(reference))];
+      drop.decision = { kind: "merged", into: survivorId, gate: proposal.gate, at: answer.at };
+    } });
+    await writeAnswerRecords(projectRoot, { before, ids: [survivorId, mergedId], actor }, [{ item: other, record: next[other] }, { item, record: next[item] }]);
+    return { record: next[item], written: true };
+  }, fail);
+}
+
+/**
+ * Apply a confirmed split under the item's lock: each part becomes a roadmap entry directly after the item in its band with a shaping record of what it takes,
+ * and the item's entry records the split decision, writing the roadmap and every record all or none. Returns { record, written } as applyMerge does.
+ */
+async function applySplit(projectRoot: string, item: string, record: any, proposal: any, answer: any, closed: any) {
+  const config = await readWorkflowConfig(projectRoot);
+  const roadmap = await readRoadmapRecord(projectRoot);
+  const entries = roadmap.valid ? roadmap.record?.initiatives ?? [] : [];
+  const entry = entries.find((candidate: any) => candidate.id === item);
+  const taken = proposal.parts.map((part: any) => part.id).filter((id: string) => entries.some((candidate: any) => candidate.id === id));
+  const refusal = !entry
+    ? fail("item_unknown", `The roadmap no longer holds ${item}, so the split was not applied.`)
+    : taken.length
+      ? fail("validation_failed", `The roadmap gained ${taken.join(", ")} since the split was proposed, so the split was not applied; propose it again with new identifiers.`)
+      : await proposalRefusal(projectRoot, citationContext(projectRoot, config, entries), [{ entry, record, pending: false }], "be split");
+  if (refusal) {
+    closeProposal(record, { ...staleOutcome(refusal), ...closed });
+    return { record, written: false };
+  }
+  const into = proposal.parts.map((part: any) => part.id);
+  const records = proposal.parts.map((part: any) => {
+    const shaped: Record<string, any> = emptyShapingRecord();
+    for (const key of PART_LISTS) shaped[key] = record[key].filter((candidate: any) => part[key].includes(candidate.id)).map((candidate: any) => structuredClone(candidate));
+    shaped.adrs = [...part.adrs];
+    shaped.origin = { kind: "split", from: item, gate: proposal.gate };
+    shaped.changedAt = record.changedAt ?? null;
+    return { item: part.id, record: shaped };
+  });
+  const original = structuredClone(record);
+  original.splitInto = into;
+  closeProposal(original, { outcome: "split", ...closed });
+  const actor = personLabel(answer.by);
+  const { before } = await applyWorkItemDecision(projectRoot, { actor, operation: "split", ids: [item, ...into], change: (current: any) => {
+    const held = current.initiatives.find((candidate: any) => candidate.id === item);
+    if (!held || held.decision) throw fail("not_emerging", `${item} was decided meanwhile, so the split was not applied.`);
+    if (current.initiatives.some((candidate: any) => into.includes(candidate.id))) throw fail("validation_failed", "A part's identifier was taken meanwhile, so the split was not applied.");
+    const added = proposal.parts.map((part: any) => ({ id: part.id, title: part.title, intent: part.intent, band: held.band, requirements: [...part.requirements], requires: [], decision: null }));
+    current.initiatives.splice(current.initiatives.indexOf(held) + 1, 0, ...added);
+    held.decision = { kind: "split", into, gate: proposal.gate, at: answer.at };
+  } });
+  await writeAnswerRecords(projectRoot, { before, ids: [item, ...into], actor }, [...records, { item, record: original }]);
+  return { record: original, written: true };
+}
+
 // The gates an update opens, in the item's coordination state as the calling session asks any gate, and each withdrawn gate that is still open closed: the opened gates, in order.
 async function changeGates(projectRoot: string, entry: any, asking: any[], withdrawals: { id: string; reason: string }[]) {
   if (!asking.length && !withdrawals.length) return [];
@@ -722,7 +1018,10 @@ async function withdrawGates(projectRoot: string, item: string, ids: string[], r
  * answer { text, choice, answeredAt, by }, with text the note for a free answer and the recommended answer followed by the note for recommended.
  * When it is the gate of the pending ready proposal, ready records ready { gate, at, by } while no readiness condition is unmet and otherwise closes the proposal
  * with outcome unmet and the conditions, not-ready closes it with the note, and a free answer closes it as declined with the note.
- * Both happen under the record's lock and leave changedAt as it was. Returns what write() returned.
+ * For a merge proposal, keep-this or keep-other merges both items into the chosen one and records the other as merged into it, and separate closes it;
+ * for a split proposal, split adds the parts to the roadmap with their shaping records and records the item as split into them, and keep-whole closes it.
+ * A merge or split that no longer fits the items, as when one was decided or gained an open question, closes as stale with why, changing nothing else.
+ * Each happens under the record's lock and leaves changedAt as it was. Returns what write() returned.
  */
 export async function recordWorkItemAnswer({ projectRoot, item, gate, write }: { projectRoot: string; item: string; gate: string; write: () => Promise<any> }) {
   const asking = (record: any) => (record?.questions ?? []).find((asked: any) => asked.gate === gate && !asked.answer && !asked.withdrawn) ?? null;
@@ -757,6 +1056,14 @@ export async function recordWorkItemAnswer({ projectRoot, item, gate, write }: {
           closeProposal(record, { outcome: "ready", ...closed });
           record.ready = { gate, at: entry.at, by: entry.by };
         }
+      } else if (proposal.kind === "merge" && choice === "separate") closeProposal(record, { outcome: "separate", ...closed });
+      else if (proposal.kind === "split" && choice === "keep-whole") closeProposal(record, { outcome: "keep-whole", ...closed });
+      else if (proposal.kind === "merge" && (choice === "keep-this" || choice === "keep-other")) {
+        const applied = await applyMerge(projectRoot, item, record, proposal, choice, entry, closed);
+        if (applied.written) return entry;
+      } else if (proposal.kind === "split" && choice === "split") {
+        const applied = await applySplit(projectRoot, item, record, proposal, entry, closed);
+        if (applied.written) return entry;
       } else return entry;
     }
     await writeRecord(projectRoot, { kind: "work-item", initiative: item }, serialize(record));
@@ -787,13 +1094,13 @@ const ROADMAP_ATTEMPTS = 5;
 export const WORK_ITEM_TOOLS = [
   {
     name: "get_work_item",
-    description: "Read one work item, a roadmap entry addressed by its roadmap identifier as item, refusing an identifier that names no entry with item_unknown. Returns item, title, intent, band, stage (emerging while the entry cites no Approved requirement file or has a shaping record without a ready mark, ready otherwise, or the decision's kind for a decided entry), unmet (the readiness conditions it does not meet, in order: no_approved_requirement, requirement_not_approved with path, scope, and status per cited requirement file that is not Approved, draft_adr_nonconforming with path, scope, and findings per cited Draft ADR that breaks the ADR format, and question_unanswered with question and text per blocking question that is neither answered nor withdrawn), revision (the SHA-256 of the shaping record, or null before it has one, which update_work_item takes as expectedRevision), record (the shaping record { inputs, questions, findings, gaps, adrs, ready, origin, merges, splitInto, mergedInto, kill, changedAt }, or null), requirements (the entry's requirement references), cited ({ path, scope, kind, status, citedBy } per cited requirement file and ADR, with status null for a file that does not exist and citedBy the other work items that cite it), comments (every comment people left on a cited store artifact after the record's changedAt, or every one while it has none, oldest first, as { artifact: { path, scope }, id, line, text, author, at }), and proposal (the pending proposal, such as { kind: \"ready\", gate }, or null). Read the comments as the person's input to the item.",
+    description: "Read one work item, a roadmap entry addressed by its roadmap identifier as item, refusing an identifier that names no entry with item_unknown. Returns item, title, intent, band, stage (emerging while the entry cites no Approved requirement file or has a shaping record without a ready mark, ready otherwise, or the decision's kind for a decided entry), unmet (the readiness conditions it does not meet, in order: no_approved_requirement, requirement_not_approved with path, scope, and status per cited requirement file that is not Approved, draft_adr_nonconforming with path, scope, and findings per cited Draft ADR that breaks the ADR format, and question_unanswered with question and text per blocking question that is neither answered nor withdrawn), revision (the SHA-256 of the shaping record, or null before it has one, which update_work_item takes as expectedRevision), record (the shaping record { inputs, questions, findings, gaps, adrs, ready, origin, merges, splitInto, mergedInto, kill, changedAt }, or null), requirements (the entry's requirement references), cited ({ path, scope, kind, status, citedBy } per cited requirement file and ADR, with status null for a file that does not exist and citedBy the other work items that cite it), comments (every comment people left on a cited store artifact after the record's changedAt, or every one while it has none, oldest first, as { artifact: { path, scope }, id, line, text, author, at }), and proposal (the pending proposal: { kind: \"ready\", gate }, { kind: \"merge\", gate, with }, or { kind: \"split\", gate, parts }, or null). A merged item's record holds mergedInto, its survivor's merges lists { from, gate, at }, a split item's record holds splitInto, and each part's record holds origin { kind: \"split\", from, gate }. Read the comments as the person's input to the item.",
     inputSchema: GET_WORK_ITEM_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_work_item",
-    description: "Apply 1 to 50 operations to a work item's shaping record at expectedRevision, the revision get_work_item returned, all or none: add_input { link, note } records a link, a URI with a scheme such as https://… or notion://…, or a project-relative path, with a one-line note of at most 300 characters, and never the linked content; add_finding { text, source } records a finding with the link it came from, refusing one without a source with source_missing; add_research_gap { note } records research that could not reach outside sources, never as a finding; cite { requirements?, adrs? } adds requirement references, written as the roadmap writes them such as billing.md§2, to the item's roadmap entry and ADR paths below the configured ADRs folder to the record, ignoring ones already cited, and uncite removes them. ask_round { questions } asks a round of 1 to 5 questions, each { question, recommended (at most 200 characters), settles (at most 1000, what the answer settles), blocking (true when the item cannot become ready without the answer) }, recording each as { id, round, question, recommended, settles, blocking, gate, askedAt, answer: null, withdrawn: false } and opening one decision gate per question in the item's coordination state, which you ask the person and wait on with wait_for_user_gate like any gate; when the person answers in the review app, Prism records answer { text, choice, answeredAt, by } on the question. withdraw_question { question } withdraws an unanswered question by its id and closes its gate, refusing an answered one with question_answered. request_ready {} stands alone in its update: while no readiness condition is unmet it opens a decision gate with the options ready and not-ready, recommending ready, whose context lists each cited artifact with its status, and records proposal { kind: \"ready\", gate }; with any unmet it is refused with readiness_unmet and unmet, opening no gate. When the person answers ready and every condition is still met, the record holds ready { gate, at, by } and the item is ready; a condition that became unmet closes the proposal with outcome unmet, not-ready closes it with the person's note, and a free answer closes it as declined. Any other update that changes the record or the entry's requirement references clears the ready mark and withdraws a pending proposal, closing its gates, so a confirmation covers the record as the person saw it; closed proposals stay under the record's proposals with their outcomes. Design starts on an item only once it is ready: update_initiative create and a design claim are refused with item_emerging while it is emerging. A cite, or an update_roadmap, that adds a reference to a requirement file that is not Approved to an emerging item is refused with round_unanswered while the item has no answered round, one whose questions are each answered or withdrawn with at least one answered, or has a question that is neither answered nor withdrawn. A link of any other form is refused with link_invalid, an ADR path outside the ADRs folder and any other operation or field with validation_failed, an identifier that names no roadmap entry with item_unknown, a stale expectedRevision with revision_conflict and currentRevision, and any operation on a decided entry with item_closed naming the decision; a requirement reference to a file that breaks its format is refused with artifact_nonconforming as update_roadmap refuses it. No operation records an answer or anything a person said: the person adds to an item by answering its gates and commenting on what it cites. Returns { item, revision, previousRevision, record, stage, unmet, openedGates }, where each entry carries an id that Prism assigns and changedAt is the time of the last update that changed the record, and openedGates lists { id, kind, purpose } for each gate the update opened.",
+    description: "Apply 1 to 50 operations to a work item's shaping record at expectedRevision, the revision get_work_item returned, all or none: add_input { link, note } records a link, a URI with a scheme such as https://… or notion://…, or a project-relative path, with a one-line note of at most 300 characters, and never the linked content; add_finding { text, source } records a finding with the link it came from, refusing one without a source with source_missing; add_research_gap { note } records research that could not reach outside sources, never as a finding; cite { requirements?, adrs? } adds requirement references, written as the roadmap writes them such as billing.md§2, to the item's roadmap entry and ADR paths below the configured ADRs folder to the record, ignoring ones already cited, and uncite removes them. ask_round { questions } asks a round of 1 to 5 questions, each { question, recommended (at most 200 characters), settles (at most 1000, what the answer settles), blocking (true when the item cannot become ready without the answer) }, recording each as { id, round, question, recommended, settles, blocking, gate, askedAt, answer: null, withdrawn: false } and opening one decision gate per question in the item's coordination state, which you ask the person and wait on with wait_for_user_gate like any gate; when the person answers in the review app, Prism records answer { text, choice, answeredAt, by } on the question. withdraw_question { question } withdraws an unanswered question by its id and closes its gate, refusing an answered one with question_answered. request_ready {} stands alone in its update: while no readiness condition is unmet it opens a decision gate with the options ready and not-ready, recommending ready, whose context lists each cited artifact with its status, and records proposal { kind: \"ready\", gate }; with any unmet it is refused with readiness_unmet and unmet, opening no gate. When the person answers ready and every condition is still met, the record holds ready { gate, at, by } and the item is ready; a condition that became unmet closes the proposal with outcome unmet, not-ready closes it with the person's note, and a free answer closes it as declined. propose_merge { with, recommended, reason } and propose_split { parts, reason } each stand alone in their update and are refused with not_emerging for an item, or the with item, that is not emerging, design_started for one with an initiative record, proposal_pending for one with a pending proposal, and questions_open naming each question that is neither answered nor withdrawn. propose_merge opens a decision gate with the options keep-this, keep-other, and separate, recommending recommended (keep-this or keep-other), whose context names both items with their titles, intents, the reason, and what each holds, and records proposal { kind: \"merge\", gate, with }; when the person answers keep-this or keep-other, the chosen item keeps its own identifier with every input, question with its answer, finding, gap, cited ADR, and requirement reference of both and records { from, gate, at } under merges with its ready mark cleared, while the other entry records the decision { kind: \"merged\", into, gate, at } and its record mergedInto; separate changes nothing. propose_split takes at least two parts, each { id, title, intent, inputs, questions, findings, gaps, requirements, adrs } naming entries of the record by id and references of the entry, refusing a part id that is not a new roadmap identifier and an entry the record or entry does not hold with validation_failed, and an entry, requirement reference, or cited ADR that no part takes with split_incomplete listing them; it opens a decision gate with the options split and keep-whole, recommending split, whose context lists each part with what it takes, and records proposal { kind: \"split\", gate, parts }; when the person answers split, each part becomes a roadmap entry in the item's band directly after it, in part order, with its title, intent, and requirement references and a shaping record of the entries it takes with origin { kind: \"split\", from, gate }, while the item's entry records the decision { kind: \"split\", into, gate, at } and its record splitInto; keep-whole changes nothing. A merged or split entry leaves every band. Any other update that changes the record or the entry's requirement references clears the ready mark and withdraws a pending proposal, closing its gates, so a confirmation covers the record as the person saw it; closed proposals stay under the record's proposals with their outcomes. Design starts on an item only once it is ready: update_initiative create and a design claim are refused with item_emerging while it is emerging. A cite, or an update_roadmap, that adds a reference to a requirement file that is not Approved to an emerging item is refused with round_unanswered while the item has no answered round, one whose questions are each answered or withdrawn with at least one answered, or has a question that is neither answered nor withdrawn. A link of any other form is refused with link_invalid, an ADR path outside the ADRs folder and any other operation or field with validation_failed, an identifier that names no roadmap entry with item_unknown, a stale expectedRevision with revision_conflict and currentRevision, and any operation on a decided entry with item_closed naming the decision; a requirement reference to a file that breaks its format is refused with artifact_nonconforming as update_roadmap refuses it. No operation records an answer or anything a person said: the person adds to an item by answering its gates and commenting on what it cites. Returns { item, revision, previousRevision, record, stage, unmet, openedGates }, where each entry carries an id that Prism assigns and changedAt is the time of the last update that changed the record, and openedGates lists { id, kind, purpose } for each gate the update opened.",
     inputSchema: UPDATE_WORK_ITEM_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }
