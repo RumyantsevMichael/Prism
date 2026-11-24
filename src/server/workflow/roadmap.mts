@@ -1031,7 +1031,7 @@ export async function updateRoadmap(input: any, options: { shapingRecords?: Map<
  * Apply a person's answer to a work item gate to the roadmap record under its lock, as the review app action that records the answer does:
  * change(record, at) changes a copy of the record and may throw to refuse, the history records operation for each of ids, and the roadmap view is regenerated.
  * No revision is checked, because the answer applies to the record as it is when the answer lands, and change re-checks what it relies on.
- * Returns { revision, before }, with before the record as it was, so a later step that fails can put the entries back.
+ * Returns { revision }; a later step that fails puts the entries back with another call whose change reverses only what this one changed.
  */
 export async function applyWorkItemDecision(projectRoot: string, { actor, operation, ids, change }: { actor: string; operation: string; ids: string[]; change: (record: any, at: string) => void }) {
   const resolved = await resolveRoadmap(projectRoot, true);
@@ -1050,7 +1050,7 @@ export async function applyWorkItemDecision(projectRoot: string, { actor, operat
     const contents = serializeRoadmap(record);
     await writeRecord(resolved.root, { kind: "roadmap" }, contents);
     await writeProjection(resolved.root, resolved.projectionPath, markdown(record, resolved.recordName), resolved.recordName, { replace: false }).catch(() => null);
-    return { revision: createHash("sha256").update(contents).digest("hex"), before: current.record };
+    return { revision: createHash("sha256").update(contents).digest("hex") };
   }, fail));
 }
 

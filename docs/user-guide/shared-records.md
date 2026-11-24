@@ -106,6 +106,7 @@ The item you keep holds every input, question with your answer, finding, researc
 When one item holds two needs, the agent asks whether to split it, listing each part with what it takes, and every entry of the shaping record, requirement reference, and cited ADR goes to at least one part.
 Answer Split to add each part as a new roadmap entry right after the item in its band, with its share of the shaping record, and to record the item as split into them, or Keep whole to leave it as it is.
 Prism asks only while each item is emerging and has no initiative, no other pending proposal, and no unanswered question; if that stopped holding before you answered, your answer changes nothing and the agent can propose again.
+The same holds when a split's parts no longer take every requirement reference the item cites, or when writing your answer fails: Prism puts back what it had changed and closes the question with why, and reports an error if it cannot put everything back.
 A merged or split entry leaves every band and appears under Merged context or Split context in the roadmap view, and the roadmap refuses to place or update it.
 A checkout of an earlier Prism version that shares the store reports the roadmap as invalid once it holds a merged or split entry, naming that entry's decision, until that checkout updates Prism.
 

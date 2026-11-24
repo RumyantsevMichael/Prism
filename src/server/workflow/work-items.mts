@@ -840,6 +840,7 @@ async function splitProposal(projectRoot: string, config: any, context: any, ent
 }
 
 // The entries of a merged record: the survivor's, then each of the other's that it does not hold, with a new identifier where one collides and its rounds after the survivor's.
+// It keeps the earlier changedAt of the two, or none when either has none, so get_work_item still lists each comment that either item listed before the merge.
 function mergedRecords(survivor: any, other: any) {
   const merged = structuredClone(survivor);
   const lastRound = Math.max(0, ...merged.questions.map((asked: any) => Number.isInteger(asked.round) ? asked.round : 0));
@@ -852,7 +853,8 @@ function mergedRecords(survivor: any, other: any) {
     }
   }
   for (const file of other.adrs) if (!merged.adrs.includes(file)) merged.adrs.push(file);
-  merged.changedAt = [survivor.changedAt, other.changedAt].filter((value) => typeof value === "string").sort().at(-1) ?? null;
+  const times = [survivor.changedAt, other.changedAt];
+  merged.changedAt = times.every((value) => typeof value === "string") ? times.sort()[0] : null;
   return merged;
 }
 
@@ -866,16 +868,10 @@ async function restoreRecord(projectRoot: string, item: string, bytes: any) {
   else await writeRecord(projectRoot, { kind: "work-item", initiative: item }, bytes);
 }
 
-// Put the roadmap entries that an answer changed back as they were, removing the ones it added.
-async function restoreRoadmap(projectRoot: string, before: any, ids: string[], actor: string) {
-  const earlier = new Map(before.initiatives.map((candidate: any) => [candidate.id, candidate]));
-  await applyWorkItemDecision(projectRoot, { actor, operation: "restore_work_items", ids, change: (record: any) => {
-    record.initiatives = record.initiatives.filter((candidate: any) => earlier.has(candidate.id)).map((candidate: any) => ids.includes(candidate.id) ? structuredClone(earlier.get(candidate.id)) : candidate);
-  } });
-}
-
-// Write the records of an answer after its roadmap change, all or none: each { item, record }, written in order, with the roadmap and every written record put back when one fails.
-async function writeAnswerRecords(projectRoot: string, roadmap: { before: any; ids: string[]; actor: string }, writes: { item: string; record: any }[]) {
+// Write the records of an answer after its roadmap change, all or none: each { item, record }, written in order.
+// When one fails, every written record is put back, and undo reverses only what the answer changed on the roadmap as it is now, under the roadmap's lock.
+// A step of that rollback that fails is reported with rollback_failed rather than ignored.
+async function writeAnswerRecords(projectRoot: string, roadmap: { ids: string[]; actor: string; undo: (record: any) => void }, writes: { item: string; record: any }[]) {
   const written: { item: string; bytes: any }[] = [];
   try {
     for (const { item, record } of writes) {
@@ -884,8 +880,10 @@ async function writeAnswerRecords(projectRoot: string, roadmap: { before: any; i
       written.push({ item, bytes });
     }
   } catch (error) {
-    for (const { item, bytes } of written.reverse()) await restoreRecord(projectRoot, item, bytes).catch(() => {});
-    await restoreRoadmap(projectRoot, roadmap.before, roadmap.ids, roadmap.actor).catch(() => {});
+    const problems: string[] = [];
+    for (const { item, bytes } of written.reverse()) await restoreRecord(projectRoot, item, bytes).catch((failure) => { problems.push(`the shaping record of ${item}: ${failure?.message ?? failure}`); });
+    await applyWorkItemDecision(projectRoot, { actor: roadmap.actor, operation: "restore_work_items", ids: roadmap.ids, change: roadmap.undo }).catch((failure) => { problems.push(`the roadmap: ${failure?.message ?? failure}`); });
+    if (problems.length) throw fail("rollback_failed", `Writing the answer failed (${error?.message ?? error}), and putting back what it changed failed for ${problems.join("; ")}.`, { cause: error?.code ?? null, problems });
     throw error;
   }
 }
@@ -930,16 +928,37 @@ async function applyMerge(projectRoot: string, item: string, record: any, propos
       return { record, written: false };
     }
     const actor = personLabel(answer.by);
-    const { before } = await applyWorkItemDecision(projectRoot, { actor, operation: "merge", ids: [survivorId, mergedId], change: (current: any) => {
+    const decision = { kind: "merged", into: survivorId, gate: proposal.gate, at: answer.at };
+    let gained: string[] = [];
+    await applyWorkItemDecision(projectRoot, { actor, operation: "merge", ids: [survivorId, mergedId], change: (current: any) => {
       const keep = current.initiatives.find((candidate: any) => candidate.id === survivorId);
       const drop = current.initiatives.find((candidate: any) => candidate.id === mergedId);
       if (!keep || !drop || keep.decision || drop.decision) throw fail("not_emerging", "An item of the merge was decided meanwhile, so the merge was not applied.");
-      keep.requirements = [...keep.requirements, ...drop.requirements.filter((reference: string) => !keep.requirements.includes(reference))];
-      drop.decision = { kind: "merged", into: survivorId, gate: proposal.gate, at: answer.at };
+      gained = drop.requirements.filter((reference: string) => !keep.requirements.includes(reference));
+      keep.requirements = [...keep.requirements, ...gained];
+      drop.decision = decision;
     } });
-    await writeAnswerRecords(projectRoot, { before, ids: [survivorId, mergedId], actor }, [{ item: other, record: next[other] }, { item, record: next[item] }]);
+    // Undo only the merge: the references the survivor gained, and the merged decision while it is still this one.
+    const undo = (current: any) => {
+      const keep = current.initiatives.find((candidate: any) => candidate.id === survivorId);
+      const drop = current.initiatives.find((candidate: any) => candidate.id === mergedId);
+      if (keep) keep.requirements = keep.requirements.filter((reference: string) => !gained.includes(reference));
+      if (drop && canonicalJson(drop.decision) === canonicalJson(decision)) drop.decision = null;
+    };
+    await writeAnswerRecords(projectRoot, { ids: [survivorId, mergedId], actor, undo }, [{ item: other, record: next[other] }, { item, record: next[item] }]);
     return { record: next[item], written: true };
   }, fail);
+}
+
+// Why a split's parts no longer take exactly the entry's requirement references, as when update_roadmap changed them while the split was pending, or null.
+function splitReferenceRefusal(entry: any, parts: any[]) {
+  const references = entry.requirements ?? [];
+  const taken = new Set(parts.flatMap((part: any) => part.requirements));
+  const missing = references.filter((reference: string) => !taken.has(reference));
+  if (missing.length) return fail("split_incomplete", `${entry.id} gained the requirement references ${missing.join(", ")} since the split was proposed and no part takes them, so the split was not applied; propose it again.`, { missing });
+  const unheld = [...taken].filter((reference) => !references.includes(reference));
+  if (unheld.length) return fail("validation_failed", `${entry.id} no longer cites the requirement references ${unheld.join(", ")} that a part takes, so the split was not applied; propose it again.`, { unheld });
+  return null;
 }
 
 /**
@@ -956,7 +975,7 @@ async function applySplit(projectRoot: string, item: string, record: any, propos
     ? fail("item_unknown", `The roadmap no longer holds ${item}, so the split was not applied.`)
     : taken.length
       ? fail("validation_failed", `The roadmap gained ${taken.join(", ")} since the split was proposed, so the split was not applied; propose it again with new identifiers.`)
-      : await proposalRefusal(projectRoot, citationContext(projectRoot, config, entries), [{ entry, record, pending: false }], "be split");
+      : await proposalRefusal(projectRoot, citationContext(projectRoot, config, entries), [{ entry, record, pending: false }], "be split") ?? splitReferenceRefusal(entry, proposal.parts);
   if (refusal) {
     closeProposal(record, { ...staleOutcome(refusal), ...closed });
     return { record, written: false };
@@ -974,15 +993,24 @@ async function applySplit(projectRoot: string, item: string, record: any, propos
   original.splitInto = into;
   closeProposal(original, { outcome: "split", ...closed });
   const actor = personLabel(answer.by);
-  const { before } = await applyWorkItemDecision(projectRoot, { actor, operation: "split", ids: [item, ...into], change: (current: any) => {
+  const decision = { kind: "split", into, gate: proposal.gate, at: answer.at };
+  await applyWorkItemDecision(projectRoot, { actor, operation: "split", ids: [item, ...into], change: (current: any) => {
     const held = current.initiatives.find((candidate: any) => candidate.id === item);
     if (!held || held.decision) throw fail("not_emerging", `${item} was decided meanwhile, so the split was not applied.`);
     if (current.initiatives.some((candidate: any) => into.includes(candidate.id))) throw fail("validation_failed", "A part's identifier was taken meanwhile, so the split was not applied.");
+    const references = splitReferenceRefusal(held, proposal.parts);
+    if (references) throw references;
     const added = proposal.parts.map((part: any) => ({ id: part.id, title: part.title, intent: part.intent, band: held.band, requirements: [...part.requirements], requires: [], decision: null }));
     current.initiatives.splice(current.initiatives.indexOf(held) + 1, 0, ...added);
-    held.decision = { kind: "split", into, gate: proposal.gate, at: answer.at };
+    held.decision = decision;
   } });
-  await writeAnswerRecords(projectRoot, { before, ids: [item, ...into], actor }, [...records, { item, record: original }]);
+  // Undo only the split: the part entries it added, and the split decision while it is still this one.
+  const undo = (current: any) => {
+    current.initiatives = current.initiatives.filter((candidate: any) => !into.includes(candidate.id));
+    const held = current.initiatives.find((candidate: any) => candidate.id === item);
+    if (held && canonicalJson(held.decision) === canonicalJson(decision)) held.decision = null;
+  };
+  await writeAnswerRecords(projectRoot, { ids: [item, ...into], actor, undo }, [...records, { item, record: original }]);
   return { record: original, written: true };
 }
 
@@ -1020,8 +1048,9 @@ async function withdrawGates(projectRoot: string, item: string, ids: string[], r
  * with outcome unmet and the conditions, not-ready closes it with the note, and a free answer closes it as declined with the note.
  * For a merge proposal, keep-this or keep-other merges both items into the chosen one and records the other as merged into it, and separate closes it;
  * for a split proposal, split adds the parts to the roadmap with their shaping records and records the item as split into them, and keep-whole closes it.
- * A merge or split that no longer fits the items, as when one was decided or gained an open question, closes as stale with why, changing nothing else.
- * Each happens under the record's lock and leaves changedAt as it was. Returns what write() returned.
+ * A merge or split that no longer fits the items, as when one was decided, gained an open question, or gained a requirement reference no part takes, closes as stale with why,
+ * changing nothing else, and so does one whose writes fail, after they are put back; a failure to put them back is thrown with rollback_failed once the proposal is closed.
+ * Each happens under the record's lock and leaves changedAt as it was, except that a merge's survivor keeps the earlier of both. Returns what write() returned.
  */
 export async function recordWorkItemAnswer({ projectRoot, item, gate, write }: { projectRoot: string; item: string; gate: string; write: () => Promise<any> }) {
   const asking = (record: any) => (record?.questions ?? []).find((asked: any) => asked.gate === gate && !asked.answer && !asked.withdrawn) ?? null;
@@ -1037,6 +1066,7 @@ export async function recordWorkItemAnswer({ projectRoot, item, gate, write }: {
     const choice = entry.after?.choice ?? null;
     const note = typeof entry.after?.note === "string" && entry.after.note.trim() ? entry.after.note.trim() : null;
     const record = structuredClone(current.record);
+    let unreported: any = null;
     if (asked) {
       const text = choice === "recommended" ? [asked.recommended, note].filter(Boolean).join(" ") : note ?? "";
       const question = record.questions.find((candidate: any) => candidate.id === asked.id);
@@ -1058,15 +1088,19 @@ export async function recordWorkItemAnswer({ projectRoot, item, gate, write }: {
         }
       } else if (proposal.kind === "merge" && choice === "separate") closeProposal(record, { outcome: "separate", ...closed });
       else if (proposal.kind === "split" && choice === "keep-whole") closeProposal(record, { outcome: "keep-whole", ...closed });
-      else if (proposal.kind === "merge" && (choice === "keep-this" || choice === "keep-other")) {
-        const applied = await applyMerge(projectRoot, item, record, proposal, choice, entry, closed);
-        if (applied.written) return entry;
-      } else if (proposal.kind === "split" && choice === "split") {
-        const applied = await applySplit(projectRoot, item, record, proposal, entry, closed);
-        if (applied.written) return entry;
+      else if ((proposal.kind === "merge" && (choice === "keep-this" || choice === "keep-other")) || (proposal.kind === "split" && choice === "split")) {
+        // The answer is already on its gate, so a merge or split that fails to apply closes the proposal as stale with why rather than leaving it pending.
+        try {
+          const applied = proposal.kind === "merge" ? await applyMerge(projectRoot, item, record, proposal, choice, entry, closed) : await applySplit(projectRoot, item, record, proposal, entry, closed);
+          if (applied.written) return entry;
+        } catch (error) {
+          closeProposal(record, { outcome: "stale", code: error?.code ?? "write_failed", message: error?.message ?? String(error), ...closed });
+          if (error?.code === "rollback_failed") unreported = error;
+        }
       } else return entry;
     }
     await writeRecord(projectRoot, { kind: "work-item", initiative: item }, serialize(record));
+    if (unreported) throw unreported;
     return entry;
   }, fail);
 }
