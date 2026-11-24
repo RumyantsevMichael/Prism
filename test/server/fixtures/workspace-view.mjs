@@ -167,7 +167,17 @@ export async function pushToRemote(where, bare, files, message = "another machin
   const work = path.join(where.parent, `push-${randomBytes(4).toString("hex")}`);
   git(where.parent, "clone", "-q", bare, work);
   await commitFiles(work, files, message);
-  git(work, "push", "-q", "origin", "HEAD:main");
+  // This machine's servers push their own store writes in the background, so one can land between the clone and the push.
+  // Another machine then does what Git asks of it: it rebases its commit onto the remote's new work, keeping its own version of a file both changed, and pushes again.
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      git(work, "push", "-q", "origin", "HEAD:main");
+      break;
+    } catch (error) {
+      if (attempt >= 10 || !/\[rejected\]|fetch first|non-fast-forward/.test(`${error.stderr ?? ""}${error.message}`)) throw error;
+      git(work, "pull", "-q", "--rebase", "-X", "theirs", "origin", "main");
+    }
+  }
   await rm(work, { recursive: true, force: true });
 }
 
