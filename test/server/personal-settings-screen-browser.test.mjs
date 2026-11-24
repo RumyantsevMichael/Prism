@@ -12,7 +12,8 @@ import { settled } from "./fixtures/wait.mjs";
 // Settings gains a Personal section where the person changes their own settings, which stay on this machine.
 
 const FILE = "personal-settings.json";
-const READ_ONLY = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
+// A tab opened without a grant names the review link as the reason it can only read.
+const READ_ONLY = "This tab can only read. It was opened from a review link, and only a tab that Prism opens itself can make changes. To make changes, run prism review in this project, or ask the agent to present the review.";
 const NOTE = "These settings stay on this machine and apply to every project and every host you run Prism in. A change here reaches no one else.";
 const SAVED = "Saved on this machine. This change reaches no one else.";
 const GROUPS = [

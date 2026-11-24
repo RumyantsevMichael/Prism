@@ -73,7 +73,8 @@ async function appBackedReview(client: any, projectRoot: string, { startSession,
       const answer = await client.present(projectRoot, { tabs: normalizeTabs(tabs), ...(group === undefined ? {} : { group }), ...(by ? { by } : {}), open: true });
       // The app never opens a browser; this session opens it in its own environment, with the app's grant in the fragment of only the URL it opens.
       const opened = answer.open ? Boolean(await browserOpener(withWriteGrant(answer.url, answer.writeGrant))) : false;
-      return { url: answer.url, opened, ...answer.session };
+      // A granted open that no browser took leaves the person with only the URL, which opens a tab that can only read, so the answer says so.
+      return { url: answer.url, opened, ...(answer.open && !opened ? { openFailed: true } : {}), ...answer.session };
     }, (review: any) => review.open(tabs, { ...(group === undefined ? {} : { group }), ...(by ? { by } : {}) })),
     viewerCount: async () => {
       if (!session && !former.length) return 1;
@@ -188,7 +189,7 @@ export async function startWorkspacesReview({ env = process.env, openBrowser: br
   try {
     const answer = await client.presentRoot();
     const opened = answer.open ? Boolean(await browserOpener(withWriteGrant(answer.url, answer.writeGrant))) : false;
-    return { url: answer.url, opened };
+    return { url: answer.url, opened, ...(answer.open && !opened ? { openFailed: true } : {}) };
   } finally {
     await client.close();
   }

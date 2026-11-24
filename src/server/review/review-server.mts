@@ -1,9 +1,9 @@
 import { createServer } from "node:http";
 import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup, openerOf } from "./public/views/tab-groups.js";
 import { randomBytes } from "node:crypto";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
+import { openBrowser } from "./browser-opener.mjs";
 import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT, pluginVersion } from "../plugin-root.mjs";
@@ -692,21 +692,7 @@ export function publicAsset(route: string) {
   return isInside(root, file) ? { file, type: ASSET_TYPES.get(extension) } : null;
 }
 
-export function openBrowser(url: any) {
-  const platform = process.platform;
-  // cmd.exe's start would read an & in the URL's query as a second command, so Windows opens the URL through the shell's URL handler.
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "rundll32" : "xdg-open";
-  const args = platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
-  try {
-    // A browser that the opener starts inherits its working folder, so it starts in the home folder and never keeps a project folder busy, which Windows would refuse to remove or rename.
-    const child = spawn(command, args, { cwd: homedir(), detached: true, stdio: "ignore", windowsHide: true });
-    child.on("error", () => {});
-    child.unref();
-    return true;
-  } catch {
-    return false;
-  }
-}
+export { openBrowser };
 
 /** The open tabs whose file the review no longer lists, or whose entity no longer resolves, in tab order. */
 export async function findMissingTabs(tabs: any, available: any, entityResolves: any) {
@@ -1972,7 +1958,7 @@ export async function startReviewServer(options: any = {}) {
       if (!opened) {
         review.releaseBrowserOpen();
       }
-      return { url, opened, ...review.getSession() };
+      return { url, opened, ...(opened ? {} : { openFailed: true }), ...review.getSession() };
     },
     close() {
       review.closeViewers();

@@ -295,8 +295,19 @@ Only a tab that Prism opened for you can make changes.
 When Prism opens the browser, for a presentation, a session start, or `prism review`, the address it opens carries a one-time grant after `#write=`, which the tab exchanges for a write session as it loads and then removes from its address.
 The grant works once and only within two minutes, and the write session stays with that one browser tab, also across reloads and when you switch it to another checkout of the same review app.
 A review URL that an agent prints, or that a tool returns, carries no grant, so a tab opened from it, a second tab on the same address, or a bookmark can only read.
-A read-only tab says `This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.`, and its controls are disabled.
+A read-only tab says `This tab can only read.`, then why, then `To make changes, run prism review in this project, or ask the agent to present the review.`, and its controls are disabled.
+The reason is one of these:
+
+| Reason the tab shows | What happened |
+|---|---|
+| `It was opened from a review link, and only a tab that Prism opens itself can make changes.` | The tab was opened from a review URL, a bookmark, history, or a copied address, which carry no grant. |
+| `The link that Prism opened it with was already used or was more than two minutes old.` | The tab loaded the address Prism opened, but the grant in it no longer worked. |
+| `Its write session ended, because the review app restarted.` | The review app refused the tab's write session, so the tab dropped it. |
+
 To get a tab that can make changes, run `prism review` in the project, or ask the agent to present the review, which opens the system browser, while no tab that can make changes is open.
+Prism opens the browser with `open` on macOS, through the Windows URL handler on Windows, and with `xdg-open` on Linux.
+Under WSL it tries the Windows URL handler first, through the `rundll32.exe` that Windows puts on the WSL path, so the review opens in your Windows browser, and then `wslview` and `xdg-open`.
+When no opener takes the address, the agent's result and `prism review` say that Prism could not open a browser and that the URL opens a tab that can only read, so answer gates in the conversation, and the [Prism log](#logs) names each opener that failed with its reason as a `browser_open_failed` warning.
 The review app keeps the write sessions it issued when a newer session replaces it on the same port, and accepts none after it exits and starts again, so after such a restart open the review again the same way.
 Only a tab that can make changes counts as an open review tab, so a read-only tab never stops Prism from opening a tab that can.
 A session of an earlier Prism release that presents through a newer review app opens only tabs that can read, so for that session any open review tab still counts and it opens no further tab.
@@ -1070,6 +1081,7 @@ The log records each process start and stop, index builds with their phases, dur
 A tool call that Prism refuses with a reason you can act on, such as an invalid argument, is information named `request_refused` with that reason's code, if it has one, not a warning.
 Each record store sync that commits, merges, or pushes records is information named `store_synced`, a sync that fails is a warning named `store_sync_failed` with its reason, once until the reason changes, and a sync with nothing to share leaves no line.
 It also records each time a process stops answering for more than a second, with what it was doing at the time, such as the index phase of the component being built.
+Each browser opener that cannot start or exits with an error is a warning named `browser_open_failed` with the opener's command and reason.
 Past 5 MiB the file moves to `prism.log.1`, replacing the older one.
 Set `PRISM_LOG_LEVEL` to `debug`, `info` (the default), `warn`, `error`, or `off`, and set `PRISM_LOG_DIR` to write the log to another folder.
 An MCP server also writes its warnings and errors to its error output, which the agent host keeps with its own logs.

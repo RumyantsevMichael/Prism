@@ -19,7 +19,7 @@ import { DEFAULT_PLACE, PLACES, placeNamed } from "./views/places.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createAgentsMenu } from "./views/agents-menu.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
-import { createActionList, readOnlyNotice, shownActionEntries } from "./views/actions.js";
+import { createActionList, noteReadOnlyReason, readOnlyNotice, shownActionEntries } from "./views/actions.js";
 import { createCodingAgents } from "./views/coding-agents.js";
 import { artifactChangesView, artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
@@ -205,6 +205,10 @@ function appFetch(url: string, options: any = {}) {
     if (response.status === 404 && response.headers.get("X-Prism-Link") === "expired" && !expiredLink) {
       expiredLink = true;
       location.reload();
+    }
+    // A write the review app refuses although it carried this tab's write session means the session ended, so the tab stops offering changes it cannot make.
+    if (response.status === 403 && rest.headers?.["X-Prism-Write"]) {
+      void response.clone().json().then((answer) => { if (answer?.code === "write_forbidden") endWriteSession(); }, () => {});
     }
     return response;
   });
@@ -430,6 +434,15 @@ function writeSession() {
   }
 }
 
+// A write session that the review app no longer accepts, after it restarted, is dropped, and the read-only notice says why.
+function endWriteSession() {
+  noteReadOnlyReason("ended");
+  try {
+    sessionStorage.removeItem(WRITE_SESSION_KEY);
+  } catch {
+  }
+}
+
 function writeHeaders(): Record<string, string> {
   const token = writeSession();
   return token ? { "X-Prism-Write": token } : {};
@@ -442,6 +455,7 @@ const actionApi = {
     const response = await appFetch(`./api/actions?target=${encodeURIComponent(target)}`, { cache: "no-store", headers: writeHeaders() });
     const listing = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(new Error(listing.message ?? "The actions could not be read."), { code: listing.code });
+    if (listing.writable === false && writeSession()) endWriteSession();
     return listing;
   },
   // An action that waits on the person, such as an approval confirmed in a native dialog, passes a longer deadlineMs.
@@ -498,7 +512,9 @@ async function takeWriteGrant() {
     const response = await appFetch("./api/write-session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grant }) });
     const answer = await response.json().catch(() => ({}));
     if (response.ok && typeof answer.token === "string") sessionStorage.setItem(WRITE_SESSION_KEY, answer.token);
+    else noteReadOnlyReason("grant");
   } catch {
+    noteReadOnlyReason("grant");
   }
 }
 
