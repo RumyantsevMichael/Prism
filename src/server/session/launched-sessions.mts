@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { lstat, realpath, stat } from "node:fs/promises";
+import { lstat, readlink, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -199,8 +199,8 @@ export async function migrationReadRoots(checkout: string, host: string, env: No
   const home = os.homedir();
   const hostHome = host === "codex" ? (env.CODEX_HOME || path.join(home, ".codex")) : (env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"));
   const roots: string[] = [];
-  const install = executable ? await installFolder(executable) : null;
-  for (const candidate of [PRISM_ROOT, path.join(hostHome, "plugins", "cache"), ...(install ? [install] : [])]) {
+  const install = executable && path.isAbsolute(executable) ? await installFolders(executable) : [];
+  for (const candidate of [PRISM_ROOT, path.join(hostHome, "plugins", "cache"), ...install]) {
     let real;
     try {
       real = await realpath(candidate);
@@ -216,20 +216,39 @@ export async function migrationReadRoots(checkout: string, host: string, env: No
 }
 
 /**
- * The folder that holds the host's own program, which its sandbox runs again inside itself on Linux: for a program that a package manager installed,
- * the scope folder above its package, which also holds its platform binary, and otherwise the folder of the program itself, or null when it cannot be read.
+ * The folders that hold the host's own program and every link to it, which its sandbox runs again inside itself: macOS starts it again from the path Prism started it from
+ * and must read each link on the way, as Codex's own installer links ~/.local/bin/codex through a `current` folder link, and Linux starts it from its real file.
+ * They are the folder of each link met while the path resolves one link at a time, folder links within it included, and the folder of the real file, which for a program
+ * that a package manager installed is the scope folder above its package, which also holds its platform binary; none when the program cannot be read.
  */
-async function installFolder(executable: string) {
+async function installFolders(executable: string) {
+  const folders = new Set<string>();
+  let current = path.resolve(executable);
+  // A chain longer than this is a loop, which the real path below refuses as well.
+  for (let hops = 0; hops < 40; hops += 1) {
+    const parts = current.split(path.sep);
+    let link = -1;
+    for (let index = 1; index < parts.length && link < 0; index += 1) {
+      const prefix = parts.slice(0, index + 1).join(path.sep) || path.sep;
+      if ((await lstat(prefix).catch(() => null))?.isSymbolicLink()) link = index;
+    }
+    if (link < 0) break;
+    const holder = parts.slice(0, link).join(path.sep) || path.sep;
+    folders.add(holder);
+    const target = await readlink(parts.slice(0, link + 1).join(path.sep)).catch(() => null);
+    if (target === null) return [];
+    current = path.resolve(holder, target, ...parts.slice(link + 1));
+  }
   let real;
   try {
     real = await realpath(executable);
   } catch {
-    return null;
+    return [];
   }
   const parts = real.split(path.sep);
   const modules = parts.lastIndexOf("node_modules");
-  if (modules >= 0 && parts[modules + 1]?.startsWith("@")) return parts.slice(0, modules + 2).join(path.sep);
-  return path.dirname(real);
+  folders.add(modules >= 0 && parts[modules + 1]?.startsWith("@") ? parts.slice(0, modules + 2).join(path.sep) : path.dirname(real));
+  return [...folders];
 }
 
 async function launchSession({ checkout, subject, host, coordinator, access = "full", readRoots = [], answeredGate = null, env }: { checkout: string; subject: LaunchSubject; host: string; coordinator: any; access?: string; readRoots?: string[]; answeredGate?: string | null; env: NodeJS.ProcessEnv }) {

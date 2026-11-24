@@ -63,7 +63,7 @@ const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsRevi
 // works in an empty folder of its own outside the checkout, and reads nothing of the checkout: it gets the run's sources, the project's paths, and the sources'
 // Git history, and the format reference through the run's own Prism tools. A read-only Claude Code run has no built-in tool and adds no folder, so it reads no file,
 // allows only the run's Prism tools and no shell, and denies every other call, since nothing asks; a read-only Codex thread selects a permission profile of its own,
-// which reads only in its working folder, Prism's own folder, Codex's plugin cache and install folder, and the platform's minimal ones, writes nowhere,
+// which reads only in its working folder, Prism's own folder, Codex's plugin cache and program folders, and the platform's minimal ones, writes nowhere,
 // has no network, and never asks to run a command outside it.
 // Prism's server, which the session starts with PRISM_MIGRATION_RUN naming the run and PRISM_MIGRATION_PROJECT naming the checkout,
 // lists and takes only the run's tools for that run's project and artifacts.
