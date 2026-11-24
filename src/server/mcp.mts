@@ -1248,8 +1248,9 @@ async function callGateWait(argumentsValue: any, metadata: any, requestId: any) 
       value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
     }
   } else if (unsupported) {
-    // A gate the person withdrew is told at once, even where the host cannot wait.
-    value = await peekWithdrawn({ projectRoot, ...source, gateIds }) ?? { status: "unsupported_host", gateIds, client: clientName, reason: unsupported };
+    // A gate the person already answered or withdrew is told at once, even where the host cannot wait.
+    const peeked = await waitForUserGates({ projectRoot, ...source, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries: undefined, signal: undefined, onProgress: undefined, holdAskers: false }).catch(() => null);
+    value = peeked?.status === "answered" ? peeked : await peekWithdrawn({ projectRoot, ...source, gateIds }) ?? { status: "unsupported_host", gateIds, client: clientName, reason: unsupported };
   } else {
     const controller = new AbortController();
     if (requestId !== undefined) pendingWaits.set(requestId, controller);

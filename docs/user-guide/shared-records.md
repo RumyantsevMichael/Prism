@@ -86,6 +86,12 @@ A shaping record is a shared record like the roadmap, so every checkout of a sto
 An entry stays emerging while it cites no Approved requirement file, or while it has a shaping record and is not marked ready, and `get_roadmap` shows such an entry without an initiative record as `emerging` rather than `envisioned`.
 You add to an item by commenting in the review browser on a requirement file or ADR it cites: the agent's next read of each item that cites the file returns the comments made since the item's record last changed.
 
+Shaping asks you about an item in rounds of up to five questions.
+Each question appears in Attention as its own question with the agent's recommended answer, what the answer settles, and whether the item can become ready without it.
+Pick the recommended answer, with a note if you want to add to it, or answer in your own words with a note alone, and Prism records your answer on the question in the item's shaping record.
+An agent can withdraw a question you have not answered, which removes it from Attention.
+Until you have answered a round, and while any question stays open, an emerging item cannot cite a requirement file that is not Approved, so no requirement is drafted before you have answered.
+
 ## Share records between machines
 
 1. Create an empty repository for the store on your Git host, for example `you/prism-store`, and give everyone who works on the project push access to it.

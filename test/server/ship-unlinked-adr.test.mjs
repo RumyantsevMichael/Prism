@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import test from "node:test";
 import { createInitiative } from "./fixtures/repository-checkouts.mjs";
-import { adrFile, answerGate, checkout, git, isolateGit, ok, refused, reviewBrowser, server, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { adrFile, answerGate, checkout, shapedEntry, git, isolateGit, ok, refused, reviewBrowser, server, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // With a record store, a ship accepts only the ADRs that slice.md files link, so it refuses while a Proposed ADR cites the initiative's requirements and no slice.md links it.
 const environment = await isolateGit();
@@ -38,7 +38,7 @@ async function finished(context, adrs) {
     assert.equal((await answerGate(review, { initiative: "reports", id: asked.gateId, choice: "allow" })).status, 200);
     assert.equal(ok(await prism.call("verify_slice", { initiative: "reports", slice: "reports", approvalGate: asked.gateId })).status, "passed");
   } else assert.equal(asked.status, "passed");
-  ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
+  await shapedEntry(prism, review, { id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] });
   return { prism, review };
 }
 

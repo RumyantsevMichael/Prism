@@ -3,7 +3,7 @@ import { readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { alias, bareRemote, checkout, commitFiles, git, isolateGit, ok, place, server } from "./fixtures/workspace-view.mjs";
-import { answerGate, reviewBrowser } from "./fixtures/workspace-artifacts.mjs";
+import { answerGate, reviewBrowser, shapedEntry } from "./fixtures/workspace-artifacts.mjs";
 
 // Ship finds the default-branch commit that holds a slice's verified work when later commits on its branch changed its files before a squash merge.
 const environment = await isolateGit();
@@ -40,7 +40,7 @@ async function verified(context) {
   assert.equal(run.status, "passed");
   const record = JSON.parse(await readFile(path.join(root, run.run), "utf8"));
   assert.ok(record.files.some((file) => file.path === "src/report.js"));
-  ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
+  await shapedEntry(prism, review, { id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] });
   return { where, code, root, prism, head: git(root, "rev-parse", "HEAD") };
 }
 

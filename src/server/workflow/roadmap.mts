@@ -940,7 +940,11 @@ async function applyOperation(resolved: any, record: any, operation: any, actor:
   }
 }
 
-export async function updateRoadmap(input: any) {
+/**
+ * Apply update_roadmap operations; options.shapingRecords maps an item to the shaping record its round check reads in place of the stored one,
+ * as update_work_item passes the record its own operations leave.
+ */
+export async function updateRoadmap(input: any, options: { shapingRecords?: Map<string, any> } = {}) {
   validateInput(UPDATE_ROADMAP_SCHEMA, input);
   // An entry that cites a requirement file breaking its format is refused before every other check, so nothing changes.
   // update_initiative replaces an entry's list, so it cites only the references the entry does not already hold, and an entry that already cites a nonconforming file keeps it.
@@ -977,6 +981,7 @@ export async function updateRoadmap(input: any) {
     for (const operation of input.operations) await applyOperation(resolved, record, operation, actor, at, marks, shipped, notes);
     const errors = validateRoadmap(record);
     if (errors.length) throw fail("invalid_roadmap", `The proposed roadmap is invalid and was not written: ${errors[0]}`, { errors });
+    await refuseUnansweredRounds(resolved, current.record?.initiatives ?? [], record.initiatives, input.operations, options.shapingRecords ?? new Map());
     // The ADRs are accepted before the ship is recorded, so a store that refuses the acceptance leaves the initiative unshipped and a later ship tries again.
     const acceptedAdrs = await acceptShippedAdrs(resolved, shipped, at);
     // The ship holds each shipped initiative's state lock, so it closes the gate that confirmed it before the decision is written, and a shipped initiative keeps no pending gate.
@@ -1002,6 +1007,28 @@ export async function updateRoadmap(input: any) {
     const legacyNotes = notes.legacyShips.length ? { legacyShips: notes.legacyShips } : {};
     return { ...publicResult(resolved, loaded, derived), created: !current.exists, previousRevision: current.revision, projectionStale, ...(shipped.length ? { acceptedAdrs } : {}), ...history, ...shipNotes, ...legacyNotes };
   }, fail)));
+}
+
+// An entry that gains a reference to a requirement file that is not Approved while it is an emerging work item waits for an answered question round, refused with round_unanswered.
+async function refuseUnansweredRounds(resolved: any, before: any[], after: any[], operations: any[], shapingRecords: Map<string, any>) {
+  const ids = [...new Set<string>(operations.filter((operation: any) => (operation.op === "add_initiative" || operation.op === "update_initiative") && operation.requirements !== undefined).map((operation: any) => operation.id))];
+  const changes = [];
+  for (const id of ids) {
+    const earlier = before.find((entry: any) => entry.id === id) ?? null;
+    const later = after.find((entry: any) => entry.id === id);
+    if (!later) continue;
+    const added = (later.requirements ?? []).filter((reference: string) => !(earlier?.requirements ?? []).includes(reference));
+    if (added.length) changes.push({ id, earlier, later, added });
+  }
+  if (!changes.length) return;
+  const workItems = await import("./work-items.mjs");
+  const context = workItems.citationContext(resolved.root, resolved.config, after);
+  const checked = [];
+  for (const change of changes) {
+    const record = shapingRecords.has(change.id) ? shapingRecords.get(change.id) : (await workItems.readShapingRecord(resolved.root, change.id)).record;
+    checked.push({ item: change.id, before: change.earlier, after: change.later, recordBefore: record, recordAfter: record, added: change.added });
+  }
+  await workItems.refuseUnansweredRounds(context, checked);
 }
 
 // After a ship is written, each slice document it recorded takes the history mark; one it could not read or write is a problem, never a refusal.

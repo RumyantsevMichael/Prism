@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promi
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { requirementFile } from "./fixtures/shipped-work.mjs";
 import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-roadmap-data-")));
@@ -140,6 +141,9 @@ test("explains why a revision does not match", async (context) => {
 
 test("a roadmap item cites requirement sections in the same form an initiative accepts", async (context) => {
   const projectRoot = await project(context, "- Roadmap: docs/roadmap.md\n- Requirements: docs/requirements/\n- Plans: docs/plans/\n");
+  // An Approved file, since an emerging item cites one that is not Approved only after an answered question round.
+  await mkdir(path.join(projectRoot, "docs/requirements"), { recursive: true });
+  await writeFile(path.join(projectRoot, "docs/requirements/reports.md"), requirementFile("Reports", ["Download", "Audit"]));
   await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: null, operations: [add("alpha", "Now", { requirements: ["docs/requirements/reports.md"] })] }), { code: "validation_failed", message: /Invalid requirement reference "docs\/requirements\/reports\.md"/ });
   const created = await updateRoadmap({ projectRoot, expectedRevision: null, operations: [add("alpha", "Now", { requirements: ["reports.md§1", "docs/requirements/reports.md#2"] })] });
   assert.deepEqual(created.record.initiatives[0].requirements, ["docs/requirements/reports.md#1", "docs/requirements/reports.md#2"]);

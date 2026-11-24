@@ -14,6 +14,7 @@ import { withoutCredentials } from "./remote-url.mjs";
 import { readRoadmap } from "./roadmap.mjs";
 import { roadmapEntry, shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction, validEarlierName } from "./state.mjs";
+import { recordWorkItemAnswer } from "./work-items.mjs";
 import { recommendedChoice } from "./format-migrations.mjs";
 import { RUN_ID, allRuns, answerMigrationRun, continueMigrationRun, failContinuation, followedRun, readRun, rerunMigration, settledRunLaunches } from "./migration-runs.mjs";
 import { ambiguousApprovalMessage, answerArtifactApproval, answeredApprovalGates, commentOnArtifact, pendingApprovalGates, storeArtifactTarget, withdrawArtifactApproval } from "./store-artifacts.mjs";
@@ -1503,14 +1504,17 @@ export async function applyAction({ projectRoot, target, action, input, revision
     }
   } else {
     // The checks repeat under the state lock on the state it holds, so a change that lands between the read above and the write is never overwritten.
-    const written = await recordPersonAction({ projectRoot, initiative: parsed.initiative, prepare: async (coordination: any) => {
+    const record = async () => (await recordPersonAction({ projectRoot, initiative: parsed.initiative, prepare: async (coordination: any) => {
       const context = await readTarget(projectRoot, parsed, indexer, coordination, env, checkouts, readOptions);
       const checked = await check(definition, context, request);
       if (!checked) return null;
       const entry = await entryOf(checked, context);
       return { entry, ...definition.change(context, checked.after) };
-    } });
-    applied = written.entry;
+    } })).entry;
+    // An answer to a work item's question is recorded on the question in the same action, so the shaping record holds what the person said.
+    applied = parsed.kind === "gate" && definition.id === "gate.answer"
+      ? await recordWorkItemAnswer({ projectRoot, item: parsed.initiative, gate: parsed.gate, write: record })
+      : await record();
   }
   // An answered approval gate leaves its artifact's pending gates, so its target has no actions left, and the result names the artifact the answer applied to.
   if (parsed.kind === "approval") return { applied, actions: [], artifact: { path: read.gateRecord.artifact.path, scope: read.gateRecord.artifact.scope } };

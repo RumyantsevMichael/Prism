@@ -36,7 +36,7 @@ test("clause 22: design proposal, acceptance, and the design view read slice.md 
   assert.ok(accepted.record.slices.reports.design, "the design was accepted from the store's slice.md");
 
   assert.match(await text(path.join(place.store, "artifacts", "plans", "reports", "initiative.md")) ?? "", /Reports/, "the initiative view is generated in the store");
-  ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
+  ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now" }] }));
   assert.match(await text(path.join(place.store, "artifacts", "roadmap.md")) ?? "", /Reports/, "the roadmap view is generated in the store");
   assert.equal(await exists(path.join(api, "docs", "plans")), false, "nothing was written under the checkout's plans folder");
   assert.equal(await exists(path.join(api, "docs", "roadmap.md")), false, "no roadmap view was written into the checkout");

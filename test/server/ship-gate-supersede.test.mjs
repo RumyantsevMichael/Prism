@@ -5,7 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { finishedProject, roadmapOperation } from "./fixtures/shipped-work.mjs";
 import { createInitiative } from "./fixtures/repository-checkouts.mjs";
-import { answerGate, checkout, git, isolateGit, ok, refused, reviewBrowser, server, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { answerGate, checkout, shapedEntry, git, isolateGit, ok, refused, reviewBrowser, server, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // One rule decides which pending gate is not open work for a ship, with or without a record store, and a ship's history marks are committed only from the checkout.
 
@@ -33,7 +33,7 @@ async function finishedWithStore(context) {
   const asked = ok(await prism.call("verify_slice", { initiative: "reports", slice: "reports" }));
   assert.equal((await answerGate(review, { initiative: "reports", id: asked.gateId, choice: "allow" })).status, 200);
   assert.equal(ok(await prism.call("verify_slice", { initiative: "reports", slice: "reports", approvalGate: asked.gateId })).status, "passed");
-  ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
+  await shapedEntry(prism, review, { id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] });
   return { place, api, prism, review };
 }
 

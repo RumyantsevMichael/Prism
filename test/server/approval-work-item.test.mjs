@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import test from "node:test";
-import { browserRequest, checkout, eventually, isolateGit, ok, refused, requirementFile, reviewBrowser, server, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { browserRequest, checkout, eventually, isolateGit, ok, refused, requirementFile, reviewBrowser, server, shapedEntry, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 import { createInitiative } from "./fixtures/repository-checkouts.mjs";
 import { launch, openPage, skip as noBrowser } from "./fixtures/kit-browser.mjs";
 import { parseRecord } from "../../dist/server/workflow/artifact-status.mjs";
@@ -39,7 +39,7 @@ test("an approval names the initiative and slice it serves, and Attention links 
   // Requirements that start an initiative are approved before its roadmap entry exists, so the id it will take shows unlinked.
   assert.deepEqual(await shownWorkItem(review, await ask(prism, { initiative: "reports" })), { initiative: { id: "reports", title: "reports", known: false }, slice: null });
 
-  ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Monthly reports", intent: "Reports ship.", band: "Now", requirements: ["billing.md§1"] }] }));
+  await shapedEntry(prism, review, { id: "reports", title: "Monthly reports", intent: "Reports ship.", band: "Now", requirements: ["billing.md§1"] });
   // The waiting card links once the roadmap lists the initiative, without a new ask.
   await eventually(async () => (await pendingApprovals(review))[0]?.workItem?.initiative?.known === true, 30000, "the card links the initiative the roadmap now lists");
   assert.deepEqual(await shownWorkItem(review, await ask(prism, { initiative: "reports" })), { initiative: { id: "reports", title: "Monthly reports", known: true }, slice: null }, "the roadmap entry gives the initiative its title");
@@ -73,13 +73,13 @@ test("a synced gate whose work item no ask_approval could record is dropped", ()
 
 test("the approval card links to the work item it serves and shows an id that names nothing yet in full", { skip: noBrowser }, async (context) => {
   const { api, prism } = await project(context);
-  ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Monthly reports for every customer account, with a title long enough to wrap", intent: "Reports ship.", band: "Now", requirements: ["billing.md§1"] }] }));
+  const review = await reviewBrowser(context, api);
+  await shapedEntry(prism, review, { id: "reports", title: "Monthly reports for every customer account, with a title long enough to wrap", intent: "Reports ship.", band: "Now", requirements: ["billing.md§1"] });
   ok(await ask(prism, { initiative: "reports" }));
   const other = "docs/requirements/refunds.md";
   await writeArtifact(prism, other, requirementFile("Refunds"));
   const unknown = "refunds-for-partial-cancellations-across-every-supported-currency";
   ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: other, question: "Approve refunds?", context: "Refunds.", initiative: unknown, slice: "ledger" }] }));
-  const review = await reviewBrowser(context, api);
   const browser = await launch(context);
   for (const width of [390, 1440]) {
     const page = await openPage(browser, `${review.baseUrl.replace(/\/$/, "")}/review?artifact=attention`, { viewport: { width, height: 900 } });

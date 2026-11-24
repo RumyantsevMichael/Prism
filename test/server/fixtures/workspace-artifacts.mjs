@@ -188,6 +188,23 @@ export async function answerGate(review, { initiative = null, id, choice = null,
   return browserRequest(review, "/api/actions/apply", { method: "POST", body: { action: "gate.answer", target, input, revision: action.revision }, headers });
 }
 
+/**
+ * Add a roadmap entry that cites requirement files which are not Approved yet, as shaping leaves one: the entry first, then a question round the person answers in the review browser,
+ * the agent closing the answered gate, then its requirement references, since an emerging item cites such a file only after an answered round.
+ */
+export async function shapedEntry(prism, review, { requirements = [], ...entry }) {
+  const current = ok(await prism.call("get_roadmap", {}));
+  ok(await prism.call("update_roadmap", { expectedRevision: current.revision ?? null, operations: [{ op: "add_initiative", ...entry }] }));
+  const asked = ok(await prism.call("update_work_item", { item: entry.id, expectedRevision: null, operations: [{ op: "ask_round", questions: [{ question: `Does ${entry.title} cover every account?`, recommended: "Yes.", settles: "Which accounts it covers.", blocking: true }] }] }));
+  const answered = await answerGate(review, { initiative: entry.id, id: asked.openedGates[0].id, choice: "recommended" });
+  assert.equal(answered.status, 200, JSON.stringify(answered.body));
+  // The agent that asked reads the answer and closes the gate, so it is no open work.
+  const state = ok(await prism.call("get_coordination_state", { initiative: entry.id }));
+  ok(await prism.call("update_coordination_state", { initiative: entry.id, expectedRevision: state.revision, changes: { gateOperations: [{ op: "resolve", id: asked.openedGates[0].id }] } }));
+  const roadmap = ok(await prism.call("get_roadmap", {}));
+  return ok(await prism.call("update_roadmap", { expectedRevision: roadmap.revision, operations: [{ op: "update_initiative", id: entry.id, requirements }] }));
+}
+
 /** One request to a review browser, with its write session when it holds one: { status, body }, with JSON bodies parsed. */
 export function browserRequest(review, route, { method = "GET", body, headers = {} } = {}) {
   const url = new URL(`${review.baseUrl}${route}`);
