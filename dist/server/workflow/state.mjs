@@ -1037,6 +1037,11 @@ async function updateCoordinationState({ projectRoot, initiative, expectedRevisi
     return applyStateChange(resolved, expectedRevision, changes, standing);
   }, error, { renew: Boolean(changes.activeOperations?.length) }));
   await markLaunchedGates(projectRoot, initiative, result.openedGates);
+  const opened = (Array.isArray(result.openedGates) ? result.openedGates : []).map((gate) => gate?.id).filter((id) => typeof id === "string");
+  if (opened.length) {
+    const { recordGateAskers } = await import("./gate-askers.mjs");
+    await recordGateAskers(projectRoot, opened.map((gate) => ({ initiative, gate })));
+  }
   return result;
 }
 async function markLaunchedGates(projectRoot, initiative, opened) {
@@ -1172,7 +1177,7 @@ async function recordPersonAction({ projectRoot, initiative, prepare }) {
     const change = await decide(resolved, current);
     if (change === null) return { ...publicStateResult(resolved, current), entry: null };
     await refuseShipped(projectRoot, initiative);
-    const { entry, setting, answer } = change;
+    const { entry, setting, answer, withdraw } = change;
     const problem = historyEntryProblem(entry);
     if (problem) throw error("invalid_changes", `The history entry is invalid: ${problem}.`);
     const before = current.state ?? defaultState();
@@ -1190,6 +1195,13 @@ async function recordPersonAction({ projectRoot, initiative, prepare }) {
       if (answerProblemText) throw error("invalid_answer", `The answer is invalid: ${answerProblemText}.`);
       candidate.pending = [...before.pending];
       candidate.pending[position] = { ...before.pending[position], answer: { choice: answer.choice, note: answer.note, via: "browser", answeredAt: entry.at, by: entry.by, entry: entry.id } };
+    }
+    if (withdraw) {
+      const position = before.pending.findIndex((item) => isRecord(item) && item.id === withdraw.id);
+      if (position === -1) throw error("unknown_gate", "The question is no longer open; the agent resolved or withdrew it.");
+      if (before.pending[position].answer) throw error("gate_answered", "The question already has an answer.");
+      candidate.pending = before.pending.filter((_, index) => index !== position);
+      candidate.closed = [...before.closed ?? [], { ...closedGate(before.pending[position], withdraw.reason), closedAt: entry.at }].slice(-CLOSED_LIMIT);
     }
     const normalized = normalizeState(candidate);
     const validation = validateStateValue(normalized);

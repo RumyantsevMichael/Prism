@@ -19,7 +19,7 @@ import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
 import { declaredView, governingContract, readViews, VIEW_KINDS } from "../workflow/view-declarations.mjs";
-import { appliedArtifactActions, pendingApprovalGates, readStoreArtifactAt, storeArtifactStatuses, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
+import { answeredApprovalGates, appliedArtifactActions, pendingApprovalGates, readStoreArtifactAt, storeArtifactLocation, storeArtifactStatuses, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
 import { servedWorkItem } from "../workflow/artifact-status.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
@@ -748,9 +748,10 @@ async function loadGlossary(projectRoot) {
   const scoped = await scopedArtifacts(projectRoot, "glossary", () => true);
   if (scoped) {
     const glossaries = [];
+    const markOf = await loadFormatMarks(projectRoot);
     for (const item of scoped.entries) {
       const content2 = await readText(projectRoot, item.ref);
-      if (content2 !== null) glossaries.push({ ref: item.ref, scope: item.label, terms: glossaryEntries(content2).map(({ term, text }) => ({ term, text: text.replace(/\s+/g, " ").trim() })) });
+      if (content2 !== null) glossaries.push({ ref: item.ref, scope: item.label, terms: glossaryEntries(content2).map(({ term, text }) => ({ term, text: text.replace(/\s+/g, " ").trim() })), format: item.path ? markOf(item.path, item.label) : null });
     }
     const mine = glossaryPath ? await readText(projectRoot, glossaryPath) : null;
     return { path: glossaryPath, exists: glossaries.length > 0, content: mine, glossaries };
@@ -800,8 +801,8 @@ async function loadAttention(projectRoot) {
   const [attention, formats, runs, permissions] = await Promise.all([remember(projectRoot, `attention:${projectRoot}`, () => computeAttention(projectRoot)), loadFormats(projectRoot), runItems(projectRoot), launchPermissions(projectRoot)]);
   const items = formats.filter((entry) => entry.count > 0).map((entry) => ({ type: "format-findings", artifactType: entry.type, label: entry.label, count: entry.count, earlier: entry.earlier, artifacts: entry.artifacts }));
   const questions = runs.needsYou.filter((item) => item.type === "migration-question").length;
-  const launched = await withLaunchQuestions(projectRoot, attention.needsYou);
-  return { ...attention, needsYou: [...runs.needsYou, ...launched, ...items], watch: [...attention.watch, ...runs.watch], formats, permissions, gateCount: attention.gateCount + questions + permissions.length };
+  const [launched, answered] = await Promise.all([withLaunchQuestions(projectRoot, attention.needsYou).then((listed) => withAskers(projectRoot, listed)), withAskers(projectRoot, attention.answered)]);
+  return { ...attention, needsYou: [...runs.needsYou, ...launched, ...items], answered, watch: [...attention.watch, ...runs.watch], formats, permissions, gateCount: attention.gateCount + questions + permissions.length };
 }
 async function withLaunchQuestions(projectRoot, needsYou) {
   if (!needsYou.some((item) => item.type === "gate" && item.kind === "assistance")) return needsYou;
@@ -817,6 +818,26 @@ async function withLaunchQuestions(projectRoot, needsYou) {
     const launch = item.type === "gate" && item.kind === "assistance" ? asked.get(`${item.initiative?.id}/${item.id}`) : void 0;
     return launch ? { ...item, launch } : item;
   });
+}
+async function withAskers(projectRoot, items) {
+  if (!items.some((item) => item?.type === "gate")) return items;
+  const { readGateAsker } = await import("../workflow/gate-askers.mjs");
+  const { askerReach, askerState, readAskerSessions } = await import("../session/asker-sessions.mjs");
+  const { readGateWakes } = await import("../session/cloud-wakes.mjs");
+  const kept = await readAskerSessions().catch(() => ({}));
+  const wakes = await readGateWakes().catch(() => ({}));
+  return Promise.all(items.map(async (item) => {
+    if (item?.type !== "gate") return item;
+    const key = item.kind === "approval" ? { gate: item.id } : typeof item.initiative?.id === "string" ? { initiative: item.initiative.id, gate: item.id } : null;
+    if (!key) return item;
+    const target = key.initiative === void 0 ? `approval:${key.gate}` : `gate:${key.initiative}/${key.gate}`;
+    const read = await readGateAsker(projectRoot, key);
+    const own = Object.hasOwn(kept, target) ? kept[target] : null;
+    const thisMachine = read.known && own !== null;
+    const { state, reason } = await askerState(read, thisMachine ? own : null).catch(() => ({ state: "unknown", reason: "Prism cannot tell whether this session is open." }));
+    const asker = { known: read.known, harness: read.harness, machine: read.machine, checkout: read.checkout, cloud: read.cloud, launched: read.launched, thisMachine, state, reason, reach: askerReach(state, read), wake: Object.hasOwn(wakes, target) ? wakes[target] : null };
+    return { ...item, asker };
+  }));
 }
 async function runItems(projectRoot) {
   const runs = await allRuns(projectRoot).catch(() => []);
@@ -889,7 +910,8 @@ async function loadMigrationRunView(projectRoot, id) {
     const sourceEntries = typeof migration.sourceText === "string" ? entriesFor(migration.type, migration.sourceText) : [];
     const contentEntries = typeof migration.content === "string" ? entriesFor(migration.type, migration.content) : [];
     const map = statementMap(migration, { answers: answers ?? {} });
-    const sourceLines = new Map((map?.statements ?? []).filter((statement) => statement.landed?.kind === "leftover" && statement.landed.point).map((statement) => [statement.landed.point, statement.line]));
+    const sourceLines = /* @__PURE__ */ new Map();
+    for (const statement of map?.statements ?? []) if (statement.landed?.kind === "leftover" && statement.landed.point && !sourceLines.has(statement.landed.point)) sourceLines.set(statement.landed.point, statement.line);
     return {
       id: migration.id,
       type: migration.type,
@@ -1042,6 +1064,7 @@ async function computeAttention(projectRoot) {
     if (item?.readyToShip && item.state !== "shipped") watch.push({ type: "ready-to-ship", initiative });
   }
   needsYou.push(...await approvalGates(projectRoot));
+  answered.push(...await answeredApprovals(projectRoot));
   needsYou.sort((left, right) => left.type === "gate" === (right.type === "gate") ? gateOrder(left, right) : left.type === "gate" ? -1 : 1);
   if (roadmap.error) needsYou.push({ type: "roadmap-problem", path: config.paths.roadmap, message: roadmap.error });
   else if (!roadmap.exists && config.paths.roadmap) needsYou.push({ type: "roadmap-missing", path: roadmap.recordPath });
@@ -1082,11 +1105,41 @@ async function approvalGates(projectRoot) {
     initiative: null,
     slice: null,
     artifacts: [],
-    artifact: { path: gate.artifact.path, scope: gate.artifact.scope },
+    artifact: { path: gate.artifact.path, scope: gate.artifact.scope, kind: gate.artifact.kind ?? null, title: gate.artifact.title ?? null },
     changed: gate.changed,
     workItem: await workItem(servedWorkItem(gate)),
     ...holders.get(gate.id) > 1 ? { ambiguous: true } : {}
   })));
+}
+async function answeredApprovals(projectRoot) {
+  const config = await readWorkflowConfig(projectRoot);
+  if ((config.workspace?.store ?? null) === null) return [];
+  const gates = await answeredApprovalGates(projectRoot).catch(() => []);
+  if (!gates.length) return [];
+  const { readGateAsker } = await import("../workflow/gate-askers.mjs");
+  const workItem = servedWorkItems(projectRoot);
+  const items = await Promise.all(gates.map(async (gate) => {
+    if (!(await readGateAsker(projectRoot, { gate: gate.id })).known) return null;
+    return {
+      type: "gate",
+      id: gate.id,
+      kind: "approval",
+      status: gate.status,
+      recorded: gate.recorded,
+      question: gate.question,
+      context: gate.context ?? null,
+      options: null,
+      recommended: null,
+      askedAt: gate.askedAt,
+      answer: { choice: gate.answer.choice, note: gate.answer.note ?? null, answeredAt: gate.answer.answeredAt },
+      initiative: null,
+      slice: null,
+      artifacts: [],
+      artifact: { path: gate.artifact.path, scope: gate.artifact.scope, kind: gate.artifact.kind ?? null, title: gate.artifact.title ?? null },
+      workItem: await workItem(servedWorkItem(gate))
+    };
+  }));
+  return items.filter(Boolean);
 }
 function servedWorkItems(projectRoot) {
   let roadmap = null;
@@ -1196,7 +1249,9 @@ async function describeRecord(projectRoot, config, artifactPath, key, snapshot) 
   }
   for (const [kind, directory] of [["decision", config.paths.adrs], ["requirements", config.paths.requirements]]) {
     if (!directory || !artifactPath.startsWith(`${directory}/`)) continue;
-    const entry = (await loadLibrary(projectRoot, kind === "decision" ? "decisions" : "requirements")).entries.find((item) => item.path === artifactPath);
+    const stored = await storeArtifactLocation(projectRoot, artifactPath).catch(() => null);
+    const ref = stored ? `store:${stored.location}` : null;
+    const entry = (await loadLibrary(projectRoot, kind === "decision" ? "decisions" : "requirements")).entries.find((item) => item.path === artifactPath || ref !== null && item.path === ref);
     if (entry) return { kind, title: entry.title, status: entry.status ?? null };
   }
   return null;

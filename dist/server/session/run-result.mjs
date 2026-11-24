@@ -26,7 +26,7 @@ function lastMessageOf(value, redact = (text) => text) {
   return redacted.length > LAST_MESSAGE_MAX ? `${redacted.slice(0, LAST_MESSAGE_MAX)}\u2026` : redacted;
 }
 const time = (value) => typeof value === "string" ? Date.parse(value) : Number.NaN;
-async function runHasResult({ checkout, initiative, since, pauses = [] }) {
+async function runHasResult({ checkout, initiative, since, until = null, pauses = [] }) {
   const start = time(since);
   if (pauses.some((pause) => Number.isFinite(time(pause.at)) && (!Number.isFinite(start) || time(pause.at) >= start))) return true;
   const { shippedDecision } = await import("../workflow/shipped-history.mjs");
@@ -34,7 +34,9 @@ async function runHasResult({ checkout, initiative, since, pauses = [] }) {
   const { readCoordinationState } = await import("../workflow/state.mjs");
   const read = await readCoordinationState({ projectRoot: checkout, initiative }).catch(() => null);
   const pending = read?.valid && Array.isArray(read.state?.pending) ? read.state.pending : [];
-  if (pending.some((gate) => gate && typeof gate === "object" && !gate.answer && !isNoResultGate(gate))) return true;
+  const end = time(until);
+  const openAtEnd = (gate) => !gate.answer || Number.isFinite(end) && !(time(gate.answer.answeredAt) <= end);
+  if (pending.some((gate) => gate && typeof gate === "object" && openAtEnd(gate) && !isNoResultGate(gate))) return true;
   const { pendingApprovalGates } = await import("../workflow/store-artifacts.mjs");
   const approvals = await pendingApprovalGates(checkout).catch(() => []);
   return (Array.isArray(approvals) ? approvals : []).some((gate) => gate?.initiative === initiative || gate?.shipped?.initiative === initiative);

@@ -11,18 +11,22 @@ import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { isStoreWithoutCheckout, recordStoreOf } from "./record-store.mjs";
 import { runGit } from "./record-store-sync.mjs";
 import { REPOSITORY_NAME } from "./repository-names.mjs";
+import { withoutCredentials } from "./remote-url.mjs";
 import { readRoadmap } from "./roadmap.mjs";
-import { shippedActionReason, shippedDecision } from "./shipped-history.mjs";
+import { roadmapEntry, shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction, validEarlierName } from "./state.mjs";
 import { recommendedChoice } from "./format-migrations.mjs";
 import { RUN_ID, allRuns, answerMigrationRun, continueMigrationRun, failContinuation, followedRun, readRun, rerunMigration, settledRunLaunches } from "./migration-runs.mjs";
-import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget } from "./store-artifacts.mjs";
+import { ambiguousApprovalMessage, answerArtifactApproval, answeredApprovalGates, commentOnArtifact, pendingApprovalGates, storeArtifactTarget, withdrawArtifactApproval } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
+import { WITHDRAWN_REASON } from "./gate-wait.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
 import { confirmInstall, confirmLaunch, installText } from "../session/launch-confirmation.mjs";
 import { installAgent, removeAgent, updateAgent } from "../session/agent-installs.mjs";
 import { answerRequest, launchRequests } from "../session/permission-requests.mjs";
-import { HOSTS } from "../session/launch-hosts.mjs";
+import { HOSTS, resolveHost } from "../session/launch-hosts.mjs";
+import { isCloudSessionId, keepGateWake, sendWake, wakePointer } from "../session/cloud-wakes.mjs";
+import { sessionLinkView } from "../session/session-links.mjs";
 import { ACP_ID_PATTERN, agentsFolder, isAcpHost, OWN_INTEGRATION_IDS, OWN_INTEGRATION_REASON, readInstalls } from "../session/acp-agents.mjs";
 import { LAUNCH_ID_PATTERN, launchFolder, readLaunchRecord } from "../session/launch-records.mjs";
 import { AUTOMATIC, AUTOMATIC_LABEL, PrismRunsError, readPrismRunsChoice, writePrismRunsChoice } from "../session/prism-runs.mjs";
@@ -36,7 +40,9 @@ import {
   LaunchError,
   listLaunches,
   resumeLaunch,
+  hostSessionRunning,
   resumeRefusal,
+  startAskerResume,
   startLaunch,
   stopLaunch
 } from "../session/launched-sessions.mjs";
@@ -147,19 +153,25 @@ async function readTarget(projectRoot, parsed, indexer, state = void 0, env = pr
     return { ...parsed, artifact };
   }
   if (parsed.kind === "approval") {
-    const gates = await pendingApprovals(projectRoot, parsed.gate);
+    const pending = await pendingApprovals(projectRoot, parsed.gate);
+    const asker = await askerOf(projectRoot, { gate: parsed.gate }, env);
+    const gates = pending.length ? pending : asker.known ? await answeredApprovals(projectRoot, parsed.gate) : [];
     if (!gates.length) throw unknownTarget(parsed.reference);
-    return { ...parsed, gateRecord: gates[0], ambiguous: gates.length > 1 ? ambiguousApprovalMessage(parsed.gate, gates) : null };
+    const context2 = { ...parsed, gateRecord: gates[0], ambiguous: gates.length > 1 ? ambiguousApprovalMessage(parsed.gate, gates) : null, asker };
+    if (state === void 0) context2.continuation = await continuationOf(projectRoot, context2, env, readOptions);
+    return context2;
   }
   if (parsed.kind === "launch") {
     const view2 = (await listLaunches({ projectRoot, env })).launches.find((item) => item.id === parsed.launch);
     if (!view2) throw unknownTarget(parsed.reference);
     const status = await launchRunStatus({ id: parsed.launch, env });
-    const resumeReason = status === "running" ? "The session is running." : await resumeRefusal({ id: parsed.launch, env });
-    const shipped2 = await shippedDecision(projectRoot, view2.initiative).catch(() => null);
+    const resumeReason2 = status === "running" ? "The session is running." : await resumeRefusal({ id: parsed.launch, env });
+    const shipped2 = view2.initiative === null ? null : await shippedDecision(projectRoot, view2.initiative).catch(() => null);
     const folder = launchFolder(env, parsed.launch);
-    const permissions = await launchRequests(folder, await readLaunchRecord(folder)).catch(() => []);
-    return { ...parsed, view: view2, initiative: view2.initiative, running: status === "running", resumeReason, shipped: shipped2, permissions };
+    const record2 = await readLaunchRecord(folder);
+    const permissions = await launchRequests(folder, record2).catch(() => []);
+    const askerResume = record2?.askerResume ?? null;
+    return { ...parsed, view: view2, initiative: view2.initiative, running: status === "running", resumeReason: resumeReason2, shipped: shipped2, permissions, askerResume };
   }
   if (parsed.kind === "agent") {
     const installed = readInstalls(env).find((item) => item.id === parsed.agent) ?? null;
@@ -196,8 +208,28 @@ async function readTarget(projectRoot, parsed, indexer, state = void 0, env = pr
     const gate = (coordination.state?.pending ?? []).find((item) => isRecord(item) && item.id === parsed.gate);
     if (!gate) throw unknownTarget(parsed.reference);
     context.gateRecord = gate;
+    context.asker = await askerOf(projectRoot, { initiative: parsed.initiative, gate: parsed.gate }, env);
+    if (state === void 0) context.continuation = await continuationOf(projectRoot, context, env, readOptions);
   }
   return context;
+}
+async function askerOf(projectRoot, key, env) {
+  const [{ readGateAsker, targetOf }, { askerState, readAskerSessions }] = await Promise.all([import("./gate-askers.mjs"), import("../session/asker-sessions.mjs")]);
+  const read = await readGateAsker(projectRoot, key);
+  const kept = await readAskerSessions(env).catch(() => ({}));
+  const target = targetOf(key);
+  const own = read.known && Object.hasOwn(kept, target) ? kept[target] : null;
+  const state = await askerState(read, own, env).catch(() => ({ state: "unknown", reason: "Prism cannot tell whether this session is open." }));
+  return { ...state, known: read.known, harness: read.harness, machine: read.machine, cloud: read.cloud, cloudSession: read.cloudSession, launched: read.launched, kept: own };
+}
+async function answeredApprovals(projectRoot, id) {
+  const config = await readWorkflowConfig(projectRoot);
+  if ((config.workspace?.store ?? null) === null) return [];
+  const gates = await answeredApprovalGates(projectRoot).catch((error) => {
+    if (error?.code === "store_not_configured") return [];
+    throw storeRefused(error) ? storeRefusal(error) : error;
+  });
+  return gates.filter((gate) => gate.id === id);
 }
 const settingsOf = (context) => (context.coordination.valid ? context.coordination.state?.settings : null) ?? {};
 function setting({ name, label, fields, effect, confirm = null, value, stored = null, after = (values) => values.value, ignores = () => [] }) {
@@ -448,8 +480,40 @@ const APPROVAL_ANSWER = {
   recommended: () => null,
   // An id that several pending gates hold names no version to answer against.
   revision: (context) => context.ambiguous ? null : context.gateRecord.current,
-  unavailable: (context) => context.ambiguous ?? (context.gateRecord.changed ? APPROVAL_CHANGED : null),
-  unavailableCode: (context) => context.ambiguous ? "approval_ambiguous" : "artifact_changed",
+  unavailable: (context) => context.ambiguous ?? (context.gateRecord.answer ? "The question already has an answer." : context.gateRecord.changed ? APPROVAL_CHANGED : null),
+  unavailableCode: (context) => context.ambiguous ? "approval_ambiguous" : context.gateRecord.answer ? "action_unavailable" : "artifact_changed",
+  change: void 0
+};
+function withdrawUnavailable(context) {
+  if (context.gateRecord.answer) return "The question already has an answer.";
+  if (context.asker?.state === "waiting") return "A session waits on this question, so it reads your answer.";
+  if (context.asker?.state === "open") return "The session that asked is open, so withdraw the question only after that session ends.";
+  return null;
+}
+const GATE_WITHDRAW = {
+  id: "gate.withdraw",
+  kinds: ["gate"],
+  label: "Withdraw",
+  group: "Question",
+  effect: "Closes the question without an answer and removes it from Attention; no session starts.",
+  target: (context) => context.reference,
+  fields: () => [],
+  value: () => null,
+  context: () => null,
+  recommended: () => null,
+  confirm: () => null,
+  revision: (context) => context.coordination.revision,
+  unavailable: withdrawUnavailable,
+  after: () => "withdrawn",
+  change: (context) => ({ withdraw: { id: context.gate, reason: WITHDRAWN_REASON } })
+};
+const APPROVAL_WITHDRAW = {
+  ...GATE_WITHDRAW,
+  kinds: ["approval"],
+  // An id that several pending gates hold names no one gate to withdraw.
+  revision: (context) => context.ambiguous ? null : context.gateRecord.current,
+  unavailable: (context) => context.ambiguous ?? withdrawUnavailable(context),
+  unavailableCode: (context) => context.ambiguous ? "approval_ambiguous" : "action_unavailable",
   change: void 0
 };
 function commentLine(value) {
@@ -556,6 +620,144 @@ const LAUNCH_RUN = {
     return { launch, after: { launch: launch.id, host, coordinator: { provider, model, effort } }, initiative: context.initiative, started: launch.id };
   }
 };
+const NO_INITIATIVE = "The question names no initiative, so a new session has nothing to resume from.";
+const NOT_LISTED = "The roadmap does not list this initiative, so a new session has nothing to resume from.";
+const SUPERSEDED = "The initiative was superseded, so it is history.";
+const LAUNCHED_ASKER = "Prism launched the session that asked, so answering resumes it from its launched session.";
+async function continuationOf(projectRoot, context, env, readOptions) {
+  const named = context.kind === "gate" ? context.initiative : typeof context.gateRecord.initiative === "string" ? context.gateRecord.initiative : null;
+  const hosts = await hostAvailability({ env });
+  const remote = env.CLAUDE_CODE_REMOTE === "true" || Boolean(env.CLAUDE_CODE_REMOTE_SESSION_ID);
+  const sessionId = context.asker?.kept?.sessionId;
+  const askerRunning = typeof sessionId === "string" && sessionId ? await hostSessionRunning(env, sessionId).catch(() => false) : false;
+  if (named === null) return { initiative: null, listed: false, superseded: false, shipped: null, launch: null, hosts, running: false, remote, askerRunning };
+  const [{ entry }, shipped, running] = await Promise.all([
+    roadmapEntry(projectRoot, named).catch(() => ({ entry: void 0 })),
+    context.kind === "gate" ? context.shipped : shippedDecision(projectRoot, named).catch(() => null),
+    initiativeRunning({ projectRoot, initiative: named, env }).catch(() => false)
+  ]);
+  const superseded = entry?.decision?.kind === "superseded";
+  let launch = null;
+  if (entry && !superseded && !shipped) {
+    const initiative = parseTarget(`initiative:${named}`);
+    const target = initiative ? await readTarget(projectRoot, initiative, null, void 0, env, null, readOptions ?? runOptionsReader(projectRoot, env)).catch(() => null) : null;
+    launch = target ? { context: target, reason: LAUNCH_RUN.unavailable(target) } : null;
+  }
+  return { initiative: named, listed: Boolean(entry) && launch !== null, superseded, shipped, launch, hosts, running, remote, askerRunning };
+}
+function newSessionReason(c) {
+  if (c.initiative === null) return NO_INITIATIVE;
+  if (c.superseded) return SUPERSEDED;
+  if (c.shipped) return shippedActionReason(c.shipped);
+  if (!c.listed) return NOT_LISTED;
+  return c.launch.reason;
+}
+function resumeReason(context, c) {
+  const asker = context.asker;
+  if (asker.cloud) return "This is a cloud session; wake it instead.";
+  if (!asker.kept) return asker.known ? `The session ran on ${asker.machine ?? "another machine"}; resume it there.` : "Prism kept no session id for it.";
+  const host = asker.kept.host;
+  if (host !== "claude-code" && host !== "codex") return `${asker.harness ?? "This harness"} does not let Prism resume a session by its id.`;
+  if (!asker.kept.sessionId) return "Prism kept no session id for it.";
+  if (asker.launched) return LAUNCHED_ASKER;
+  if (asker.state === "unknown") return `Prism cannot tell whether the session is open: ${asker.reason}`;
+  if (asker.state === "waiting") return "A session waits on this question, so it reads your answer.";
+  if (asker.state === "open") return "The session is open, so a resume would run beside it.";
+  if (c.askerRunning) return "The session is open, so a resume would run beside it.";
+  if (c.running) return `A launched session of ${c.initiative} is running on this machine.`;
+  const found = c.hosts.find((item) => item.host === host);
+  if (!found?.available) return found?.reason ?? `${hostLabel(c, host)} was not found.`;
+  return null;
+}
+function wakeReason(context, c) {
+  if (!context.asker.cloud) return "The session that asked is not a cloud session.";
+  if (c.remote) return "A wake must be sent from your own computer, not from a cloud session.";
+  const claude = c.hosts.find((item) => item.host === "claude-code");
+  if (!claude?.available) return claude?.reason ?? "Claude Code was not found: no claude executable on PATH.";
+  return null;
+}
+function continuationOptions(context) {
+  const c = context.continuation;
+  if (!c) return [];
+  return [
+    { value: "new-session", label: "New orchestration session", consequence: "Starts a new orchestration session of the initiative on this computer that acts first on your answer; you confirm it outside the browser.", reason: newSessionReason(c) },
+    { value: "resume", label: "Resume the session that asked", consequence: "Resumes the session that asked, headless on this computer, with a message that your answer is in Prism's records; you confirm it outside the browser.", reason: resumeReason(context, c) },
+    { value: "wake", label: "Wake the cloud session that asked", consequence: "Sends the cloud session that asked a pointer to your answer from this computer; you confirm it outside the browser.", reason: wakeReason(context, c) }
+  ];
+}
+function continueUnavailable(context) {
+  const c = context.continuation;
+  if (c?.shipped && context.kind === "approval") return shippedActionReason(c.shipped);
+  if (context.ambiguous) return context.ambiguous;
+  if (context.asker?.state === "waiting") return "A session waits on this question, so it reads your answer.";
+  if (context.asker?.state === "open") return "The session that asked is open, so it reads your answer when it gets a message.";
+  if (!context.gateRecord.answer) return "Answer the question first.";
+  if (context.asker?.launched) return LAUNCHED_ASKER;
+  if (continuationOptions(context).every((item) => item.reason)) return "No way to continue applies to this question.";
+  return null;
+}
+const GATE_CONTINUE = {
+  ...launchBase,
+  id: "gate.continue",
+  kinds: ["gate", "approval"],
+  label: "Continue",
+  group: "Question",
+  effect: "Continues the work with your answer in the way you pick; nothing starts until you confirm outside the browser.",
+  target: (context) => context.reference,
+  fields: (context) => [choice("continuation", "Continue with", continuationOptions(context), { required: true })],
+  recommended: (context) => context.continuation && newSessionReason(context.continuation) === null ? { value: "new-session", reason: "A new session reads your answer from the records and needs no live session." } : null,
+  revision: (context) => context.kind === "approval" ? context.ambiguous ? null : context.gateRecord.current : context.coordination.revision,
+  unavailable: continueUnavailable,
+  unavailableCode: (context) => context.ambiguous ? "approval_ambiguous" : "action_unavailable",
+  after: (values) => ({ continuation: values.continuation }),
+  async launch({ projectRoot, context, env, values }) {
+    const picked = continuationOptions(context).find((item) => item.value === values.continuation);
+    if (!picked || picked.reason) throw fail("action_unavailable", picked?.reason ?? "No way to continue applies to this question.", { reason: picked?.reason ?? null });
+    if (picked.value === "resume") return resumeAsker({ projectRoot, context, env });
+    if (picked.value === "wake") return wakeAsker({ projectRoot, context, env });
+    const target = context.continuation.launch.context;
+    const host = launchHostOf(target);
+    const coordinator = await checkedLaunchChoices(target, host);
+    const checkout = await realpath(projectRoot);
+    await confirmLaunch({ initiative: target.initiative, host, checkout, env });
+    const { launch } = await startLaunch({ projectRoot: checkout, initiative: target.initiative, host, coordinator, answeredGate: context.gate, env });
+    const { provider, model, effort } = coordinator;
+    return { launch, after: { continuation: "new-session", launch: launch.id, host, coordinator: { provider, model, effort } }, initiative: target.initiative, started: launch.id };
+  }
+};
+async function resumeAsker({ projectRoot, context, env }) {
+  const kept = context.asker.kept;
+  const initiative = context.continuation.initiative;
+  const resume = { gate: context.gate, initiative, artifact: initiative === null ? context.gateRecord.artifact?.path ?? null : null };
+  await confirmLaunch({ initiative, host: kept.host, checkout: kept.checkout, resume, env });
+  const again = await readTarget(projectRoot, parseTarget(context.reference), null, void 0, env);
+  const reason = continueUnavailable(again) ?? resumeReason(again, again.continuation);
+  if (reason) throw fail("action_unavailable", reason, { reason });
+  const current = again.asker.kept;
+  const { launch } = await startAskerResume({ checkout: current.checkout, host: current.host, hostSessionId: current.sessionId, resume, env });
+  return { launch, after: { continuation: "resume", launch: launch.id, host: current.host }, initiative, started: launch.id, ...initiative === null ? { record: false } : {} };
+}
+async function wakeAsker({ projectRoot, context, env }) {
+  const initiative = context.continuation.initiative;
+  const subject = { gate: context.gate, initiative, artifact: initiative === null ? context.gateRecord.artifact?.path ?? null : null };
+  const cloud = context.asker.cloudSession;
+  const link = isCloudSessionId(cloud) ? sessionLinkView({ kind: "claude-code-web", id: cloud })?.url ?? null : null;
+  if (!link) throw fail("action_unavailable", "The session that asked is not a cloud session.", { reason: "The session that asked is not a cloud session." });
+  const checkout = await realpath(projectRoot);
+  await confirmLaunch({ initiative, host: "claude-code", checkout, wake: { subject, link }, env });
+  const again = await readTarget(projectRoot, parseTarget(context.reference), null, void 0, env);
+  const reason = continueUnavailable(again) ?? wakeReason(again, again.continuation);
+  if (reason) throw fail("action_unavailable", reason, { reason });
+  const claude = await resolveHost("claude-code", env);
+  if (!claude?.available || !claude.command) {
+    const missing = claude?.reason ?? "Claude Code was not found: no claude executable on PATH.";
+    throw fail("action_unavailable", missing, { reason: missing });
+  }
+  const wake = await sendWake({ command: claude.command, prefix: claude.prefix, cloud, pointer: wakePointer(subject), checkout, env });
+  await keepGateWake(context.reference, wake, env).catch(() => {
+  });
+  return { launch: null, wake, after: { continuation: "wake", delivered: wake.delivered }, initiative, started: null, ...initiative === null ? { record: false } : {} };
+}
 const LAUNCH_STOP = {
   ...launchBase,
   id: "launch.stop",
@@ -569,6 +771,7 @@ const LAUNCH_STOP = {
   after: () => null,
   async launch({ projectRoot, context, env }) {
     const launch = await stopLaunch({ id: context.launch, env });
+    if (context.initiative === null) return { launch, after: "stopped", initiative: null, started: null, record: false };
     const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
     return { launch, after: "stopped", initiative: context.initiative, started: null, record: !shipped };
   }
@@ -587,11 +790,12 @@ const LAUNCH_RESUME = {
   },
   after: () => null,
   async launch({ projectRoot, context, env }) {
-    await confirmLaunch({ initiative: context.view.initiative, host: context.view.host, checkout: context.view.checkout, env });
-    const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
+    const named = context.view.initiative !== null;
+    await confirmLaunch({ initiative: context.view.initiative, host: context.view.host, checkout: context.view.checkout, resume: named ? null : context.askerResume, env });
+    const shipped = named ? await shippedDecision(projectRoot, context.initiative).catch(() => null) : null;
     if (shipped) throw fail("action_unavailable", shippedActionReason(shipped), { reason: shippedActionReason(shipped) });
     const launch = await resumeLaunch({ id: context.launch, env, cause: "person" });
-    return { launch, after: { launch: launch.id, run: launch.runs }, initiative: context.initiative, started: launch.id };
+    return { launch, after: { launch: launch.id, run: launch.runs }, initiative: context.initiative, started: launch.id, ...named ? {} : { record: false } };
   }
 };
 const POINT_TEXT_MAX = 500;
@@ -696,8 +900,8 @@ const LAUNCH_PERMISSION = {
   after: (values) => ({ request: values.request, decision: values.decision }),
   async launch({ projectRoot, context, env, values }) {
     const request = await answerRequest({ env, launch: context.launch, request: values.request, decision: values.decision });
-    const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
-    return { launch: null, after: { decision: values.decision, action: request.action }, initiative: context.initiative, started: null, record: !shipped };
+    const shipped = context.initiative === null ? null : await shippedDecision(projectRoot, context.initiative).catch(() => null);
+    return { launch: null, after: { decision: values.decision, action: request.action }, initiative: context.initiative, started: null, record: context.initiative !== null && !shipped };
   }
 };
 const agentBase = {
@@ -789,7 +993,7 @@ const MACHINE_PRISM_RUNS = {
     return { host, provider, run: { model: run.model, effort: run.effort, typed: run.typed } };
   }
 };
-const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, MIGRATION_RUN_ANSWER, MIGRATION_RUN_RERUN, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, AGENT_INSTALL, AGENT_UPDATE, AGENT_REMOVE, MACHINE_PRISM_RUNS];
+const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, GATE_WITHDRAW, APPROVAL_WITHDRAW, GATE_CONTINUE, MIGRATION_RUN_ANSWER, MIGRATION_RUN_RERUN, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, LAUNCH_PERMISSION, AGENT_INSTALL, AGENT_UPDATE, AGENT_REMOVE, MACHINE_PRISM_RUNS];
 const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
 function view(definition, context) {
   const reason = context.shipped && !definition.ownsShipped ? shippedActionReason(context.shipped) : definition.unavailable(context);
@@ -960,8 +1164,16 @@ async function applyAction({ projectRoot, target, action, input, revision, confi
     if (read.ambiguous) throw fail("approval_ambiguous", read.ambiguous, { reason: read.ambiguous });
     const checked = await check(definition, read, request);
     applied = await entryOf(checked, read);
-    if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the answer cannot record who approved; set one with git config user.name and answer again.");
     const gate = read.gateRecord;
+    if (definition.id === "gate.withdraw") {
+      await withdrawArtifactApproval(projectRoot, { path: gate.artifact.path, scope: gate.artifact.scope, id: gate.id, by: applied.by.name ? { name: applied.by.name, host: os.hostname() } : null, entry: applied }).catch((error) => {
+        if (error?.code === "unknown_gate" || error?.code === "gate_answered") throw unknownTarget(target);
+        if (error?.code === "approval_ambiguous") throw fail("approval_ambiguous", error.message, { reason: error.message });
+        throw storeRefused(error) ? storeRefusal(error) : error;
+      });
+      return { applied, actions: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope } };
+    }
+    if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the answer cannot record who approved; set one with git config user.name and answer again.");
     await answerArtifactApproval(projectRoot, { path: gate.artifact.path, scope: gate.artifact.scope, id: gate.id, choice: checked.after.choice, note: checked.after.note, by: { name: applied.by.name, host: os.hostname() }, entry: applied }).catch((error) => {
       if (error?.code === "unknown_gate" || error?.code === "gate_answered") throw unknownTarget(target);
       if (error?.code === "artifact_changed") throw fail("artifact_changed", APPROVAL_CHANGED);
@@ -1038,6 +1250,7 @@ async function applyAction({ projectRoot, target, action, input, revision, confi
   }
   if (parsed.kind === "approval") return { applied, actions: [], artifact: { path: read.gateRecord.artifact.path, scope: read.gateRecord.artifact.scope } };
   if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, ...read.artifact.path === null ? { location: read.artifact.location } : {}, scope: read.artifact.scope }, comment: stored.id };
+  if (definition.id === "gate.withdraw") return { applied, actions: [] };
   const actions = (await listActions({ projectRoot, target, indexer, env, checkouts })).actions;
   if (parsed.kind === "gate") {
     const launch = applied ? await answerLaunchGate({ projectRoot, initiative: parsed.initiative, gate: parsed.gate, entry: applied.id, env }).catch(() => null) : null;
@@ -1046,6 +1259,9 @@ async function applyAction({ projectRoot, target, action, input, revision, confi
   return { applied, actions };
 }
 const launchRefusal = (error) => error instanceof LaunchError ? fail(error.code, error.message) : error;
+function wakeHistoryWarning(error) {
+  return withoutCredentials(`The wake was sent, but Prism could not record it in the initiative's history: ${String(error?.message ?? error)}`);
+}
 async function applyLaunchAction({ projectRoot, definition, context, request, entryOf, env, target, indexer, checkouts = null }) {
   const checked = await check(definition, context, request);
   let outcome;
@@ -1055,15 +1271,20 @@ async function applyLaunchAction({ projectRoot, definition, context, request, en
     throw launchRefusal(error);
   }
   const entry = await entryOf({ ...checked, after: outcome.after }, context);
-  if (outcome.record === false) return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env, checkouts })).actions, launch: outcome.launch };
+  const wake = outcome.wake === void 0 ? {} : { wake: outcome.wake };
+  if (outcome.record === false) return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env, checkouts })).actions, launch: outcome.launch, ...wake };
   try {
     await recordPersonAction({ projectRoot, initiative: outcome.initiative, prepare: async () => ({ entry }) });
   } catch (error) {
+    if (outcome.wake !== void 0) {
+      const actions = await listActions({ projectRoot, target, indexer, env, checkouts }).then((listed) => listed.actions, () => []);
+      return { applied: null, actions, launch: outcome.launch, ...wake, warnings: [wakeHistoryWarning(error)] };
+    }
     if (outcome.started) await stopLaunch({ id: outcome.started, env }).catch(() => {
     });
     throw error;
   }
-  return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env, checkouts })).actions, launch: outcome.launch };
+  return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env, checkouts })).actions, launch: outcome.launch, ...wake };
 }
 export {
   ActionError,
@@ -1073,5 +1294,6 @@ export {
   listActionTargets,
   listActions,
   parseTarget,
-  prismIndexer
+  prismIndexer,
+  wakeHistoryWarning
 };

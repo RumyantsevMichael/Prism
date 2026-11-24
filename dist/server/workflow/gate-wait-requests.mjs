@@ -35,6 +35,14 @@ async function recordWaitRequest({ sessionId, agent = MAIN_AGENT, projectRoot, i
   await rename(temporary, file);
   return { replaced: typeof replaced?.waitId === "string" && typeof replaced.initiative === "string" && typeof replaced.projectRoot === "string" ? { waitId: replaced.waitId, initiative: replaced.initiative, projectRoot: replaced.projectRoot } : null };
 }
+async function waitRequestPending({ sessionId, agent = MAIN_AGENT, waitId, directory = gateWaitDirectory(), now = Date.now() }) {
+  try {
+    const request = parseStoreJson(await readFile(requestFile(directory, sessionId, agent), "utf8"));
+    return request.waitId === waitId && now - Date.parse(request.requestedAt) <= WAIT_REQUEST_TTL_MS;
+  } catch {
+    return false;
+  }
+}
 async function takeWaitRequest({ sessionId, agent = MAIN_AGENT, directory = gateWaitDirectory(), now = Date.now() }) {
   const file = requestFile(directory, sessionId, agent);
   const taken = `${file}.${randomBytes(6).toString("hex")}.taken`;
@@ -60,5 +68,6 @@ export {
   WAIT_REQUEST_TTL_MS,
   gateWaitDirectory,
   recordWaitRequest,
-  takeWaitRequest
+  takeWaitRequest,
+  waitRequestPending
 };

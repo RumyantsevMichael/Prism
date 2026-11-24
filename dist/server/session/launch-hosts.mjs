@@ -7,6 +7,7 @@ import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { acpHostDefinition, acpHosts, isAcpHost } from "./acp-agents.mjs";
 import { isAgentModel } from "./agent-models.mjs";
 import { acpConversation } from "./host-adapters/acp.mjs";
+import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { lastMessageOf } from "./run-result.mjs";
 import { shownForm } from "./permission-requests.mjs";
 const HOSTS = Object.freeze([
@@ -96,8 +97,12 @@ function requiredServer(server) {
   return server;
 }
 const deniedOf = (folders) => Array.isArray(folders) ? folders.filter((folder) => typeof folder === "string" && (path.posix.isAbsolute(folder) || /^[A-Za-z]:[\\/]/.test(folder))) : [];
-const CODEX_READ_ONLY = Object.freeze({ approvalPolicy: "never", sandbox: "read-only" });
-const codexReadOnlySandbox = (folder, readRoots) => ({ type: "readOnly", access: { type: "restricted", includePlatformDefaults: true, readableRoots: [folder, ...readRoots] } });
+const CODEX_READ_ONLY_PROFILE = "prism-read-only";
+const codexReadOnly = (folder, readRoots) => ({
+  approvalPolicy: "never",
+  permissions: CODEX_READ_ONLY_PROFILE,
+  profile: { filesystem: Object.fromEntries([[":minimal", "read"], ...[folder, ...readRoots].map((root) => [root, "read"])]), network: { enabled: false } }
+});
 const rootsOf = (readRoots) => Array.isArray(readRoots) ? readRoots.filter((root) => typeof root === "string" && path.isAbsolute(root)) : [];
 const readOnly = (access2) => access2 === "read-only";
 const LAUNCH_NOTE = "Prism launched this run headless, so no person reads your messages or replies. When you need the person, ask only through a Prism gate: record it with update_coordination_state and wait for the answer with wait_for_user_gate. Where your autonomy lets you, decide by yourself and continue the work. Never end a turn with a question in your reply, because nobody sees it.";
@@ -229,22 +234,45 @@ function hostArguments({ host, hostSessionId, resume, coordinator = null, access
 function runInvocation({ initiative = null, migrationRun = null }) {
   return typeof migrationRun === "string" && migrationRun ? `prism:migrate-artifact ${migrationRun}` : `prism:orchestrate ${initiative}`;
 }
-function claudePrompt(subject) {
-  const invocation = subject !== null && typeof subject === "object" ? runInvocation(subject) : runInvocation({ initiative: subject });
-  return { type: "user", message: { role: "user", content: `/${invocation}` } };
+const answeredSuffix = (answeredGate) => answeredGate === null ? "" : ` answered-gate ${answeredGate}`;
+const ASKED_GATE = /^(gate|approval)-[0-9a-f]{8,32}$/;
+const ARTIFACT_PATH = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
+function askerResumeOf(value) {
+  if (!value || typeof value !== "object" || typeof value.gate !== "string" || !ASKED_GATE.test(value.gate)) return null;
+  const initiative = value.initiative ?? null;
+  const artifact = value.artifact ?? null;
+  if (initiative !== null && (typeof initiative !== "string" || !SLUG_PATTERN.test(initiative))) return null;
+  if (initiative === null && (typeof artifact !== "string" || artifact.length > 512 || !ARTIFACT_PATH.test(artifact))) return null;
+  return { gate: value.gate, initiative, artifact: initiative === null ? artifact : null };
 }
-function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null, access: access2 = "full", migrationServer = null }) {
+const askerSubject = (resume) => resume.initiative !== null ? `the initiative ${resume.initiative}` : resume.artifact;
+function askerResumeText(resume) {
+  return `Prism: the person answered your question ${resume.gate} of ${askerSubject(resume)} in the review app. Read the answer from Prism's records and continue.`;
+}
+function askerLaterText(resume, prefix) {
+  return resume.initiative !== null ? `${prefix}prism:orchestrate ${resume.initiative}` : `Prism: continue your work on ${resume.artifact}.`;
+}
+const startText = (prefix, initiative, answeredGate, asker, askerAnswered, migrationRun = null) => typeof migrationRun === "string" && migrationRun ? `${prefix}${runInvocation({ migrationRun })}` : asker ? askerAnswered ? askerResumeText(asker) : askerLaterText(asker, prefix) : `${prefix}${runInvocation({ initiative })}${answeredSuffix(answeredGate)}`;
+function claudePrompt(subject, answeredGate = null, asker = null, askerAnswered = true) {
+  const { initiative = null, migrationRun = null } = subject !== null && typeof subject === "object" ? subject : { initiative: subject };
+  return { type: "user", message: { role: "user", content: startText("/", initiative, answeredGate, asker, askerAnswered, migrationRun) } };
+}
+function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null, access: access2 = "full", migrationServer = null, readRoots = [] }) {
   const { model, provider } = coordinatorOf(coordinator);
   const chosen = { ...model === null ? {} : { model }, ...provider === null ? {} : { modelProvider: provider } };
-  const policy = readOnly(access2) ? { ...CODEX_READ_ONLY, config: { mcp_servers: { [MIGRATION_SERVER]: requiredServer(migrationServer) } } } : { ...CODEX_POLICY, developerInstructions: LAUNCH_NOTE };
+  const readOnlyPolicy = () => {
+    const { profile, ...selected } = codexReadOnly(checkout, rootsOf(readRoots));
+    return { ...selected, config: { mcp_servers: { [MIGRATION_SERVER]: requiredServer(migrationServer) }, permissions: { [CODEX_READ_ONLY_PROFILE]: profile } } };
+  };
+  const policy = readOnly(access2) ? readOnlyPolicy() : { ...CODEX_POLICY, developerInstructions: LAUNCH_NOTE };
   if (!resume) return { method: "thread/start", params: { cwd: checkout, ...policy, ...chosen } };
   if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
   return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...policy, ...chosen } };
 }
-function codexTurnRequest({ threadId, initiative = null, migrationRun = null, coordinator = null, access: access2 = "full", checkout = null, readRoots = [] }) {
+function codexTurnRequest({ threadId, initiative = null, migrationRun = null, coordinator = null, answeredGate = null, asker = null, askerAnswered = true }) {
   const { effort } = coordinatorOf(coordinator);
-  const sandbox = readOnly(access2) && typeof checkout === "string" ? { sandboxPolicy: codexReadOnlySandbox(checkout, rootsOf(readRoots)) } : {};
-  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$${runInvocation({ initiative, migrationRun })}` }], ...effort === null ? {} : { effort }, ...sandbox } };
+  const text2 = startText("$", initiative, answeredGate, asker, askerAnswered, migrationRun);
+  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: text2 }], ...effort === null ? {} : { effort } } };
 }
 const CODEX_APPROVALS = /* @__PURE__ */ new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"]);
 const isPlainObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -375,7 +403,7 @@ const claudeErrorText = (event) => text(event.result) || (Array.isArray(event.er
 const detached = (text2) => Buffer.from(text2, "utf16le").toString("utf16le");
 const digestKey = (id) => createHash("sha256").update(Buffer.from(id, "utf16le")).digest("base64");
 const REFUSED_ON_ATTENTION = "The person refused this on Attention.";
-function hostConversation(host, { initiative = null, migrationRun = null, access: access2 = "full", readRoots = [], migrationServer = null, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {
+function hostConversation(host, { initiative = null, migrationRun = null, access: access2 = "full", readRoots = [], migrationServer = null, checkout, hostSessionId = null, resume = false, coordinator = null, answeredGate = null, asker = null, askerAnswered = true, send, closeInput, onSessionId = () => {
 }, onModel = () => {
 }, acp = null, permissions = null }) {
   const facts = { hostSessionId: null, agentSessionId: null, settled: false, turnId: null, model: null, refusals: [], refusalCount: 0, ownToolAllows: 0, hostError: null, failure: null, usage: null, lastMessage: null, stopReason: null };
@@ -445,6 +473,7 @@ function hostConversation(host, { initiative = null, migrationRun = null, access
     hostSessionId,
     resume,
     coordinator: coordinatorOf(coordinator),
+    answeredGate,
     env: acp.env,
     launch: acp.launch,
     facts,
@@ -465,7 +494,7 @@ function hostConversation(host, { initiative = null, migrationRun = null, access
     let interruptId = null;
     const waitingTools = /* @__PURE__ */ new Map();
     return {
-      start: () => write(claudePrompt({ initiative, migrationRun })),
+      start: () => write(claudePrompt({ initiative, migrationRun }, answeredGate, asker, askerAnswered)),
       interrupt() {
         if (interruptId !== null) return;
         interruptId = randomUUID();
@@ -576,7 +605,7 @@ function hostConversation(host, { initiative = null, migrationRun = null, access
     const answered = (method, result) => {
       if (method === "initialize") {
         write({ jsonrpc: "2.0", method: "initialized", params: {} });
-        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, coordinator, access: access2, migrationServer });
+        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, coordinator, access: access2, migrationServer, readRoots });
         request(open, params);
         return;
       }
@@ -592,7 +621,7 @@ function hostConversation(host, { initiative = null, migrationRun = null, access
           close();
           return;
         }
-        const { method: turn, params } = codexTurnRequest({ threadId, initiative, migrationRun, coordinator, access: access2, checkout, readRoots });
+        const { method: turn, params } = codexTurnRequest({ threadId, initiative, migrationRun, coordinator, answeredGate, asker, askerAnswered });
         turnRequested = true;
         request(turn, params);
         return;
@@ -741,6 +770,7 @@ function hostConversation(host, { initiative = null, migrationRun = null, access
 export {
   CLAUDE_UNNAMED_TOOL,
   CLAUDE_UNNAMED_TOOL_REASON,
+  CODEX_READ_ONLY_PROFILE,
   CODEX_UNDESCRIBED_CHANGE,
   CODEX_UNNAMED_COMMAND,
   EFFORT_PATTERN,
@@ -766,6 +796,10 @@ export {
   STRIPPED_VARIABLES,
   TOOL_NAME_MAX,
   TRACKED_TASKS,
+  askerLaterText,
+  askerResumeOf,
+  askerResumeText,
+  askerSubject,
   builtinHost,
   checkedCoordinator,
   claudeInterrupt,

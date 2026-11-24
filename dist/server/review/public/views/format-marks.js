@@ -5,22 +5,31 @@ function findingsList(findings) {
   const lines = (findings ?? []).map((finding) => `<li class="format-finding"><prism-chip tone="warning" data-code-subject>${escapeHtml(finding.rule)}</prism-chip><span class="format-finding-message">${findingMessage(finding)}${Number.isInteger(finding.line) ? ` <span class="muted">\xB7 line ${finding.line}</span>` : ""}</span></li>`).join("");
   return `<ul class="format-findings">${lines}</ul>`;
 }
+const NOTE_FINDINGS = 3;
+const plainMessage = (finding) => String(finding.message ?? "").replace(/`/g, "").trim();
+function formatNote(format) {
+  const findings = (format?.findings ?? []).filter((finding) => finding && typeof finding.message === "string" && finding.message);
+  if (!findings.length) return (format?.rules ?? []).join(", ");
+  const lines = findings.slice(0, NOTE_FINDINGS).map((finding) => `${Number.isInteger(finding.line) ? `Line ${finding.line}: ` : ""}${plainMessage(finding)}${finding.rule ? ` (${finding.rule})` : ""}`);
+  const more = findings.length - NOTE_FINDINGS;
+  return [...lines, ...more > 0 ? [`and ${more} more`] : []].join("\n");
+}
 function formatBadge(format) {
   if (!format) return "";
-  return `<prism-badge data-format-mark tone="warning" note="${escapeHtml((format.rules ?? []).join(", "))}">Breaks its format</prism-badge>`;
+  return `<prism-badge data-format-mark tone="warning" note="${escapeHtml(formatNote(format))}">Breaks its format</prism-badge>`;
 }
 function formatBadgeElement(format) {
   if (!format) return null;
   const badge = document.createElement("prism-badge");
   badge.dataset.formatMark = "";
   badge.setAttribute("tone", "warning");
-  badge.setAttribute("note", (format.rules ?? []).join(", "));
+  badge.setAttribute("note", formatNote(format));
   badge.textContent = "Breaks its format";
   return badge;
 }
-function formatBanner(format) {
+function formatBanner(format, heading = "This file breaks its format") {
   if (!format) return "";
-  return `<div class="document-notice"><prism-banner data-format-mark tone="warning" heading="This file breaks its format">${findingsList(format.findings)}</prism-banner></div>`;
+  return `<div class="document-notice"><prism-banner data-format-mark tone="warning" heading="${escapeHtml(heading)}">${findingsList(format.findings)}</prism-banner></div>`;
 }
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function dayText(value) {
@@ -40,5 +49,6 @@ export {
   formatBadge,
   formatBadgeElement,
   formatBanner,
+  formatNote,
   migratedNote
 };

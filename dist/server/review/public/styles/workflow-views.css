@@ -634,8 +634,104 @@
   font-weight: var(--prism-font-weight-semibold);
 }
 
-.gate-where {
+/* The work a question belongs to, under the question, as links that wrap. */
+.gate-work {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--prism-space-1) var(--prism-space-2);
+  min-width: 0;
   margin: 0;
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+/* Who asked the question and the state of that session, at the top of the answer, apart from the answer by a line. */
+.gate-asker {
+  display: grid;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  padding-bottom: var(--prism-space-5);
+  border-bottom: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.gate-asker > .label-caps {
+  margin: 0;
+}
+
+.gate-asker-line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.gate-asker-text {
+  display: grid;
+  gap: var(--prism-space-1);
+  min-width: 0;
+}
+
+.gate-asker-who,
+.gate-asker-where {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.gate-asker-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+  font-size: var(--prism-font-size-sm);
+}
+
+.gate-asker-where {
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+.gate-asker-state:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: var(--prism-stroke);
+  border-radius: var(--prism-radius-xs);
+}
+
+.gate-asker-note {
+  margin: 0;
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+/* A wake line keeps its icon on its first line and wraps a long reason beside it. */
+.gate-asker-note[data-wake] {
+  display: flex;
+  align-items: baseline;
+  gap: var(--prism-space-2);
+}
+
+.gate-asker-note[data-wake] > span {
+  min-width: 0;
+}
+
+/* Withdraw under the answer and Continue on an answered question hold the shared action renderer's forms. */
+.gate-withdraw,
+.gate-continue {
+  min-width: 0;
+}
+
+/* Withdraw reads as one line, what it does and then its quiet button at the end, and its button keeps its own width on a phone. */
+.gate-withdraw .action-submit.is-form {
+  flex-wrap: nowrap;
+}
+
+.gate-withdraw .action-hint.is-form {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.gate-withdraw .action-submit.is-form > :last-child {
+  flex: none;
 }
 
 /* The lifecycle keeps its six steps on one row, and takes two rows of three in a narrow sheet. */
@@ -734,85 +830,26 @@
   min-width: 0;
 }
 
-.inspect-tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--prism-sidebar-width) - var(--prism-space-7))), 1fr));
-  gap: var(--prism-space-3);
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.inspect-tiles > li {
-  display: grid;
+/* The rest of the attached files open below the first few, in a list of their own. */
+.gate-documents-more {
   min-width: 0;
 }
 
-/* A tile's name and kind are full-width inline blocks with the hidden separator between them, so they take a line each and the text still reads as one label. */
-.inspect-tile {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 0 var(--prism-space-4);
-  min-width: 0;
-  padding: var(--prism-space-3) var(--prism-space-4);
-  border: var(--prism-stroke) solid var(--prism-color-line);
-  border-radius: var(--prism-radius-md);
-  background: var(--prism-color-surface);
-  color: var(--prism-color-ink);
-  text-decoration: none;
-}
-
-a.inspect-tile:hover {
-  background: var(--prism-color-hover);
-}
-
-a.inspect-tile:focus-visible {
-  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
-  outline-offset: var(--prism-stroke);
-}
-
-.inspect-tile > :first-child {
-  color: var(--prism-color-accent-text);
-}
-
-.inspect-text {
-  display: block;
+/* The answer's form, between who asked and Withdraw, and the asker beside Send, who receives the answer. */
+.gate-answer-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--prism-space-5);
   min-width: 0;
 }
 
-.inspect-tile.is-missing > :first-child {
-  color: var(--prism-color-warning);
+.gate-send-to {
+  flex: none;
 }
 
-.inspect-name,
-.inspect-kind {
-  display: inline-block;
-  width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.inspect-name {
-  font-weight: var(--prism-font-weight-medium);
-}
-
-.inspect-name[data-code-subject] {
-  font-family: var(--prism-font-code);
-  font-size: var(--prism-font-size-sm);
-  font-weight: var(--prism-font-weight-regular);
-}
-
-.inspect-kind {
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-xs);
-}
-
-.inspect-separator {
-  font-size: 0;
+.gate-answer > .gate-withdraw {
+  padding-top: var(--prism-space-4);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
 }
 
 .gate-answer {

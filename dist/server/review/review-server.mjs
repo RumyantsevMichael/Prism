@@ -1467,8 +1467,8 @@ function createProjectReview({
       }
       try {
         const result = await applyAction({ projectRoot, target: body.target, action: body.action, input: body.input, revision: body.revision, confirmed: body.confirmed, via: "review-app", indexer, checkouts: await checkoutRoots() });
-        if (result.applied) forgetWorkspace();
-        sendJson(response, 200, { applied: result.applied, actions: result.actions, ...result.launch !== void 0 ? { launch: result.launch } : {} });
+        if (result.applied || result.wake !== void 0) forgetWorkspace();
+        sendJson(response, 200, { applied: result.applied, actions: result.actions, ...result.launch !== void 0 ? { launch: result.launch } : {}, ...result.wake !== void 0 ? { wake: result.wake } : {}, ...result.warnings !== void 0 ? { warnings: result.warnings } : {} });
         if (result.applied) {
           const target = parseTarget(result.applied.target);
           const event = { ...result.applied, initiative: target?.initiative ?? (target?.kind === "launch" ? result.launch?.initiative ?? null : null), ...result.artifact ? { artifact: result.artifact } : {} };

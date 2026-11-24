@@ -1012,6 +1012,7 @@ function requireApp() {
   return false;
 }
 const settingsDialog = document.getElementById("settings-dialog");
+const PHONE = matchMedia("(max-width: 720px)");
 const PRISM_RUNS_TARGET = "machine:prism-runs";
 let prismRunsList = null;
 let prismRunsShown = false;
@@ -1063,9 +1064,18 @@ function startSettings() {
     for (const section2 of settingsDialog.querySelectorAll(".settings-section")) section2.hidden = section2.dataset.section !== name || !ready;
     for (const item of sections.querySelectorAll("prism-tree-item")) item.toggleAttribute("selected", item.getAttribute("value") === name);
   };
+  const panes = settingsDialog.querySelector(".settings");
+  const back = document.getElementById("settings-back");
   sections.addEventListener("prism-select", (event) => {
     const value = event.detail?.value;
-    if (value) showSection(value);
+    if (!value) return;
+    showSection(value);
+    panes.dataset.pane = "section";
+    if (PHONE.matches) back.focus();
+  });
+  back.addEventListener("click", () => {
+    panes.dataset.pane = "list";
+    sections.querySelector("prism-tree-item[selected]")?.focus();
   });
   document.getElementById("settings-button").addEventListener("click", () => openSettings());
   const root = document.documentElement;
@@ -1110,6 +1120,7 @@ function openSettings() {
   document.getElementById("settings-store-state").textContent = store.hidden ? "This workspace keeps no records yet." : (store.getAttribute("tip") ?? "").split("\n")[0];
   document.getElementById("settings-store-open").hidden = store.hidden;
   if (settingsDialog.querySelector('.settings-section[data-section="agents"]:not([hidden])')) void codingAgents?.refresh();
+  settingsDialog.querySelector(".settings").dataset.pane = "list";
   settingsDialog.show();
   showPersonalAccess();
   loadPersonalSettings();
@@ -1351,7 +1362,7 @@ function titleIndex() {
   return new Map((navigation.index ?? []).filter((entry) => entry.kind === "initiative" || entry.kind === "slice").map((entry) => [entry.ref, entry.label]));
 }
 function describe(path) {
-  const record = (prismRecords.has(path) || path.startsWith(".prism/")) && recordKind(path);
+  const record = (prismRecords.has(path) || prismRecords.has(localTab(path)) || path.startsWith(".prism/")) && recordKind(path);
   if (!record) return { label: fileName(path), kind: "File", owner: null, code: true };
   return { ...recordLabel(path, titleIndex()), code: false };
 }
@@ -2490,6 +2501,8 @@ function viewContext(path, state) {
   return {
     path,
     state,
+    // The view draws again over itself showing, rather than in place of another page or none, so it shows what it has at once and fills in the rest in place.
+    redrawing: renderedPath === path,
     // The lane a lane link asks the Roadmap page to show.
     lane: pendingLane?.path === path ? pendingLane.lane : null,
     // Touched by my work reads the slice in the selected tab, or else the one selected last, and passes its answer back for the sidebar's count.

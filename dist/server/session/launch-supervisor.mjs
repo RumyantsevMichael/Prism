@@ -6,9 +6,9 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
-import { launchCoordinator, launchView, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
+import { ANSWERED_GATE_PATTERN, launchCoordinator, launchView, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
 import { isAcpHost } from "./acp-agents.mjs";
-import { hostArguments, hostConversation, hostEnvironment, migrationServerDefinition, MIGRATION_SERVER, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { askerResumeOf, hostArguments, hostConversation, hostEnvironment, migrationServerDefinition, MIGRATION_SERVER, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 import { approvalText, confirmApproval } from "./launch-confirmation.mjs";
 import { permissionBroker, shownForm } from "./permission-requests.mjs";
 const STDERR_KEEP = 64 * 1024;
@@ -63,7 +63,8 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
   });
   const record = await readLaunchRecord(folder2);
   if (!record) return;
-  const resume = record.runs.length > 0;
+  const asker = askerResumeOf(record.askerResume);
+  const resume = record.runs.length > 0 || asker !== null;
   if (isAcpHost(record.host)) {
     await update((current) => {
       current.starting = { token: token2, supervisorPid: process.pid, at: (/* @__PURE__ */ new Date()).toISOString() };
@@ -130,7 +131,7 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
       run: token2,
       host: record.host,
       hostLabel: resolved.label,
-      confirm: async ({ action, reason }) => confirmApproval({ text: approvalText({ initiative: await initiativeTitle(record.checkout, record.initiative), host: resolved.label, action, reason }), env })
+      confirm: async ({ action, reason }) => confirmApproval({ text: approvalText({ initiative: record.initiative === null ? null : await initiativeTitle(record.checkout, record.initiative), artifact: asker?.artifact ?? null, host: resolved.label, action, reason }), env })
     });
     const conversation = hostConversation(record.host, {
       permissions,
@@ -144,6 +145,10 @@ async function superviseRun({ folder: folder2, cause: cause2, token: token2, env
       hostSessionId: record.hostSessionId,
       resume,
       coordinator,
+      // Only the first run starts from the answered gate; a resume continues the conversation that already acted on it.
+      asker,
+      askerAnswered: record.runs.length === 0,
+      answeredGate: !resume && typeof record.answeredGate === "string" && ANSWERED_GATE_PATTERN.test(record.answeredGate) ? record.answeredGate : null,
       send: (message) => child.stdin.write(`${JSON.stringify(message)}
 `),
       closeInput: () => child.stdin.end(),

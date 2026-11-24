@@ -280,7 +280,7 @@ const FAILING_STOPS = /* @__PURE__ */ new Set(["refusal", "max_tokens", "max_tur
 const BYPASS_VALUES = /* @__PURE__ */ new Set(["bypassPermissions", "agent-full-access"]);
 const BYPASS_WORDS = /bypass|full[\s_-]*access|(accept|allow|approve)s?\s+(all|every)\s+(permission|request|tool)/i;
 const SKILL_URI = "prism://skills/orchestrate/SKILL.md";
-const launchInstruction = (initiative) => `Run the Prism skill orchestrate in the attached resource for the initiative ${initiative}. Prism's skills are not installed in this agent: read every other Prism skill or reference file that a skill names with Prism's get_skill tool.`;
+const launchInstruction = (initiative, answeredGate = null) => `Run the Prism skill orchestrate in the attached resource for the initiative ${initiative}. Prism's skills are not installed in this agent: read every other Prism skill or reference file that a skill names with Prism's get_skill tool.${answeredGate === null ? "" : ` Act first on the answer of the gate ${answeredGate}.`}`;
 const acpRunReasons = Object.freeze({
   notOffered: (label, value, option) => `${label} does not offer ${value} for ${option}.`,
   noResume: (label) => `${label} cannot resume a session.`,
@@ -339,7 +339,7 @@ function prismToolAllow(params, tools, known = {}) {
   return allow ? { outcome: { outcome: "selected", optionId: allow.optionId } } : null;
 }
 function acpConversation(options) {
-  const { label, initiative, checkout, hostSessionId, resume, coordinator, env, launch, facts, write, close, cut } = options;
+  const { label, initiative, checkout, hostSessionId, resume, coordinator, answeredGate = null, env, launch, facts, write, close, cut } = options;
   const pending = /* @__PURE__ */ new Map();
   const toolCalls = /* @__PURE__ */ new Map();
   let prismTools = /* @__PURE__ */ new Set();
@@ -427,7 +427,7 @@ function acpConversation(options) {
     }
     const first = embedded ? { type: "resource", resource: { uri: SKILL_URI, mimeType: "text/markdown", text: skill } } : { type: "text", text: skill };
     prompting = true;
-    request("session/prompt", { sessionId, prompt: [first, { type: "text", text: launchInstruction(initiative) }, { type: "text", text: LAUNCH_NOTE }] });
+    request("session/prompt", { sessionId, prompt: [first, { type: "text", text: launchInstruction(initiative, answeredGate) }, { type: "text", text: LAUNCH_NOTE }] });
   };
   const opened = (method, result) => {
     const id = method === "session/new" ? result?.sessionId : hostSessionId;

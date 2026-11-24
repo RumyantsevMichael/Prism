@@ -134,7 +134,8 @@ function cardsHtml(action, field, input, { disabled, key, form }) {
   const recommended = action.recommended?.value ?? null;
   const options = field.options.map((option) => {
     const tone = form.tone?.(option) ?? null;
-    return `<prism-choice-option value="${escapeHtml(option.value)}" data-focus-key="${escapeHtml(`${key}|${field.name}|${option.value}`)}"${tone ? ` tone="${escapeHtml(tone)}"` : ""}${disabled ? " disabled" : ""}>${escapeHtml(option.label ?? option.value)}${option.value === recommended ? ` ${badge("Recommended", "accent")}` : ""}${option.consequence ? `<span slot="detail">${escapeHtml(option.consequence)}</span>` : ""}</prism-choice-option>`;
+    const detail = option.reason ?? option.consequence ?? null;
+    return `<prism-choice-option value="${escapeHtml(option.value)}" data-focus-key="${escapeHtml(`${key}|${field.name}|${option.value}`)}"${tone ? ` tone="${escapeHtml(tone)}"` : ""}${disabled || option.reason ? " disabled" : ""}>${escapeHtml(option.label ?? option.value)}${option.value === recommended ? ` ${badge("Recommended", "accent")}` : ""}${detail ? `<span slot="detail">${escapeHtml(detail)}</span>` : ""}</prism-choice-option>`;
   }).join("");
   const clear = field.required ? "" : `<prism-button size="sm" variant="ghost" data-clear data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}|clear`)}" tip="Unchoose the option to answer in your own words"${picked === null || disabled ? " hidden" : ""}><prism-icon name="close" size="xs"></prism-icon>Clear choice</prism-button>`;
   const heading = form.heading ? `<p class="label-caps" aria-hidden="true">${escapeHtml(form.heading)}</p>` : "";
@@ -175,7 +176,7 @@ function formHtml(action, entry, state, { disabled, layout, renderMarkdown, form
   const guidance = form.guidance ? `${contextHtml(action, renderMarkdown)}${guidanceHtml(action, null)}` : "";
   const heading = !fields.includes("action-cards") && form.heading ? `<p class="label-caps">${escapeHtml(form.heading)}</p>` : "";
   const ready = !disabled && state.ready;
-  return `${guidance}${heading}${fields ? `<div class="action-fields is-form">${fields}</div>` : ""}<div class="action-submit is-form">${formHintHtml(id, words)}<prism-button variant="${escapeHtml(words.submit.variant)}" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${ready ? "" : " disabled"}>${escapeHtml(words.submit.label)}</prism-button>${form.trailing?.(action) ?? ""}</div>`;
+  return `${guidance}${heading}${fields ? `<div class="action-fields is-form">${fields}</div>` : ""}<div class="action-submit is-form">${formHintHtml(id, words)}${form.leading?.(action) ?? ""}<prism-button variant="${escapeHtml(words.submit.variant)}" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${ready ? "" : " disabled"}>${escapeHtml(words.submit.label)}</prism-button>${form.trailing?.(action) ?? ""}</div>`;
 }
 function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLabel, batch, unavailableButtons, layoutOf, form = null, named = false }) {
   const { key, draft, error, sending } = entry;
@@ -188,7 +189,7 @@ function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLa
   const choice = action.fields.find((field) => field.kind !== "text");
   let control;
   if (form) {
-    control = action.available ? formHtml(action, entry, state, { disabled, layout, renderMarkdown, form, id }) : `<p class="action-reason">${escapeHtml(action.reason ?? "")}</p>`;
+    control = action.available ? formHtml(action, entry, state, { disabled, layout, renderMarkdown, form, id }) : `<p class="action-reason">${escapeHtml(action.reason ?? "")}</p>${form.unavailable?.(action) ?? ""}`;
     return `<div class="action-row is-form" data-action-key="${escapeHtml(key)}" aria-busy="${Boolean(sending)}">
     <div class="action-control">${control}<p class="action-error" role="alert"${error ? "" : " hidden"}>${escapeHtml(error ?? "")}</p></div>
   </div>`;
@@ -232,7 +233,7 @@ function shownActionEntries() {
   return entries;
 }
 const lastListings = /* @__PURE__ */ new WeakMap();
-function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false, groups = null, batch = false, sections = null, unavailableButtons = false, form = null, onApplied = null, onRefused = null }) {
+function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false, groups = null, actions = null, batch = false, sections = null, unavailableButtons = false, form = null, onApplied = null, onRefused = null }) {
   if (!lastListings.has(api)) lastListings.set(api, /* @__PURE__ */ new Map());
   const known = lastListings.get(api);
   const listings = new Map(targets.filter((target) => known.has(target)).map((target) => [target, known.get(target)]));
@@ -253,7 +254,7 @@ function createActionList({ root, targets, api, drafts = {}, renderMarkdown = nu
     entry.draft = hostFieldOf(action) ? runDraftOf(target, action) : drafts[key] ?? null;
     return entry;
   }
-  const actionsOf = () => wanted.flatMap((target) => (listings.get(target)?.actions ?? []).filter((action) => !groups || groups.includes(action.group)).map((action) => ({ target, action })));
+  const actionsOf = () => wanted.flatMap((target) => (listings.get(target)?.actions ?? []).filter((action) => (!groups || groups.includes(action.group)) && (!actions || actions.includes(action.id))).map((action) => ({ target, action })));
   const writable = () => wanted.length > 0 && wanted.every((target) => listings.get(target)?.writable === true);
   const itemOf = (target, action, items = actionsOf()) => items.find((item) => item.target === target && item.action.id === action.id) ?? { target, action };
   function layoutOf(target, action) {
@@ -759,8 +760,11 @@ function createActionList({ root, targets, api, drafts = {}, renderMarkdown = nu
   };
   document.addEventListener("prism:action", onChange);
   document.addEventListener("prism:poll", onChange);
+  const drawn = wanted.every((target) => listings.has(target));
   render();
-  void refresh();
+  const first = refresh().catch(() => {
+  });
+  panel.loaded = drawn ? Promise.resolve() : first;
   return panel;
 }
 function mountInitiativeSettings(slot, { target, eyebrow, ctx }) {

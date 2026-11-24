@@ -301,6 +301,7 @@ export {
   recordEarlierShips,
   recordShipDocuments,
   refuseShipped,
+  roadmapEntry,
   shipDate,
   shippedActionReason,
   shippedDecision,

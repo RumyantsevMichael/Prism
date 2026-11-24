@@ -4,7 +4,7 @@ import { access, constants, link, readFile, realpath, rm, stat, writeFile } from
 import os from "node:os";
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
-import { hostDefinition } from "./launch-hosts.mjs";
+import { askerResumeOf, askerSubject, hostDefinition } from "./launch-hosts.mjs";
 import { shownForm } from "./permission-requests.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { LaunchError, launchesDirectory, prepareLaunchesDirectory } from "./launch-records.mjs";
@@ -20,6 +20,7 @@ const COOLDOWN_FILE = "confirmation-cooldown.json";
 const PENDING_FILE = "confirmation-pending.json";
 const UNAVAILABLE_PREFIX = "This computer cannot show a confirmation outside the browser: ";
 const STDERR_MAX = 500;
+const CLOUD_LINK = /^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]{8,120}$/;
 const LAUNCH_BUTTONS = Object.freeze({ ok: "Launch", cancel: "Cancel" });
 const APPROVAL_BUTTONS = Object.freeze({ ok: "Allow", cancel: "Refuse" });
 const INSTALL_BUTTONS = Object.freeze({ ok: "Install", cancel: "Cancel" });
@@ -41,8 +42,14 @@ function qtText(text) {
 function confirmationText({ label, initiative, checkout }) {
   return `Start a ${label} session on this computer that runs Prism's orchestrate skill for the initiative ${initiative} in ${checkout}? Further launches in the next 30 minutes will start without asking.`;
 }
-function approvalText({ initiative, host, action, reason }) {
-  return `Allow ${host} to do this once, in its session for the initiative ${initiative}?
+function resumeConfirmationText({ label, resume, checkout }) {
+  return `Resume the ${label} session that asked question ${resume.gate} of ${askerSubject(resume)} in ${checkout}? Further launches in the next 30 minutes will start without asking.`;
+}
+function wakeConfirmationText({ subject, link: link2 }) {
+  return `Wake the Claude Code cloud session ${link2} about question ${subject.gate} of ${askerSubject(subject)}? Prism sends it only a pointer to your answer in Prism's records, nothing else of the question. Further launches in the next 30 minutes will start without asking.`;
+}
+function approvalText({ initiative, artifact = null, host, action, reason }) {
+  return `Allow ${host} to do this once, in its session for ${initiative === null && artifact ? artifact : `the initiative ${initiative}`}?
 
 Action: ${action}
 Reason: ${reason || "none given"}
@@ -324,10 +331,15 @@ function runDialog(dialog) {
     child.on("close", (code) => done({ code, stdout, stderr, timedOut }));
   });
 }
-async function confirmLaunch({ initiative, host, checkout, env = process.env, platform = process.platform, now = Date.now() }) {
+async function confirmLaunch({ initiative, host, checkout, resume = null, wake = null, env = process.env, platform = process.platform, now = Date.now() }) {
   const definition = hostDefinition(host);
   if (!definition) throw new LaunchError("unknown_host", `Prism cannot launch the host ${host}.`);
-  if (typeof initiative !== "string" || !SLUG_PATTERN.test(initiative)) throw new LaunchError("unknown_initiative", `Prism cannot launch the initiative ${String(initiative)}.`);
+  const asker = resume === null ? null : askerResumeOf(resume);
+  if (resume !== null && !asker) throw new LaunchError("invalid_gate", "The answered gate is not a gate id that Prism records.");
+  const woken = wake === null ? null : askerResumeOf(wake.subject);
+  if (wake !== null && !woken) throw new LaunchError("invalid_gate", "The answered gate is not a gate id that Prism records.");
+  if (wake !== null && !CLOUD_LINK.test(wake.link)) throw new LaunchError("invalid_session", "The session that asked is not a cloud session that Prism can wake.");
+  if (!asker && !woken && (typeof initiative !== "string" || !SLUG_PATTERN.test(initiative))) throw new LaunchError("unknown_initiative", `Prism cannot launch the initiative ${String(initiative)}.`);
   await prepareLaunchesDirectory(env);
   const window = await launchWindow({ env, now });
   if (window) return { asked: false, windowEndsAt: window.endsAt };
@@ -335,7 +347,7 @@ async function confirmLaunch({ initiative, host, checkout, env = process.env, pl
   const cooldown = () => new LaunchError("confirmation_cooldown", "You declined a launch moments ago; wait a little before launching again.");
   if (await dialogOpen(env)) throw pending();
   if (await coolingDown(env, now)) throw cooldown();
-  const text = confirmationText({ label: definition.label, initiative, checkout });
+  const text = woken ? wakeConfirmationText({ subject: woken, link: wake.link }) : asker ? resumeConfirmationText({ label: definition.label, resume: asker, checkout }) : confirmationText({ label: definition.label, initiative, checkout });
   const dialog = await nativeDialog({ text, env, platform });
   if (dialog instanceof LaunchError) throw dialog;
   const release = await takePendingSlot(env, now);
@@ -412,5 +424,7 @@ export {
   confirmationText,
   installText,
   launchWindow,
-  nativeDialog
+  nativeDialog,
+  resumeConfirmationText,
+  wakeConfirmationText
 };

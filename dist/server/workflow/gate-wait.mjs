@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { forgetAskedGates } from "./approval-deliveries.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { endGateWait, gateWaitStep, personChangesText } from "./change-notices.mjs";
+import { holdGates } from "./gate-askers.mjs";
 const DEFAULT_WAIT_MINUTES = 720;
 const MAX_WAIT_MINUTES = 1440;
 const MAX_WAIT_GATES = 10;
@@ -52,14 +53,51 @@ function gateSource({ projectRoot, initiative, artifact, scope }) {
   if (typeof initiative !== "string" || !initiative) throw new Error("Pass the initiative whose coordination state holds the gates, or the artifact whose approval gates to wait on.");
   return async () => (await readCoordinationState({ projectRoot, initiative })).state?.pending ?? [];
 }
+const WITHDRAWN_REASON = "The person withdrew this question without an answer.";
+function withdrawnText(value) {
+  return value.withdrawn.map((item) => `The person withdrew user gate ${item.id} in the review browser without an answer. Do not act on it as answered.`).join("\n");
+}
+function withdrawnOf(initiative, gateIds, state, history) {
+  if (Array.isArray(state?.withdrawn)) return state.withdrawn.filter((item) => gateIds.includes(item.id));
+  const closed = Array.isArray(state?.closed) ? state.closed : [];
+  const entries = Array.isArray(history) && history.length ? history : Array.isArray(state?.history) ? state.history : [];
+  return gateIds.flatMap((id) => {
+    const gate = closed.findLast((item) => isRecord(item) && item.id === id && item.reason === WITHDRAWN_REASON && !item.answer);
+    if (!gate) return [];
+    const entry = entries.findLast((item) => isRecord(item) && item.action === "gate.withdraw" && item.target === `gate:${initiative}/${id}`);
+    return [{ id, at: typeof gate.closedAt === "string" ? gate.closedAt : entry?.at ?? null, by: { name: typeof entry?.by?.name === "string" ? entry.by.name : null } }];
+  });
+}
+async function peekWithdrawn({ projectRoot, initiative, artifact, scope, gateIds }) {
+  try {
+    const ids = [...new Set(gateIds)];
+    let state;
+    if (typeof artifact === "string" && artifact) {
+      const gates = await gateSource({ projectRoot, artifact, scope })();
+      state = { pending: gates.filter((gate) => !gate.withdrawn), withdrawn: gates.filter((gate) => gate.withdrawn).map((gate) => ({ id: gate.id, ...gate.withdrawn })) };
+    } else {
+      const read = await readCoordinationState({ projectRoot, initiative });
+      if (!read.valid) return null;
+      state = read.state ?? {};
+    }
+    const pending = new Set((state.pending ?? []).filter(isRecord).map((gate) => gate.id));
+    const answered = (state.pending ?? []).some((gate) => isRecord(gate) && ids.includes(gate.id) && gate.answer);
+    const withdrawn = answered ? [] : withdrawnOf(initiative, ids.filter((id) => !pending.has(id)), state, []);
+    return withdrawn.length ? { status: "withdrawn", gateIds: ids, withdrawn } : null;
+  } catch {
+    return null;
+  }
+}
 function changedText(value) {
   return [personChangesText(value.changes), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n");
 }
 function outcome(initiative, gateIds, state, history, shown, held, known, first, watchChanges) {
   const pending = state?.pending ?? [];
   const present = gateIds.map((id) => pending.find((item) => isRecord(item) && item.id === id)).filter(Boolean);
-  if (!present.length) return { result: { status: first ? "unknown_gate" : "resolved" } };
   const answered = present.filter((gate) => gate.answer);
+  const withdrawn = answered.length ? [] : withdrawnOf(initiative, gateIds.filter((id) => !present.some((gate) => gate.id === id)), state, history);
+  if (withdrawn.length) return { result: { status: "withdrawn", withdrawn } };
+  if (!present.length) return { result: { status: first ? "unknown_gate" : "resolved" } };
   const waiting = present.filter((gate) => !gate.answer).map((gate) => gate.id);
   if (answered.length) return { result: { status: "answered", answered, waiting }, answers: answered.map((gate) => gate.id) };
   if (!watchChanges) return { result: null };
@@ -76,7 +114,7 @@ async function waitForUserGates(input) {
   }
   return result;
 }
-async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 6e4, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries, notices = null, watchChanges = false, leaseMs = Math.max(HOLD_LEASE_MS, 10 * pollMs) }) {
+async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 6e4, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries, notices = null, watchChanges = false, leaseMs = Math.max(HOLD_LEASE_MS, 10 * pollMs), holdAskers = true }) {
   if (!Array.isArray(gateIds) || !gateIds.length || gateIds.length > MAX_WAIT_GATES || gateIds.some((id) => typeof id !== "string" || !id)) {
     throw new Error(`Pass one to ${MAX_WAIT_GATES} gate ids.`);
   }
@@ -105,7 +143,10 @@ async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, 
     first = false;
     return decision;
   };
-  const poll = readArtifactGates ? async () => decide({ pending: await readArtifactGates() }, [], /* @__PURE__ */ new Set()).result : notices ? () => gateWaitStep({ projectRoot, initiative, ...session, waitId, gateIds: ids, until: Date.now() + leaseMs }, decide) : async () => {
+  const poll = readArtifactGates ? async () => {
+    const gates = await readArtifactGates();
+    return decide({ pending: gates.filter((gate) => !gate.withdrawn), withdrawn: gates.filter((gate) => gate.withdrawn).map((gate) => ({ id: gate.id, ...gate.withdrawn })) }, [], /* @__PURE__ */ new Set()).result;
+  } : notices ? () => gateWaitStep({ projectRoot, initiative, ...session, waitId, gateIds: ids, until: Date.now() + leaseMs }, decide) : async () => {
     const read = await readCoordinationState({ projectRoot, initiative });
     if (!read.valid) return decide(null).result;
     const state = read.state ?? {};
@@ -113,6 +154,7 @@ async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, 
     return decide(state, history, new Set(history.map((entry) => entry.id))).result;
   };
   let value;
+  let askerHold = null;
   try {
     let firstRead = true;
     while (true) {
@@ -133,6 +175,7 @@ async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, 
       if (signal?.aborted) {
         return value = { status: "cancelled", gateIds: ids };
       }
+      if (holdAskers && !askerHold) askerHold = holdGates(projectRoot, ids.map((gate) => readArtifactGates ? { gate } : { initiative, gate }));
       if (Date.now() >= deadline) {
         return value = last ? { ...last, gateIds: ids } : { status: "timeout", gateIds: ids };
       }
@@ -140,6 +183,7 @@ async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, 
     }
   } finally {
     if (heartbeat) clearInterval(heartbeat);
+    if (askerHold) await askerHold.release();
     if (notices) {
       await endGateWait({ projectRoot, initiative, ...session, waitId, cancelled: !value || value.status === "cancelled", hold: value?.status === "timeout" ? hold : null }).catch(() => {
       });
@@ -148,11 +192,15 @@ async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, 
 }
 export {
   DEFAULT_WAIT_MINUTES,
+  HOLD_LEASE_MS,
   HOOK_WAIT_MINUTES,
   MAX_WAIT_GATES,
   MAX_WAIT_MINUTES,
+  WITHDRAWN_REASON,
   answerText,
   changedText,
   gateSource,
-  waitForUserGates
+  peekWithdrawn,
+  waitForUserGates,
+  withdrawnText
 };

@@ -99,6 +99,7 @@ function tokenVoided(record, token) {
 function voidToken(record, token) {
   record.voidedTokens = [...Array.isArray(record.voidedTokens) ? record.voidedTokens : [], token].slice(-VOIDED_TOKENS_KEPT);
 }
+const ANSWERED_GATE_PATTERN = /^(gate|approval)-[0-9a-f]{8,32}$/;
 async function readLaunchRecord(folder) {
   try {
     const info = await lstat(path.join(folder, RECORD_FILE));
@@ -392,6 +393,7 @@ async function removeLaunchFolder(folder, record = null) {
   await rm(folder, { recursive: true, force: true });
 }
 export {
+  ANSWERED_GATE_PATTERN,
   ANSWER_WAITS,
   DEFAULT_STOP_GRACE_MS,
   GATES_KEPT,

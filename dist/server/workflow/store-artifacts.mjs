@@ -8,7 +8,7 @@ import { artifactIndex, markArtifactIndexStale } from "./artifact-index.mjs";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACTS, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, ARTIFACT_LOCATION_BYTES_MAX, letterCaseKey, locationArtifact, locationExcess, locationIdentity, locationLimits, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, scopeFolder, STORE_NAME_BYTES_MAX, uniqueIdentities, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
-import { acceptAtShip, acceptedLocation, acceptedWhenMoved, answerApproval, askApproval, hasStatus, linkedPaths, movedWithoutAcceptance, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion, writtenStatus as writtenStatusOf } from "./artifact-status.mjs";
+import { acceptAtShip, acceptedLocation, acceptedWhenMoved, answerApproval, askApproval, hasStatus, linkedPaths, movedWithoutAcceptance, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion, withdrawApproval, writtenStatus as writtenStatusOf } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
 import { checkArtifactFolders, folderChecks, noteToolCallWrite, recordStoreOf, repositoryScopes, resolveArtifactFile, resolveStatusFile, seenScopes, statusFileResolver, withArtifactStoreLock } from "./record-store.mjs";
 import { pruneArtifactFolders, runGit, scheduleRecordSync } from "./record-store-sync.mjs";
@@ -449,7 +449,7 @@ async function readResult(seen, input, { file, name, scope, address, record }) {
     ...await listComments(seen, scope, address, input.commentOffset ?? 1)
   };
 }
-const STATUS_OPERATIONS = /* @__PURE__ */ new Set(["ask_approval", "answer_approval"]);
+const STATUS_OPERATIONS = /* @__PURE__ */ new Set(["ask_approval", "answer_approval", "withdraw_approval"]);
 function checkOperation(config, kinds, operation) {
   const file = normalizeArtifactPath(operation.path);
   const address = file === null || file === "" ? null : artifactAddress(kinds, file);
@@ -585,7 +585,14 @@ async function updateArtifact(input) {
     const checked = input.operations.map((operation) => checkOperation(config, kinds, operation));
     const seen = await seenScopes(input.projectRoot);
     for (const item of checked) if (item.operation.op === "ask_approval" && item.operation.shipped !== void 0) item.shipped = await shippedRealization(input.projectRoot, seen, kinds, item.operation.shipped);
-    return withArtifactStoreLock(seen, async () => ({ artifacts: (await applyOperations(seen, checked, { noteWrites: true })).artifacts }));
+    const result = await withArtifactStoreLock(seen, async () => ({ artifacts: (await applyOperations(seen, checked, { noteWrites: true })).artifacts }));
+    const asked = (result?.artifacts ?? []).map((entry) => entry?.gate).filter((gate) => typeof gate === "string");
+    if (asked.length) {
+      const named = checked.filter((item) => item.operation.op === "ask_approval").map((item) => typeof item.operation.initiative === "string" ? item.operation.initiative : null);
+      const { recordGateAskers } = await import("./gate-askers.mjs");
+      await recordGateAskers(input.projectRoot, asked.map((gate, index) => ({ gate, named: named[index] ?? null })));
+    }
+    return result;
   });
 }
 async function shippedRealization(projectRoot, seen, kinds, initiative) {
@@ -815,6 +822,11 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
       setStatus(status.target, file, record);
       artifacts.push({ path: file, scope: source.scope, version: version2, gate: answered.gate });
       if (answered.text !== null) noteFormatted(file, source.scope, address);
+    } else if (operation.op === "withdraw_approval") {
+      const status = await statusOf(source.scope, address);
+      const withdrawn = withdrawApproval(status.record, operation.withdrawal);
+      setStatus(status.target, file, withdrawn.record);
+      artifacts.push({ path: file, scope: source.scope, version: source.record.version, gate: withdrawn.gate });
     } else if (operation.op === "accept_at_ship") {
       const status = await statusOf(source.scope, address);
       const accepted = acceptAtShip(status.record, decode(contentOf(file, source.record), file), { ...operation.ship, versionOf: (text2) => artifactVersion(Buffer.from(text2, "utf8")) });
@@ -1394,6 +1406,18 @@ async function answerArtifactApproval(projectRoot, { path: file, scope, componen
     });
   });
 }
+async function withdrawArtifactApproval(projectRoot, { path: file, scope, component, id, by, entry = null }) {
+  return refusing(async () => {
+    const { config, kinds } = await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    const item = checkOperation(config, kinds, { op: "withdraw_approval", path: file, ...namedScope(seen, scope, component), withdrawal: { id, by, entry } });
+    return withArtifactStoreLock(seen, async () => {
+      const holding = (await seenPendingGates(seen)).filter((gate) => gate.id === id);
+      if (holding.length > 1) throw fail("approval_ambiguous", ambiguousApprovalMessage(id, holding), { holders: holding.map((gate) => gate.artifact) });
+      return (await applyOperations(seen, [item])).artifacts[0];
+    });
+  });
+}
 function ambiguousApprovalMessage(id, gates) {
   const named = gates.map((gate) => `${gate.artifact.path} (${gate.artifact.scope?.label ?? "workspace"})`);
   return `More than one pending approval holds the id ${id}, so an answer to it cannot tell which file it approves: ${named.join(", ")}. Nothing was recorded; the agent asks again for the file it means.`;
@@ -1409,6 +1433,30 @@ async function pendingApprovalGates(projectRoot) {
     return seenPendingGates(await seenScopes(projectRoot));
   });
 }
+const ANSWERED_APPROVAL_KEPT_MS = 7 * 24 * 60 * 60 * 1e3;
+async function answeredApprovalGates(projectRoot, now = Date.now()) {
+  return refusing(async () => {
+    await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    const gates = [];
+    const resolve = manyReads(seen);
+    for (const entry of await statusHoldings(seen)) {
+      const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path), resolve);
+      const asked = (gate) => Date.parse(gate?.askedAt ?? "") || 0;
+      const latest = Math.max(0, ...[...record.pending, ...record.closed].map(asked));
+      const current = record.closed.filter((gate) => gate.answer && asked(gate) === latest && now - (Date.parse(gate.answer.answeredAt ?? "") || 0) <= ANSWERED_APPROVAL_KEPT_MS);
+      if (!current.length) continue;
+      const stored2 = await readStored(entry.target).catch(() => null);
+      for (const gate of current) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope, kind: entry.kind, title: documentTitle(stored2) }, recorded: record.status, current: stored2?.version ?? null, changed: stored2?.version !== gate.version });
+    }
+    return gates.sort((left, right) => (Date.parse(right.answer.answeredAt) || 0) - (Date.parse(left.answer.answeredAt) || 0));
+  });
+}
+function documentTitle(record) {
+  if (!record?.bytes) return null;
+  const match = /^# +(.+?)\s*$/m.exec(record.bytes.subarray(0, 8192).toString("utf8"));
+  return match ? match[1].slice(0, 300) : null;
+}
 async function seenPendingGates(seen) {
   const gates = [];
   const resolve = manyReads(seen);
@@ -1416,7 +1464,7 @@ async function seenPendingGates(seen) {
     const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path), resolve);
     if (!record.pending.length) continue;
     const current = await readStored(entry.target).catch(() => null);
-    for (const gate of record.pending) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope }, recorded: record.status, current: current?.version ?? null, changed: current?.version !== gate.version });
+    for (const gate of record.pending) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope, kind: entry.kind, title: documentTitle(current) }, recorded: record.status, current: current?.version ?? null, changed: current?.version !== gate.version });
   }
   return gates;
 }
@@ -1496,7 +1544,7 @@ async function approvalGatesWithIds(projectRoot, ids) {
     const resolve = manyReads(seen);
     for (const entry of await statusHoldings(seen)) {
       const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path), resolve);
-      for (const gate of waitableGates(record)) if (wanted.has(gate.id)) gates.push({ artifact: { path: entry.path, scope: entry.scope }, gate: { ...gate, artifact: entry.path } });
+      for (const gate of waitableGates(record)) if (wanted.has(gate.id) && !gate.withdrawn) gates.push({ artifact: { path: entry.path, scope: entry.scope }, gate: { ...gate, artifact: entry.path } });
     }
     return gates;
   });
@@ -1792,6 +1840,7 @@ async function storeSyncBase(projectRoot) {
   return { base: seen.store.base, sync: Boolean(seen.store.sync) };
 }
 export {
+  ANSWERED_APPROVAL_KEPT_MS,
   ARTIFACT_CONTENT_MAX,
   ARTIFACT_TOOLS,
   ArtifactError,
@@ -1801,6 +1850,7 @@ export {
   acceptLinkedAdrs,
   ambiguousApprovalMessage,
   answerArtifactApproval,
+  answeredApprovalGates,
   appliedArtifactAction,
   appliedArtifactActions,
   applyStoreRun,
@@ -1836,6 +1886,7 @@ export {
   unlinkedAdrs,
   updateArtifact,
   versionChanges,
+  withdrawArtifactApproval,
   workspaceArtifacts,
   writeMovedView,
   writeStoreArtifact

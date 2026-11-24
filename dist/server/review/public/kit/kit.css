@@ -1593,6 +1593,22 @@ prism-list-item mark {
   width: min(var(--prism-palette-width), calc(100vw - 2 * var(--prism-space-6)));
 }
 
+/* A fixed-height centered dialog keeps one height whatever its body holds, so switching what it shows moves none of its edges; its body scrolls what does not fit. */
+.prism-dialog-surface[data-height="fixed"][data-placement="center"] {
+  height: min(var(--prism-dialog-height), calc(100vh - 2 * var(--prism-space-7)));
+}
+
+/* On a phone a fixed-height dialog fills the window, as a page of its own does. */
+@media (max-width: 720px) {
+  .prism-dialog-surface[data-height="fixed"][data-placement="center"] {
+    width: 100vw;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+}
+
 /* A drawer's surface spans --prism-drawer-width from the left edge between the top bar and the status bar, and draws nothing itself:
    its frame is the island, --prism-drawer-width wide and inset by the island gap, on the chrome color. */
 .prism-dialog-surface[data-placement="start"] {
@@ -3589,8 +3605,9 @@ prism-row[wrap] .prism-row-title > a {
   white-space: nowrap;
 }
 
-/* A wrapping row shows its title and its detail in full. */
-prism-row[wrap] .prism-row-title {
+/* A wrapping row shows its title, its description, and its detail in full. */
+prism-row[wrap] .prism-row-title,
+prism-row[wrap] .prism-row-description {
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -3624,6 +3641,26 @@ prism-row[wrap] .prism-row-title {
 .prism-row-action > * {
   min-width: 0;
   max-width: 100%;
+}
+
+/* A revealing row shows its action while the pointer is over the row or focus is inside it, and a screen without hover always shows it.
+   The action keeps its room while hidden, so the row's columns never move. */
+@media (hover: hover) {
+  prism-row[reveal] > .prism-row-action {
+    opacity: 0;
+    transition: opacity var(--prism-duration-fast) ease-out;
+  }
+
+  prism-row[reveal]:hover > .prism-row-action,
+  prism-row[reveal]:focus-within > .prism-row-action {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  prism-row[reveal] > .prism-row-action {
+    transition: none;
+  }
 }
 
 /* A stacked row's several marks and actions wrap within their column, a gap apart. */

@@ -1,7 +1,8 @@
 // Generated from src/server/review/view-versions.mts by scripts/native-build/compile.mjs.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { watch } from "node:fs";
+import { EventEmitter } from "node:events";
+import { lstatSync, readdirSync, watch } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 const SKIPPED = /* @__PURE__ */ new Set([".git", ".prism-sync"]);
@@ -94,7 +95,93 @@ async function signatureOf(targets) {
 }
 const defaultWatch = process.platform === "win32" ? (() => {
   throw new Error("Folders are not watched on Windows.");
-}) : watch;
+}) : process.platform === "linux" ? ((target, options, listener) => options?.recursive ? watchFolderTree(target, listener) : watch(target, options, listener)) : watch;
+function watchFolderTree(root, listener) {
+  const tree = new EventEmitter();
+  const watchers = /* @__PURE__ */ new Map();
+  let closed = false;
+  let started = false;
+  const fail = (error) => {
+    if (!started) throw error;
+    tree.emit("error", error);
+  };
+  const forget = (relative) => {
+    for (const [folder, watcher] of watchers) {
+      if (folder !== relative && !folder.startsWith(`${relative}${path.sep}`)) continue;
+      try {
+        watcher.close();
+      } catch {
+      }
+      watchers.delete(folder);
+    }
+  };
+  const add = (relative, report) => {
+    if (closed || watchers.has(relative) || relative && skipped(relative)) return;
+    const folder = path.join(root, relative);
+    let watcher;
+    try {
+      watcher = watch(folder, { persistent: false }, (event, name) => {
+        if (closed) return;
+        const child = name === null || name === void 0 ? null : relative ? path.join(relative, String(name)) : String(name);
+        listener(event, child);
+        if (child !== null && event === "rename") settle(child);
+      });
+    } catch (error) {
+      if (relative && (error?.code === "ENOENT" || error?.code === "ENOTDIR")) return;
+      fail(error);
+      return;
+    }
+    watcher.on("error", (error) => {
+      if (relative) forget(relative);
+      else tree.emit("error", error);
+    });
+    watchers.set(relative, watcher);
+    let entries;
+    try {
+      entries = readdirSync(folder, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const child = relative ? path.join(relative, entry.name) : entry.name;
+      if (report && !skipped(child)) listener("rename", child);
+      if (entry.isDirectory()) add(child, report);
+    }
+  };
+  const settle = (relative) => {
+    let info;
+    try {
+      info = lstatSync(path.join(root, relative));
+    } catch {
+      forget(relative);
+      return;
+    }
+    if (info.isDirectory()) add(relative, true);
+    else forget(relative);
+  };
+  tree.close = () => {
+    closed = true;
+    for (const watcher of watchers.values()) {
+      try {
+        watcher.close();
+      } catch {
+      }
+    }
+    watchers.clear();
+  };
+  try {
+    add("", false);
+  } catch (error) {
+    tree.close();
+    throw error;
+  }
+  started = true;
+  tree.unref = () => {
+  };
+  tree.ref = () => {
+  };
+  return tree;
+}
 async function nearestExisting(target) {
   let child = target;
   for (let parent = path.dirname(target); parent !== child; child = parent, parent = path.dirname(parent)) {

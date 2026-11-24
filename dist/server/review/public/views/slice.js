@@ -418,7 +418,7 @@ async function render(container, entity, ctx) {
       </section>
       <div data-initiative-settings></div>
     </prism-dialog>`;
-  mountInitiativeSettings(container.querySelector("[data-initiative-settings]"), { target: `slice:${data.id}/${data.slug}`, eyebrow: `Initiative: ${data.initiativeTitle}`, ctx });
+  const settings = mountInitiativeSettings(container.querySelector("[data-initiative-settings]"), { target: `slice:${data.id}/${data.slug}`, eyebrow: `Initiative: ${data.initiativeTitle}`, ctx });
   const details = container.querySelector("[data-slice-details]");
   details.addEventListener("click", (event) => {
     if (event.target.closest?.("prism-chip[data-artifact], a[data-artifact]")) details.close();
@@ -491,6 +491,7 @@ async function render(container, entity, ctx) {
   }
   if (artifacts.review && !artifacts.review.invalid) await mountReviewLedger(container, artifacts.review, ctx);
   if (tab === "views") await mountViews(container, views, ctx);
+  await settings?.loaded;
   if (clause) highlightClause(clause);
   if (container.querySelector("[data-index-notice]")) {
     const builtAt = (status) => status?.state === "ready" ? status.index?.builtAt ?? "" : null;

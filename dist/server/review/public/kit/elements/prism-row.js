@@ -13,7 +13,8 @@ class PrismRow extends Base {
     options: [
       { name: "icon", values: ICON_NAMES, default: "", description: "Draws a kind tile with this glyph at the start." },
       { name: "tone", values: TONES, default: "neutral", description: "The kind tile's color." },
-      { name: "wrap", values: ["boolean"], default: "false", description: "Lets the title wrap and sets the tile at the top, for a row that shows its detail in full." },
+      { name: "wrap", values: ["boolean"], default: "false", description: "Lets the title and the description wrap and sets the tile at the top, for a row that shows its text in full." },
+      { name: "reveal", values: ["boolean"], default: "false", description: "Shows the action only while the pointer is over the row or focus is inside it, such as a quiet Open in side panel button; a screen without hover always shows it." },
       { name: "stack", values: ["boolean"], default: "false", description: "In a phone-width window, sets the kind and the action under the text, each wrapping onto lines of their own, instead of leaving out the kind, for a row whose marks and several actions all matter." },
       { name: 'slot="description"', values: ["children"], default: "", description: "The second line, such as where the item belongs and what it is." },
       { name: 'slot="detail"', values: ["children"], default: "", description: "A further line under the description, shown whole, such as the answer that was given." },
@@ -21,7 +22,7 @@ class PrismRow extends Base {
       { name: 'slot="time"', values: ["children"], default: "", description: "The time column, such as a <time> of how long ago." },
       { name: 'slot="action"', values: ["children"], default: "", description: "The action column, such as a small prism-button." }
     ],
-    states: ["default", "linked", "no-action", "wrap", "stack"],
+    states: ["default", "linked", "no-action", "wrap", "stack", "reveal"],
     keyboard: ["A link or button in the row is reached by Tab; a shortened title shows its full text in the tooltip."]
   };
   connectedCallback() {

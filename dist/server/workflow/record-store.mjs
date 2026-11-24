@@ -22,6 +22,9 @@ const RECORD_FILES = Object.freeze({ initiative: "initiative.json", state: "stat
 const SLICE_KINDS = /* @__PURE__ */ new Set(["review", "change-map", "design-view", "frozen-tests", "runs"]);
 const LEGACY_CHANGE_MAP = "concept-delta.json";
 const CLAIMS = "claims";
+const ASKERS = "askers";
+const APPROVAL_ASKERS = "approval-askers";
+const ASKER_GATE = /^(?:gate|approval)-[0-9a-f]{8,32}$/;
 const FORMAT_MIGRATIONS = "format-migrations";
 const FORMAT_MIGRATION_ID = /^(?:migration-[0-9a-f]{8,64}|run-[0-9a-f]{16})$/;
 const FORMAT_MIGRATION_FILE = /^(?:migration-[0-9a-f]{8,64}|run-[0-9a-f]{16})\.json$/;
@@ -58,6 +61,10 @@ class RecordStoreError extends Error {
   }
 }
 const fail = (code, message, details) => new RecordStoreError(code, message, details);
+function requireGate(value) {
+  if (typeof value !== "string" || !ASKER_GATE.test(value)) throw fail("invalid_path", "The gate identifier must be a gate or approval gate id.");
+  return value;
+}
 function requireSlug(value, label) {
   if (typeof value !== "string" || !SLUG_PATTERN.test(value)) throw fail("invalid_path", `The ${label} identifier must use letters, digits, hyphens, or underscores.`);
   return value;
@@ -72,9 +79,11 @@ function recordPath(key) {
     if (typeof key.id !== "string" || !FORMAT_FINDING_ID.test(key.id)) throw fail("invalid_path", "A format finding id is finding- and hexadecimal digits.");
     return `${RECORD_DIRECTORY}/${FORMAT_FINDINGS}/${key.id}.json`;
   }
+  if (key?.kind === "asker" && key.initiative === void 0) return `${RECORD_DIRECTORY}/${APPROVAL_ASKERS}/${requireGate(key.gate)}.json`;
   const initiative = requireSlug(key?.initiative, "initiative");
   if (key.kind === "initiative" || key.kind === "state") return `${INITIATIVES}/${initiative}/${RECORD_FILES[key.kind]}`;
   if (key.kind === "claim") return `${INITIATIVES}/${initiative}/${CLAIMS}/${requireSlug(key.slice, "slice")}.json`;
+  if (key.kind === "asker") return `${INITIATIVES}/${initiative}/${ASKERS}/${requireGate(key.gate)}.json`;
   if (!SLICE_KINDS.has(key.kind)) throw fail("invalid_path", `Unknown record kind ${key.kind}.`);
   const folder = `${INITIATIVES}/${initiative}/slices/${requireSlug(key.slice, "slice")}`;
   return key.kind === "runs" ? `${folder}/runs` : `${folder}/${RECORD_FILES[key.kind]}`;
@@ -82,10 +91,12 @@ function recordPath(key) {
 function parseRecordPath(relative) {
   if (relative === ROADMAP_RECORD) return { kind: "roadmap" };
   const parts = typeof relative === "string" ? relative.split("/") : [];
+  if (parts.length === 3 && parts[0] === RECORD_DIRECTORY && parts[1] === APPROVAL_ASKERS && parts[2].endsWith(".json") && ASKER_GATE.test(parts[2].slice(0, -5))) return { kind: "asker", gate: parts[2].slice(0, -5) };
   if (parts[0] !== RECORD_DIRECTORY || parts[1] !== "initiatives" || !SLUG_PATTERN.test(parts[2] ?? "")) return null;
   if (parts.length === 4 && parts[3] === RECORD_FILES.initiative) return { kind: "initiative", initiative: parts[2] };
   if (parts.length === 4 && parts[3] === RECORD_FILES.state) return { kind: "state", initiative: parts[2] };
   if (parts.length === 5 && parts[3] === CLAIMS && parts[4].endsWith(".json") && SLUG_PATTERN.test(parts[4].slice(0, -5))) return { kind: "claim", initiative: parts[2], slice: parts[4].slice(0, -5) };
+  if (parts.length === 5 && parts[3] === ASKERS && parts[4].endsWith(".json") && ASKER_GATE.test(parts[4].slice(0, -5))) return { kind: "asker", initiative: parts[2], gate: parts[4].slice(0, -5) };
   if (parts[3] !== "slices" || !SLUG_PATTERN.test(parts[4] ?? "")) return null;
   const base = { initiative: parts[2], slice: parts[4] };
   if (parts.length === 6 && parts[5] === RECORD_FILES.review) return { kind: "review", ...base };
@@ -96,7 +107,7 @@ function parseRecordPath(relative) {
   return null;
 }
 function isManagedRecordFile(relative) {
-  if (relative === ROADMAP_RECORD || relative.startsWith(`${INITIATIVES}/`) || relative.startsWith(`${RECORD_DIRECTORY}/${FORMAT_MIGRATIONS}/`) || relative.startsWith(`${RECORD_DIRECTORY}/${FORMAT_FINDINGS}/`)) return true;
+  if (relative === ROADMAP_RECORD || relative.startsWith(`${INITIATIVES}/`) || relative.startsWith(`${RECORD_DIRECTORY}/${APPROVAL_ASKERS}/`) || relative.startsWith(`${RECORD_DIRECTORY}/${FORMAT_MIGRATIONS}/`) || relative.startsWith(`${RECORD_DIRECTORY}/${FORMAT_FINDINGS}/`)) return true;
   return relative.startsWith(`${RECORD_DIRECTORY}/`) && Object.hasOwn(HOUSEKEEPING, relative.slice(RECORD_DIRECTORY.length + 1));
 }
 const MIGRATION_FILE = /^(?:\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{8}|[0-9a-f]{40,64})\.json$/;
@@ -116,6 +127,7 @@ function isStoreFile(relative) {
   if (names[0] === FORMAT_MIGRATIONS) return names.length === 2 && FORMAT_MIGRATION_FILE.test(names[1]);
   if (names[0] === FORMAT_FINDINGS) return names.length === 2 && FORMAT_FINDING_FILE.test(names[1]);
   if (names[0] === REPOSITORIES) return names.length === 2 && names[1].endsWith(".json") && portableRepositoryName(names[1].slice(0, -".json".length));
+  if (names[0] === APPROVAL_ASKERS) return parseRecordPath(`${RECORD_DIRECTORY}/${relative}`)?.kind === "asker";
   if (names[0] !== "initiatives") return false;
   const key = parseRecordPath(`${RECORD_DIRECTORY}/${relative}`);
   if (key?.kind !== "runs") return key !== null && key.kind !== "roadmap";
@@ -141,6 +153,7 @@ const STORE_FILE_BOUNDS = Object.freeze({
   "design-view": 4 * MiB,
   "frozen-tests": 4 * MiB,
   claim: 64 * KiB,
+  asker: 64 * KiB,
   runs: 4 * MiB,
   "root-text": MiB,
   "root-git": 64 * KiB
@@ -161,11 +174,11 @@ function storeFileBound(relative) {
 function isStoreFolder(relative) {
   if (typeof relative !== "string") return false;
   const names = relative.split("/");
-  if (names.length === 1) return ["initiatives", ARTIFACTS, ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, "migrations", FORMAT_MIGRATIONS, FORMAT_FINDINGS, REPOSITORIES].includes(names[0]);
+  if (names.length === 1) return ["initiatives", APPROVAL_ASKERS, ARTIFACTS, ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, "migrations", FORMAT_MIGRATIONS, FORMAT_FINDINGS, REPOSITORIES].includes(names[0]);
   if (names[0] === ARTIFACTS || names[0] === ARTIFACT_STATUS || names[0] === ARTIFACT_COMMENTS || names[0] === ARTIFACT_IDENTITY) return names.slice(1).every(wellFormedName);
   if (names[0] !== "initiatives" || !SLUG_PATTERN.test(names[1])) return false;
   if (names.length === 2) return true;
-  if (names.length === 3) return names[2] === CLAIMS || names[2] === "slices";
+  if (names.length === 3) return names[2] === CLAIMS || names[2] === ASKERS || names[2] === "slices";
   return names[2] === "slices" && SLUG_PATTERN.test(names[3]) && (names.length === 4 || names.length === 5 && names[4] === "runs");
 }
 function inside(root, target) {
@@ -1070,6 +1083,7 @@ async function removeInitiativeRecords(projectRootPath, initiative) {
   await assertContained(store.contain, path.join(target, "x"), storeLabel(store), null, { write: true });
   for (const kind of ["initiative", "state"]) await rm(physical(store, recordPath({ kind, initiative })), { force: true });
   await rm(path.join(target, CLAIMS), { recursive: true, force: true });
+  await rm(path.join(target, ASKERS), { recursive: true, force: true });
   for (const slice of await directoryNames(path.join(target, "slices"))) {
     const folder = path.join(target, "slices", slice);
     for (const entry of await readdir(folder)) if (entry !== "runs") await rm(path.join(folder, entry), { recursive: true, force: true });

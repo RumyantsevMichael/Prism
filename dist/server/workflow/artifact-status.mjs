@@ -60,7 +60,7 @@ function wellFormedGate(kind, gate) {
   if (typeof gate.id !== "string" || !gate.id || gate.id.length > 200 || !askableStatus(kind, gate.status, gate.shipped) || !VERSION.test(gate.version ?? "")) return false;
   if (!boundedText(gate.question, GATE_TEXT_MAX) || !gate.question || !optionalText(gate.context, GATE_TEXT_MAX)) return false;
   if (!optionalWorkItemId(gate.initiative) || !optionalWorkItemId(gate.slice) || gate.slice !== void 0 && gate.initiative === void 0 && gate.shipped === void 0) return false;
-  if (!optionalText(gate.askedAt, 64) || !optionalText(gate.closedAt, 64) || !optionalText(gate.closed, 64) || !optionalText(gate.supersededBy, 200)) return false;
+  if (!optionalText(gate.askedAt, 64) || !optionalText(gate.closedAt, 64) || !optionalText(gate.closed, 64) || !optionalText(gate.supersededBy, 200) || !optionalPerson(gate.by)) return false;
   if (gate.answer === void 0) return true;
   const answer = gate.answer;
   return isRecord(answer) && APPROVAL_CHOICES.includes(answer.choice) && optionalText(answer.note, NOTE_MAX) && optionalText(answer.answeredAt, 64) && optionalText(answer.via, 64) && optionalText(answer.entry, 64) && optionalPerson(answer.by);
@@ -238,6 +238,18 @@ function answerApproval(kind, file, record, { id, choice, note = null, by, versi
     gate: { ...gate, answer }
   };
 }
+function withdrawApproval(record, { id, by, entry = null, now = entry?.at ? new Date(entry.at) : /* @__PURE__ */ new Date() }) {
+  const gate = record.pending.find((item) => item.id === id);
+  if (!gate) {
+    const closed2 = record.closed.find((item) => item.id === id);
+    if (closed2?.answer) throw fail("gate_answered", "The question already has an answer.");
+    throw fail("unknown_gate", closed2 ? "The question was closed without an answer, so it no longer applies." : "The question is no longer open; the agent resolved or withdrew it.");
+  }
+  const at = now.toISOString();
+  const closed = keep([...record.closed, { ...gate, closedAt: at, closed: "withdrawn", by }], CLOSED_KEPT);
+  const pending = record.pending.filter((item) => item.id !== id);
+  return { record: { ...record, pending, closed, history: keep([...record.history, { event: "withdrawn", gate: gate.id, at, by, ...entry ? { entry } : {} }], HISTORY_KEPT) }, gate: closed.at(-1) };
+}
 function withAcceptedVersion(record, version, event) {
   return { ...record, acceptedVersion: version, history: keep([...record.history, { ...event, acceptedVersion: version }], HISTORY_KEPT) };
 }
@@ -311,7 +323,8 @@ function servedWorkItem(gate) {
 }
 function waitableGates(record) {
   const shape = (gate) => ({ id: gate.id, kind: "approval", status: gate.status, question: gate.question, context: gate.context ?? null, options: APPROVAL_OPTIONS, askedAt: gate.askedAt, ...gate.answer ? { answer: gate.answer } : {} });
-  return [...record.pending.map(shape), ...record.closed.filter((gate) => gate.answer).map(shape)];
+  const withdrawn = (gate) => ({ ...shape(gate), withdrawn: { at: gate.closedAt ?? null, by: { name: typeof gate.by?.name === "string" ? gate.by.name : null } } });
+  return [...record.pending.map(shape), ...record.closed.filter((gate) => gate.answer).map(shape), ...record.closed.filter((gate) => gate.closed === "withdrawn" && !gate.answer).map(withdrawn)];
 }
 export {
   APPROVAL_CHOICES,
@@ -342,5 +355,6 @@ export {
   statusRecordLocation,
   waitableGates,
   withAcceptedVersion,
+  withdrawApproval,
   writtenStatus
 };
