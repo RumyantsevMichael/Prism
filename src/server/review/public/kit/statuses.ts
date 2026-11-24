@@ -22,6 +22,7 @@ export const STATUSES: Readonly<Record<string, any>> = Object.freeze({
   "in-progress": ["active", "In progress"],
   shipped: ["done", "Shipped"],
   superseded: ["retired", "Superseded"],
+  merged: ["retired", "Merged"],
   // Slices.
   "not-started": ["idle", "Not started"],
   "design-review": ["waiting", "Design review"],
