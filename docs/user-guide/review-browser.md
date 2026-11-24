@@ -98,7 +98,8 @@ A file that keeps its format shows neither.
 Typing two or more characters in the search replaces the groups with the matching requirements, decisions, glossary terms, and diagrams, grouped by kind and at most 20 of each, titles that hold the text first.
 A record matches when every word you type occurs in its title or its text, ignoring case, and a glossary term opens the Glossary.
 Clearing the field or pressing Esc in it brings the groups back.
-**History** lists the shipped and superseded initiatives, newest decision first, each with the decision's date, such as `9 Nov`, or `14 Jun 2025` in another year, and a muted `Superseded` mark on superseded ones; hover or focus a row to see when it shipped, or when it was superseded and by which initiative.
+**History** lists the shipped and superseded initiatives and the killed, merged, and split work items, newest decision first, each with the decision's date, such as `9 Nov`, or `14 Jun 2025` in another year, and a muted `Superseded`, `Killed`, `Merged`, or `Split` mark on all but shipped ones.
+Hover or focus a row to see when it shipped, when it was superseded and by which initiative, why it was killed, which item it merged into, or which items it split into.
 It says `Nothing has shipped yet.` while there is none.
 Choosing any other place leaves the open page as it is, and the place stays while you change tabs, follow links, use the palette, or go back.
 The browser remembers the current place, so a reload or a new window shows it again, and an address with `place=work`, or another place's name, chooses that place.
@@ -746,6 +747,12 @@ The list shows the same groups with each initiative's dependencies as links unde
 Click a lane's arrow to collapse it.
 Next to the counts at the top, a link names how many open roadmap questions there are and opens Attention showing only them, where they are answered; the Roadmap page itself lists none.
 A superseded initiative's page says below its title when it was superseded and by which initiative, linked, and the decision's reason.
+
+Every roadmap entry is a work item, and an entry that is still being shaped, because it cites no Approved requirement file or a person has not yet confirmed it ready, shows the state **Emerging**.
+Its card carries a chip that counts the readiness conditions it has yet to meet, and the chip's tooltip names each of them.
+A killed, merged, or split item leaves every lane and every status group, so only History lists it.
+An item's page shows its shaping above the facts fold: **Readiness** with each unmet condition, or that a person confirmed it ready, **Cited requirements and decisions** with each file's status and the other items that cite it, **Questions** with each round's questions, whether readiness needs them, and your answers, and its **Inputs**, **Findings** with their sources, and **Research gaps**.
+A killed item's page says below its title when it was killed and your reason, and a merged or split item's page names, linked, the item it merged into or the items it split into.
 
 An initiative page names its lane and its rank there above its title, such as `Initiative · Now · #1`, and under the title its state and intent.
 Its run totals, **Launch**, and **Settings** sit at the end of its head.

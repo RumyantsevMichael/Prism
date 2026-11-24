@@ -1,6 +1,6 @@
 import { activeDetails } from "./coordination-state.js";
 import { applyWidths } from "./entities.js";
-import { stateBadge } from "./roadmap.js";
+import { stateBadge, unmetText } from "./roadmap.js";
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
 import { artifactChip, badge, bindLinks, card, emptyNote, escapeHtml, keyValues, pageSub, plural, requirementGroups, setPageHead, setPageSub, shortDate, status } from "./util.js";
 import { runTotalsHtml, runTotalsSummary, runTotalsTableHtml } from "./run-totals.js";
@@ -123,11 +123,103 @@ function supersededLines(data: any) {
   return `${line}${decision.reason ? pageSub(escapeHtml(decision.reason), { detail: true }) : ""}`;
 }
 
-// The page's lines under its title: the initiative's state with its intent, and for a superseded initiative what superseded it.
+// Below the title, a killed item's page says when it was killed and the person's reason, and a merged or split item's page names, linked,
+// the item it merged into or the items it split into.
+function closedLines(data: any) {
+  const decision = data.roadmapItem?.decision;
+  if (!["killed", "merged", "split"].includes(decision?.kind)) return "";
+  const date = shortDate(decision.at, { year: true });
+  const links = (data.closedInto ?? []).map((other: any) => itemLink(other.id, other.title)).join(", ");
+  const words = { killed: "Killed", merged: "Merged", split: "Split" }[decision.kind as "killed" | "merged" | "split"];
+  const line = pageSub(`${words}${date ? ` ${escapeHtml(date)}` : ""}${links ? ` into ${links}` : ""}`, { glyph: status(decision.kind, { glyphOnly: true }) });
+  return `${line}${decision.kind === "killed" && decision.reason ? pageSub(escapeHtml(decision.reason), { detail: true }) : ""}`;
+}
+
+function itemLink(id: string, title: string) {
+  const ref = `initiative:${id}`;
+  return `<a href="./review?artifact=${encodeURIComponent(ref)}" data-artifact="${escapeHtml(ref)}">${escapeHtml(title)}</a>`;
+}
+
+// The page's lines under its title: the initiative's state with its intent, and for a superseded, killed, merged, or split one what became of it.
 function headLines(data: any) {
   const item = data.roadmapItem;
   const intent = item ? escapeHtml(item.intent) : data.exists ? "This initiative has a record but no roadmap entry." : "";
-  return `<div class="prism-page-subs">${pageSub(`${stateBadge(item?.state ?? "unlisted")}${intent ? ` <span>${intent}</span>` : ""}`)}${supersededLines(data)}</div>`;
+  return `<div class="prism-page-subs">${pageSub(`${stateBadge(item?.state ?? "unlisted")}${intent ? ` <span>${intent}</span>` : ""}`)}${supersededLines(data)}${closedLines(data)}</div>`;
+}
+
+// A link an input or a finding names: a web address opens in a new tab, a project path opens its page when the review app has it,
+// and any other address, such as notion://, stays text.
+function sourceLink(link: string, ctx: any) {
+  if (/^https?:\/\//i.test(link)) return `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link)}</a>`;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(link) && ctx.hasArtifact?.(link)) return `<a href="./review?artifact=${encodeURIComponent(link)}" data-artifact="${escapeHtml(link)}" data-code-subject>${escapeHtml(link)}</a>`;
+  return `<span data-code-subject>${escapeHtml(link)}</span>`;
+}
+
+const rows = (label: string, html: string) => html ? `<div class="prism-rows" role="list" aria-label="${escapeHtml(label)}">${html}</div>` : "";
+
+// Whether an item is ready for design: each unmet readiness condition, or, once none is left, whether a person confirmed it ready.
+function readinessCard(item: any, stage: string) {
+  const unmet = item.unmet ?? [];
+  const ready = item.record?.ready;
+  const body = unmet.length
+    ? rows("Unmet readiness conditions", unmet.map((condition: any) => `<prism-row wrap icon="warning" tone="warning">${escapeHtml(unmetText(condition))}</prism-row>`).join(""))
+    : ready
+      ? `<p>A person confirmed it ready${ready.at ? ` on ${escapeHtml(shortDate(ready.at, { year: true }))}` : ""}.</p>`
+      : stage === "emerging"
+        ? `<p>Every readiness condition is met; it becomes ready once a person confirms it.</p>`
+        : `<p>Every readiness condition is met.</p>`;
+  return card("Readiness", body, { eyebrow: unmet.length ? `${plural(unmet.length, "condition")} unmet` : stage === "emerging" ? "Emerging" : "Ready", className: "work-item-readiness" });
+}
+
+// The requirement files and ADRs an item cites, each with its status and the other items that cite it.
+function citedCard(data: any, item: any, ctx: any) {
+  const titles = item.titles ?? {};
+  const html = (item.cited ?? []).map((entry: any) => {
+    const also = entry.citedBy?.length ? `Also cited by ${entry.citedBy.map((id: string) => escapeHtml(titles[id] ?? id)).join(", ")}` : "";
+    const scope = entry.scope?.label ? ` · ${escapeHtml(entry.scope.label)}` : "";
+    const name = ctx.hasArtifact?.(entry.path) ? `<a href="./review?artifact=${encodeURIComponent(entry.path)}" data-artifact="${escapeHtml(entry.path)}" data-code-subject>${escapeHtml(entry.path)}</a>` : `<span data-code-subject>${escapeHtml(entry.path)}</span>`;
+    const kind = entry.status ? status(entry.status, { attributes: ' slot="kind"' }) : `<span slot="kind" class="muted">Missing</span>`;
+    return `<prism-row wrap icon="${entry.kind === "adrs" ? "scale" : "document"}" tone="accent">${name}<span slot="description">${entry.kind === "adrs" ? "Decision" : "Requirements"}${scope}</span>${also ? `<span slot="detail">${also}</span>` : ""}${kind}</prism-row>`;
+  }).join("");
+  return card("Cited requirements and decisions", html ? rows("Cited requirements and decisions", html) : emptyNote("It cites no requirement file or ADR yet."), { eyebrow: plural(item.cited?.length ?? 0, "artifact"), className: "work-item-cited" });
+}
+
+// An item's question rounds, oldest first, each question with whether it blocks readiness and the person's answer.
+function questionsCard(record: any) {
+  const questions = record.questions ?? [];
+  if (!questions.length) return "";
+  const html = questions.map((asked: any) => {
+    const mark = asked.answer ? badge("Answered", "success") : asked.withdrawn ? badge("Withdrawn") : badge("Unanswered", "warning");
+    const detail = asked.answer ? `<span slot="detail">${escapeHtml(asked.answer.text ?? "")}</span>` : "";
+    return `<prism-row wrap icon="question" tone="${asked.answer ? "success" : asked.withdrawn ? "neutral" : "warning"}">${escapeHtml(asked.question)}<span slot="description">Round ${escapeHtml(asked.round)} · ${asked.blocking ? "Needed for readiness" : "Not needed for readiness"}</span>${detail}${mark.replace("<prism-badge", '<prism-badge slot="kind"')}</prism-row>`;
+  }).join("");
+  const rounds = Math.max(...questions.map((asked: any) => Number(asked.round) || 0));
+  return card("Questions", rows("Questions", html), { eyebrow: plural(rounds, "round"), className: "work-item-questions" });
+}
+
+// What the item was shaped from: its inputs as links with their notes, its findings with their sources, and the research that could not be done.
+function sourcesCards(record: any, ctx: any) {
+  const inputs = (record.inputs ?? []).map((input: any) => `<prism-row wrap icon="link" tone="accent">${escapeHtml(input.note)}<span slot="description">${sourceLink(input.link, ctx)}</span></prism-row>`).join("");
+  const findings = (record.findings ?? []).map((finding: any) => `<prism-row wrap icon="search" tone="info">${escapeHtml(finding.text)}<span slot="description">${sourceLink(finding.source, ctx)}</span></prism-row>`).join("");
+  const gaps = (record.gaps ?? []).map((gap: any) => `<prism-row wrap icon="info" tone="neutral">${escapeHtml(gap.note)}</prism-row>`).join("");
+  return [
+    inputs ? card("Inputs", rows("Inputs", inputs), { eyebrow: plural(record.inputs.length, "input"), className: "work-item-inputs" }) : "",
+    findings ? card("Findings", rows("Findings", findings), { eyebrow: plural(record.findings.length, "finding"), className: "work-item-findings" }) : "",
+    gaps ? card("Research gaps", rows("Research gaps", gaps), { eyebrow: plural(record.gaps.length, "gap"), className: "work-item-gaps" }) : ""
+  ].join("");
+}
+
+// An item's shaping, as its page shows it while it is emerging or has a shaping record: its readiness, its cited artifacts, its questions,
+// and what it was shaped from; a decided item keeps its record as history, without a readiness card.
+function workItemSection(data: any, ctx: any) {
+  const item = data.workItem;
+  if (!item) return "";
+  if (item.problem) return card("Unreadable shaping record", `<p class="error">${escapeHtml(item.problem.message)}</p>`, { eyebrow: "Shaping" });
+  const stage = item.stage;
+  if (stage !== "emerging" && !item.record) return "";
+  const decided = !["emerging", "ready"].includes(stage);
+  const record = item.record ?? {};
+  return `<div class="work-item">${decided ? "" : readinessCard(item, stage)}${citedCard(data, item, ctx)}${questionsCard(record)}${sourcesCards(record, ctx)}${item.record ? "" : emptyNote("Nobody has started shaping it yet.")}</div>`;
 }
 
 // One segment per leaf slice in its status's color, labeled with the done count and the other statuses that hold slices.
@@ -461,21 +553,26 @@ export async function render(container: any, entity: any, ctx: any) {
     applyWidths(container);
     bindLinks(container, ctx);
   };
+  const shaping = workItemSection(data, ctx);
   if (!data.exists) {
-    container.innerHTML = `${top}${facts(data, ctx)}${totalsInPage}${card("No slices yet", `<p>No initiative record exists yet.</p><p class="muted">Orchestration creates it when the initiative starts.</p>`, { eyebrow: "Envisioned" })}${overlays(data, ctx, ids, Boolean(endRoot))}`;
+    const state = item?.state ?? "envisioned";
+    const noSlices = ["killed", "merged", "split"].includes(state) ? "" : card("No slices yet", state === "emerging"
+      ? `<p>No initiative record exists yet.</p><p class="muted">Design starts once a person confirms that it is ready.</p>`
+      : `<p>No initiative record exists yet.</p><p class="muted">Orchestration creates it when the initiative starts.</p>`, { eyebrow: state === "emerging" ? "Emerging" : "Envisioned" });
+    container.innerHTML = `${top}${shaping}${facts(data, ctx)}${totalsInPage}${noSlices}${overlays(data, ctx, ids, Boolean(endRoot))}`;
     finish();
     return;
   }
   if (!data.valid) {
     // An unreadable record that the roadmap does not list is no action target, so its page has no settings to show.
-    container.innerHTML = `${top}${facts(data, ctx)}${totalsInPage}${card("Invalid initiative record", `<ul class="diagnostic-list">${data.errors.map((error: any) => `<li class="is-blocking">${escapeHtml(error)}</li>`).join("")}</ul>`, { eyebrow: "Initiative record" })}${item ? overlays(data, ctx, ids, Boolean(endRoot)) : ""}`;
+    container.innerHTML = `${top}${shaping}${facts(data, ctx)}${totalsInPage}${card("Invalid initiative record", `<ul class="diagnostic-list">${data.errors.map((error: any) => `<li class="is-blocking">${escapeHtml(error)}</li>`).join("")}</ul>`, { eyebrow: "Initiative record" })}${item ? overlays(data, ctx, ids, Boolean(endRoot)) : ""}`;
     finish();
     return;
   }
   const counts = data.derived.counts;
   const summary = `${plural(data.derived.leaves.length, "leaf slice")} · ${counts.done} done · ${counts["in-progress"]} in progress · ${counts.blocked} blocked`;
   const toolbar = `<div class="initiative-toolbar"><prism-segmented label="View" value="${escapeHtml(mode)}" data-initiative-mode>${MODES.map(([value, label]) => `<span value="${value}">${label}</span>`).join("")}</prism-segmented>${frontier(data, ctx)}</div>`;
-  container.innerHTML = `${top}${sliceProgress(data)}${facts(data, ctx)}${totalsInPage}${toolbar}<div data-initiative-body></div>${overlays(data, ctx, ids, Boolean(endRoot))}`;
+  container.innerHTML = `${top}${shaping}${sliceProgress(data)}${facts(data, ctx)}${totalsInPage}${toolbar}<div data-initiative-body></div>${overlays(data, ctx, ids, Boolean(endRoot))}`;
   const body = container.querySelector("[data-initiative-body]");
   if (mode === "graph") await graph(body, data, ctx);
   else if (mode === "list") body.innerHTML = card("Slice tree", `<ul class="slice-outline root">${tree(data, data.derived.root, 0, ctx)}</ul>`, { eyebrow: summary });

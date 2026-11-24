@@ -1681,7 +1681,7 @@ function trailOf(path: any) {
   });
 }
 
-const STATE_WORDS: Record<string, any> = { envisioned: "Envisioned", planned: "Planned", "in-progress": "In progress", shipped: "Shipped", superseded: "Superseded", unlisted: "Not on the roadmap" };
+const STATE_WORDS: Record<string, any> = { emerging: "Emerging", envisioned: "Envisioned", planned: "Planned", "in-progress": "In progress", shipped: "Shipped", superseded: "Superseded", killed: "Killed", merged: "Merged", split: "Split", unlisted: "Not on the roadmap" };
 const STATUS_WORDS: Record<string, any> = { "not-started": "Not started", "in-progress": "In progress", blocked: "Blocked", split: "Split", done: "Done" };
 const PHASE_STEPS = [["requirements", "Requirements"], ["design", "Design"], ["frozen", "Tests frozen"], ["build", "Build"], ["review", "Review"], ["shipped", "Shipped"]];
 
@@ -2283,24 +2283,30 @@ function knowledgeNavigation() {
 }
 
 /**
- * History: every initiative with a shipped or superseded decision, newest decision first, each leading to its page with the decision's date;
- * a superseded one carries a muted mark, and its tooltip names what superseded it.
+ * History: every initiative with a shipped or superseded decision and every killed, merged, or split work item, newest decision first,
+ * each leading to its page with the decision's date; every decision but shipped carries a muted mark, and the tooltip names what superseded it,
+ * the item it merged into, its parts, or the reason it was killed.
  */
 function historyNavigation() {
   const settled = (navigation as any).places?.history ?? [];
   if (!settled.length) return [element("p", "nav-note", "Nothing has shipped yet.")];
   const titles = new Map((navigation.initiatives ?? []).map((item) => [(item as any).id, (item as any).title]));
+  const named = (id: string) => titles.get(id) ?? id;
   return [tree("History", settled.map((entry: any) => {
     const ref = `initiative:${entry.id}`;
     const date = shortDate(entry.at);
-    const superseded = entry.decision === "superseded";
+    const shipped = entry.decision === "shipped";
+    const word = STATE_WORDS[entry.decision] ?? entry.decision;
     const end = [];
-    if (superseded) end.push(element("span", "prism-tree-flag is-muted", "Superseded"));
+    if (!shipped) end.push(element("span", "prism-tree-flag is-muted", word));
     if (date) end.push(meta(date));
-    const by = superseded && entry.by ? ` by ${titles.get(entry.by) ?? entry.by}` : "";
-    const tip = `${entry.title} · ${superseded ? "Superseded" : "Shipped"}${date ? ` ${date}` : ""}${by}`;
-    // The glyph names the state only for shipped work, since the Superseded mark already says it.
-    const glyph = kitElement("prism-status", { value: superseded ? "superseded" : "shipped", "glyph-only": true, "aria-hidden": superseded ? "true" : null });
+    const after = entry.decision === "superseded" && entry.by ? ` by ${named(entry.by)}`
+      : entry.decision === "merged" && entry.by ? ` into ${named(entry.by)}`
+      : entry.decision === "split" && entry.into?.length ? ` into ${entry.into.map(named).join(", ")}`
+      : entry.decision === "killed" && entry.reason ? `: ${entry.reason}` : "";
+    const tip = `${entry.title} · ${word}${date ? ` ${date}` : ""}${after}`;
+    // The glyph names the state only for shipped work, since the muted mark already says it.
+    const glyph = kitElement("prism-status", { value: entry.decision, "glyph-only": true, "aria-hidden": shipped ? null : "true" });
     return treeItem(ref, entry.title, { selected: selectedPath === ref, start: [glyph], end, tip });
   }))];
 }

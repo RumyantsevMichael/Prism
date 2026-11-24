@@ -18,8 +18,8 @@ export function placeNamed(name: string) {
   return PLACES.find((place) => place.name === name) ?? null;
 }
 
-/** The decisions that move an initiative from Work to History. */
-const SETTLED = new Set(["shipped", "superseded"]);
+/** The decisions that move an initiative or a work item to History: shipped and superseded work, and killed, merged, and split items. */
+const SETTLED = new Set(["shipped", "superseded", "killed", "merged", "split"]);
 
 /**
  * The place a page belongs to, as the review server names it: Attention's pages, the Roadmap, Knowledge's lists and records,

@@ -544,6 +544,8 @@ async function computeInitiativeView(projectRoot: string, id: string) {
     // A superseded initiative's page names the initiative that superseded it by its title.
     supersededBy: supersedingItem(roadmap, id),
     workItem: await initiativeWorkItem(projectRoot, roadmap, id),
+    // A merged or split item's page names the items it went into by their titles.
+    closedInto: closedInto(roadmap, id),
     exists: loaded.exists,
     valid: loaded.valid,
     errors: loaded.errors,
@@ -563,10 +565,20 @@ async function initiativeWorkItem(projectRoot: string, roadmap: any, id: string)
   if (!roadmap.items.some((item: any) => item.id === id)) return null;
   try {
     const { stage, unmet, revision, record, requirements, cited, proposal } = await getWorkItem({ projectRoot, item: id });
-    return { stage, unmet, revision, record, requirements, cited, proposal };
+    // The titles of the other items that cite its artifacts, so the page names them rather than their ids.
+    const citing = new Set(cited.flatMap((entry: any) => entry.citedBy));
+    const titles = Object.fromEntries(roadmap.items.filter((other: any) => citing.has(other.id)).map((other: any) => [other.id, other.title]));
+    return { stage, unmet, revision, record, requirements, cited, proposal, titles };
   } catch (error) {
-    return { stage: null, unmet: [], revision: null, record: null, requirements: [], cited: [], proposal: null, problem: { code: error?.code ?? "work_item_unreadable", message: error?.message ?? String(error) } };
+    return { stage: null, unmet: [], revision: null, record: null, requirements: [], cited: [], proposal: null, titles: {}, problem: { code: error?.code ?? "work_item_unreadable", message: error?.message ?? String(error) } };
   }
+}
+
+function closedInto(roadmap: any, id: string) {
+  const decision = roadmap.items.find((item: any) => item.id === id)?.decision;
+  if (decision?.kind !== "merged" && decision?.kind !== "split") return [];
+  const ids = decision.kind === "merged" ? [decision.into] : Array.isArray(decision.into) ? decision.into : [];
+  return ids.filter((other: any) => typeof other === "string").map((other: string) => ({ id: other, title: roadmap.items.find((item: any) => item.id === other)?.title ?? other }));
 }
 
 function supersedingItem(roadmap: any, id: string) {
