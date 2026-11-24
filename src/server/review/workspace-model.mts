@@ -9,7 +9,8 @@ import { hostDefinition } from "../session/launch-hosts.mjs";
 import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workflow/initiative.mjs";
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
-import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
+import { DISPLAY_BANDS, readRoadmap, withWorkItems } from "../workflow/roadmap.mjs";
+import { getWorkItem } from "../workflow/work-items.mjs";
 import { historyOrder, readCoordinationState } from "../workflow/state.mjs";
 import { readIndexHistory } from "../workflow/index-history.mjs";
 import { RECORD_DIRECTORY, inArtifactStore, isStoreWithoutCheckout, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordPath, recordStoreOf, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
@@ -377,10 +378,12 @@ async function computeRoadmapView(projectRoot: string) {
   } catch (error) {
     return { config: { paths: config.paths, diagnostics: config.diagnostics }, error: error.message, bands: DISPLAY_BANDS, items: [], unlisted: await initiativeFolders(projectRoot) };
   }
-  const { resolved, loaded, derived } = roadmap;
+  const { resolved, loaded } = roadmap;
   const record = loaded.record;
   const items = [];
   if (loaded.valid && record) {
+    // Each entry is a work item: its stage and unmet readiness conditions come as get_roadmap derives them, with an emerging entry's state emerging.
+    const derived = await withWorkItems(resolved.root, resolved.config, record.initiatives, roadmap.derived);
     for (const [index, item] of record.initiatives.entries()) {
       const facts = derived[index];
       items.push({
@@ -400,6 +403,7 @@ async function computeRoadmapView(projectRoot: string) {
         requiredBy: record.initiatives.filter((other: any) => other.requires.includes(item.id)).map((other: any) => other.id),
         rationale: item.rationale ?? null,
         decision: item.decision,
+        workItem: facts.workItem ?? null,
         findings: await initiativeFindings(projectRoot, config, item.id),
         ...sliceFacts(await claimedSlices(projectRoot, item.id))
       });
@@ -539,6 +543,7 @@ async function computeInitiativeView(projectRoot: string, id: string) {
     relatedTitles: relatedTitles(roadmap, id),
     // A superseded initiative's page names the initiative that superseded it by its title.
     supersededBy: supersedingItem(roadmap, id),
+    workItem: await initiativeWorkItem(projectRoot, roadmap, id),
     exists: loaded.exists,
     valid: loaded.valid,
     errors: loaded.errors,
@@ -550,6 +555,18 @@ async function computeInitiativeView(projectRoot: string, id: string) {
     slices,
     config: { paths: config.paths }
   };
+}
+
+// The roadmap entry's work item as get_work_item reads it, for the page's shaping record, cited artifacts, and unmet readiness conditions,
+// or null when the initiative has no roadmap entry; an unreadable record is reported on the page with its problem.
+async function initiativeWorkItem(projectRoot: string, roadmap: any, id: string) {
+  if (!roadmap.items.some((item: any) => item.id === id)) return null;
+  try {
+    const { stage, unmet, revision, record, requirements, cited, proposal } = await getWorkItem({ projectRoot, item: id });
+    return { stage, unmet, revision, record, requirements, cited, proposal };
+  } catch (error) {
+    return { stage: null, unmet: [], revision: null, record: null, requirements: [], cited: [], proposal: null, problem: { code: error?.code ?? "work_item_unreadable", message: error?.message ?? String(error) } };
+  }
 }
 
 function supersedingItem(roadmap: any, id: string) {
@@ -1766,9 +1783,13 @@ async function computeNavigation(projectRoot: string) {
   };
 }
 
-// History's entries: every initiative with a shipped or superseded decision, newest decision first, with what superseded it when the decision names it.
+// The decisions that settle a roadmap entry, which History lists: shipped and superseded initiatives, and killed, merged, and split work items.
+const SETTLED_DECISIONS = new Set(["shipped", "superseded", "killed", "merged", "split"]);
+
+// History's entries: every entry with a settled decision, newest decision first, with what superseded it or what it merged into as by,
+// a killed item's reason, and a split item's parts as into.
 function historyEntries(roadmap: any) {
-  const settled = (roadmap.items ?? []).filter((item: any) => item.decision?.kind === "shipped" || item.decision?.kind === "superseded");
+  const settled = (roadmap.items ?? []).filter((item: any) => SETTLED_DECISIONS.has(item.decision?.kind));
   const time = (item: any) => {
     const value = Date.parse(item.decision.at ?? "");
     return Number.isFinite(value) ? value : -Infinity;
@@ -1776,7 +1797,15 @@ function historyEntries(roadmap: any) {
   return settled
     .map((item: any, order: any) => ({ item, order }))
     .sort((left: any, right: any) => time(right.item) - time(left.item) || left.order - right.order)
-    .map(({ item }: { item: any }) => ({ id: item.id, title: item.title, decision: item.decision.kind, at: item.decision.at ?? null, by: item.decision.kind === "superseded" ? item.decision.by ?? null : null }));
+    .map(({ item }: { item: any }) => {
+      const { kind } = item.decision;
+      const by = kind === "superseded" ? item.decision.by ?? null : kind === "merged" ? item.decision.into ?? null : null;
+      return {
+        id: item.id, title: item.title, decision: kind, at: item.decision.at ?? null, by,
+        ...(kind === "killed" ? { reason: item.decision.reason ?? null } : {}),
+        ...(kind === "split" ? { into: Array.isArray(item.decision.into) ? [...item.decision.into] : [] } : {})
+      };
+    });
 }
 
 // Work's groups in their order, each initiative once and an empty group left out: work not on the roadmap, then blocked work that nobody is
@@ -1811,7 +1840,7 @@ async function initiativePlace(projectRoot: string, id: string) {
   const view = await loadInitiativeView(projectRoot, id).catch(() => null);
   const roadmap = view ? null : await loadRoadmapView(projectRoot);
   const decision = (view?.roadmapItem ?? roadmap?.items.find((item: any) => item.id === id))?.decision?.kind;
-  if (decision === "shipped" || decision === "superseded") return "history";
+  if (SETTLED_DECISIONS.has(decision)) return "history";
   return view?.exists ? "work" : "roadmap";
 }
 
@@ -1970,8 +1999,8 @@ function relatedTitles(roadmap: any, id: string) {
 
 function bandRank(roadmap: any, id: string) {
   const item = roadmap.items.find((entry: any) => entry.id === id);
-  if (!item || item.state === "shipped" || item.state === "superseded") return null;
-  const rank = roadmap.items.filter((entry: any) => entry.band === item.band && entry.state !== "shipped" && entry.state !== "superseded").findIndex((entry: any) => entry.id === id);
+  if (!item || SETTLED_DECISIONS.has(item.state)) return null;
+  const rank = roadmap.items.filter((entry: any) => entry.band === item.band && !SETTLED_DECISIONS.has(entry.state)).findIndex((entry: any) => entry.id === id);
   return rank < 0 ? null : rank + 1;
 }
 

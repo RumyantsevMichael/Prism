@@ -657,7 +657,7 @@ export async function getRoadmap(input: any) {
  * Each derived entry with workItem { stage, unmet }, its work item's stage and unmet readiness conditions, and an emerging entry that derives as envisioned, without an initiative record, as emerging.
  * The work item module reads the roadmap, so it is imported when a read needs it.
  */
-async function withWorkItems(root: string, config: any, entries: any[], derived: any[]) {
+export async function withWorkItems(root: string, config: any, entries: any[], derived: any[]) {
   const { workItemStages } = await import("./work-items.mjs");
   const stages = await workItemStages(root, config, entries);
   return derived.map((item: any) => {
