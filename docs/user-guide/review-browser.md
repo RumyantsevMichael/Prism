@@ -360,7 +360,7 @@ On a slice page's card, picking an option applies it at once.
 A change that needs your confirmation opens a dialog that says what it lets agents do, with **Confirm** and **Cancel**; Esc or **Cancel** leaves the setting as it was.
 Every control works with Tab, Enter, and Space.
 When an agent or another tab changed the setting after the page showed it, the page refuses your change, shows the current value, and says `Someone changed this since you opened it; it now shows the current value.`
-The card checks for changes every few seconds and at once when any tab applies an action, so it shows a value an agent set without a reload.
+The card checks for changes when the records change and at once when any tab applies an action, so it shows a value an agent set without a reload, and otherwise every 30 seconds, or every few seconds while the tab has lost its connection to the review app.
 In a tab that can only read, the card shows the read-only notice and its controls are disabled.
 A question's answer shows the situation the agent described, what each option does, and the option the agent recommends with its reason, when the agent gave them.
 

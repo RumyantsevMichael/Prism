@@ -163,6 +163,40 @@ test("a root reports which targets no watcher covers and why", async (t) => {
   assert.deepEqual((await failing.watching(root)).unwatched, [{ path: local, reason: process.platform === "win32" ? "windows" : "unwatchable" }]);
 });
 
+test("Prism's own lock and write files never change the version, watched or not, so a build that takes a lock does not start the next one", async (t) => {
+  const root = await folder(t);
+  const store = path.join(root, "store");
+  let clock = 1000;
+  let listener = null;
+  const capture = (target, options, callback) => { listener = callback; return { on() {}, close() {}, unref() {} }; };
+  const watched = createViewVersions({ targetsOf: async () => ({ folders: [store], files: [], gitRoots: [] }), watchTree: capture, isEventless: async () => null, now: () => clock });
+  t.after(() => watched.close());
+  const first = await watched.current(root);
+  listener("rename", path.join("format-migrations", "run-0000000000000000.json.lock"));
+  listener("rename", path.join("initiatives", ".state.json.123.abc.tmp"));
+  assert.equal(await watched.current(root), first, "a watcher event for a lock or write file is ignored");
+  listener("rename", path.join("initiatives", "state.json"));
+  assert.notEqual(await watched.current(root), first, "the record's own event still counts");
+
+  const unwatched = createViewVersions({ targetsOf: async () => ({ folders: [store], files: [], gitRoots: [] }), watchTree: noWatcher, isEventless: async () => null, now: () => clock });
+  t.after(() => unwatched.close());
+  const before = await unwatched.current(root);
+  const lock = path.join(store, "initiatives", "run.json.lock");
+  for (let round = 0; round < 3; round += 1) {
+    await writeFile(lock, "{}");
+    clock += 1;
+    assert.equal(await unwatched.current(root), before, "a lock taken is not a change");
+    await rm(lock);
+    clock += 1;
+    assert.equal(await unwatched.current(root), before, "a lock released is not a change");
+  }
+  clock += 5000;
+  assert.equal(await unwatched.current(root), before, "the full listing leaves lock files out too");
+  await writeFile(path.join(store, "initiatives", "added.json.tmp"), "{}\n");
+  await rename(path.join(store, "initiatives", "added.json.tmp"), path.join(store, "initiatives", "added.json"));
+  await settled(async () => { clock += 1; return unwatched.current(root); }, (version) => version !== before);
+});
+
 test("changes inside Git's data and the store's sync state never change the version", async (t) => {
   const root = await folder(t);
   let clock = 1000;
