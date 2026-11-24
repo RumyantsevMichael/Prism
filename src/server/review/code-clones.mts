@@ -357,17 +357,22 @@ export async function createCodeClones({ directory }: { directory: string }) {
       const entry = entryOf(workspace, repository);
       if (!entry) return null;
       const folder = folderOf(entry);
-      const reader = branchReaders.get(folder);
       // A fetch waits while a read runs, since new tips would supersede it, and freshness counts from the end of the latest fetch, so a slow fetch is not followed by another at once.
-      if (freshMs !== null && !demanded.has(entry) && !reader?.reading && Date.now() - (attempts.get(entry) ?? 0) > freshMs) {
-        demanded.set(entry, refresh(entry).catch(() => {}).finally(() => demanded.delete(entry)));
-      }
+      const due = () => freshMs !== null && !demanded.has(entry) && Date.now() - (attempts.get(entry) ?? 0) > freshMs;
+      const demand = () => demanded.set(entry, refresh(entry).catch(() => {}).finally(() => demanded.delete(entry)));
+      if (due() && !branchReaders.get(folder)?.reading) demand();
       if (!(await exists(folder))) return null;
       if (demanded.has(entry)) return { state: "preparing" };
       const head = await git(folder, ["symbolic-ref", "--quiet", "HEAD"]);
       const tipsKey = tipsKeyOf(head.ok ? head.text.trim() : "", await branchesOf(folder));
       if (!branchReaders.has(folder)) branchReaders.set(folder, createBranchReader((args) => git(folder, args)));
-      return branchReaders.get(folder)!.answer(tipsKey, owned) ?? { state: "preparing" };
+      const model = branchReaders.get(folder)!.answer(tipsKey, owned);
+      // A read that ended while this request waited held back a fetch that is now due, so the answer of tips older than freshMs waits for that fetch.
+      if (model !== undefined && due()) {
+        demand();
+        return { state: "preparing" };
+      }
+      return model ?? { state: "preparing" };
     },
 
     /** Whether a branch of the repository's clone holds a commit: true or false, or null without a clone. */
