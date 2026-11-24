@@ -65,6 +65,8 @@ import { PrismKbd } from "./elements/prism-kbd.js";
 import { PrismTable } from "./elements/prism-table.js";
 import { PrismMaximize } from "./elements/prism-maximize.js";
 import { PrismContents } from "./elements/prism-contents.js";
+import { PrismLineDelta } from "./elements/prism-line-delta.js";
+import { PrismInlineNote } from "./elements/prism-inline-note.js";
 
 /**
  * Every kit element class; each carries a static `tag` and a static `catalog` of
@@ -133,6 +135,8 @@ export const KIT_ELEMENTS = [
   PrismSliceBar,
   PrismSeverity,
   PrismStatus,
+  PrismLineDelta,
+  PrismInlineNote,
   PrismResizer
 ];
 

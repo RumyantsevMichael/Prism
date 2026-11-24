@@ -13,6 +13,8 @@ const UNBROKEN = "a-record-name-with-no-spaces-anywhere-that-cannot-wrap-and-kee
 const canvasOf = (scale: any, extra = "") => `<prism-canvas class="catalog-canvas" scale="${scale}"${extra}><svg class="catalog-canvas-drawing" viewBox="0 0 120 48" data-zoom="${Math.round(scale * 100)}" aria-hidden="true" focusable="false"><rect x="1" y="1" width="118" height="46" rx="6"/><text x="60" y="29" text-anchor="middle">Drawing at ${Math.round(scale * 100)}%</text></svg></prism-canvas>`;
 const TONES = ["neutral", "accent", "danger", "warning", "success", "info"];
 const html = escapeHtml;
+// An inline note in a tone with its tone's glyph.
+const noteOf = (tone: string, text: string) => `<prism-inline-note tone="${tone}"><prism-icon slot="start" name="${tone}" size="xs"></prism-icon>${text}</prism-inline-note>`;
 
 let ids = 0;
 const id = (prefix: string) => `${prefix}-${(ids += 1)}`;
@@ -699,6 +701,20 @@ const third = 3;</code></pre></prism-code>`,
     segment: `<span class="catalog-segments"><prism-status value="done" variant="segment" glyph-only></prism-status><prism-status value="in-progress" variant="segment" glyph-only></prism-status><prism-status value="design-review" variant="segment" glyph-only></prism-status><prism-status value="blocked" variant="segment" glyph-only></prism-status><prism-status value="not-started" variant="segment" glyph-only></prism-status></span>`,
     "long-text": `<prism-status value="planned">${LONG}</prism-status>`,
     "unbroken-name": `<prism-status value="in-progress">${UNBROKEN}</prism-status>`
+  },
+  "prism-line-delta": {
+    both: `<prism-line-delta added="3" removed="2"></prism-line-delta>`,
+    "added-only": `<prism-line-delta added="12"></prism-line-delta>`,
+    "removed-only": `<prism-line-delta removed="1"></prism-line-delta>`,
+    zero: `<prism-line-delta added="0" removed="0"></prism-line-delta>`,
+    "long-text": `<span class="catalog-note">${html(LONG)} <prism-line-delta added="123456" removed="78901"></prism-line-delta></span>`,
+    "unbroken-name": `<span class="catalog-note">${UNBROKEN} <prism-line-delta added="4" removed="1"></prism-line-delta></span>`
+  },
+  "prism-inline-note": {
+    warning: noteOf("warning", "Report retry attempts also changes lines 2–4, so whichever merges second will conflict."),
+    info: noteOf("info", "Shown for the chosen branch only."),
+    "long-text": `<div class="catalog-narrow">${noteOf("warning", `${LONG} ${LONG}`)}${noteOf("info", LONG)}</div>`,
+    "unbroken-name": `<div class="catalog-narrow">${noteOf("warning", UNBROKEN)}</div>`
   }
 };
 

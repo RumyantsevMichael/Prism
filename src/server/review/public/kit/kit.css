@@ -2415,6 +2415,45 @@ prism-time {
   white-space: nowrap;
 }
 
+/* ---------- prism-line-delta: the added and removed line counts of a version ---------- */
+
+prism-line-delta {
+  display: inline;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.prism-line-delta-added { color: var(--prism-color-diff-added); }
+.prism-line-delta-removed { color: var(--prism-color-diff-removed); }
+
+.prism-line-delta-added[hidden],
+.prism-line-delta-removed[hidden] {
+  display: none;
+}
+
+/* ---------- prism-inline-note: a note in a tone with a glyph before its text, that wraps within its container ---------- */
+
+prism-inline-note {
+  display: flex;
+  align-items: baseline;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  color: var(--prism-color-info);
+  font-size: var(--prism-font-size-sm);
+  line-height: var(--prism-line-height);
+  overflow-wrap: anywhere;
+}
+
+prism-inline-note[tone="warning"] { color: var(--prism-color-warning); }
+
+prism-inline-note > [slot="start"] {
+  flex: none;
+  order: -1;
+  align-self: center;
+}
+
 /* ---------- prism-claim: an agent avatar, the holder, the activity with its phase facet, and the time left ---------- */
 
 prism-claim {
