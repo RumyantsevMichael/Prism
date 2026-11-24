@@ -1,16 +1,17 @@
 import { createHash, randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { checkArtifactContent } from "./artifact-check.mjs";
+import { rewriteStatusLines } from "./artifact-status.mjs";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { normalizeRequirementReference, readInitiative } from "./initiative.mjs";
 import { canonicalJson, mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, parseVersions } from "./record-merge.mjs";
-import { listWorkItemRecords, readRecord, readStoreFileBytes, removeRecord, STORE_FILE_BOUNDS, withRecordLock, writeRecord } from "./record-store.mjs";
+import { listInitiatives, listWorkItemRecords, readRecord, readStoreFileBytes, removeRecord, STORE_FILE_BOUNDS, withRecordLock, writeRecord } from "./record-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { applyWorkItemDecision, readRoadmapRecord, RoadmapError, updateRoadmap } from "./roadmap.mjs";
 import { readCoordinationState, updateCoordinationState } from "./state.mjs";
-import { storeArtifactComments, storeArtifactCopy, storeArtifactStatuses } from "./store-artifacts.mjs";
+import { restoreRetiredArtifacts, retireArtifacts, storeArtifactComments, storeArtifactCopy, storeArtifactStatuses, storeLinkingArtifacts } from "./store-artifacts.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 
@@ -48,6 +49,8 @@ const link = { type: "string", minLength: 1, maxLength: 2000 };
 const paths = { type: "array", maxItems: 200, items: text };
 const entryIds = { type: "array", maxItems: 1000, items: { type: "string", minLength: 1, maxLength: 40 } };
 const PARTS_MAX = 20;
+/** What a kill may do with each cited artifact: keep it, withdraw a requirement file, or decline an ADR. */
+const KILL_CHOICES = ["keep", "withdraw", "decline"];
 const object = (properties: any, required = Object.keys(properties)) => ({ type: "object", additionalProperties: false, properties, required });
 
 export const GET_WORK_ITEM_SCHEMA = object({ projectRoot: text, item: itemId });
@@ -73,7 +76,8 @@ export const UPDATE_WORK_ITEM_SCHEMA = object({
     object({ op: { const: "propose_merge" }, with: itemId, recommended: { enum: ["keep-this", "keep-other"] }, reason: text }),
     object({ op: { const: "propose_split" }, reason: text, parts: { type: "array", minItems: 2, maxItems: PARTS_MAX, items: object({
       id: itemId, title: text, intent: text, inputs: entryIds, questions: entryIds, findings: entryIds, gaps: entryIds, requirements: paths, adrs: paths
-    }) } })
+    }) } }),
+    object({ op: { const: "propose_kill" }, reason: text, artifacts: { type: "array", maxItems: 400, items: object({ path: text, choice: { enum: KILL_CHOICES } }) } })
   ] } }
 }, ["projectRoot", "item", "expectedRevision", "operations"]);
 
@@ -233,8 +237,8 @@ function applyOperations(config: any, current: any, references: string[], operat
   const withdrawals: { id: string; reason: string }[] = [];
   const readyRequested = operations.some((operation) => operation.op === "request_ready");
   if (readyRequested && operations.length > 1) throw fail("validation_failed", "request_ready stands alone in its update, so the confirmation covers the record as it is; nothing changed.");
-  // A merge or split proposal stands alone too, so the person decides on the records as they are; its checks need the roadmap and the other items, so the update makes them.
-  const proposing = operations.find((operation) => operation.op === "propose_merge" || operation.op === "propose_split") ?? null;
+  // A merge, split, or kill proposal stands alone too, so the person decides on the records as they are; its checks need the roadmap and the other items, so the update makes them.
+  const proposing = operations.find((operation) => ["propose_merge", "propose_split", "propose_kill"].includes(operation.op)) ?? null;
   if (proposing && operations.length > 1) throw fail("validation_failed", `${proposing.op} stands alone in its update, so the person decides on the records as they are; nothing changed.`);
   for (const operation of operations) {
     switch (operation.op) {
@@ -293,6 +297,7 @@ function applyOperations(config: any, current: any, references: string[], operat
       case "request_ready":
       case "propose_merge":
       case "propose_split":
+      case "propose_kill":
         break;
       default:
         throw fail("validation_failed", `Unsupported operation ${operation.op}.`);
@@ -575,13 +580,20 @@ export async function updateWorkItem(input: any) {
         applied.record.proposal = { kind: "ready", gate: GATE_PENDING };
         opening.push({ gate: readyGate(entry, cited), purpose: "ready" });
       }
+      let uses: any[] | null = null;
       if (applied.proposing) {
         const readContext = citationContext(input.projectRoot, config, entries);
-        const proposed = applied.proposing.op === "propose_merge"
+        const proposed: any = applied.proposing.op === "propose_merge"
           ? await mergeProposal(input.projectRoot, readContext, entries, entry, applied.record, applied.proposing)
-          : await splitProposal(input.projectRoot, config, readContext, entries, entry, applied.record, applied.proposing);
+          : applied.proposing.op === "propose_split"
+            ? await splitProposal(input.projectRoot, config, readContext, entries, entry, applied.record, applied.proposing)
+            // A kill reads the item as it is stored, so an item without a shaping record keeps the stage it has.
+            : await killProposal(input.projectRoot, readContext, entry, current.record, applied.proposing);
         applied.record.proposal = proposed.proposal;
         opening.push({ gate: proposed.gate, purpose: proposed.proposal.kind });
+        // A kill asks the person about each cited artifact at a gate of its own beside the kill gate.
+        for (const gate of proposed.artifactGates ?? []) opening.push({ gate, purpose: "artifact" });
+        uses = proposed.uses ?? null;
       }
       const requirementsChanged = canonicalJson(applied.requirements) !== canonicalJson(held);
       // Requirement references live on the roadmap entry, so a change to them alone neither creates the shaping record nor rewrites it, except to clear a ready mark or a pending proposal.
@@ -629,7 +641,11 @@ export async function updateWorkItem(input: any) {
           const question = record.questions.find((candidate: any) => candidate.id === asked.id);
           question.gate = opened[index].id;
         });
-        if (record.proposal?.gate === GATE_PENDING) record.proposal = { ...record.proposal, gate: opened[applied.asks.length].id };
+        if (record.proposal?.gate === GATE_PENDING) {
+          const first = applied.asks.length;
+          record.proposal = { ...record.proposal, gate: opened[first].id };
+          if (Array.isArray(record.proposal.artifacts)) record.proposal.artifacts = record.proposal.artifacts.map((artifact: any, index: number) => ({ ...artifact, gate: opened[first + 1 + index].id }));
+        }
         contents = serialize(record);
         try {
           await writeRecord(input.projectRoot, { kind: "work-item", initiative: entry.id }, contents);
@@ -641,7 +657,7 @@ export async function updateWorkItem(input: any) {
         revision = revisionOf(Buffer.from(contents, "utf8"));
       }
       const { stage, unmet } = await describeItem(context, updatedEntry, record);
-      return { item: entry.id, revision, previousRevision: current.revision, record, stage, unmet, openedGates: opened.map((gate, index) => ({ id: gate.id, kind: gate.kind, purpose: opening[index].purpose })) };
+      return { item: entry.id, revision, previousRevision: current.revision, record, stage, unmet, openedGates: opened.map((gate, index) => ({ id: gate.id, kind: gate.kind, purpose: opening[index].purpose })), ...(uses === null ? {} : { uses }) };
     }
   }, fail);
 }
@@ -718,7 +734,7 @@ const openQuestions = (record: any) => (record?.questions ?? []).filter((asked: 
  * design_started for one with an initiative record, proposal_pending for one with a pending proposal, and questions_open naming each open question.
  * items is [{ entry, record }]; the refusal names what changed nothing, so the caller can throw it or record it as a stale proposal.
  */
-async function proposalRefusal(projectRoot: string, context: any, items: { entry: any; record: any; pending?: boolean }[], action: string) {
+async function proposalRefusal(projectRoot: string, context: any, items: { entry: any; record: any; pending?: boolean }[], action: string, { questions = true }: { questions?: boolean } = {}) {
   for (const { entry, record } of items) {
     const stage = entry.decision ? entry.decision.kind : (await describeItem(context, entry, record)).stage;
     if (stage !== "emerging") return fail("not_emerging", `${entry.id} is ${stage === "ready" ? "a ready" : `a ${stage}`} work item, not an emerging one, so it cannot ${action}; nothing changed.`, { item: entry.id, stage });
@@ -731,7 +747,7 @@ async function proposalRefusal(projectRoot: string, context: any, items: { entry
   for (const { entry, record, pending = true } of items) {
     if (pending && record?.proposal) return fail("proposal_pending", `${entry.id} has a pending ${record.proposal.kind} proposal, so it cannot ${action} until the person answers its gate ${record.proposal.gate}; nothing changed.`, { item: entry.id, proposal: record.proposal });
   }
-  const open = items.flatMap(({ entry, record }) => openQuestions(record).map((asked: any) => ({ item: entry.id, question: asked.id, text: asked.question })));
+  const open = questions ? items.flatMap(({ entry, record }) => openQuestions(record).map((asked: any) => ({ item: entry.id, question: asked.id, text: asked.question }))) : [];
   if (open.length) return fail("questions_open", `A work item cannot ${action} while a question of its shaping is neither answered nor withdrawn: ${open.map((asked: any) => `${asked.item} ${JSON.stringify(asked.text)} (${asked.question})`).join("; ")}. Wait for the person's answers or withdraw the questions; nothing changed.`, { questions: open });
   return null;
 }
@@ -839,6 +855,293 @@ async function splitProposal(projectRoot: string, config: any, context: any, ent
   return { proposal: { kind: "split", gate: GATE_PENDING, parts }, gate };
 }
 
+// The artifacts a kill decides on, one per cited path in citation order, with the scope of its first copy.
+async function killArtifacts(context: any, entry: any, record: any) {
+  const found: { path: string; scope: any; kind: string }[] = [];
+  for (const artifact of await citedArtifacts(context, entry, record)) {
+    if (!found.some((known) => known.path === artifact.path)) found.push({ path: artifact.path, scope: artifact.scope, kind: artifact.kind });
+  }
+  return found;
+}
+
+const RETIRING: Readonly<Record<string, string>> = Object.freeze({ requirements: "withdraw", adrs: "decline" });
+const RETIRED_STATUS: Readonly<Record<string, string>> = Object.freeze({ withdraw: "Withdrawn", decline: "Declined" });
+const retires = (choice: any) => choice === "withdraw" || choice === "decline";
+
+// Recursively list the files below a checkout folder with an extension, a few levels deep, as project-relative paths.
+async function checkoutFiles(projectRoot: string, folder: string | null, extension: string, depth = 6): Promise<string[]> {
+  if (folder === null || folder === undefined) return [];
+  const found: string[] = [];
+  const visit = async (relative: string, level: number) => {
+    const entries = await readdir(path.join(projectRoot, relative), { withFileTypes: true }).catch(() => []);
+    for (const item of entries) {
+      const child = path.posix.join(relative, item.name);
+      if (item.isDirectory() && level < depth) await visit(child, level + 1);
+      else if (item.isFile() && item.name.endsWith(extension)) found.push(child);
+    }
+  };
+  await visit(folder, 1);
+  return found.sort();
+}
+
+// A feature file's # Requirement: and # ADR: comments, as the project-relative paths their links name.
+function featureLinks(text: string, file: string) {
+  const found = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*#\s*(?:Requirement|ADR):\s*\[[^\]]*\]\(([^)\s]+)\)/.exec(line);
+    if (!match || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(match[1])) continue;
+    const target = match[1].replace(/[#?].*$/s, "");
+    if (!target) continue;
+    const joined = target.startsWith("/") ? target.slice(1) : path.posix.join(path.posix.dirname(file), target);
+    const normalized = path.posix.normalize(joined);
+    if (!normalized.startsWith("../") && normalized !== "..") found.add(normalized);
+  }
+  return [...found];
+}
+
+/**
+ * Everything that may use a project's requirement files and ADRs, read once: [{ use, links }], where use is the use as propose_kill reports it
+ * and links the project-relative paths the user names: other roadmap entries by their citations, initiative slices by their requirements,
+ * plan slice.md files, requirement files, and ADRs by their Markdown links, and feature files by their # Requirement: and # ADR: comments.
+ */
+async function useSources(context: any, item: string) {
+  const sources: { use: any; links: string[] }[] = [];
+  const records = await context.shapingRecords();
+  for (const entry of context.entries) {
+    // A killed, merged, or split entry is history and uses nothing; its successors carry its citations on.
+    if (entry.id === item || ["killed", "merged", "split"].includes(entry.decision?.kind)) continue;
+    const links = [...(entry.requirements ?? []).map(referenceFile), ...(records.get(entry.id)?.adrs ?? [])];
+    if (links.length) sources.push({ use: { kind: "work-item", item: entry.id }, links });
+  }
+  for (const initiative of await listInitiatives(context.projectRoot).catch(() => [])) {
+    if (initiative === item) continue;
+    const slices = (await readInitiative(context.projectRoot, initiative).catch(() => null))?.loaded?.record?.slices ?? {};
+    for (const [slice, held] of Object.entries<any>(slices)) {
+      const links = (Array.isArray(held?.requirements) ? held.requirements : []).filter((reference: any) => typeof reference === "string").map(referenceFile);
+      if (links.length) sources.push({ use: { kind: "design", initiative, slice }, links });
+    }
+  }
+  const kinds: Readonly<Record<string, string>> = { requirements: "requirement", adrs: "adr", plans: "design" };
+  if (context.store) {
+    for (const held of await storeLinkingArtifacts(context.projectRoot)) sources.push({ use: { kind: kinds[held.kind], path: held.path, scope: held.scope }, links: held.links });
+  } else {
+    const { linkedPaths } = await import("./artifact-status.mjs");
+    const folders: [string, string | null][] = [["requirements", context.config.paths?.requirements ?? null], ["adrs", context.config.paths?.adrs ?? null], ["plans", context.config.paths?.plans ?? null]];
+    for (const [kind, folder] of folders) {
+      for (const file of await checkoutFiles(context.projectRoot, folder, ".md")) {
+        if (kind === "plans" && path.posix.basename(file) !== "slice.md") continue;
+        const text = await readFile(path.join(context.projectRoot, file), "utf8").catch(() => null);
+        if (text !== null) sources.push({ use: { kind: kinds[kind], path: file, scope: null }, links: (linkedPaths(text, file) ?? []) as string[] });
+      }
+    }
+  }
+  for (const file of await checkoutFiles(context.projectRoot, context.config.paths?.features ?? null, ".feature")) {
+    const text = await readFile(path.join(context.projectRoot, file), "utf8").catch(() => null);
+    if (text !== null) sources.push({ use: { kind: "feature", path: file }, links: featureLinks(text, file) });
+  }
+  return sources;
+}
+
+/** The uses of each artifact a kill decides on: [{ path, scope, uses }], in the artifacts' order, leaving out an artifact's link to itself. */
+async function artifactUses(context: any, item: string, artifacts: { path: string; scope: any }[]) {
+  const sources = await useSources(context, item);
+  return artifacts.map((artifact) => ({
+    path: artifact.path, scope: artifact.scope,
+    uses: sources.filter((source) => source.use.path !== artifact.path && source.links.includes(artifact.path)).map((source) => source.use)
+  }));
+}
+
+// One use in words, for a gate's context and a refusal.
+function describeUse(use: any) {
+  switch (use.kind) {
+    case "work-item": return `the work item ${use.item}`;
+    case "design": return use.initiative ? `the slice ${use.slice} of the initiative ${use.initiative}` : `the design ${use.path}${scopeLabel(use.scope)}`;
+    case "feature": return `the feature file ${use.path}`;
+    case "requirement": return `the requirement file ${use.path}${scopeLabel(use.scope)}`;
+    case "adr": return `the ADR ${use.path}${scopeLabel(use.scope)}`;
+    default: return use.path ?? use.item ?? use.kind;
+  }
+}
+
+const describeUses = (uses: any[]) => uses.length ? uses.map(describeUse).join(", ") : "nothing else";
+
+// Check a kill proposal and build its gates: { proposal, gate, artifactGates, uses }, with the gates written once they open.
+async function killProposal(projectRoot: string, context: any, entry: any, record: any, operation: any) {
+  const refusal = await proposalRefusal(projectRoot, context, [{ entry, record }], "be killed", { questions: false });
+  if (refusal) throw refusal;
+  if (!operation.reason.trim()) throw fail("validation_failed", "A kill needs a reason; nothing changed.");
+  const cited = await killArtifacts(context, entry, record);
+  const named = operation.artifacts.map((artifact: any) => artifact.path);
+  const twice = named.filter((file: string, index: number) => named.indexOf(file) !== index);
+  if (twice.length) throw fail("validation_failed", `A kill takes one choice per cited artifact, and ${[...new Set(twice)].join(", ")} has more than one; nothing changed.`);
+  const missing = cited.filter((artifact) => !named.includes(artifact.path)).map((artifact) => artifact.path);
+  const extra = named.filter((file: string) => !cited.some((artifact) => artifact.path === file));
+  if (missing.length || extra.length) {
+    const parts = [missing.length ? `it gives no choice for ${missing.join(", ")}` : null, extra.length ? `${extra.join(", ")} ${extra.length === 1 ? "is" : "are"} not cited by ${entry.id}` : null].filter(Boolean);
+    throw fail("kill_incomplete", `A kill takes exactly one choice per artifact that ${entry.id} cites, and ${parts.join(", and ")}; nothing changed.`, { missing, extra });
+  }
+  const artifacts = cited.map((artifact) => {
+    const choice = operation.artifacts.find((candidate: any) => candidate.path === artifact.path).choice;
+    if (choice !== "keep" && choice !== RETIRING[artifact.kind]) throw fail("validation_failed", `${artifact.path} is ${artifact.kind === "requirements" ? "a requirement file, which a kill keeps or withdraws" : "an ADR, which a kill keeps or declines"}, not ${choice}; nothing changed.`);
+    return { ...artifact, choice };
+  });
+  const uses = await artifactUses(context, entry.id, artifacts);
+  const usesOf = (file: string) => uses.find((candidate) => candidate.path === file)!.uses;
+  const gate = {
+    op: "ask",
+    kind: "decision",
+    question: `Should the work item ${entry.title} be killed?`,
+    context: [
+      `Shaping proposes killing the work item ${entry.title} (${entry.id}): ${entry.intent}`,
+      `Why: ${operation.reason}`,
+      artifacts.length ? `What uses its artifacts:\n${artifacts.map((artifact) => `- ${artifact.path}${scopeLabel(artifact.scope)}, proposed ${artifact.choice}: used by ${describeUses(usesOf(artifact.path))}.`).join("\n")}` : "It cites no requirement file or ADR.",
+      "Answer each artifact's own question first; killing records your note as the reason, applies your choice for each artifact, and takes the item out of every band, while keeping it changes nothing."
+    ].join("\n\n"),
+    artifacts: [],
+    options: [
+      { id: "kill", label: "Kill", consequence: `${entry.id} leaves the roadmap bands and stays in its history with your note as the reason.` },
+      { id: "keep", label: "Keep", consequence: `${entry.id} stays as it is.` }
+    ],
+    recommended: { option: "kill", reason: `Shaping recommends killing it: ${operation.reason}` }
+  };
+  const artifactGates = artifacts.map((artifact) => {
+    const retiring = RETIRING[artifact.kind];
+    const noun = artifact.kind === "requirements" ? "requirement file" : "ADR";
+    return {
+      op: "ask",
+      kind: "decision",
+      question: `What happens to the ${noun} ${artifact.path}${scopeLabel(artifact.scope)} if ${entry.title} is killed?`,
+      context: [
+        `Shaping proposes killing the work item ${entry.title} (${entry.id}), which cites ${artifact.path}.`,
+        `It is used by ${describeUses(usesOf(artifact.path))}.`,
+        `Prism refuses to ${retiring} it while anything uses it other than an artifact that this kill also withdraws or declines.`
+      ].join("\n\n"),
+      artifacts: [],
+      options: [
+        { id: "keep", label: "Keep", consequence: `${artifact.path} stays as it is.` },
+        { id: retiring, label: retiring === "withdraw" ? "Withdraw" : "Decline", consequence: `${artifact.path} becomes ${RETIRED_STATUS[retiring]} once the kill is confirmed.` }
+      ],
+      recommended: { option: artifact.choice, reason: `Shaping proposes to ${artifact.choice} it.` }
+    };
+  });
+  const proposal = { kind: "kill", gate: GATE_PENDING, reason: operation.reason, artifacts: artifacts.map((artifact) => ({ path: artifact.path, scope: artifact.scope, choice: artifact.choice, gate: GATE_PENDING })) };
+  return { proposal, gate, artifactGates, uses };
+}
+
+// The answers of a coordination state's gates, by id: { choice, note } for each answered gate, pending or closed.
+function gateAnswers(state: any) {
+  const answers = new Map<string, any>();
+  for (const gate of [...(state?.pending ?? []), ...(state?.closed ?? [])]) if (gate?.answer && typeof gate.id === "string") answers.set(gate.id, gate.answer);
+  return answers;
+}
+
+/**
+ * Refuse an answer to a kill proposal's gates that the person may not give, before it is recorded: withdraw or decline of an artifact that something else uses,
+ * other than an artifact of the same proposal answered withdraw or decline, with artifact_in_use; and kill while an artifact's gate has no answer with
+ * dispositions_unanswered, without a note with reason_required, or while a withdrawn or declined artifact gained a use, with artifact_in_use.
+ */
+async function refuseKillAnswer(projectRoot: string, item: string, proposal: any, gate: string, after: any, coordination: any) {
+  const choice = after?.choice ?? null;
+  const answers = gateAnswers(coordination?.state);
+  const artifact = proposal.artifacts.find((candidate: any) => candidate.gate === gate) ?? null;
+  const retiringNow = artifact ? (retires(choice) ? [artifact] : []) : proposal.artifacts.filter((candidate: any) => retires(answers.get(candidate.gate)?.choice));
+  if (!artifact) {
+    if (choice !== "kill") return;
+    const open = proposal.artifacts.filter((candidate: any) => !answers.has(candidate.gate));
+    if (open.length) throw fail("dispositions_unanswered", `Answer what happens to ${open.map((candidate: any) => candidate.path).join(", ")} at ${open.length === 1 ? "its own question" : "their own questions"} before killing ${item}; nothing was recorded.`, { artifacts: open.map((candidate: any) => candidate.path) });
+    if (typeof after?.note !== "string" || !after.note.trim()) throw fail("reason_required", `Killing ${item} records your note as its reason, so add a note that says why; nothing was recorded.`);
+  }
+  if (!retiringNow.length) return;
+  const config = await readWorkflowConfig(projectRoot);
+  const { entries, entry } = await roadmapEntry(projectRoot, item);
+  const context = citationContext(projectRoot, config, entries);
+  // An artifact this kill also withdraws or declines leaves with it, so its use does not count.
+  const leaving = new Set(proposal.artifacts.filter((candidate: any) => candidate === artifact ? retires(choice) : retires(answers.get(candidate.gate)?.choice)).map((candidate: any) => candidate.path));
+  const used = (await artifactUses(context, entry.id, retiringNow)).map((found) => ({ ...found, uses: found.uses.filter((use: any) => !(use.path && leaving.has(use.path) && (use.kind === "requirement" || use.kind === "adr"))) })).filter((found) => found.uses.length);
+  if (used.length) {
+    throw fail("artifact_in_use", `${used.map((found) => `${found.path} is still used by ${describeUses(found.uses)}`).join("; ")}, so it cannot be ${artifact ? (choice === "withdraw" ? "withdrawn" : "declined") : "withdrawn or declined"}; keep it, or end those uses first; nothing was recorded.`, { uses: used });
+  }
+}
+
+// Retire artifacts in a project without a record store: each Status: line is rewritten in the checkout, and the result puts them back.
+async function retireCheckoutArtifacts(projectRoot: string, items: { path: string; status: string }[], at: string) {
+  const written: { path: string; before: string; after: string }[] = [];
+  const restore = async () => {
+    for (const { path: file, before, after } of written.reverse()) {
+      const now = await readFile(path.join(projectRoot, file), "utf8").catch(() => null);
+      if (now === after) await writeFile(path.join(projectRoot, file), before);
+    }
+  };
+  try {
+    for (const item of items) {
+      const before = await readFile(path.join(projectRoot, item.path), "utf8");
+      const after = rewriteStatusLines(before, item.status, at.slice(0, 10));
+      await writeFile(path.join(projectRoot, item.path), after);
+      written.push({ path: item.path, before, after });
+    }
+  } catch (error) {
+    await restore().catch(() => {});
+    throw error;
+  }
+  return restore;
+}
+
+/**
+ * Apply a confirmed kill under the item's lock: each artifact answered withdraw or decline becomes Withdrawn or Declined, the entry records the killed decision with the
+ * person's note as its reason, and the record holds kill, writing the roadmap, the artifacts, and the record all or none. Returns { record, written } as applyMerge does.
+ */
+async function applyKill(projectRoot: string, item: string, record: any, proposal: any, answer: any, closed: any, answers: Map<string, any>) {
+  const config = await readWorkflowConfig(projectRoot);
+  const roadmap = await readRoadmapRecord(projectRoot);
+  const entries = roadmap.valid ? roadmap.record?.initiatives ?? [] : [];
+  const entry = entries.find((candidate: any) => candidate.id === item);
+  const refusal = !entry
+    ? fail("item_unknown", `The roadmap no longer holds ${item}, so the kill was not applied.`)
+    : await proposalRefusal(projectRoot, citationContext(projectRoot, config, entries), [{ entry, record, pending: false }], "be killed", { questions: false });
+  if (refusal) {
+    closeProposal(record, { ...staleOutcome(refusal), ...closed });
+    return { record, written: false };
+  }
+  const reason = closed.note;
+  const artifacts = proposal.artifacts.map((artifact: any) => ({ path: artifact.path, scope: artifact.scope, choice: answers.get(artifact.gate)?.choice ?? "keep" }));
+  const retiring = artifacts.filter((artifact: any) => retires(artifact.choice)).map((artifact: any) => ({ path: artifact.path, scope: artifact.scope, status: RETIRED_STATUS[artifact.choice] }));
+  const actor = personLabel(answer.by);
+  const decision = { kind: "killed", reason, gate: proposal.gate, at: answer.at };
+  await applyWorkItemDecision(projectRoot, { actor, operation: "kill", ids: [item], change: (current: any) => {
+    const held = current.initiatives.find((candidate: any) => candidate.id === item);
+    if (!held || held.decision) throw fail("not_emerging", `${item} was decided meanwhile, so the kill was not applied.`);
+    held.decision = decision;
+  } });
+  // Undo only the kill: the killed decision while it is still this one.
+  const undo = (current: any) => {
+    const held = current.initiatives.find((candidate: any) => candidate.id === item);
+    if (held && canonicalJson(held.decision) === canonicalJson(decision)) held.decision = null;
+  };
+  let restoreArtifacts: () => Promise<unknown> = async () => {};
+  try {
+    if ((config.workspace?.store ?? null) !== null) {
+      const retired = await retireArtifacts(projectRoot, retiring, { item, gate: proposal.gate, at: answer.at });
+      restoreArtifacts = () => restoreRetiredArtifacts(projectRoot, retired);
+    } else restoreArtifacts = await retireCheckoutArtifacts(projectRoot, retiring, answer.at);
+  } catch (error) {
+    await applyWorkItemDecision(projectRoot, { actor, operation: "restore_work_items", ids: [item], change: undo }).catch((failure) => {
+      throw fail("rollback_failed", `Retiring the killed item's artifacts failed (${error?.message ?? error}), and putting back the roadmap failed: ${failure?.message ?? failure}.`, { cause: error?.code ?? null });
+    });
+    throw error;
+  }
+  const killed = structuredClone(record);
+  killed.kill = { reason, artifacts, gate: proposal.gate, at: answer.at, by: answer.by };
+  const questionGates = openQuestions(killed).map((asked: any) => asked.gate).filter((id: any) => typeof id === "string");
+  for (const asked of openQuestions(killed)) asked.withdrawn = true;
+  closeProposal(killed, { outcome: "kill", ...closed });
+  await writeAnswerRecords(projectRoot, { ids: [item], actor, undo, restore: restoreArtifacts }, [{ item, record: killed }]);
+  await withdrawGates(projectRoot, item, questionGates, KILLED_QUESTION).catch(() => {});
+  return { record: killed, written: true };
+}
+
+const KILLED_QUESTION = "The work item was killed, so its question needs no answer.";
+const CLOSED_KILL = "The kill was not confirmed, so what happens to this artifact needs no answer.";
+
 // The entries of a merged record: the survivor's, then each of the other's that it does not hold, with a new identifier where one collides and its rounds after the survivor's.
 // It keeps the earlier changedAt of the two, or none when either has none, so get_work_item still lists each comment that either item listed before the merge.
 function mergedRecords(survivor: any, other: any) {
@@ -871,7 +1174,7 @@ async function restoreRecord(projectRoot: string, item: string, bytes: any) {
 // Write the records of an answer after its roadmap change, all or none: each { item, record }, written in order.
 // When one fails, every written record is put back, and undo reverses only what the answer changed on the roadmap as it is now, under the roadmap's lock.
 // A step of that rollback that fails is reported with rollback_failed rather than ignored.
-async function writeAnswerRecords(projectRoot: string, roadmap: { ids: string[]; actor: string; undo: (record: any) => void }, writes: { item: string; record: any }[]) {
+async function writeAnswerRecords(projectRoot: string, roadmap: { ids: string[]; actor: string; undo: (record: any) => void; restore?: () => Promise<unknown> }, writes: { item: string; record: any }[]) {
   const written: { item: string; bytes: any }[] = [];
   try {
     for (const { item, record } of writes) {
@@ -882,6 +1185,7 @@ async function writeAnswerRecords(projectRoot: string, roadmap: { ids: string[];
   } catch (error) {
     const problems: string[] = [];
     for (const { item, bytes } of written.reverse()) await restoreRecord(projectRoot, item, bytes).catch((failure) => { problems.push(`the shaping record of ${item}: ${failure?.message ?? failure}`); });
+    if (roadmap.restore) await roadmap.restore().catch((failure) => { problems.push(`the retired artifacts: ${failure?.message ?? failure}`); });
     await applyWorkItemDecision(projectRoot, { actor: roadmap.actor, operation: "restore_work_items", ids: roadmap.ids, change: roadmap.undo }).catch((failure) => { problems.push(`the roadmap: ${failure?.message ?? failure}`); });
     if (problems.length) throw fail("rollback_failed", `Writing the answer failed (${error?.message ?? error}), and putting back what it changed failed for ${problems.join("; ")}.`, { cause: error?.code ?? null, problems });
     throw error;
@@ -1047,19 +1351,29 @@ async function withdrawGates(projectRoot: string, item: string, ids: string[], r
  * When it is the gate of the pending ready proposal, ready records ready { gate, at, by } while no readiness condition is unmet and otherwise closes the proposal
  * with outcome unmet and the conditions, not-ready closes it with the note, and a free answer closes it as declined with the note.
  * For a merge proposal, keep-this or keep-other merges both items into the chosen one and records the other as merged into it, and separate closes it;
- * for a split proposal, split adds the parts to the roadmap with their shaping records and records the item as split into them, and keep-whole closes it.
+ * for a split proposal, split adds the parts to the roadmap with their shaping records and records the item as split into them, and keep-whole closes it;
+ * for a kill proposal, an answer to an artifact's gate or to the kill gate passes write() a guard that refuses it before it is recorded, as refuseKillAnswer says,
+ * kill retires the artifacts answered withdraw or decline and records the item as killed with the note as its reason, and keep closes it with the unanswered artifact gates.
  * A merge or split that no longer fits the items, as when one was decided, gained an open question, or gained a requirement reference no part takes, closes as stale with why,
  * changing nothing else, and so does one whose writes fail, after they are put back; a failure to put them back is thrown with rollback_failed once the proposal is closed.
  * Each happens under the record's lock and leaves changedAt as it was, except that a merge's survivor keeps the earlier of both. Returns what write() returned.
  */
-export async function recordWorkItemAnswer({ projectRoot, item, gate, write }: { projectRoot: string; item: string; gate: string; write: () => Promise<any> }) {
+export async function recordWorkItemAnswer({ projectRoot, item, gate, write }: { projectRoot: string; item: string; gate: string; write: (guard?: (after: any, coordination: any) => Promise<void>) => Promise<any> }) {
   const asking = (record: any) => (record?.questions ?? []).find((asked: any) => asked.gate === gate && !asked.answer && !asked.withdrawn) ?? null;
   const proposing = (record: any) => record?.proposal?.gate === gate ? record.proposal : null;
+  // An artifact's gate of a pending kill proposal, which records only the person's answer on the gate, once it passes the kill's checks.
+  const deciding = (record: any) => record?.proposal?.kind === "kill" && Array.isArray(record.proposal.artifacts) && record.proposal.artifacts.some((artifact: any) => artifact?.gate === gate) ? record.proposal : null;
   const seen = await readShapingRecord(projectRoot, item).catch(() => null);
-  if (!asking(seen?.record) && !proposing(seen?.record)) return write();
+  if (!asking(seen?.record) && !proposing(seen?.record) && !deciding(seen?.record)) return write();
   return withRecordLock(projectRoot, { kind: "work-item", initiative: item }, async (located: any) => {
     const current = parseShapingRecord(item, await readStoreFileBytes(located.target, RECORD_MAX_BYTES));
-    const entry = await write();
+    const killing = proposing(current.record)?.kind === "kill" ? current.record.proposal : deciding(current.record);
+    // A kill's answers are checked under the coordination state's lock before they are recorded, so a refused answer records nothing.
+    let answers = new Map<string, any>();
+    const entry = await write(killing ? async (after: any, coordination: any) => {
+      answers = gateAnswers(coordination?.state);
+      await refuseKillAnswer(projectRoot, item, killing, gate, after, coordination);
+    } : undefined);
     const asked = asking(current.record);
     const proposal = proposing(current.record);
     if (!entry || (!asked && !proposal)) return entry;
@@ -1067,13 +1381,28 @@ export async function recordWorkItemAnswer({ projectRoot, item, gate, write }: {
     const note = typeof entry.after?.note === "string" && entry.after.note.trim() ? entry.after.note.trim() : null;
     const record = structuredClone(current.record);
     let unreported: any = null;
+    let closingGates: string[] = [];
     if (asked) {
       const text = choice === "recommended" ? [asked.recommended, note].filter(Boolean).join(" ") : note ?? "";
       const question = record.questions.find((candidate: any) => candidate.id === asked.id);
       question.answer = { text, choice, answeredAt: entry.at, by: entry.by };
     } else {
       const closed = { at: entry.at, by: entry.by, ...(note === null ? {} : { note }) };
+      // A kill that is not confirmed closes the questions about its artifacts that the person has not answered.
+      const unanswered = proposal.kind === "kill" ? proposal.artifacts.map((artifact: any) => artifact.gate).filter((id: any) => typeof id === "string" && !answers.has(id)) : [];
+      if (proposal.kind === "kill" && (choice === null || choice === "keep")) closingGates = unanswered;
       if (choice === null) closeProposal(record, { outcome: "declined", ...closed });
+      else if (proposal.kind === "kill" && choice === "keep") closeProposal(record, { outcome: "keep", ...closed });
+      else if (proposal.kind === "kill" && choice === "kill") {
+        try {
+          const applied = await applyKill(projectRoot, item, record, proposal, entry, closed, answers);
+          if (applied.written) return entry;
+        } catch (error) {
+          closeProposal(record, { outcome: "stale", code: error?.code ?? "write_failed", message: error?.message ?? String(error), ...closed });
+          if (error?.code === "rollback_failed") unreported = error;
+        }
+        closingGates = unanswered;
+      }
       else if (proposal.kind === "ready" && choice === "not-ready") closeProposal(record, { outcome: "not-ready", ...closed });
       else if (proposal.kind === "ready" && choice === "ready") {
         // The conditions are read again at the answer, so a requirement that lost its approval since the gate was asked leaves the item emerging.
@@ -1100,6 +1429,7 @@ export async function recordWorkItemAnswer({ projectRoot, item, gate, write }: {
       } else return entry;
     }
     await writeRecord(projectRoot, { kind: "work-item", initiative: item }, serialize(record));
+    await withdrawGates(projectRoot, item, closingGates, CLOSED_KILL).catch(() => {});
     if (unreported) throw unreported;
     return entry;
   }, fail);
@@ -1128,13 +1458,13 @@ const ROADMAP_ATTEMPTS = 5;
 export const WORK_ITEM_TOOLS = [
   {
     name: "get_work_item",
-    description: "Read one work item, a roadmap entry addressed by its roadmap identifier as item, refusing an identifier that names no entry with item_unknown. Returns item, title, intent, band, stage (emerging while the entry cites no Approved requirement file or has a shaping record without a ready mark, ready otherwise, or the decision's kind for a decided entry), unmet (the readiness conditions it does not meet, in order: no_approved_requirement, requirement_not_approved with path, scope, and status per cited requirement file that is not Approved, draft_adr_nonconforming with path, scope, and findings per cited Draft ADR that breaks the ADR format, and question_unanswered with question and text per blocking question that is neither answered nor withdrawn), revision (the SHA-256 of the shaping record, or null before it has one, which update_work_item takes as expectedRevision), record (the shaping record { inputs, questions, findings, gaps, adrs, ready, origin, merges, splitInto, mergedInto, kill, changedAt }, or null), requirements (the entry's requirement references), cited ({ path, scope, kind, status, citedBy } per cited requirement file and ADR, with status null for a file that does not exist and citedBy the other work items that cite it), comments (every comment people left on a cited store artifact after the record's changedAt, or every one while it has none, oldest first, as { artifact: { path, scope }, id, line, text, author, at }), and proposal (the pending proposal: { kind: \"ready\", gate }, { kind: \"merge\", gate, with }, or { kind: \"split\", gate, parts }, or null). A merged item's record holds mergedInto, its survivor's merges lists { from, gate, at }, a split item's record holds splitInto, and each part's record holds origin { kind: \"split\", from, gate }. Read the comments as the person's input to the item.",
+    description: "Read one work item, a roadmap entry addressed by its roadmap identifier as item, refusing an identifier that names no entry with item_unknown. Returns item, title, intent, band, stage (emerging while the entry cites no Approved requirement file or has a shaping record without a ready mark, ready otherwise, or the decision's kind for a decided entry), unmet (the readiness conditions it does not meet, in order: no_approved_requirement, requirement_not_approved with path, scope, and status per cited requirement file that is not Approved, draft_adr_nonconforming with path, scope, and findings per cited Draft ADR that breaks the ADR format, and question_unanswered with question and text per blocking question that is neither answered nor withdrawn), revision (the SHA-256 of the shaping record, or null before it has one, which update_work_item takes as expectedRevision), record (the shaping record { inputs, questions, findings, gaps, adrs, ready, origin, merges, splitInto, mergedInto, kill, changedAt }, or null), requirements (the entry's requirement references), cited ({ path, scope, kind, status, citedBy } per cited requirement file and ADR, with status null for a file that does not exist and citedBy the other work items that cite it), comments (every comment people left on a cited store artifact after the record's changedAt, or every one while it has none, oldest first, as { artifact: { path, scope }, id, line, text, author, at }), and proposal (the pending proposal: { kind: \"ready\", gate }, { kind: \"merge\", gate, with }, or { kind: \"split\", gate, parts }, { kind: \"kill\", gate, reason, artifacts: [{ path, scope, choice, gate }] }, or null). A killed item's record holds kill { reason, artifacts: [{ path, scope, choice }], gate, at, by }. A merged item's record holds mergedInto, its survivor's merges lists { from, gate, at }, a split item's record holds splitInto, and each part's record holds origin { kind: \"split\", from, gate }. Read the comments as the person's input to the item.",
     inputSchema: GET_WORK_ITEM_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_work_item",
-    description: "Apply 1 to 50 operations to a work item's shaping record at expectedRevision, the revision get_work_item returned, all or none: add_input { link, note } records a link, a URI with a scheme such as https://… or notion://…, or a project-relative path, with a one-line note of at most 300 characters, and never the linked content; add_finding { text, source } records a finding with the link it came from, refusing one without a source with source_missing; add_research_gap { note } records research that could not reach outside sources, never as a finding; cite { requirements?, adrs? } adds requirement references, written as the roadmap writes them such as billing.md§2, to the item's roadmap entry and ADR paths below the configured ADRs folder to the record, ignoring ones already cited, and uncite removes them. ask_round { questions } asks a round of 1 to 5 questions, each { question, recommended (at most 200 characters), settles (at most 1000, what the answer settles), blocking (true when the item cannot become ready without the answer) }, recording each as { id, round, question, recommended, settles, blocking, gate, askedAt, answer: null, withdrawn: false } and opening one decision gate per question in the item's coordination state, which you ask the person and wait on with wait_for_user_gate like any gate; when the person answers in the review app, Prism records answer { text, choice, answeredAt, by } on the question. withdraw_question { question } withdraws an unanswered question by its id and closes its gate, refusing an answered one with question_answered. request_ready {} stands alone in its update: while no readiness condition is unmet it opens a decision gate with the options ready and not-ready, recommending ready, whose context lists each cited artifact with its status, and records proposal { kind: \"ready\", gate }; with any unmet it is refused with readiness_unmet and unmet, opening no gate. When the person answers ready and every condition is still met, the record holds ready { gate, at, by } and the item is ready; a condition that became unmet closes the proposal with outcome unmet, not-ready closes it with the person's note, and a free answer closes it as declined. propose_merge { with, recommended, reason } and propose_split { parts, reason } each stand alone in their update and are refused with not_emerging for an item, or the with item, that is not emerging, design_started for one with an initiative record, proposal_pending for one with a pending proposal, and questions_open naming each question that is neither answered nor withdrawn. propose_merge opens a decision gate with the options keep-this, keep-other, and separate, recommending recommended (keep-this or keep-other), whose context names both items with their titles, intents, the reason, and what each holds, and records proposal { kind: \"merge\", gate, with }; when the person answers keep-this or keep-other, the chosen item keeps its own identifier with every input, question with its answer, finding, gap, cited ADR, and requirement reference of both and records { from, gate, at } under merges with its ready mark cleared, while the other entry records the decision { kind: \"merged\", into, gate, at } and its record mergedInto; separate changes nothing. propose_split takes at least two parts, each { id, title, intent, inputs, questions, findings, gaps, requirements, adrs } naming entries of the record by id and references of the entry, refusing a part id that is not a new roadmap identifier and an entry the record or entry does not hold with validation_failed, and an entry, requirement reference, or cited ADR that no part takes with split_incomplete listing them; it opens a decision gate with the options split and keep-whole, recommending split, whose context lists each part with what it takes, and records proposal { kind: \"split\", gate, parts }; when the person answers split, each part becomes a roadmap entry in the item's band directly after it, in part order, with its title, intent, and requirement references and a shaping record of the entries it takes with origin { kind: \"split\", from, gate }, while the item's entry records the decision { kind: \"split\", into, gate, at } and its record splitInto; keep-whole changes nothing. A merged or split entry leaves every band. Any other update that changes the record or the entry's requirement references clears the ready mark and withdraws a pending proposal, closing its gates, so a confirmation covers the record as the person saw it; closed proposals stay under the record's proposals with their outcomes. Design starts on an item only once it is ready: update_initiative create and a design claim are refused with item_emerging while it is emerging. A cite, or an update_roadmap, that adds a reference to a requirement file that is not Approved to an emerging item is refused with round_unanswered while the item has no answered round, one whose questions are each answered or withdrawn with at least one answered, or has a question that is neither answered nor withdrawn. A link of any other form is refused with link_invalid, an ADR path outside the ADRs folder and any other operation or field with validation_failed, an identifier that names no roadmap entry with item_unknown, a stale expectedRevision with revision_conflict and currentRevision, and any operation on a decided entry with item_closed naming the decision; a requirement reference to a file that breaks its format is refused with artifact_nonconforming as update_roadmap refuses it. No operation records an answer or anything a person said: the person adds to an item by answering its gates and commenting on what it cites. Returns { item, revision, previousRevision, record, stage, unmet, openedGates }, where each entry carries an id that Prism assigns and changedAt is the time of the last update that changed the record, and openedGates lists { id, kind, purpose } for each gate the update opened.",
+    description: "Apply 1 to 50 operations to a work item's shaping record at expectedRevision, the revision get_work_item returned, all or none: add_input { link, note } records a link, a URI with a scheme such as https://… or notion://…, or a project-relative path, with a one-line note of at most 300 characters, and never the linked content; add_finding { text, source } records a finding with the link it came from, refusing one without a source with source_missing; add_research_gap { note } records research that could not reach outside sources, never as a finding; cite { requirements?, adrs? } adds requirement references, written as the roadmap writes them such as billing.md§2, to the item's roadmap entry and ADR paths below the configured ADRs folder to the record, ignoring ones already cited, and uncite removes them. ask_round { questions } asks a round of 1 to 5 questions, each { question, recommended (at most 200 characters), settles (at most 1000, what the answer settles), blocking (true when the item cannot become ready without the answer) }, recording each as { id, round, question, recommended, settles, blocking, gate, askedAt, answer: null, withdrawn: false } and opening one decision gate per question in the item's coordination state, which you ask the person and wait on with wait_for_user_gate like any gate; when the person answers in the review app, Prism records answer { text, choice, answeredAt, by } on the question. withdraw_question { question } withdraws an unanswered question by its id and closes its gate, refusing an answered one with question_answered. request_ready {} stands alone in its update: while no readiness condition is unmet it opens a decision gate with the options ready and not-ready, recommending ready, whose context lists each cited artifact with its status, and records proposal { kind: \"ready\", gate }; with any unmet it is refused with readiness_unmet and unmet, opening no gate. When the person answers ready and every condition is still met, the record holds ready { gate, at, by } and the item is ready; a condition that became unmet closes the proposal with outcome unmet, not-ready closes it with the person's note, and a free answer closes it as declined. propose_merge { with, recommended, reason } and propose_split { parts, reason } each stand alone in their update and are refused with not_emerging for an item, or the with item, that is not emerging, design_started for one with an initiative record, proposal_pending for one with a pending proposal, and questions_open naming each question that is neither answered nor withdrawn. propose_merge opens a decision gate with the options keep-this, keep-other, and separate, recommending recommended (keep-this or keep-other), whose context names both items with their titles, intents, the reason, and what each holds, and records proposal { kind: \"merge\", gate, with }; when the person answers keep-this or keep-other, the chosen item keeps its own identifier with every input, question with its answer, finding, gap, cited ADR, and requirement reference of both and records { from, gate, at } under merges with its ready mark cleared, while the other entry records the decision { kind: \"merged\", into, gate, at } and its record mergedInto; separate changes nothing. propose_split takes at least two parts, each { id, title, intent, inputs, questions, findings, gaps, requirements, adrs } naming entries of the record by id and references of the entry, refusing a part id that is not a new roadmap identifier and an entry the record or entry does not hold with validation_failed, and an entry, requirement reference, or cited ADR that no part takes with split_incomplete listing them; it opens a decision gate with the options split and keep-whole, recommending split, whose context lists each part with what it takes, and records proposal { kind: \"split\", gate, parts }; when the person answers split, each part becomes a roadmap entry in the item's band directly after it, in part order, with its title, intent, and requirement references and a shaping record of the entries it takes with origin { kind: \"split\", from, gate }, while the item's entry records the decision { kind: \"split\", into, gate, at } and its record splitInto; keep-whole changes nothing. propose_kill { reason, artifacts } stands alone in its update, is refused as propose_split is except that open questions do not stop it, and takes exactly one { path, choice } per cited artifact, keep or withdraw for a requirement file and keep or decline for an ADR, refusing a missing or extra artifact with kill_incomplete and a choice that does not fit its kind with validation_failed; it returns uses, one { path, scope, uses } per cited artifact, where each use is { kind: \"work-item\", item } for another open or shipped roadmap entry that cites it, { kind: \"design\", initiative, slice } for an initiative slice whose requirements name it, { kind: \"design\", path, scope } for a plan slice.md that links it, { kind: \"feature\", path } for a feature file whose # Requirement: or # ADR: comment links it, and { kind: \"requirement\" or \"adr\", path, scope } for another requirement file or ADR that links it; it opens a kill gate with the options kill and keep, recommending kill, whose context holds the reason and the uses, and one gate per cited artifact with the options keep and withdraw or keep and decline, recommending the proposed choice, and records proposal { kind: \"kill\", gate, reason, artifacts: [{ path, scope, choice, gate }] }. The person answers each artifact's gate first: withdraw or decline is refused with artifact_in_use, naming each use, while anything other than an artifact of the same kill answered withdraw or decline uses it; kill is refused with dispositions_unanswered while an artifact's gate has no answer, with reason_required without a note, and with artifact_in_use when a withdrawn or declined artifact gained a use. When the person answers kill, each artifact answered withdraw becomes Withdrawn and each answered decline Declined, in its Status: line and recorded status, the record holds kill with the note as reason, the entry records the decision { kind: \"killed\", reason, gate, at }, and the item's open question gates close as withdrawn; keep changes nothing. A killed, merged, or split entry leaves every band. Any other update that changes the record or the entry's requirement references clears the ready mark and withdraws a pending proposal, closing its gates, so a confirmation covers the record as the person saw it; closed proposals stay under the record's proposals with their outcomes. Design starts on an item only once it is ready: update_initiative create and a design claim are refused with item_emerging while it is emerging. A cite, or an update_roadmap, that adds a reference to a requirement file that is not Approved to an emerging item is refused with round_unanswered while the item has no answered round, one whose questions are each answered or withdrawn with at least one answered, or has a question that is neither answered nor withdrawn. A link of any other form is refused with link_invalid, an ADR path outside the ADRs folder and any other operation or field with validation_failed, an identifier that names no roadmap entry with item_unknown, a stale expectedRevision with revision_conflict and currentRevision, and any operation on a decided entry with item_closed naming the decision; a requirement reference to a file that breaks its format is refused with artifact_nonconforming as update_roadmap refuses it. No operation records an answer or anything a person said: the person adds to an item by answering its gates and commenting on what it cites. Returns { item, revision, previousRevision, record, stage, unmet, openedGates }, where each entry carries an id that Prism assigns and changedAt is the time of the last update that changed the record, and openedGates lists { id, kind, purpose } for each gate the update opened.",
     inputSchema: UPDATE_WORK_ITEM_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

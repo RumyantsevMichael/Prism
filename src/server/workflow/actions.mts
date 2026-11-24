@@ -1504,15 +1504,18 @@ export async function applyAction({ projectRoot, target, action, input, revision
     }
   } else {
     // The checks repeat under the state lock on the state it holds, so a change that lands between the read above and the write is never overwritten.
-    const record = async () => (await recordPersonAction({ projectRoot, initiative: parsed.initiative, prepare: async (coordination: any) => {
+    // guard, which a work item's kill passes, refuses an answer under the state's lock before anything is recorded.
+    const record = async (guard?: (after: any, coordination: any) => Promise<void>) => (await recordPersonAction({ projectRoot, initiative: parsed.initiative, prepare: async (coordination: any) => {
       const context = await readTarget(projectRoot, parsed, indexer, coordination, env, checkouts, readOptions);
       const checked = await check(definition, context, request);
       if (!checked) return null;
+      if (guard) await guard(checked.after, coordination);
       const entry = await entryOf(checked, context);
       return { entry, ...definition.change(context, checked.after) };
     } })).entry;
     // An answer to a work item's question is recorded on the question in the same action, so the shaping record holds what the person said,
-    // and an answer to a work item's ready, merge, or split gate applies its proposal in the same action, so no agent applies a choice the person did not make.
+    // and an answer to a work item's ready, merge, split, or kill gate applies its proposal in the same action, so no agent applies a choice the person did not make;
+    // an answer to a kill's gates that withdraws or declines an artifact still in use, or kills before every artifact is answered or without a reason, is refused and records nothing.
     applied = parsed.kind === "gate" && definition.id === "gate.answer"
       ? await recordWorkItemAnswer({ projectRoot, item: parsed.initiative, gate: parsed.gate, write: record })
       : await record();

@@ -107,8 +107,14 @@ When one item holds two needs, the agent asks whether to split it, listing each 
 Answer Split to add each part as a new roadmap entry right after the item in its band, with its share of the shaping record, and to record the item as split into them, or Keep whole to leave it as it is.
 Prism asks only while each item is emerging and has no initiative, no other pending proposal, and no unanswered question; if that stopped holding before you answered, your answer changes nothing and the agent can propose again.
 The same holds when a split's parts no longer take every requirement reference the item cites, or when writing your answer fails: Prism puts back what it had changed and closes the question with why, and reports an error if it cannot put everything back.
-A merged or split entry leaves every band and appears under Merged context or Split context in the roadmap view, and the roadmap refuses to place or update it.
-A checkout of an earlier Prism version that shares the store reports the roadmap as invalid once it holds a merged or split entry, naming that entry's decision, until that checkout updates Prism.
+When shaping finds that an emerging item is no longer wanted, the agent asks you in Attention whether to kill it, with its reason and everything that uses each requirement file and ADR it cites: other work items, initiative slices and plans, feature files, requirement files, and ADRs.
+Each cited file gets a question of its own: keep it, or withdraw a requirement file or decline an ADR.
+Prism refuses to withdraw or decline a file while anything else still uses it, naming each use, except another file that the same kill withdraws or declines, so answer the files that others depend on first.
+Answer each file's question before the kill question, and give a note with Kill, since it is kept as the reason.
+Prism refuses the kill while a file you chose to withdraw or decline has gained a use since you answered.
+Kill sets each withdrawn requirement file to Withdrawn and each declined ADR to Declined, keeps the other files as they are, closes the item's open questions, and takes the item out of every band, while Keep leaves everything as it is.
+A killed, merged, or split entry leaves every band and appears under Killed context with its reason, Merged context, or Split context in the roadmap view, and the roadmap refuses to place or update it.
+A checkout of an earlier Prism version that shares the store reports the roadmap as invalid once it holds a killed, merged, or split entry, naming that entry's decision, until that checkout updates Prism.
 
 When an agent asks you to approve a requirement file or ADR, the question in Attention names each work item that cites the file, or says that no work item cites it.
 An agent cannot ask you to approve a requirement file that an emerging item cites until you have answered a question round about that item: the request is refused with `shaping_unasked`, naming the item.

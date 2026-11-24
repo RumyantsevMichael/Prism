@@ -288,6 +288,11 @@ export function decidedRecord(record: any, { option, at }: { option: string; at:
   return { ...record, status: "Proposed", history: keep([...record.history, { event: "decided", status: "Proposed", option, at }], HISTORY_KEPT) };
 }
 
+/** A status record after a person's kill of a work item retired its artifact: status Withdrawn or Declined, with the kill in its history. */
+export function retiredRecord(record: any, { status, item, gate, at }: { status: string; item: string; gate: string; at: string }) {
+  return { ...record, status, history: keep([...record.history, { event: "retired", status, item, gate, at }], HISTORY_KEPT) };
+}
+
 export const notAStatusArtifact = (file: string) => fail("not_a_status_artifact", `${file} is no requirement or ADR, so it has no status to approve; approval gates apply only to files under the configured Requirements and ADRs folders.`);
 
 const STATUS_LINE = /^Status:[^\r\n]*(\r?\n|$)/;

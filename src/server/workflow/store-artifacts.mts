@@ -8,7 +8,7 @@ import { writeAtomically } from "./artifact-store.mjs";
 import { implementationText, inspectArtifact } from "./artifact-formats.mjs";
 import { assertInput } from "./artifact-schema.mjs";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACTS, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, ARTIFACT_LOCATION_BYTES_MAX, letterCaseKey, locationArtifact, locationExcess, locationIdentity, locationLimits, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, scopeFolder, STORE_NAME_BYTES_MAX, uniqueIdentities, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
-import { acceptAtShip, acceptedLocation, acceptedWhenMoved, answerApproval, askApproval, decidedRecord, decideDraft, DRAFT_STATUS, hasStatus, linkedPaths, movedWithoutAcceptance, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion, withdrawApproval, writtenStatus as writtenStatusOf } from "./artifact-status.mjs";
+import { acceptAtShip, acceptedLocation, acceptedWhenMoved, answerApproval, askApproval, decidedRecord, decideDraft, DRAFT_STATUS, hasStatus, linkedPaths, movedWithoutAcceptance, newRecord, notAStatusArtifact, parseRecord, retiredRecord, rewriteStatusLines, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion, withdrawApproval, writtenStatus as writtenStatusOf } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
 import { checkArtifactFolders, folderChecks, noteToolCallWrite, recordStoreOf, repositoryScopes, resolveArtifactFile, resolveStatusFile, seenScopes, statusFileResolver, withArtifactStoreLock } from "./record-store.mjs";
 import { pruneArtifactFolders, runGit, scheduleRecordSync } from "./record-store-sync.mjs";
@@ -959,7 +959,7 @@ async function applyOperations(seenStore: any, checked: any, { held = null, note
     }
     // A ship names the scope of each ADR it accepts, which may be another repository's, so the ADR is found there alone.
     const source = operation.op === "move_scope" ? await moveSource(item, await holders(seen, address, scopesFor(seen, address.kind, null), read))
-      : operation.op === "accept_at_ship" || operation.op === "accept_moved" ? await one(item, [operation.atScope])
+      : ["accept_at_ship", "accept_moved", "retire", "unretire"].includes(operation.op) ? await one(item, [operation.atScope])
       : await one(item, scopesFor(seen, address.kind, given));
     if (!source) {
       await refuseOthers(item);
@@ -1046,6 +1046,25 @@ async function applyOperations(seenStore: any, checked: any, { held = null, note
       setStatus(status.target, file, accepted.record);
       artifacts.push({ path: file, scope: source.scope, version: accepted.record.acceptedVersion });
       noteFormatted(file, source.scope, address);
+    } else if (operation.op === "retire") {
+      // A person's kill of a work item retires the artifact: its Status: line and its recorded status change together, and the entry keeps what it was so a failed kill can put it back.
+      const status = await statusOf(source.scope, address);
+      const before = contentOf(file, source.record);
+      const next = Buffer.from(rewriteStatusLines(decode(before, file), operation.status, operation.at.slice(0, 10)), "utf8");
+      tooLarge(file, next.length);
+      state.set(source.target, stored(next));
+      names.set(source.target, file);
+      setStatus(status.target, file, retiredRecord(status.record, { status: operation.status, item: operation.item, gate: operation.gate, at: operation.at }));
+      artifacts.push({ path: file, scope: source.scope, version: artifactVersion(next), status: operation.status, previous: { bytes: before, record: status.record, exists: status.exists } });
+    } else if (operation.op === "unretire") {
+      // A failed kill puts back an artifact it retired, while the artifact is still as the kill left it.
+      const status = await statusOf(source.scope, address);
+      if (source.record.version === operation.version) {
+        state.set(source.target, stored(operation.previous.bytes));
+        names.set(source.target, file);
+        setStatus(status.target, file, operation.previous.exists ? operation.previous.record : null);
+      }
+      artifacts.push({ path: file, scope: source.scope, version: state.get(source.target)?.version ?? source.record.version });
     } else if (operation.op === "accept_version") {
       const status = await statusOf(source.scope, address);
       if (status.record.acceptedVersion !== source.record.version) {
@@ -2147,6 +2166,56 @@ export async function unlinkedAdrs(projectRoot: string, plan: any, requirements:
       if (names.length) found.push({ path: entry.path, scope: entry.scope.label, requirements: names });
     }
     return found.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : left.scope < right.scope ? -1 : left.scope > right.scope ? 1 : 0);
+  });
+}
+
+/**
+ * Retire the requirement files and ADRs that a person's kill of a work item withdraws or declines, all or none under the store's artifact lock:
+ * each { path, scope, status }, with scope the scope object that holds it and status Withdrawn or Declined, has its Status: line and its recorded status set.
+ * Returns the retired entries { path, scope, version, status, previous }, which restoreRetiredArtifacts takes to put them back.
+ */
+export async function retireArtifacts(projectRoot: string, items: { path: string; scope: any; status: string }[], { item, gate, at }: { item: string; gate: string; at: string }) {
+  return refusing(async () => {
+    const { kinds } = await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    if (!items.length) return [];
+    return withArtifactStoreLock(seen, async () => {
+      const checked = items.map((entry) => ({ operation: { op: "retire", path: entry.path, atScope: entry.scope, status: entry.status, item, gate, at }, file: entry.path, address: artifactAddress(kinds, entry.path), given: null }));
+      return (await applyOperations(seen, checked)).artifacts;
+    });
+  });
+}
+
+/** Put back the artifacts that retireArtifacts retired, each one only while it still holds the version the retirement wrote. */
+export async function restoreRetiredArtifacts(projectRoot: string, retired: any[]) {
+  return refusing(async () => {
+    const { kinds } = await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    if (!retired.length) return [];
+    return withArtifactStoreLock(seen, async () => {
+      const checked = retired.map((entry) => ({ operation: { op: "unretire", path: entry.path, atScope: entry.scope, version: entry.version, previous: entry.previous }, file: entry.path, address: artifactAddress(kinds, entry.path), given: null }));
+      return (await applyOperations(seen, checked)).artifacts;
+    });
+  });
+}
+
+/**
+ * The requirement files, ADRs, and plan slice.md files that every seen scope holds, with the project-relative paths their Markdown links name, for the uses of an artifact:
+ * [{ path, scope, kind, links }], with kind requirements, adrs, or plans; a file Prism cannot read as text names nothing.
+ */
+export async function storeLinkingArtifacts(projectRoot: string) {
+  return refusing(async () => {
+    await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    const found = [];
+    for (const entry of await holdings(seen, "", null)) {
+      if (!["requirements", "adrs", "plans"].includes(entry.kind) || (entry.kind === "plans" && path.posix.basename(entry.path) !== "slice.md")) continue;
+      const held = await readStored(entry.target, null, null, CONTENT_MAX).catch(() => null);
+      const text = held?.bytes ? artifactText(held.bytes) : null;
+      if (text === null) continue;
+      found.push({ path: entry.path, scope: entry.scope, kind: entry.kind, links: (linkedPaths(text, entry.path) ?? []) as string[] });
+    }
+    return found;
   });
 }
 

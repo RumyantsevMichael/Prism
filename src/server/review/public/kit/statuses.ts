@@ -22,6 +22,7 @@ export const STATUSES: Readonly<Record<string, any>> = Object.freeze({
   "in-progress": ["active", "In progress"],
   shipped: ["done", "Shipped"],
   superseded: ["retired", "Superseded"],
+  killed: ["retired", "Killed"],
   merged: ["retired", "Merged"],
   // Slices.
   "not-started": ["idle", "Not started"],
@@ -39,6 +40,7 @@ export const STATUSES: Readonly<Record<string, any>> = Object.freeze({
   rejected: ["problem", "Rejected"],
   deprecated: ["retired", "Deprecated"],
   withdrawn: ["retired", "Withdrawn"],
+  declined: ["retired", "Declined"],
   // Review findings and reviewers.
   open: ["idle", "Open"],
   reopened: ["problem", "Reopened"],
