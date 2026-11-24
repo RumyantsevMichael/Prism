@@ -28,8 +28,8 @@ import { documentDigests, entryShippedDecision, hasOpenWork, openWork, openWorkM
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
 export const DISPLAY_BANDS = Object.freeze([...BANDS, "Shipped"]);
-/** The states an initiative derives: envisioned, planned, and in progress from its records and coordination state, emerging where get_roadmap reads an envisioned entry's work item as emerging, and shipped and superseded from a recorded decision. */
-export const ROADMAP_STATES = Object.freeze(["emerging", "envisioned", "planned", "in-progress", "shipped", "superseded"]);
+/** The states an initiative derives: envisioned, planned, and in progress from its records and coordination state, shipped and superseded from a recorded decision. */
+export const ROADMAP_STATES = Object.freeze(["envisioned", "planned", "in-progress", "shipped", "superseded"]);
 const RECORD_MAX_BYTES = 1024 * 1024;
 const HISTORY_LIMIT = 500;
 
