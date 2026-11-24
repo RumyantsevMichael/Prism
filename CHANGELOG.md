@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.33.0](https://github.com/RumyantsevMichael/Prism/compare/v0.32.0...v0.33.0) (2026-11-24)
+
+
+### Added
+
+* **gates:** answer gates after their session has gone ([#437](https://github.com/RumyantsevMichael/Prism/issues/437)) ([4f63499](https://github.com/RumyantsevMichael/Prism/commit/4f6349903db8a49e2989cca97ac04c48d8f5bc2b))
+* **review:** lay out gate cards around what happened and their documents ([#455](https://github.com/RumyantsevMichael/Prism/issues/455)) ([efcf740](https://github.com/RumyantsevMichael/Prism/commit/efcf7409f7bd9d4dad64875e44d354399a1d1003)), closes [#453](https://github.com/RumyantsevMichael/Prism/issues/453) [#454](https://github.com/RumyantsevMichael/Prism/issues/454)
+
+
+### Fixed
+
+* **gates:** hold a Codex deferred wait's gates until its Stop hook ([#441](https://github.com/RumyantsevMichael/Prism/issues/441)) ([b077e27](https://github.com/RumyantsevMichael/Prism/commit/b077e27f35b3daab8b8e6d397b08a3f01beb6d9a)), closes [#148](https://github.com/RumyantsevMichael/Prism/issues/148)
+* **launch:** judge a run's result as of the time it ended ([#442](https://github.com/RumyantsevMichael/Prism/issues/442)) ([b373c69](https://github.com/RumyantsevMichael/Prism/commit/b373c690f0d964e877b9ab435a892610c32846f3)), closes [#438](https://github.com/RumyantsevMichael/Prism/issues/438)
+* let the test's other machine rebase a push that a store sync beat ([#450](https://github.com/RumyantsevMichael/Prism/issues/450)) ([2a1d231](https://github.com/RumyantsevMichael/Prism/commit/2a1d2315c39a289aaeed3adb03610f6609fd5be0)), closes [#449](https://github.com/RumyantsevMichael/Prism/issues/449)
+* **review:** keep the Settings dialog one size across its sections ([#447](https://github.com/RumyantsevMichael/Prism/issues/447)) ([e494c1f](https://github.com/RumyantsevMichael/Prism/commit/e494c1f55ce4c2c9f5dcba9e14f758ccd96325d2)), closes [#446](https://github.com/RumyantsevMichael/Prism/issues/446)
+* **review:** notice store files rewritten by a rename at once on Linux ([#448](https://github.com/RumyantsevMichael/Prism/issues/448)) ([a8fe8f1](https://github.com/RumyantsevMichael/Prism/commit/a8fe8f1c0c0e029af6dfebf86e339c7e0bb1d58f)), closes [#443](https://github.com/RumyantsevMichael/Prism/issues/443)
+* **review:** show where a multi-line leftover starts on a run's page ([#440](https://github.com/RumyantsevMichael/Prism/issues/440)) ([df366b3](https://github.com/RumyantsevMichael/Prism/commit/df366b35cbc2c854d7deff218f481b0beb5a580b))
+* run format migrations on current Codex and say what breaks a file's format ([#445](https://github.com/RumyantsevMichael/Prism/issues/445)) ([7791786](https://github.com/RumyantsevMichael/Prism/commit/779178694f08a2ca74e3bf0eb995e21570549c10)), closes [#59](https://github.com/RumyantsevMichael/Prism/issues/59)
+* stop the unsent-notes sync tests' servers before removing their folder ([#452](https://github.com/RumyantsevMichael/Prism/issues/452)) ([4a73c12](https://github.com/RumyantsevMichael/Prism/commit/4a73c12733fde5cd6a6ac7109b5c49674e8b4d1b)), closes [#451](https://github.com/RumyantsevMichael/Prism/issues/451)
+
 ## [0.32.0](https://github.com/RumyantsevMichael/Prism/compare/v0.31.1...v0.32.0) (2026-11-23)
 
 
