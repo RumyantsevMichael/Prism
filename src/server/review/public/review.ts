@@ -1632,7 +1632,8 @@ function titleIndex() {
 }
 
 function describe(path: any) {
-  const record = (prismRecords.has(path) || path.startsWith(".prism/")) && recordKind(path);
+  // A store artifact is listed by its store:<location> ref, which the checkout's path maps to.
+  const record = (prismRecords.has(path) || prismRecords.has(localTab(path)) || path.startsWith(".prism/")) && recordKind(path);
   if (!record) return { label: fileName(path), kind: "File", owner: null, code: true };
   return { ...recordLabel(path, titleIndex()), code: false };
 }

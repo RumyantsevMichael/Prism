@@ -117,24 +117,44 @@ function kindChip(item: any) {
   return chip(`${look ? `<prism-icon name="${look.chip}" size="xs"></prism-icon> ` : ""}${escapeHtml(GATE_LABELS[item.kind] ?? item.kind)}`);
 }
 
+// Only a review question moves its slice to the next phase, so only its card names the phase gate and shows the lifecycle;
+// a decision or an action needed while a slice is in design is not a design gate.
+const PHASE_KINDS = new Set(["visual-review", "correctness"]);
+
+// The head holds what the question is and where it belongs: its kind, its time, the question, and the work it serves as links,
+// so the situation the agent wrote follows it at once; who asked opens the answer beside it.
 function gateHead(item: any, ctx: any, time: any) {
-  const phase = gatePhase(item);
+  const phase = PHASE_KINDS.has(item.kind) ? gatePhase(item) : null;
   const tag = phase !== null && phase < PHASES.length ? `<prism-phase variant="tag" phase="${PHASES[phase][0]}">${escapeHtml(PHASE_GATES[PHASES[phase][0]])}</prism-phase>` : "";
-  const where = location(item, ctx);
   return `<div class="gate-chips">${tag}${kindChip(item)}${when(time, "attention-time gate-time")}</div>
     <h3 class="gate-question">${escapeHtml(item.question)}</h3>
-    ${gateAsker(item)}
-    ${gateWithdraw(item)}
-    ${where ? `<p class="attention-where gate-where">${where}</p>` : ""}`;
+    ${item.kind === "approval" ? "" : gateWork(item, ctx)}`;
 }
 
-// The state of the session that asked, as the state chip names it and the tone it takes.
-const ASKER_STATES: Record<string, { label: string; tone: string }> = {
-  waiting: { label: "Waits for your answer", tone: "success" },
-  open: { label: "Open, not waiting", tone: "info" },
-  "not-running": { label: "Not running", tone: "neutral" },
-  unknown: { label: "Prism cannot tell", tone: "warning" }
+// The initiative and slice a question belongs to, as links that wrap, so a long title reads whole.
+function gateWork(item: any, ctx: any) {
+  if (!item.initiative) return "";
+  const parts = [artifactLink(`initiative:${item.initiative.id}`, ctx, item.initiative.title)];
+  if (item.slice) parts.push(artifactLink(`slice:${item.initiative.id}/${item.slice.slug}`, ctx, item.slice.title));
+  return `<p class="gate-work">${parts.join('<span class="crumb-separator" aria-hidden="true">›</span>')}</p>`;
+}
+
+// The state of the session that asked, as an icon beside its name: the icon's name is the state in words, and its tooltip says what the state means for the answer.
+const ASKER_STATES: Record<string, { label: string; icon: string; tone: string; tip: (asker: any) => string }> = {
+  waiting: { label: "Waits for your answer", icon: "check-circle", tone: "success", tip: () => "Waits for your answer. This session is waiting on this question and picks up your answer within a minute or so." },
+  open: { label: "Open, not waiting", icon: "info", tone: "info", tip: () => "Open, not waiting. This session is open but no longer waits on this question, so it reads your answer only with the next message it gets in its own conversation." },
+  "not-running": { label: "Not running", icon: "clock", tone: "neutral", tip: () => "Not running. The session that asked has stopped. It reads your answer the next time it runs, or you can continue the work from here once you have answered." },
+  unknown: {
+    label: "Prism can't see this session",
+    icon: "warning",
+    tone: "warning",
+    tip: (asker: any) => asker.known && asker.cloud
+      ? "Prism can't see this session. It runs in the cloud, so this computer can't tell whether it is still open or waiting. If it is waiting, it picks up your answer within a minute or so. If it was closed, it gets your answer the next time it runs, or when you send it any message in its own conversation. To be sure, open the session and say “go”."
+      : `Prism can't see this session. ${asker.reason ?? "This computer can't tell whether it is still open or waiting."} If it is waiting, it picks up your answer within a minute or so. If not, it gets your answer the next time it runs, or when you send it any message in its own conversation.`
+  }
 };
+
+const askerName = (asker: any) => asker.known ? `${asker.harness ?? "An unnamed harness"} on ${asker.machine ?? "an unnamed machine"}` : "An unknown session";
 
 // An unanswered question whose asker no wait holds and no open session can read can be withdrawn; the shared action renderer draws its
 // gate.withdraw listing into this place once the page is drawn, and the server's listing stays the backstop.
@@ -150,29 +170,39 @@ function wakeLine(wake: any) {
   return `<p class="gate-asker-note" data-wake="not-delivered"><prism-icon name="warning" size="xs" tone="danger"></prism-icon><span>${escapeHtml(`Wake not delivered: ${wake.reason ?? "Claude Code gave no reason."}`)}</span></p>`;
 }
 
-// Who asked the question, where, and whether that session waits, is open, is not running, or is in a state Prism cannot tell, with how to reach an open one.
+// Who asked the question, where, and whether that session waits, is open, is not running, or is in a state Prism cannot tell, with how to reach an open one,
+// at the top of the answer, since the asker is who receives it.
 function gateAsker(item: any) {
   const asker = item.asker;
   if (!asker) return "";
-  const who = asker.known
-    ? `Asked by ${asker.harness ?? "an unnamed harness"} on ${asker.machine ?? "an unnamed machine"} · ${asker.checkout ?? "an unnamed checkout"}${asker.cloud ? " · cloud session" : ""}`
-    : "Asked by an unknown session";
+  const where = asker.known ? `${asker.checkout ?? "an unnamed checkout"}${asker.cloud ? " · cloud session" : ""}` : "";
   const look = ASKER_STATES[asker.state] ?? ASKER_STATES.unknown;
-  const state = chip(escapeHtml(look.label), { tone: look.tone, tip: asker.reason ?? "" });
+  const state = `<prism-icon class="gate-asker-state" name="${look.icon}" tone="${look.tone}" size="sm" label="${escapeHtml(look.label)}" tip="${escapeHtml(look.tip(asker))}" tabindex="0"></prism-icon>`;
   const wake = asker.wake ? wakeLine(asker.wake) : "";
-  return `<div class="gate-asker"><p class="gate-asker-line"><span>${escapeHtml(who)}</span>${state}</p>${asker.reach ? `<p class="gate-asker-note">${escapeHtml(asker.reach)}</p>` : ""}${wake}</div>`;
+  return `<section class="gate-asker" aria-label="Asked by">
+    <p class="label-caps">Asked by</p>
+    <div class="gate-asker-line"><prism-avatar kind="agent" size="sm" name="${escapeHtml(askerName(asker))}"${asker.state === "waiting" ? " live" : ""}></prism-avatar><div class="gate-asker-text"><p class="gate-asker-who"><strong>${escapeHtml(askerName(asker))}</strong>${state}</p>${where ? `<p class="gate-asker-where">${escapeHtml(where)}</p>` : ""}</div></div>
+    ${asker.reach ? `<p class="gate-asker-note">${escapeHtml(asker.reach)}</p>` : ""}${wake}${gateHolder(item)}
+  </section>`;
 }
 
-// Whose work resumes once the gate is answered: the agent whose live claim holds the slice, for what, and how long the claim has left.
+// The agent whose live claim holds the slice, for what, and how long the claim has left; it is not always the session that asked, so it is named apart.
 function gateHolder(item: any) {
   const claim = liveHolder(item);
   if (!claim) return "";
   const left = timeLeft(claim.expiresAt).text ? `, ${liveTime(claim.expiresAt, { format: "left" })}` : "";
-  const holds = `It holds the slice for ${claim.activity === "design" ? "design" : "implementation"}${left}.`;
-  return `<p class="gate-holder"><prism-claim variant="avatar"${claimAttributes(claim)}></prism-claim><span><strong>${escapeHtml(claim.label)}</strong> is waiting on your answer. ${holds}</span></p>`;
+  return `<p class="gate-holder"><prism-claim variant="avatar"${claimAttributes(claim)}></prism-claim><span><strong>${escapeHtml(claim.label)}</strong> holds this slice for ${claim.activity === "design" ? "design" : "implementation"}${left}.</span></p>`;
+}
+
+// The asker beside Send, since the answer goes to the session that asked.
+function sendTo(item: any) {
+  const asker = item.asker;
+  if (!asker?.known) return "";
+  return `<prism-avatar class="gate-send-to" kind="agent" size="sm" name="${escapeHtml(askerName(asker))}" tip="${escapeHtml(`Your answer goes to ${askerName(asker)}`)}"${asker.state === "waiting" ? " live" : ""}></prism-avatar>`;
 }
 
 function gateSteps(item: any) {
+  if (!PHASE_KINDS.has(item.kind)) return "";
   const current = gatePhase(item);
   if (current === null) return "";
   return `<prism-stepper class="gate-steps" label="Where this slice is in the workflow">${PHASES.map(([phase, label], index) => `<prism-step phase="${phase}" state="${index < current ? "done" : index === current ? "current" : "upcoming"}">${label}</prism-step>`).join("")}</prism-stepper>`;
@@ -210,51 +240,70 @@ export function inspectLabel(artifact: any, ctx: any) {
   return { label: named.label === named.kind ? named.kind : `${named.label} · ${named.kind}` };
 }
 
-const INSPECT_ICONS: Record<string, any> = { design: "document", "change-map": "grid", "review-ledger": "flask", decision: "scale", requirements: "document" };
+const DOCUMENT_ICONS: Record<string, any> = { design: "document", "change-map": "grid", "review-ledger": "flask", decision: "scale", requirements: "document" };
+const DOCUMENT_ORDER: Record<string, number> = { design: 0, "change-map": 1, "review-ledger": 2, decision: 3, requirements: 4 };
+const SHOWN_DOCUMENTS = 5;
 
-// An inspect tile shows the record's name on one line and its kind and counts below; the separator stays in the text between them, so the tile reads as its whole label.
-function inspectTile(artifact: any, ctx: any) {
+// One attached file as a row: its title or file name as the link, its kind with the counts that matter below it, a warning badge for a missing file,
+// and a button that opens it in the side panel beside the question.
+function documentRow(artifact: any, ctx: any) {
   const { label, code } = inspectLabel(artifact, ctx);
-  const [name, ...rest] = code ? [label] : label.split(" · ");
-  const kind = code ? (artifact.available ? "Source · read-only" : "Not found") : rest.join(" · ");
-  const icon = code ? "code" : INSPECT_ICONS[artifact.record?.kind] ?? "file";
-  const text = `<prism-icon name="${artifact.available ? icon : "warning"}"></prism-icon><span class="inspect-text"><span class="inspect-name"${code ? " data-code-subject" : ""}>${escapeHtml(name)}</span>${!code && kind ? '<span class="inspect-separator"> · </span>' : ""}<span class="inspect-kind">${escapeHtml(code && artifact.available ? kind : !artifact.available && !code ? `${kind} · not found` : kind)}</span></span>`;
-  if (artifact.available && ctx.hasArtifact(artifact.path)) {
-    return `<li><a class="inspect-tile" href="./review?artifact=${encodeURIComponent(artifact.path)}" data-artifact="${escapeHtml(artifact.path)}">${text}</a></li>`;
+  const record = artifact.record ?? null;
+  const segments = String(artifact.path).split("/");
+  const folder = segments.slice(0, -1).join("/") || "repository root";
+  let name, description;
+  if (code) [name, description] = [segments.at(-1), `Source · ${folder}`];
+  else if (record?.kind === "design" && record.title) [name, description] = [record.title, label];
+  else {
+    const [first, ...rest] = label.split(" · ");
+    [name, description] = [first, rest.join(" · ")];
   }
-  return `<li><span class="inspect-tile${artifact.available ? "" : " is-missing"}">${text}</span></li>`;
+  const icon = !artifact.available ? "warning" : code ? "code" : DOCUMENT_ICONS[record?.kind] ?? "file";
+  const tone = !artifact.available ? "warning" : code ? "neutral" : "accent";
+  const subject = code ? " data-code-subject" : "";
+  const title = artifact.available && ctx.hasArtifact(artifact.path)
+    ? `<a class="title-link" href="./review?artifact=${encodeURIComponent(artifact.path)}" data-artifact="${escapeHtml(artifact.path)}"${subject}>${escapeHtml(name)}</a>`
+    : `<span${subject}>${escapeHtml(name)}</span>`;
+  const mark = !artifact.available
+    ? '<prism-badge slot="kind" variant="status" tone="warning">Not found</prism-badge>'
+    : "";
+  const open = artifact.available
+    ? `<prism-button slot="action" variant="ghost" shape="square" size="sm" icon="panel" label="${escapeHtml(`Open ${name} in the side panel`)}" tip="Open in side panel" data-side-artifact="${escapeHtml(artifact.path)}"></prism-button>`
+    : "";
+  return `<prism-row wrap reveal${mark ? " stack" : ""} icon="${icon}" tone="${tone}">${title}${description ? `<span slot="description">${escapeHtml(description)}</span>` : ""}${mark}${open}</prism-row>`;
 }
 
-function inspectList(item: any, ctx: any) {
-  if (!item.artifacts?.length) return "";
-  return `<div class="gate-block"><p class="label-caps">Inspect</p><ul class="inspect-tiles">${item.artifacts.map((artifact: any) => inspectTile(artifact, ctx)).join("")}</ul></div>`;
+// The files the question refers to, Prism's records first, then documents, then code, with the first few shown and the rest a click away.
+function documentsBlock(item: any, ctx: any) {
+  const artifacts = item.artifacts ?? [];
+  if (!artifacts.length) return "";
+  const rank = (artifact: any) => artifact.record?.kind in DOCUMENT_ORDER ? DOCUMENT_ORDER[artifact.record.kind] : inspectLabel(artifact, ctx).code ? 6 : 5;
+  const rows = artifacts.map((artifact: any, index: number) => ({ artifact, index })).sort((left: any, right: any) => rank(left.artifact) - rank(right.artifact) || left.index - right.index).map(({ artifact }: any) => documentRow(artifact, ctx));
+  const list = (part: string[], label: string) => `<div class="prism-rows gate-documents" role="list" aria-label="${label}">${part.join("")}</div>`;
+  const rest = rows.slice(SHOWN_DOCUMENTS);
+  const more = rest.length ? `<prism-disclosure class="gate-documents-more" summary="${escapeHtml(`${rest.length} more`)}">${list(rest, "More documents")}</prism-disclosure>` : "";
+  const gone = item.stale ? `<p class="notice">Every file this question refers to is gone, so it may no longer apply. The agent that asked it withdraws it when it does not.</p>` : "";
+  return `<div class="gate-block"><p class="label-caps">${escapeHtml(`Documents · ${artifacts.length}`)}</p>${list(rows.slice(0, SHOWN_DOCUMENTS), "Documents")}${more}${gone}</div>`;
 }
 
-// The figures the attached records give, as evidence for the answer: clauses, frozen tests, planned changes, and open findings.
-function evidence(item: any) {
-  const tiles = [];
-  const order: Record<string, any> = { design: 0, "change-map": 1, "review-ledger": 2 };
-  const records = [...(item.artifacts ?? [])].sort((left, right) => (order[left.record?.kind] ?? 3) - (order[right.record?.kind] ?? 3));
-  for (const artifact of records) {
-    const record = artifact.record;
-    if (!artifact.available || !record) continue;
-    if (record.kind === "design") {
-      tiles.push(stat(record.clauses === 1 ? "contract clause" : "contract clauses", String(record.clauses ?? 0), { attributes: ' layout="figure" icon="document"' }));
-      tiles.push(stat(record.frozenTests === 1 ? "frozen test, failing until built" : "frozen tests, failing until built", String(record.frozenTests ?? 0), { tone: record.frozenTests ? "success" : "", attributes: ' layout="figure" icon="lock"' }));
-    }
-    if (record.kind === "change-map") tiles.push(stat(record.plannedChanges === 1 ? "planned change" : "planned changes", String(record.plannedChanges ?? 0), { attributes: ' layout="figure" icon="grid"' }));
-    if (record.kind === "review-ledger") tiles.push(stat(record.openFindings === 1 ? "open finding" : "open findings", String(record.openFindings ?? 0), { tone: record.openFindings ? "warning" : "", attributes: ' layout="figure" icon="flask"' }));
-  }
-  return tiles.length ? `<div class="gate-evidence" role="list" aria-label="Evidence">${tiles.map((tile) => `<span role="listitem">${tile}</span>`).join("")}</div>` : "";
+// A document row's button opens its file in the side panel and keeps the question in view.
+function bindDocuments(container: any, ctx: any) {
+  container.addEventListener("click", (event: any) => {
+    const button = event.target.closest?.("[data-side-artifact]");
+    if (!button || !container.contains(button) || !ctx.sidePanel) return;
+    event.preventDefault();
+    void ctx.sidePanel.show(button.dataset.sideArtifact);
+  });
 }
 
 // An approval gate is the target approval:<id> of the review app's actions, every other gate the target gate:<initiative>/<id>.
 const answerTarget = (item: any) => item.kind === "approval" ? `approval:${item.id}` : `gate:${item.initiative.id}/${item.id}`;
 
 // The answer's place in the card: the shared action renderer draws the gate.answer listing of its target into it once the page is drawn.
+// The panel beside the question opens with who asked, then the answer, then Withdraw, which a question rarely needs.
 function answerSlot(item: any) {
   const owner = item.kind === "approval" ? " data-approval" : ` data-initiative="${escapeHtml(item.initiative.id)}"`;
-  return `<div class="gate-answer" data-gate="${escapeHtml(item.id)}"${owner} data-answer-target="${escapeHtml(answerTarget(item))}"><p class="muted action-loading">Loading…</p></div>`;
+  return `<div class="gate-answer">${gateAsker(item)}<div class="gate-answer-form" data-gate="${escapeHtml(item.id)}"${owner} data-answer-target="${escapeHtml(answerTarget(item))}"><p class="muted action-loading">Loading…</p></div>${gateWithdraw(item)}</div>`;
 }
 
 const ARCHIVE_SESSION = (launch: any) => `<prism-button variant="ghost" data-archive-session data-launch="${escapeHtml(launch.id)}" text="Archive session"></prism-button>`;
@@ -264,6 +313,7 @@ export function answerFormOptions(item: any) {
   return {
     heading: "Your answer",
     tone: (option: any) => option.value === "request-changes" ? "danger" : null,
+    leading: () => item.launch ? "" : sendTo(item),
     trailing: () => item.launch ? ARCHIVE_SESSION(item.launch) : "",
     wording: (_action: any, form: any) => {
       const words = answerState(item, { choice: form.input.choice ?? null, note: form.input.note ?? "" });
@@ -291,6 +341,16 @@ function servedWork(item: any, ctx: any) {
   return `<span class="approval-work">${parts.join('<span class="approval-work-separator" aria-hidden="true">›</span>')}</span>`;
 }
 
+// The file an approval applies to, as a row that names it by title and kind, links it, and shows its whole path, since the answer applies to exactly that file.
+function approvalDocument(item: any, ctx: any) {
+  const path = item.artifact.path;
+  const kind = item.artifact.kind === "adrs" ? "Decision" : "Requirements";
+  const name = item.artifact.title || path.split("/").pop();
+  const title = ctx.hasArtifact(path) ? `<a class="title-link" href="./review?artifact=${encodeURIComponent(path)}" data-artifact="${escapeHtml(path)}">${escapeHtml(name)}</a>` : `<span>${escapeHtml(name)}</span>`;
+  const open = `<prism-button slot="action" variant="ghost" shape="square" size="sm" icon="panel" label="${escapeHtml(`Open ${name} in the side panel`)}" tip="Open in side panel" data-side-artifact="${escapeHtml(path)}"></prism-button>`;
+  return `<div class="prism-rows gate-documents" role="list" aria-label="Document"><prism-row wrap reveal icon="${kind === "Decision" ? "scale" : "document"}" tone="accent">${title}<span slot="description">${kind} · <span data-code-subject>${escapeHtml(path)}</span></span>${open}</prism-row></div>`;
+}
+
 function approvalSubject(item: any, ctx: any) {
   const scope = item.artifact.scope?.label ?? "workspace";
   const status = (text: string, modifier: any) => `<span class="approval-status-value ${modifier}">${escapeHtml(text)}</span>`;
@@ -298,7 +358,7 @@ function approvalSubject(item: any, ctx: any) {
     ? `<span class="approval-status">${status(item.recorded, "is-recorded")}<span class="approval-status-arrow" aria-hidden="true">→</span><span class="sr-only">to</span>${status(item.status, "is-approved")}</span>`
     : `<span class="approval-status">${status(item.status, "is-approved")}</span>`;
   return `${keyValues([
-      ["File", `<code class="approval-path" data-code-subject>${escapeHtml(item.artifact.path)}</code>`],
+      ["Document", approvalDocument(item, ctx)],
       ["Scope", chip(escapeHtml(scope))],
       ["Asked for", servedWork(item, ctx)],
       ["Approving records", change]
@@ -321,8 +381,8 @@ export function gateDetail(item: any, ctx: any) {
     </header>
     <div class="gate-body">
       <div class="gate-main">
-        ${approvalSubject(item, ctx)}
         ${gateContext(item, ctx)}
+        ${approvalSubject(item, ctx)}
       </div>
       ${answerSlot(item)}
     </div>
@@ -331,18 +391,16 @@ export function gateDetail(item: any, ctx: any) {
   return `<article class="gate attention-item gate-${escapeHtml(item.kind)}" aria-label="${escapeHtml(GATE_LABELS[item.kind] ?? "Question")}">
     <header class="gate-head">
       ${gateHead(item, ctx, item.askedAt)}
-      ${gateHolder(item)}
       ${gateSteps(item)}
     </header>
     <div class="gate-body">
       <div class="gate-main">
         ${gateContext(item, ctx)}
         ${gateGuidance(item)}
-        ${evidence(item)}
-        ${inspectList(item, ctx)}
-        ${item.stale ? `<p class="notice">Every file this question refers to is gone, so it may no longer apply. The agent that asked it withdraws it when it does not.</p>` : ""}
+        ${documentsBlock(item, ctx)}
+        ${item.stale && !item.artifacts?.length ? `<p class="notice">Every file this question refers to is gone, so it may no longer apply. The agent that asked it withdraws it when it does not.</p>` : ""}
       </div>
-      ${item.unavailable ? unavailableAnswer(item) : answerSlot(item)}
+      ${item.unavailable ? `<div class="gate-answer">${gateAsker(item)}${unavailableAnswer(item)}</div>` : answerSlot(item)}
     </div>
   </article>`;
 }
@@ -470,7 +528,7 @@ function mountAnswers(container: any, ctx: any, gates: any) {
   const lists: any[] = [];
   if (!ctx.actionApi) return lists;
   const drafts = (ctx.state.answerDrafts ??= {});
-  for (const slot of container.querySelectorAll(".gate-answer[data-answer-target]")) {
+  for (const slot of container.querySelectorAll(".gate-answer-form[data-answer-target]")) {
     const item = gates.find((gate: any) => gate.id === slot.dataset.gate && answerTarget(gate) === slot.dataset.answerTarget);
     if (!item) continue;
     const target = slot.dataset.answerTarget;
@@ -1140,6 +1198,7 @@ export function render(container: any, entity: any, ctx: any) {
   }
   bindPermissions(container, ctx);
   bindArchiveSession(container, ctx);
+  bindDocuments(container, ctx);
   // A change applied while the page is open names its question from the questions the page shows.
   const questions = new Map([...gates, ...(data.shippedGates ?? []), ...answered, ...earlier].filter((item) => item.initiative?.id).map((item) => [`gate:${item.initiative.id}/${item.id}`, item.question]));
   followChanges(container, ctx, questions);

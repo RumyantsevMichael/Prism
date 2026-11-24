@@ -171,7 +171,7 @@ test("§18 Answer opens the waited question in Attention, and Open shows the fai
   await menu(page).getByRole("button", { name: "Answer", exact: true }).click();
   await settled(() => shownRef(page), "attention");
   await waitForView(page);
-  const form = page.locator(`.gate-answer[data-gate="${s.gate}"][data-initiative="${INITIATIVE}"]`);
+  const form = page.locator(`.gate-answer-form[data-gate="${s.gate}"][data-initiative="${INITIATIVE}"]`);
   await form.waitFor({ state: "visible" });
   assert.match(await visibleText(page.locator("#artifact")), /Which retention window\?/);
   assert.equal(await menu(page).count(), 0, "the menu closes");
