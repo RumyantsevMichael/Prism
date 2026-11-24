@@ -237,14 +237,9 @@ const actionListingReads = {
   })
 };
 
-// Counting them lists the checkout with Git four times, so the count is reused as the views are, and for at most CHECKOUT_ARTIFACTS_MS, since staging a file changes no file that a view reads.
-const CHECKOUT_ARTIFACTS_MS = 30000;
 async function checkoutArtifactsOf(projectRoot: string, store: any) {
   if (store.kind === "project" || store.unavailable) return {};
-  return rememberView(projectRoot, "checkout-artifacts", () => {
-    validUntil(Date.now() + CHECKOUT_ARTIFACTS_MS);
-    return artifactsInCheckout(projectRoot);
-  });
+  return artifactsInCheckout(projectRoot);
 }
 
 /** The source files the review shows, without a checkout file at an artifact path of a project with a store, which is never the artifact. */
