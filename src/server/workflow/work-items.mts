@@ -315,6 +315,16 @@ export function roundsAnswered(record: any) {
   return [...rounds].some((round) => questions.some((asked: any) => asked.round === round && asked.answer));
 }
 
+/** Whether a shaping record has an answered round: one whose questions are each answered or withdrawn, with at least one answered. */
+export function hasAnsweredRound(record: any) {
+  const questions = Array.isArray(record?.questions) ? record.questions : [];
+  const rounds = new Set(questions.map((asked: any) => asked.round));
+  return [...rounds].some((round) => {
+    const asked = questions.filter((candidate: any) => candidate.round === round);
+    return asked.every((candidate: any) => candidate.answer || candidate.withdrawn) && asked.some((candidate: any) => candidate.answer);
+  });
+}
+
 /**
  * Refuse with round_unanswered a change that adds requirement references to files that are not Approved to an item that is emerging before or after it,
  * while the item's shaping record has no answered round or has an open question, so no requirement is drafted for an item before the person answered a round.
@@ -460,6 +470,31 @@ export async function workItemStages(projectRoot: string, config: any, entries: 
     }
   }
   return stages;
+}
+
+/**
+ * The work items that cite a requirement file or ADR, in roadmap order, for the checks of an approval request: { id, title, stage, answered },
+ * with answered whether the item's shaping record has an answered round.
+ * A requirement file is cited by the entries whose requirement references name it, and an ADR by the items whose shaping records cite it.
+ */
+export async function citingItems(projectRoot: string, file: string, kind: "requirements" | "adrs") {
+  const roadmap = await readRoadmapRecord(projectRoot);
+  if (!roadmap.valid) return [];
+  const entries = roadmap.record?.initiatives ?? [];
+  const config = await readWorkflowConfig(projectRoot);
+  const context = citationContext(projectRoot, config, entries);
+  const records = await context.shapingRecords();
+  const found = [];
+  for (const entry of entries) {
+    const record = records.get(entry.id) ?? null;
+    const cites = kind === "requirements"
+      ? (entry.requirements ?? []).some((reference: string) => referenceFile(reference) === file)
+      : (record?.adrs ?? []).includes(file);
+    if (!cites) continue;
+    const stage = itemStage(entry, record, await citedArtifacts(context, entry, record));
+    found.push({ id: entry.id, title: entry.title, stage, answered: hasAnsweredRound(record) });
+  }
+  return found;
 }
 
 // Every comment that people left on an item's cited store artifacts after the record last changed, or every one before the record exists, oldest first.

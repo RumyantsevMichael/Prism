@@ -100,6 +100,11 @@ Any later change to the item's shaping withdraws an open readiness question and 
 Design does not start on an emerging item: creating its initiative, or claiming it for design, is refused with `item_emerging`, naming what is missing.
 A design that links a Draft ADR is refused with `adr_draft` until design decides that ADR by choosing one of its options.
 
+When an agent asks you to approve a requirement file or ADR, the question in Attention names each work item that cites the file, or says that no work item cites it.
+An agent cannot ask you to approve a requirement file that an emerging item cites until you have answered a question round about that item: the request is refused with `shaping_unasked`, naming the item.
+A requirement whose statement holds a code span or a file path may describe how the system is built rather than what you observe, so Prism warns about it when the file is written, edited, checked, or sent for approval, and the approval question names each such section, such as §1.
+A warning refuses nothing, and the file still conforms to its format.
+
 ## Share records between machines
 
 1. Create an empty repository for the store on your Git host, for example `you/prism-store`, and give everyone who works on the project push access to it.

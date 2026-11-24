@@ -240,6 +240,42 @@ export function requirementsIn(value: any) {
   return found.filter((sentence) => /\bshall\b/i.test(sentence.text));
 }
 
+// A code span, and the forms of a file path: a word that begins with /, ./, ../, or ~/, holds a \ between two characters, holds two / between non-empty parts, or holds one / and ends in an extension.
+const CODE_SPAN = /`[^`]+`/;
+const WORD_EDGES = /^[("'‘“[{<]+|[.,;:!?)"'’”\]}>]+$/g;
+function isFilePath(word: string) {
+  if (word.includes("://")) return false;
+  if (/^(\/|\.\/|\.\.\/|~\/)/.test(word) && word.length > 1) return true;
+  if (/[^\\]\\[^\\]/.test(word)) return true;
+  if (/[^/]\/[^/]+\/[^/]/.test(word)) return true;
+  return (word.match(/\//g) ?? []).length === 1 && /[^/]\/[^/]/.test(word) && /\.[A-Za-z0-9]{1,10}$/.test(word);
+}
+
+/** Whether a requirement statement describes implementation: it holds a code span or a word that is a file path, its surrounding punctuation aside. */
+export function describesImplementation(statement: string) {
+  if (CODE_SPAN.test(statement)) return true;
+  return statement.replace(/`[^`]*`/g, " ").split(/\s+/).map((word) => word.replace(WORD_EDGES, "")).some((word) => word !== "" && isFilePath(word));
+}
+
+/**
+ * The requirements.implementation-text warnings of a requirement file: { rule, section, line, text, message } for each numbered section whose Requirement: statement holds a code span or a file path.
+ * A warning refuses nothing and is no format finding; it tells the person that the statement may describe implementation rather than observable behavior.
+ */
+export function implementationText(input: any) {
+  const { text } = decode("requirements", input);
+  if (typeof text !== "string") return [];
+  const warnings: any[] = [];
+  for (const section of markdownSections(linesOf(text)).sections) {
+    const match = /^(\d+)\.\s+\S/.exec(section.title);
+    if (!match) continue;
+    const field: any = (section.body as any[]).find((item: any) => !item.fenced && /^Requirement:/.test(item.value));
+    const statement = field ? /^Requirement:\s*(.*?)\s*$/.exec(field.value)![1] : "";
+    if (!field || !statement || !describesImplementation(statement)) continue;
+    warnings.push({ rule: "requirements.implementation-text", section: Number(match[1]), line: field.line, text: statement, message: `Section ${match[1]}'s requirement holds a code span or a file path, so it may describe implementation rather than the behavior a person observes; state what the system does, and leave how to the design.` });
+  }
+  return warnings;
+}
+
 function inspectRequirementSection(section: any, number: any, findings: any, unknowns: any, oneShall: any) {
   const type = "requirements";
   const labels = [...REQUIREMENT_FIELDS, "Supersedes"];
