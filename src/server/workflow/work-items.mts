@@ -7,7 +7,7 @@ import { normalizeRequirementReference } from "./initiative.mjs";
 import { canonicalJson, mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { listWorkItemRecords, readRecord, readStoreFileBytes, STORE_FILE_BOUNDS, withRecordLock, writeRecord } from "./record-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { readRoadmapRecord, updateRoadmap } from "./roadmap.mjs";
+import { readRoadmapRecord, RoadmapError, updateRoadmap } from "./roadmap.mjs";
 import { storeArtifactComments, storeArtifactCopy, storeArtifactStatuses } from "./store-artifacts.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
@@ -393,7 +393,7 @@ export async function getWorkItem(input: any) {
 }
 
 /**
- * Apply revision-checked operations to an item's shaping record, all or none: the record is written only when it changes, with changedAt the time of the update,
+ * Apply revision-checked operations to an item's shaping record, all or none: the record is written only when its own fields change, with changedAt the time of the update,
  * and requirement references that cite and uncite name land on the item's roadmap entry through update_roadmap.
  */
 export async function updateWorkItem(input: any) {
@@ -408,31 +408,47 @@ export async function updateWorkItem(input: any) {
     if (current.revision !== input.expectedRevision) {
       throw fail("revision_conflict", revisionMismatch("shaping record", input.expectedRevision, current.revision), { currentRevision: current.revision });
     }
-    const { roadmap, entries, entry } = await roadmapEntry(input.projectRoot, named.id);
-    if (entry.decision) throw fail("item_closed", `${entry.id} has a ${entry.decision.kind} decision, so its work item is closed and nothing changed.`, { item: entry.id, decision: entry.decision.kind });
-    const at = new Date().toISOString();
-    const held = [...(entry.requirements ?? [])];
-    const applied = applyOperations(config, current.record, held, input.operations, at);
-    const requirementsChanged = canonicalJson(applied.requirements) !== canonicalJson(held);
-    const recordChanged = canonicalJson({ ...applied.record, changedAt: null }) !== canonicalJson({ ...(current.record ?? emptyShapingRecord()), changedAt: null });
-    let { revision, record } = current;
-    if (requirementsChanged || recordChanged) {
-      // The roadmap is written first, so a refused citation, such as of a requirement file that breaks its format, leaves the shaping record as it was.
-      if (requirementsChanged) {
-        await updateRoadmap({ projectRoot: input.projectRoot, expectedRevision: roadmap.revision, actor: input.actor ?? "agent", operations: [{ op: "update_initiative", id: entry.id, requirements: applied.requirements }] });
+    // An update_roadmap that lands between this read of the roadmap and its write applies the operations again to the entry it left,
+    // because the revision a caller holds is the shaping record's, which no roadmap write changes.
+    for (let attempt = 1; ; attempt++) {
+      const { roadmap, entries, entry } = await roadmapEntry(input.projectRoot, named.id);
+      if (entry.decision) throw fail("item_closed", `${entry.id} has a ${entry.decision.kind} decision, so its work item is closed and nothing changed.`, { item: entry.id, decision: entry.decision.kind });
+      const at = new Date().toISOString();
+      const held = [...(entry.requirements ?? [])];
+      const applied = applyOperations(config, current.record, held, input.operations, at);
+      const requirementsChanged = canonicalJson(applied.requirements) !== canonicalJson(held);
+      // Requirement references live on the roadmap entry, so a change to them alone neither creates nor rewrites the shaping record.
+      const recordChanged = canonicalJson({ ...applied.record, changedAt: null }) !== canonicalJson({ ...(current.record ?? emptyShapingRecord()), changedAt: null });
+      let { revision, record } = current;
+      let contents = null;
+      if (recordChanged) {
+        record = { ...applied.record, changedAt: at };
+        contents = serialize(record);
+        if (Buffer.byteLength(contents) > RECORD_MAX_BYTES) throw fail("artifact_too_large", `The shaping record of ${entry.id} would exceed its bound, so nothing changed.`, { item: entry.id });
       }
-      record = { ...applied.record, changedAt: at };
-      const contents = serialize(record);
-      if (Buffer.byteLength(contents) > RECORD_MAX_BYTES) throw fail("artifact_too_large", `The shaping record of ${entry.id} would exceed its bound, so nothing changed.`, { item: entry.id });
-      await writeRecord(input.projectRoot, { kind: "work-item", initiative: entry.id }, contents);
-      revision = revisionOf(Buffer.from(contents, "utf8"));
+      // The roadmap is written after every check of the record and before the record, so a refused citation, such as of a requirement file that breaks its format, leaves the shaping record as it was.
+      if (requirementsChanged) {
+        try {
+          await updateRoadmap({ projectRoot: input.projectRoot, expectedRevision: roadmap.revision, actor: input.actor ?? "agent", operations: [{ op: "update_initiative", id: entry.id, requirements: applied.requirements }] });
+        } catch (error) {
+          if (!(error instanceof RoadmapError && error.code === "revision_conflict")) throw error;
+          if (attempt < ROADMAP_ATTEMPTS) continue;
+          throw fail("revision_conflict", `The roadmap changed during each of ${ROADMAP_ATTEMPTS} attempts to write ${entry.id}'s requirement references, so nothing changed; retry at the shaping record's current revision.`, { currentRevision: current.revision });
+        }
+      }
+      if (contents !== null) {
+        await writeRecord(input.projectRoot, { kind: "work-item", initiative: entry.id }, contents);
+        revision = revisionOf(Buffer.from(contents, "utf8"));
+      }
+      const updatedEntry = { ...entry, requirements: applied.requirements };
+      const context = citationContext(input.projectRoot, config, entries.map((candidate: any) => candidate.id === entry.id ? updatedEntry : candidate));
+      const { stage, unmet } = await describeItem(context, updatedEntry, record);
+      return { item: entry.id, revision, previousRevision: current.revision, record, stage, unmet, openedGates: [] };
     }
-    const updatedEntry = { ...entry, requirements: applied.requirements };
-    const context = citationContext(input.projectRoot, config, entries.map((candidate: any) => candidate.id === entry.id ? updatedEntry : candidate));
-    const { stage, unmet } = await describeItem(context, updatedEntry, record);
-    return { item: entry.id, revision, previousRevision: current.revision, record, stage, unmet, openedGates: [] };
   }, fail);
 }
+
+const ROADMAP_ATTEMPTS = 5;
 
 export const WORK_ITEM_TOOLS = [
   {
