@@ -3605,8 +3605,9 @@ prism-row[wrap] .prism-row-title > a {
   white-space: nowrap;
 }
 
-/* A wrapping row shows its title and its detail in full. */
-prism-row[wrap] .prism-row-title {
+/* A wrapping row shows its title, its description, and its detail in full. */
+prism-row[wrap] .prism-row-title,
+prism-row[wrap] .prism-row-description {
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -3640,6 +3641,26 @@ prism-row[wrap] .prism-row-title {
 .prism-row-action > * {
   min-width: 0;
   max-width: 100%;
+}
+
+/* A revealing row shows its action while the pointer is over the row or focus is inside it, and a screen without hover always shows it.
+   The action keeps its room while hidden, so the row's columns never move. */
+@media (hover: hover) {
+  prism-row[reveal] > .prism-row-action {
+    opacity: 0;
+    transition: opacity var(--prism-duration-fast) ease-out;
+  }
+
+  prism-row[reveal]:hover > .prism-row-action,
+  prism-row[reveal]:focus-within > .prism-row-action {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  prism-row[reveal] > .prism-row-action {
+    transition: none;
+  }
 }
 
 /* A stacked row's several marks and actions wrap within their column, a gap apart. */

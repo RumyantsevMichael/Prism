@@ -1774,7 +1774,7 @@ async function statusHoldings(seen: any) {
 }
 
 /**
- * Every pending approval gate of the requirements and ADRs that the checkout sees, as { id, status, version, question, context, askedAt, artifact: { path, scope }, recorded, current, changed },
+ * Every pending approval gate of the requirements and ADRs that the checkout sees, as { id, status, version, question, context, askedAt, artifact: { path, scope, kind, title }, recorded, current, changed },
  * where recorded is the artifact's recorded status, current the version of its bytes now, and changed whether they changed since the gate was asked, so that an answer is refused with artifact_changed.
  */
 export async function pendingApprovalGates(projectRoot: string) {
@@ -1804,10 +1804,17 @@ export async function answeredApprovalGates(projectRoot: string, now = Date.now(
       const current = record.closed.filter((gate: any) => gate.answer && asked(gate) === latest && now - (Date.parse(gate.answer.answeredAt ?? "") || 0) <= ANSWERED_APPROVAL_KEPT_MS);
       if (!current.length) continue;
       const stored = await readStored(entry.target).catch(() => null);
-      for (const gate of current) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope }, recorded: record.status, current: stored?.version ?? null, changed: stored?.version !== gate.version });
+      for (const gate of current) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope, kind: entry.kind, title: documentTitle(stored) }, recorded: record.status, current: stored?.version ?? null, changed: stored?.version !== gate.version });
     }
     return gates.sort((left: any, right: any) => (Date.parse(right.answer.answeredAt) || 0) - (Date.parse(left.answer.answeredAt) || 0));
   });
+}
+
+// A requirement's or ADR's title, its first level-one heading, so an approval card names the file by what it is about; null without one.
+function documentTitle(record: any) {
+  if (!record?.bytes) return null;
+  const match = /^# +(.+?)\s*$/m.exec(record.bytes.subarray(0, 8192).toString("utf8"));
+  return match ? match[1].slice(0, 300) : null;
 }
 
 async function seenPendingGates(seen: any) {
@@ -1817,7 +1824,7 @@ async function seenPendingGates(seen: any) {
     const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path), resolve);
     if (!record.pending.length) continue;
     const current = await readStored(entry.target).catch(() => null);
-    for (const gate of record.pending) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope }, recorded: record.status, current: current?.version ?? null, changed: current?.version !== gate.version });
+    for (const gate of record.pending) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope, kind: entry.kind, title: documentTitle(current) }, recorded: record.status, current: current?.version ?? null, changed: current?.version !== gate.version });
   }
   return gates;
 }

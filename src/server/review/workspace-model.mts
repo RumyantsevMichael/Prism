@@ -18,7 +18,7 @@ import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
 import { declaredView, governingContract, readViews, VIEW_KINDS } from "../workflow/view-declarations.mjs";
-import { answeredApprovalGates, appliedArtifactActions, pendingApprovalGates, readStoreArtifactAt, storeArtifactStatuses, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
+import { answeredApprovalGates, appliedArtifactActions, pendingApprovalGates, readStoreArtifactAt, storeArtifactLocation, storeArtifactStatuses, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
 import { servedWorkItem } from "../workflow/artifact-status.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
@@ -1309,7 +1309,7 @@ async function approvalGates(projectRoot: string) {
   const workItem = servedWorkItems(projectRoot);
   return Promise.all(gates.map(async (gate: any) => ({
     type: "gate", id: gate.id, kind: "approval", status: gate.status, recorded: gate.recorded, question: gate.question, context: gate.context ?? null, options: null, recommended: null,
-    askedAt: gate.askedAt, answer: null, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope }, changed: gate.changed,
+    askedAt: gate.askedAt, answer: null, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope, kind: gate.artifact.kind ?? null, title: gate.artifact.title ?? null }, changed: gate.changed,
     workItem: await workItem(servedWorkItem(gate)),
     ...(holders.get(gate.id) > 1 ? { ambiguous: true } : {})
   })));
@@ -1330,7 +1330,7 @@ async function answeredApprovals(projectRoot: string) {
     if (!(await readGateAsker(projectRoot, { gate: gate.id })).known) return null;
     return {
       type: "gate", id: gate.id, kind: "approval", status: gate.status, recorded: gate.recorded, question: gate.question, context: gate.context ?? null, options: null, recommended: null,
-      askedAt: gate.askedAt, answer: { choice: gate.answer.choice, note: gate.answer.note ?? null, answeredAt: gate.answer.answeredAt }, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope },
+      askedAt: gate.askedAt, answer: { choice: gate.answer.choice, note: gate.answer.note ?? null, answeredAt: gate.answer.answeredAt }, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope, kind: gate.artifact.kind ?? null, title: gate.artifact.title ?? null },
       workItem: await workItem(servedWorkItem(gate))
     };
   }));
@@ -1460,7 +1460,10 @@ async function describeRecord(projectRoot: string, config: any, artifactPath: st
   }
   for (const [kind, directory] of [["decision", config.paths.adrs], ["requirements", config.paths.requirements]]) {
     if (!directory || !artifactPath.startsWith(`${directory}/`)) continue;
-    const entry = (await loadLibrary(projectRoot, kind === "decision" ? "decisions" : "requirements")).entries.find((item: any) => item.path === artifactPath);
+    // In a workspace with a record store the library names a stored file by its store:<location> ref, not by the path the gate names it by.
+    const stored = await storeArtifactLocation(projectRoot, artifactPath).catch(() => null);
+    const ref = stored ? `store:${stored.location}` : null;
+    const entry = (await loadLibrary(projectRoot, kind === "decision" ? "decisions" : "requirements")).entries.find((item: any) => item.path === artifactPath || (ref !== null && item.path === ref));
     if (entry) return { kind, title: entry.title, status: entry.status ?? null };
   }
   return null;
