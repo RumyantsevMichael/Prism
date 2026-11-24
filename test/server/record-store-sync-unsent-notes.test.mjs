@@ -7,6 +7,7 @@ import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { defer } from "./fixtures/teardown.mjs";
 import { pause } from "./fixtures/wait.mjs";
 import { notes, prismServer, repository } from "./fixtures/repository-checkouts.mjs";
 
@@ -49,7 +50,7 @@ function waitingServer(context, root, app) {
     await exited;
     clearTimeout(timer);
   };
-  context.after(close);
+  defer(context, close);
   let next = 1;
   const send = (message) => child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
   const request = (method, params) => { const id = next++; send({ id, method, params }); return id; };
@@ -61,7 +62,9 @@ function waitingServer(context, root, app) {
 // A checkout whose synced store a waiting server uses, a gate to wait on, and a record version that a sync of a stopped server saved, still pending, once the store is in use.
 async function savedDuringWait(context) {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-unsent-notes-")));
-  context.after(() => rm(parent, { recursive: true, force: true }));
+  // The folder is removed after every server started in it has stopped, since Windows refuses to remove a folder that a running process works in,
+  // and the removal retries a file that Windows still holds for a moment after the server and its Git processes ended.
+  defer(context, () => rm(parent, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
   git(parent, "init", "-q", "--bare", "-b", "main", "remote.git");
   git(parent, "clone", "-q", "remote.git", "store");
   const store = path.join(parent, "store");
