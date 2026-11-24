@@ -118,7 +118,7 @@ function kindChip(item: any) {
 }
 
 // Only a review question moves its slice to the next phase, so only its card names the phase gate and shows the lifecycle;
-// a decision or an action needed while a slice is in design is not a design gate.
+// a decision or an action needed while a slice is in design is not a design gate. The tag alone says it; the slice's page shows the whole lifecycle.
 const PHASE_KINDS = new Set(["visual-review", "correctness"]);
 
 // The head holds what the question is and where it belongs: its kind, its time, the question, and the work it serves as links,
@@ -126,17 +126,26 @@ const PHASE_KINDS = new Set(["visual-review", "correctness"]);
 function gateHead(item: any, ctx: any, time: any) {
   const phase = PHASE_KINDS.has(item.kind) ? gatePhase(item) : null;
   const tag = phase !== null && phase < PHASES.length ? `<prism-phase variant="tag" phase="${PHASES[phase][0]}">${escapeHtml(PHASE_GATES[PHASES[phase][0]])}</prism-phase>` : "";
-  return `<div class="gate-chips">${tag}${kindChip(item)}${when(time, "attention-time gate-time")}</div>
+  return `<div class="gate-chips">${kindChip(item)}${tag}${when(time, "attention-time gate-time")}</div>
     <h3 class="gate-question">${escapeHtml(item.question)}</h3>
-    ${item.kind === "approval" ? "" : gateWork(item, ctx)}`;
+    ${item.kind === "approval" ? servedWork(item, ctx) : gateWork(item, ctx)}`;
 }
 
-// The initiative and slice a question belongs to, as links that wrap, so a long title reads whole.
+// The work a question belongs to, as a row under the question: the slice with its initiative below it, or the initiative alone.
+// Outside a review gate, whose tag already names the phase, the row shows the slice's phase, kept on a phone by stacking it under the text.
+function workRow(initiative: string, slice: string | null, phase: number | null, extra = "") {
+  const tag = phase !== null && phase < PHASES.length ? `<prism-phase slot="kind" phase="${PHASES[phase][0]}">${escapeHtml(PHASES[phase][1])}</prism-phase>` : "";
+  const row = slice
+    ? `<prism-row wrap${tag ? " stack" : ""} icon="layers" tone="accent">${slice}<span slot="description">Slice of ${initiative}</span>${tag}</prism-row>`
+    : `<prism-row wrap icon="roadmap" tone="neutral">${initiative}<span slot="description">Initiative</span></prism-row>`;
+  return `<div class="prism-rows gate-work${extra}" role="list" aria-label="Work">${row}</div>`;
+}
+
 function gateWork(item: any, ctx: any) {
   if (!item.initiative) return "";
-  const parts = [artifactLink(`initiative:${item.initiative.id}`, ctx, item.initiative.title)];
-  if (item.slice) parts.push(artifactLink(`slice:${item.initiative.id}/${item.slice.slug}`, ctx, item.slice.title));
-  return `<p class="gate-work">${parts.join('<span class="crumb-separator" aria-hidden="true">›</span>')}</p>`;
+  const initiative = artifactLink(`initiative:${item.initiative.id}`, ctx, item.initiative.title);
+  const slice = item.slice ? artifactLink(`slice:${item.initiative.id}/${item.slice.slug}`, ctx, item.slice.title) : null;
+  return workRow(initiative, slice, item.slice && !PHASE_KINDS.has(item.kind) ? gatePhase(item) : null);
 }
 
 // The state of the session that asked, as an icon beside its name: the icon's name is the state in words, and its tooltip says what the state means for the answer.
@@ -199,13 +208,6 @@ function sendTo(item: any) {
   const asker = item.asker;
   if (!asker?.known) return "";
   return `<prism-avatar class="gate-send-to" kind="agent" size="sm" name="${escapeHtml(askerName(asker))}" tip="${escapeHtml(`Your answer goes to ${askerName(asker)}`)}"${asker.state === "waiting" ? " live" : ""}></prism-avatar>`;
-}
-
-function gateSteps(item: any) {
-  if (!PHASE_KINDS.has(item.kind)) return "";
-  const current = gatePhase(item);
-  if (current === null) return "";
-  return `<prism-stepper class="gate-steps" label="Where this slice is in the workflow">${PHASES.map(([phase, label], index) => `<prism-step phase="${phase}" state="${index < current ? "done" : index === current ? "current" : "upcoming"}">${label}</prism-step>`).join("")}</prism-stepper>`;
 }
 
 // The situation the agent wrote for a person who has not followed the run, rendered as Markdown where the page can.
@@ -335,10 +337,10 @@ function servedWork(item: any, ctx: any) {
   const work = item.workItem;
   if (!work?.initiative) return "";
   const { initiative, slice } = work;
-  const unknown = (id: string, why: string) => `<span class="approval-work-part"><code class="approval-path" data-code-subject>${escapeHtml(id)}</code> <span class="muted">${why}</span></span>`;
-  const parts = [initiative.known ? `<span class="approval-work-part">${artifactLink(`initiative:${initiative.id}`, ctx, initiative.title)}</span>` : unknown(initiative.id, "not on the roadmap yet")];
-  if (slice) parts.push(initiative.known && slice.known ? `<span class="approval-work-part">${artifactLink(`slice:${initiative.id}/${slice.slug}`, ctx, slice.title)}</span>` : unknown(slice.slug, "no slice yet"));
-  return `<span class="approval-work">${parts.join('<span class="approval-work-separator" aria-hidden="true">›</span>')}</span>`;
+  const unknown = (id: string, why: string) => `<span class="approval-work-part"><span data-code-subject>${escapeHtml(id)}</span> <span class="muted">${why}</span></span>`;
+  const named = initiative.known ? artifactLink(`initiative:${initiative.id}`, ctx, initiative.title) : unknown(initiative.id, "not on the roadmap yet");
+  const part = slice ? (initiative.known && slice.known ? artifactLink(`slice:${initiative.id}/${slice.slug}`, ctx, slice.title) : unknown(slice.slug, "no slice yet")) : null;
+  return workRow(named, part, null, " approval-work");
 }
 
 // The file an approval applies to, as a row that names it by title and kind, links it, and shows its whole path, since the answer applies to exactly that file.
@@ -360,7 +362,6 @@ function approvalSubject(item: any, ctx: any) {
   return `${keyValues([
       ["Document", approvalDocument(item, ctx)],
       ["Scope", chip(escapeHtml(scope))],
-      ["Asked for", servedWork(item, ctx)],
       ["Approving records", change]
     ])}
     ${item.ambiguous ? `<p class="notice">Another pending approval holds this question's id, so an answer cannot tell which file it approves and is refused. The agent asks again for the file it means.</p>` : ""}
@@ -391,7 +392,6 @@ export function gateDetail(item: any, ctx: any) {
   return `<article class="gate attention-item gate-${escapeHtml(item.kind)}" aria-label="${escapeHtml(GATE_LABELS[item.kind] ?? "Question")}">
     <header class="gate-head">
       ${gateHead(item, ctx, item.askedAt)}
-      ${gateSteps(item)}
     </header>
     <div class="gate-body">
       <div class="gate-main">

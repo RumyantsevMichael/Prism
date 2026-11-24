@@ -634,18 +634,6 @@
   font-weight: var(--prism-font-weight-semibold);
 }
 
-/* The work a question belongs to, under the question, as links that wrap. */
-.gate-work {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--prism-space-1) var(--prism-space-2);
-  min-width: 0;
-  margin: 0;
-  font-size: var(--prism-font-size-sm);
-  overflow-wrap: anywhere;
-}
-
 /* Who asked the question and the state of that session, at the top of the answer, apart from the answer by a line. */
 .gate-asker {
   display: grid;
@@ -732,17 +720,6 @@
 
 .gate-withdraw .action-submit.is-form > :last-child {
   flex: none;
-}
-
-/* The lifecycle keeps its six steps on one row, and takes two rows of three in a narrow sheet. */
-.gate-steps {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-}
-
-@container gate (max-width: 520px) {
-  .gate-steps {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
 }
 
 .gate-body {
@@ -938,25 +915,10 @@
   overflow-wrap: anywhere;
 }
 
-/* The initiative and slice an approval serves wrap as text, so a long title or an unbroken id reads whole at every width. */
-.approval-work {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--prism-space-1) var(--prism-space-2);
-  min-width: 0;
-  max-width: 100%;
-  padding-block: var(--prism-space-1);
-  line-height: var(--prism-line-height);
-}
-
+/* An approval names the work it serves under its question as other gates do; an unbroken id that is not on the roadmap yet wraps whole. */
 .approval-work-part {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.approval-work-separator {
-  color: var(--prism-color-ink-muted);
 }
 
 /* The status that approving writes holds up to 200 characters, so it is wrapping text, never a one-line label that cuts it off. */
