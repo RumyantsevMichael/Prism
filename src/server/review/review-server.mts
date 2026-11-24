@@ -23,6 +23,7 @@ import { readIndexingStatus } from "../repository-intelligence/index-status.mjs"
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, viewWatching, loadAttention, loadClaims, loadDeclaredView, loadFormatMark, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
+import { branchOwners, ownerKey } from "./code-owners.mjs";
 import { frozenTestFile, verificationLog } from "./verification-view.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
@@ -39,6 +40,9 @@ import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
 import { createCachedValue } from "./cached-value.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
+// A line of work is quiet after this many days without a commit, unless a Code request names another threshold.
+const QUIET_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const PUBLIC_DIR = path.join(SERVER_DIR, "public");
 const VENDOR_DIR = path.join(PLUGIN_ROOT, "vendor", "plantuml");
@@ -1222,6 +1226,16 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // A code file that a clone holds but does not show answers 404 with why, so the page says the file is not shown rather than gone.
+  // The quiet threshold and whether quiet branches show, as a Code request names them: { quietDays, showQuiet }, 30 days and hidden by default, or null for a value outside them.
+  function codeShowing(url: any) {
+    const days = url.searchParams.get("quietDays");
+    const show = url.searchParams.get("showQuiet");
+    if (days !== null && !/^[1-9][0-9]{0,2}$/.test(days)) return null;
+    const quietDays = days === null ? QUIET_DAYS : Number(days);
+    if (quietDays > 365 || (show !== null && show !== "true" && show !== "false")) return null;
+    return { quietDays, showQuiet: show === "true" };
+  }
+
   function withheldAnswer(read: any) {
     const why = read.withheld === "binary" ? "it is a binary file" : "it is over 512 KiB";
     return { code: "file_not_shown", reason: read.withheld, message: `${read.path} is not available here because ${why}, which the review app does not show.` };
@@ -1230,12 +1244,34 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // The code routes of a workspace's page, which read the code clones Prism keeps and never answer a URL of a Git host.
   async function serveCode(response: any, route: string, url: any) {
     const repository = url.searchParams.get("repository");
+    const shown = codeShowing(url);
+    if (!shown) {
+      sendJson(response, 400, { code: "invalid_request", message: "quietDays must be a whole number of days from 1 to 365, and showQuiet must be true or false." });
+      return;
+    }
     if (!workspace?.code || !repository || !(await storeRepositories()).includes(repository)) {
       sendJson(response, 404, { code: "repository_unknown", message: "The workspace has no repository of that name." });
       return;
     }
     const off = () => sendJson(response, 404, { code: "code_off", message: `The code content of ${repository} is off or not fetched yet, so this machine keeps no clone of it.` });
-    if (route === "/api/code/tree") {
+    if (route === "/api/code/branches") {
+      const owners = await branchOwners(projectRoot);
+      const owned = (branch: string) => owners.get(ownerKey(repository, branch)) ?? [];
+      const prefix = ownerKey(repository, "");
+      const model = await workspace.code.branches(repository, [...owners.keys()].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length)));
+      if (model === null) off();
+      else if (model.state === "preparing") sendJson(response, 202, { state: "preparing" });
+      else {
+        const now = Date.now();
+        const branches = model.branches.map(({ commit, ...branch }: any) => ({
+          ...branch,
+          // Days count whole, so a commit made a day ago is within a threshold of one day.
+          quiet: !branch.default && Math.floor((now - Date.parse(branch.committedAt)) / DAY_MS) > shown.quietDays,
+          owners: branch.default ? [] : owned(branch.name).map(({ initiative, slice }) => ({ initiative, slice }))
+        }));
+        sendJson(response, 200, { repository, defaultBranch: model.defaultBranch, branches });
+      }
+    } else if (route === "/api/code/tree") {
       const folder = workspace.code.folder(url.searchParams.get("folder") ?? "");
       if (folder === null) {
         sendJson(response, 400, { code: "invalid_request", message: "The folder must be a path below the repository's root." });
@@ -1644,7 +1680,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null, repositories: await codeRepositories() } : { workspace: checkout };
       const scoped = storeIndex ? { artifactScopes: storeIndex.artifactScopes, scopes: storeIndex.scopes, ...(storeIndex.scopeFilter ? { scopeFilter: storeIndex.scopeFilter, unknownScopes: storeIndex.unknownScopes } : {}), notes: storeIndex.notes } : { artifactScopes: await listArtifactScopes(projectRoot) };
       send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store), watching: await viewWatching(projectRoot).catch(() => null) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, version: appVersion ?? pluginVersion(), ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
-    } else if (["/api/code/tree", "/api/code/compare", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
+    } else if (["/api/code/branches", "/api/code/tree", "/api/code/compare", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
       await serveCode(response, route, url);
     } else if (route === "/api/slice-files" && request.method === "GET") {
       const ref = `slice:${url.searchParams.get("initiative") ?? ""}/${url.searchParams.get("slice") ?? ""}`;

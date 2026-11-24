@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ComponentError, readComponents } from "../workflow/components.mjs";
+import { readBranchFacts, readBranches } from "./code-branches.mjs";
 import { runGit } from "../workflow/record-store-sync.mjs";
 import { storeIdentity } from "../workflow/remote-url.mjs";
 import { REPOSITORIES, portableRepositoryName } from "../workflow/repository-names.mjs";
@@ -155,6 +156,11 @@ export async function createCodeClones({ directory }: { directory: string }) {
   const folderOf = (entry: any) => path.join(codeDirectory, entry.clone);
   // Reads of the default branch's files, by clone folder and commit, so a link check lists a commit's tree once.
   const defaultFiles = new Map();
+  // The branch facts of each clone, by clone folder and branch tips, read in the background: { tips, facts } once read, { tips, reading } meanwhile.
+  const branchFacts = new Map();
+  // When each entry's latest fetch started, and the fetch that a Code request waits for because none started within the fetch interval, kept apart from the saved entries.
+  const attempts = new WeakMap<any, number>();
+  const demanded = new WeakMap<any, Promise<void>>();
 
   // Clone the remote into a temporary sibling that is renamed into place, so code/ never holds a partial clone, and a failed clone leaves no folder.
   async function cloneInto(entry: any) {
@@ -187,6 +193,7 @@ export async function createCodeClones({ directory }: { directory: string }) {
 
   // Bring one repository's clone up to date, cloning it when it is not there yet, and record whether its remote could be reached.
   function refresh(entry: any) {
+    attempts.set(entry, Date.now());
     return serial(entry.clone, async () => {
       const cloned = await exists(folderOf(entry));
       const outcome = cloned ? await fetchInto(entry) : await cloneInto(entry);
@@ -207,6 +214,7 @@ export async function createCodeClones({ directory }: { directory: string }) {
     await serial(entry.clone, () => rm(folderOf(entry), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
     for (const key of defaultFiles.keys()) if (key.startsWith(`${folderOf(entry)}\0`)) defaultFiles.delete(key);
     heldCommits.delete(folderOf(entry));
+    branchFacts.delete(folderOf(entry));
   }
 
   // A repository's code state: off, on with its branches, or unreachable with Git's reason and the branches of the clone it fetched last, none when it never cloned.
@@ -337,6 +345,32 @@ export async function createCodeClones({ directory }: { directory: string }) {
         compared.push({ branch: branch.name, changes });
       }
       return { base: from.name, branches: compared };
+    },
+
+    /**
+     * The branch model of the repository's clone, as readBranches answers it for the names of the branches that a slice owns: { defaultBranch, branches },
+     * { state: "preparing" } while Prism still reads the branches of the clone's current tips in the background, or null without a clone.
+     * When no fetch of the clone started within freshMs, as on a workspace that no page has open, it fetches first, so the answer reads the remote's current tips.
+     */
+    async branches(workspace: any, repository: string, owned: Iterable<string> = [], { freshMs = null }: { freshMs?: number | null } = {}) {
+      const entry = entryOf(workspace, repository);
+      if (entry && freshMs !== null && !demanded.has(entry) && Date.now() - (attempts.get(entry) ?? 0) > freshMs) {
+        demanded.set(entry, refresh(entry).catch(() => {}).finally(() => demanded.delete(entry)));
+      }
+      if (entry && demanded.has(entry)) await demanded.get(entry);
+      const folder = await cloneOf(workspace, repository);
+      if (!folder) return null;
+      const tips = (await branchesOf(folder)).map((branch) => `${branch.name}\0${branch.commit}`).join("\n");
+      let known = branchFacts.get(folder);
+      if (known?.tips !== tips) {
+        const read = { tips, facts: undefined as any, reading: null as any };
+        read.reading = readBranchFacts((args) => git(folder, args)).then((facts) => { read.facts = facts; }, () => { if (branchFacts.get(folder) === read) branchFacts.delete(folder); });
+        branchFacts.set(folder, read);
+        known = read;
+      }
+      if (known.facts === undefined) return { state: "preparing" };
+      if (known.facts === null) return { defaultBranch: null, branches: [] };
+      return readBranches((args) => git(folder, args), known.facts, new Set(owned));
     },
 
     /** Whether a branch of the repository's clone holds a commit: true or false, or null without a clone. */
