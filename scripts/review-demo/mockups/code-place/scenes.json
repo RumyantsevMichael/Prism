@@ -1,0 +1,11 @@
+{
+  "source": "The scenes of the Code place mockups approved on 23 November 2026, drawn by injecting content.mjs's markup into the demo app.",
+  "scenes": [
+    { "name": "all", "picture": "code-all-1440-light.png", "width": 1440, "height": 900, "theme": "light", "pick": "", "picked": false, "only": false },
+    { "name": "all", "picture": "code-all-1440-dark.png", "width": 1440, "height": 900, "theme": "dark", "pick": "", "picked": false, "only": false },
+    { "name": "work-picked", "picture": "code-work-picked-1440-light.png", "width": 1440, "height": 900, "theme": "light", "pick": "s:deadline", "picked": true, "only": true },
+    { "name": "tree", "picture": "code-tree-390-light.png", "width": 390, "height": 844, "theme": "light", "pick": "", "phone": true, "mode": "tree" },
+    { "name": "file", "picture": "code-file-390-light.png", "width": 390, "height": 844, "theme": "light", "pick": "", "phone": true, "mode": "file" },
+    { "name": "drawer", "picture": "code-drawer-390-light.png", "width": 390, "height": 844, "theme": "light", "pick": "", "phone": true, "drawer": true, "mode": "tree" }
+  ]
+}
