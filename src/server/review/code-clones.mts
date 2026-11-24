@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ComponentError, readComponents } from "../workflow/components.mjs";
-import { readBranchFacts, readBranches } from "./code-branches.mjs";
+import { createBranchReader, tipsKeyOf } from "./code-branches.mjs";
 import { runGit } from "../workflow/record-store-sync.mjs";
 import { storeIdentity } from "../workflow/remote-url.mjs";
 import { REPOSITORIES, portableRepositoryName } from "../workflow/repository-names.mjs";
@@ -156,9 +156,9 @@ export async function createCodeClones({ directory }: { directory: string }) {
   const folderOf = (entry: any) => path.join(codeDirectory, entry.clone);
   // Reads of the default branch's files, by clone folder and commit, so a link check lists a commit's tree once.
   const defaultFiles = new Map();
-  // The branch facts of each clone, by clone folder and branch tips, read in the background: { tips, facts } once read, { tips, reading } meanwhile.
-  const branchFacts = new Map();
-  // When each entry's latest fetch started, and the fetch that a Code request waits for because none started within the fetch interval, kept apart from the saved entries.
+  // The branch reader of each clone, by clone folder, which reads one set of tips at a time in the background and keeps its answer.
+  const branchReaders = new Map<string, ReturnType<typeof createBranchReader>>();
+  // When each entry's latest fetch started or ended, and the fetch that a Code request started because none ran within the fetch interval, kept apart from the saved entries.
   const attempts = new WeakMap<any, number>();
   const demanded = new WeakMap<any, Promise<void>>();
 
@@ -203,7 +203,7 @@ export async function createCodeClones({ directory }: { directory: string }) {
         ? `Prism could not fetch the code of ${entry.repository}, so it shows what it fetched last: ${outcome.message}`
         : `Prism could not clone the code of ${entry.repository} and tries again at the next fetch: ${outcome.message}` });
       await save();
-    });
+    }).finally(() => attempts.set(entry, Date.now()));
   }
 
   // Drop a repository's entry, and its clone once no other entry uses the same remote.
@@ -214,7 +214,7 @@ export async function createCodeClones({ directory }: { directory: string }) {
     await serial(entry.clone, () => rm(folderOf(entry), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
     for (const key of defaultFiles.keys()) if (key.startsWith(`${folderOf(entry)}\0`)) defaultFiles.delete(key);
     heldCommits.delete(folderOf(entry));
-    branchFacts.delete(folderOf(entry));
+    branchReaders.delete(folderOf(entry));
   }
 
   // A repository's code state: off, on with its branches, or unreachable with Git's reason and the branches of the clone it fetched last, none when it never cloned.
@@ -349,28 +349,25 @@ export async function createCodeClones({ directory }: { directory: string }) {
 
     /**
      * The branch model of the repository's clone, as readBranches answers it for the names of the branches that a slice owns: { defaultBranch, branches },
-     * { state: "preparing" } while Prism still reads the branches of the clone's current tips in the background, or null without a clone.
-     * When no fetch of the clone started within freshMs, as on a workspace that no page has open, it fetches first, so the answer reads the remote's current tips.
+     * { state: "preparing" } while Prism still fetches the clone or reads the branches of its current tips and default branch in the background, or null without a clone.
+     * When no fetch of the clone ran within freshMs, as on a workspace that no page has open, it starts one in the background and answers preparing until it ends,
+     * so the answer reads the remote's current tips and a slow remote never holds a request.
      */
     async branches(workspace: any, repository: string, owned: Iterable<string> = [], { freshMs = null }: { freshMs?: number | null } = {}) {
       const entry = entryOf(workspace, repository);
-      if (entry && freshMs !== null && !demanded.has(entry) && Date.now() - (attempts.get(entry) ?? 0) > freshMs) {
+      if (!entry) return null;
+      const folder = folderOf(entry);
+      const reader = branchReaders.get(folder);
+      // A fetch waits while a read runs, since new tips would supersede it, and freshness counts from the end of the latest fetch, so a slow fetch is not followed by another at once.
+      if (freshMs !== null && !demanded.has(entry) && !reader?.reading && Date.now() - (attempts.get(entry) ?? 0) > freshMs) {
         demanded.set(entry, refresh(entry).catch(() => {}).finally(() => demanded.delete(entry)));
       }
-      if (entry && demanded.has(entry)) await demanded.get(entry);
-      const folder = await cloneOf(workspace, repository);
-      if (!folder) return null;
-      const tips = (await branchesOf(folder)).map((branch) => `${branch.name}\0${branch.commit}`).join("\n");
-      let known = branchFacts.get(folder);
-      if (known?.tips !== tips) {
-        const read = { tips, facts: undefined as any, reading: null as any };
-        read.reading = readBranchFacts((args) => git(folder, args)).then((facts) => { read.facts = facts; }, () => { if (branchFacts.get(folder) === read) branchFacts.delete(folder); });
-        branchFacts.set(folder, read);
-        known = read;
-      }
-      if (known.facts === undefined) return { state: "preparing" };
-      if (known.facts === null) return { defaultBranch: null, branches: [] };
-      return readBranches((args) => git(folder, args), known.facts, new Set(owned));
+      if (!(await exists(folder))) return null;
+      if (demanded.has(entry)) return { state: "preparing" };
+      const head = await git(folder, ["symbolic-ref", "--quiet", "HEAD"]);
+      const tipsKey = tipsKeyOf(head.ok ? head.text.trim() : "", await branchesOf(folder));
+      if (!branchReaders.has(folder)) branchReaders.set(folder, createBranchReader((args) => git(folder, args)));
+      return branchReaders.get(folder)!.answer(tipsKey, owned) ?? { state: "preparing" };
     },
 
     /** Whether a branch of the repository's clone holds a commit: true or false, or null without a clone. */
