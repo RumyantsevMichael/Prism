@@ -41,6 +41,7 @@ import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs
 import { INITIATIVE_TOOLS, InitiativeError, claimedByUpdate, getInitiative, initiativeAcknowledgement, initiativeWork, readInitiative, requireClaimedWork, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, roadmapAcknowledgement, updateRoadmap } from "./workflow/roadmap.mjs";
 import { ARTIFACT_TOOLS, artifactAtLocation, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
+import { WORK_ITEM_TOOLS, WorkItemError, getWorkItem, updateWorkItem } from "./workflow/work-items.mjs";
 import { savedComment } from "./workflow/artifact-comments.mjs";
 import { keptExplanation, shownPath } from "./workflow/artifact-migration.mjs";
 import { ARTIFACT_MIGRATIONS, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX } from "./workflow/artifact-paths.mjs";
@@ -414,6 +415,10 @@ function stateErrorData(error: any) {
   if (error?.name === "ArtifactError") {
     return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "path", "location", "limit", "nameLimit", "component", "components", "proposed", "artifacts", "options", "findings"].filter(key => error[key] !== undefined).map(key => [key, error[key]])) };
   }
+  // A refused work item update names the item, the decision that closed it, or the current revision of its shaping record.
+  if (error instanceof WorkItemError) {
+    return { code: error.code, ...Object.fromEntries(["errors", "currentRevision", "item", "decision", "unmet"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? (error[key] as any[]).slice(0, 100) : error[key]])) };
+  }
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };
   }
@@ -536,6 +541,7 @@ const sessionInputSchema = { oneOf: [explicitSessionInputSchema, activeSessionIn
 
 const tools = [
   ...ROADMAP_TOOLS,
+  ...WORK_ITEM_TOOLS,
   ...INITIATIVE_TOOLS,
   ...ARTIFACT_TOOLS,
   GET_SKILL_TOOL,
@@ -1984,6 +1990,18 @@ async function callTool(name: string, argumentsValue: any = {}, metadata: any, r
       : name === "get_roadmap" ? await Promise.all((value.markedHistory ?? []).map(async (item: any) => ({ type: "text", text: await historyMarksText(projectRoot, item.initiative, item.marked) })))
       : [];
     return { content: [{ type: "text", text: JSON.stringify(value) }, ...marks], structuredContent: value };
+  }
+  if (name === "get_work_item" || name === "update_work_item") {
+    const input = { ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) };
+    let value;
+    try {
+      value = name === "get_work_item" ? await getWorkItem(input) : await updateWorkItem(input);
+    } catch (error) {
+      // A citation of a requirement file that breaks its format is refused as update_roadmap refuses it.
+      if (!(error instanceof ArtifactCitationError)) throw error;
+      return { content: [{ type: "text", text: error.message }], structuredContent: { code: error.code, message: error.message, artifacts: error.artifacts }, isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (name === "get_artifact" || name === "update_artifact") {
     const input = { ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) };

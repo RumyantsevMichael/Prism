@@ -28,8 +28,8 @@ import { documentDigests, entryShippedDecision, hasOpenWork, openWork, openWorkM
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
 export const DISPLAY_BANDS = Object.freeze([...BANDS, "Shipped"]);
-/** The states an initiative derives: envisioned, planned, and in progress from its records and coordination state, shipped and superseded from a recorded decision. */
-export const ROADMAP_STATES = Object.freeze(["envisioned", "planned", "in-progress", "shipped", "superseded"]);
+/** The states an initiative derives: envisioned, planned, and in progress from its records and coordination state, emerging where get_roadmap reads an envisioned entry's work item as emerging, and shipped and superseded from a recorded decision. */
+export const ROADMAP_STATES = Object.freeze(["emerging", "envisioned", "planned", "in-progress", "shipped", "superseded"]);
 const RECORD_MAX_BYTES = 1024 * 1024;
 const HISTORY_LIMIT = 500;
 
@@ -563,6 +563,12 @@ export function roadmapAcknowledgement(result: any, operations: any[]) {
   return { ...onlyInitiatives(result, ids), touched: ids };
 }
 
+/** The roadmap record as stored, without deriving any entry: { revision, exists, valid, errors, record }. */
+export async function readRoadmapRecord(projectRoot: string) {
+  const { revision, exists, valid, errors, record } = await loadRoadmap(await resolveRoadmap(projectRoot));
+  return { revision, exists, valid, errors, record };
+}
+
 export async function readRoadmap(projectRoot: string) {
   const resolved = await resolveRoadmap(projectRoot);
   const loaded = await loadRoadmap(resolved);
@@ -628,8 +634,22 @@ export async function getRoadmap(input: any) {
   const recorded = loaded.valid && loaded.record ? await recordEarlierShips(resolved.root, loaded.record.initiatives) : [];
   if (recorded.length) ({ resolved, loaded, derived } = await readRoadmap(input.projectRoot));
   const markedHistory = recorded.filter((item) => item.marked.length);
+  if (loaded.valid && loaded.record) derived = await withWorkItems(resolved.root, resolved.config, loaded.record.initiatives, derived);
   const result = { ...publicResult(resolved, loaded, derived), components: await roadmapComponents(resolved.root, resolved.config), ...(markedHistory.length ? { markedHistory } : {}) };
   return input.initiative === undefined ? result : onlyInitiatives(result, [input.initiative], true);
+}
+
+/**
+ * Each derived entry with workItem { stage, unmet }, its work item's stage and unmet readiness conditions, and an emerging entry that derives as envisioned, without an initiative record, as emerging.
+ * The work item module reads the roadmap, so it is imported when a read needs it.
+ */
+async function withWorkItems(root: string, config: any, entries: any[], derived: any[]) {
+  const { workItemStages } = await import("./work-items.mjs");
+  const stages = await workItemStages(root, config, entries);
+  return derived.map((item: any) => {
+    const workItem = stages.get(item.id) ?? { stage: null, unmet: [] };
+    return { ...item, ...(workItem.stage === "emerging" && item.state === "envisioned" ? { state: "emerging" } : {}), workItem };
+  });
 }
 
 /**

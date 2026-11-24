@@ -1,6 +1,6 @@
 # Share Prism state across worktrees and machines
 
-Prism keeps its machine records (roadmap, initiatives, slice state, reviews, change maps, design views, frozen tests, and runs) under each checkout's `.prism` folder by default.
+Prism keeps its machine records (roadmap, work items' shaping records, initiatives, slice state, reviews, change maps, design views, frozen tests, and runs) under each checkout's `.prism` folder by default.
 Each linked worktree and each clone then holds its own copy, so work started in one checkout is invisible to the others.
 A record store moves those records into one folder that every checkout shares, and store sync shares that folder between machines through Git.
 Name the store by its Git remote to share records between machines, or by a folder path to share them between checkouts on one machine.
@@ -75,6 +75,16 @@ Its result lists each moved file with its place in the store, each file that sta
 `.prism/workflow.md` is left out of that list, since its configured paths stay the files' addresses.
 Frozen tests of accepted designs stay in the checkout.
 [Sync status](#sync-status) says when a move happens and what an interrupted move leaves behind.
+
+## Work items and their shaping records
+
+Every roadmap entry is a work item, and an agent reads one with `get_work_item` and changes it with `update_work_item`, by its roadmap identifier.
+While an idea is shaped, its work item keeps a shaping record beside the entry: the inputs an agent was given, each a link with a one-line note, the findings it made, each with a link to its source, the research it could not do, and the ADRs the item cites.
+Prism keeps only the link of an input, never a copy of what it names.
+The requirement files an item cites stay on its roadmap entry, so the roadmap still names them, and one file or ADR can serve any number of items.
+A shaping record is a shared record like the roadmap, so every checkout of a store reads the same one, and each change is checked against the revision the agent last read, so a change someone made in the meantime refuses the whole update with `revision_conflict`.
+An entry stays emerging while it cites no Approved requirement file, or while it has a shaping record and is not marked ready, and `get_roadmap` shows such an entry without an initiative record as `emerging` rather than `envisioned`.
+You add to an item by commenting in the review browser on a requirement file or ADR it cites: the agent's next read of each item that cites the file returns the comments made since the item's record last changed.
 
 ## Share records between machines
 
@@ -410,6 +420,8 @@ An initiative's coordination state stays within 1 MiB.
 When a write or a merge would exceed that, the oldest history entries give way first and then the oldest closed gates, so your settings and open gates are always kept, and a write always keeps the history entry of the change it records.
 A history entry or closed gate that gave way on either machine stays gone after a merge, and an agent is never told about it later.
 A write is refused with `artifact_too_large` only when the state exceeds 1 MiB with all of its history and closed gates gone.
+A work item's shaping record merges too, so inputs, findings, research gaps, and cited ADRs that agents add to one item on two machines all survive, and the record keeps the later of the two change times.
+A shaping record collides when one entry changed differently on both machines, when its entries were reordered differently, or when another field, such as a ready mark, changed differently on both.
 Other records, such as slice claims, collide whenever Git cannot merge their lines.
 In a collision the first push wins.
 The machine whose push lost keeps the upstream version and saves its own version under `.prism-sync/conflicts/<time>/` in the store, so no bytes are lost.

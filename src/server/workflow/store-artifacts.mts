@@ -1913,6 +1913,29 @@ export async function storeArtifactStatuses(projectRoot: string, folder = "") {
 }
 
 /**
+ * Every comment that people left on the store artifact at a project-relative path in the seen scope with a label, oldest first, as get_artifact pages them,
+ * or [] when no seen scope has the label or the path names no artifact.
+ */
+export async function storeArtifactComments(projectRoot: string, file: string, label: string) {
+  return refusing(async () => {
+    const { kinds } = await configuration(projectRoot);
+    const normalized = normalizeArtifactPath(file);
+    const address = normalized ? artifactAddress(kinds, normalized) : null;
+    if (!address || address.rest === "") return [];
+    const seen = await seenScopes(projectRoot);
+    const scope = labeledScope(seen, label);
+    if (!scope) return [];
+    const comments = [];
+    for (let offset: number | null = 1; offset !== null;) {
+      const read: any = await listComments(seen, scope, address, offset);
+      comments.push(...read.comments);
+      offset = read.nextCommentOffset;
+    }
+    return comments;
+  });
+}
+
+/**
  * The approval gates of one requirement or ADR as a gate wait reads them: pending ones without an answer, answered ones with it, each with options and kind approval.
  * The artifact is found by its path, and by scope when two seen scopes hold it.
  * A wait that already read the gates passes since true: an artifact that is gone from the seen scopes then has no gates, so the wait ends as resolved,
