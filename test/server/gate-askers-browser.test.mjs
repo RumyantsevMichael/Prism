@@ -21,14 +21,17 @@ test("clause 9: the card names the asker, its state chip, and how to reach an op
   const page = await openPage(browser, reviewUrl(review.base, "attention"), { viewport: { width: 1440, height: 900 } });
   await waitForView(page);
   const text = await settled(() => page.locator(".attention-detail").innerText().catch(() => ""), (value) => value.includes("Asked by"));
-  assert.ok(text.includes(`Asked by Claude Code on ${MACHINE} · `), text);
-  assert.ok(text.includes("Open, not waiting"), "the state chip names the open session");
+  const asker = page.locator(".attention-detail .gate-asker");
+  assert.equal(await asker.locator(".gate-asker-who strong").innerText(), `Claude Code on ${MACHINE}`, text);
+  assert.equal(await asker.locator(".gate-asker-state").getAttribute("aria-label"), "Open, not waiting", "the state icon names the open session");
+  assert.match(await asker.locator(".gate-asker-state").getAttribute("tip"), /reads your answer only with the next message/, "the state's tooltip explains it");
   assert.ok(text.includes("Prism cannot reach this session, because no wait holds the question. Send any message in that Claude Code session, and it reads the answer."), "the card says how to reach it");
   await s.setAgentsOpen([]);
   await settled(async () => (await card(review, id))?.asker?.state, "not-running");
   await page.reload();
   await waitForView(page);
-  assert.ok((await settled(() => page.locator(".attention-detail").innerText().catch(() => ""), (value) => value.includes("Not running"))).includes("Not running"));
+  const state = () => page.locator(".attention-detail .gate-asker-state").getAttribute("aria-label").catch(() => "");
+  assert.equal(await settled(state, "Not running"), "Not running");
   assert.deepEqual(page.errors, []);
 });
 
@@ -41,6 +44,9 @@ test("clause 9: a gate without a recorded asker reads as asked by an unknown ses
   const page = await openPage(browser, reviewUrl(review.base, "attention"), { viewport: { width: 1440, height: 900 } });
   await waitForView(page);
   const text = await settled(() => page.locator(".attention-detail").innerText().catch(() => ""), (value) => value.includes("Asked by"));
-  assert.ok(text.includes("Asked by an unknown session"), text);
-  assert.ok(text.includes("Prism cannot tell"), "the state chip says Prism cannot tell");
+  const asker = page.locator(".attention-detail .gate-asker");
+  assert.equal(await asker.locator(".gate-asker-who strong").innerText(), "An unknown session", text);
+  const state = asker.locator(".gate-asker-state");
+  assert.equal(await state.getAttribute("aria-label"), "Prism can't see this session", "the warning icon says Prism can't see the session");
+  assert.match(await state.getAttribute("tip"), /If it is waiting, it picks up your answer/, "the tooltip says what happens to the answer");
 });

@@ -21,7 +21,7 @@ const pick = async (page, text) => {
 };
 
 const SHEET = ".attention-sheet:not([hidden])";
-const answerOf = (page) => page.locator(`${SHEET} .gate-answer`);
+const answerOf = (page) => page.locator(`${SHEET} .gate-answer-form`);
 const shownText = (locator) => locator.evaluate((element) => element.innerText.replace(/\s+/g, " ").trim());
 const submitOf = (answer) => answer.locator("prism-button[data-apply]");
 
@@ -145,8 +145,8 @@ test("an answer being written survives another answer of the same initiative: th
   const submit = answerOf(page).locator("prism-button[data-apply]");
   assert.deepEqual([await shownText(submit), await submit.getAttribute("variant")], ["Request changes", "danger"], "the picked answer is kept too");
   await submit.click();
-  await settled(() => page.locator(`.gate-answer[data-answer-target="${target}"]`).count(), 0);
-  assert.equal(await page.locator(`.gate-answer[data-answer-target="${target}"]`).count(), 0, "the answer was recorded although the revision changed after the card read it");
+  await settled(() => page.locator(`.gate-answer-form[data-answer-target="${target}"]`).count(), 0);
+  assert.equal(await page.locator(`.gate-answer-form[data-answer-target="${target}"]`).count(), 0, "the answer was recorded although the revision changed after the card read it");
   assert.equal(await page.locator(".attention-detail .action-error:not([hidden])").count(), 0);
   assert.deepEqual(page.errors, []);
 });

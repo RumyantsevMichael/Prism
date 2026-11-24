@@ -191,7 +191,7 @@ test("§26 §20 a tab that can only read says so, offers no stop, still opens th
   await row(page, `launch:${s.waiting}`).getByRole("button", { name: "Answer", exact: true }).click();
   await settled(() => shownRef(page), "attention");
   assert.equal(await shownRef(page), "attention");
-  await page.locator(`.gate-answer[data-gate="${s.gate}"][data-initiative="${INITIATIVE}"]`).waitFor({ state: "visible" });
+  await page.locator(`.gate-answer-form[data-gate="${s.gate}"][data-initiative="${INITIATIVE}"]`).waitFor({ state: "visible" });
   // The initiative page's launch state leads a tab that cannot make changes to the Agents page.
   const initiative = await s.open(`initiative:${INITIATIVE}`);
   const link = initiative.getByRole("link", { name: "Open in Agents", exact: true });

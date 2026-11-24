@@ -245,7 +245,7 @@ function formHtml(action: any, entry: any, state: any, { disabled, layout, rende
   const guidance = form.guidance ? `${contextHtml(action, renderMarkdown)}${guidanceHtml(action, null)}` : "";
   const heading = !fields.includes("action-cards") && form.heading ? `<p class="label-caps">${escapeHtml(form.heading)}</p>` : "";
   const ready = !disabled && state.ready;
-  return `${guidance}${heading}${fields ? `<div class="action-fields is-form">${fields}</div>` : ""}<div class="action-submit is-form">${formHintHtml(id, words)}<prism-button variant="${escapeHtml(words.submit.variant)}" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${ready ? "" : " disabled"}>${escapeHtml(words.submit.label)}</prism-button>${form.trailing?.(action) ?? ""}</div>`;
+  return `${guidance}${heading}${fields ? `<div class="action-fields is-form">${fields}</div>` : ""}<div class="action-submit is-form">${formHintHtml(id, words)}${form.leading?.(action) ?? ""}<prism-button variant="${escapeHtml(words.submit.variant)}" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${ready ? "" : " disabled"}>${escapeHtml(words.submit.label)}</prism-button>${form.trailing?.(action) ?? ""}</div>`;
 }
 
 function actionHtml(action: any, entry: any, { writable, renderMarkdown, heading, submitLabel, batch, unavailableButtons, layoutOf, form = null, named = false }: { writable: any; renderMarkdown: any; heading: any; submitLabel: any; batch: any; unavailableButtons: any; layoutOf: any; form?: any; named?: boolean }) {
@@ -328,7 +328,7 @@ const lastListings = new WeakMap();
  * sections, [{ heading, actions }], heads the rows of the action ids each lists with its heading, in the list's order.
  * unavailableButtons keeps the button of an unavailable action without fields, disabled, beside the reason it is unavailable.
  * actions, when given, keeps only the listed actions of those ids, such as one question's answer apart from its other actions.
- * form draws each action as a form, such as a question's answer: { heading, tone(option), wording(action, state), trailing(action), unavailable(action), guidance }, where wording gives
+ * form draws each action as a form, such as a question's answer: { heading, tone(option), wording(action, state), leading(action), trailing(action), unavailable(action), guidance }, where wording gives
  * { field: { <name>: { label, placeholder } }, submit: { label, variant }, hint, ready } for the form's state. A form keeps the person's input when the record changed
  * under it, and sends once more against the current revision when the action is still available, since its input does not depend on the record's other values.
  * onApplied(action, input, result) replaces the toast of an applied change, and onRefused(action, result) may return the words to show for a refusal.
