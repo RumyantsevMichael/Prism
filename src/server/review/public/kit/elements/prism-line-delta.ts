@@ -13,7 +13,7 @@ export class PrismLineDelta extends Base {
   static tag = "prism-line-delta";
   static observedAttributes = ["added", "removed"];
   static catalog = {
-    purpose: "The added and removed line counts of a version, such as +3 −2, in the added-line and removed-line colors; it stays on one line beside a long text, and assistive technology reads it as 3 lines added, 2 lines removed.",
+    purpose: "The added and removed line counts of a version, such as +3 −2, in the added-line and removed-line colors; it stays on one line beside a long text, and assistive technology reads it as 3 lines added, 2 lines removed, or 1 line added for a count of 1.",
     options: [
       { name: "added", values: ["whole number"], default: "", description: "The number of added lines, shown as +<added>; without it the added part is left out." },
       { name: "removed", values: ["whole number"], default: "", description: "The number of removed lines, shown as −<removed>; without it the removed part is left out." }
@@ -46,7 +46,8 @@ export class PrismLineDelta extends Base {
     this.removedPart.textContent = removed === null ? "" : `−${removed}`;
     this.removedPart.hidden = removed === null;
     this.gap.textContent = added !== null && removed !== null ? " " : "";
-    const words = [added === null ? "" : `${added} lines added`, removed === null ? "" : `${removed} lines removed`].filter(Boolean).join(", ");
+    const noun = (n: number) => (n === 1 ? "line" : "lines");
+    const words = [added === null ? "" : `${added} ${noun(added)} added`, removed === null ? "" : `${removed} ${noun(removed)} removed`].filter(Boolean).join(", ");
     setAttribute(this, "role", words ? "img" : null);
     setAttribute(this, "aria-label", words || null);
   }
