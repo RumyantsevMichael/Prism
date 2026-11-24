@@ -10,7 +10,7 @@ import { applySteps, codeWorkspace } from "./fixtures/code-place.mjs";
 // with memory and per-request work that stay bounded as the remote's branch count grows.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
-const { createBranchReader, readBranchFacts, tipsKeyOf } = await import("../../dist/server/review/code-branches.mjs");
+const { createBranchReader, rankBranches, readBranchFacts, tipsKeyOf } = await import("../../dist/server/review/code-branches.mjs");
 
 const WEB = {
   name: "web",
@@ -111,14 +111,13 @@ const keyOf = (folder) => {
   return tipsKeyOf(head, branches);
 };
 
-test("the pair counts of the branch facts take 4 bytes for each pair of tips, held as numbers by tip position", async () => {
+test("the branch facts hold a bounded number of counts for each tip, as numbers by tip position", async () => {
   const folder = manyBranches(environment, 300);
   const facts = await readBranchFacts(countingGit(folder).run);
   assert.equal(facts.tips.length, 301);
-  assert.ok(facts.own instanceof Uint32Array, "the pair counts are one typed array");
-  assert.equal(facts.own.byteLength, 301 * 301 * 4, "so 2000 distinct tips take 16 MB");
-  assert.ok(facts.firstParentTips.every((tips) => tips instanceof Int32Array && tips.length <= 1), "each branch keeps only the tips in its first-parent history");
-  assert.equal(Object.values(facts).filter((value) => value instanceof Map).length, 0, "no map keyed by commit holds a count for each pair");
+  const arrays = Object.values(facts).filter((value) => ArrayBuffer.isView(value));
+  assert.ok(arrays.every((array) => array.length === 301), "each count is held once for each tip, never for each pair of tips");
+  assert.deepEqual([facts.columns.size, facts.pairs.size], [0, 0], "no count against another branch is read before a base choice asks for it");
 });
 
 test("a reader answers preparing at once, runs one read at a time, and answers a ready model with no Git command", async () => {
@@ -137,7 +136,7 @@ test("a reader answers preparing at once, runs one read at a time, and answers a
   // A change of owners reorders the base choice from the kept facts and reuses each branch's fork, files, and people.
   assert.equal(reader.answer(key, ["b0001"]), undefined);
   await reader.idle();
-  assert.equal(counts.started, started, "a change of owners alone runs no Git command here, where no base changes");
+  assert.ok(counts.started - started <= 1, `a change of owners alone reads only the one column of counts that the new ranking adds, where no base changes, not ${counts.started - started} commands`);
   assert.equal(reader.answer(key, ["b0001"]).branches.length, 121);
 });
 
@@ -157,4 +156,77 @@ test("a read that newer tips supersede stops, and the newest tips are read once"
   await reader.idle();
   assert.equal(reader.answer(second, []).branches.length, 202, "the newest tips are answered");
   assert.ok(counts.started < baseline.counts.started * 1.5, `the superseded read stopped early: ${counts.started} commands against ${baseline.counts.started} for one read`);
+});
+
+test("a request that arrives in any step after a read's loop ends starts the read of its key", async () => {
+  const folder = manyBranches(environment, 1);
+  const key = keyOf(folder);
+  const raw = countingGit(folder).run;
+  for (let steps = 0; steps < 15; steps += 1) {
+    let reader = null;
+    let asked = false;
+    // After each Git command answers, a request with other owners waits for the first ready answer and arrives `steps` microtasks after it.
+    const run = async (args) => {
+      const answered = await raw(args);
+      (async () => {
+        for (let wait = 0; wait < 60 && !asked; wait += 1) {
+          await Promise.resolve();
+          if (!asked && reader.answer(key, []) !== undefined) {
+            asked = true;
+            for (let step = 0; step < steps; step += 1) await Promise.resolve();
+            reader.answer(key, ["b0000"]);
+          }
+        }
+      })();
+      return answered;
+    };
+    reader = createBranchReader(run);
+    reader.answer(key, []);
+    await waitFor(async () => asked, 20000, "the first ready answer");
+    await reader.idle();
+    assert.notEqual(reader.answer(key, ["b0000"]), undefined, `a request ${steps} microtasks after the read ended was read`);
+  }
+});
+
+test("a read that fails after its facts were read keeps them, so the next request does not read them again", async () => {
+  const folder = manyBranches(environment, 3);
+  const key = keyOf(folder);
+  const { run: raw } = countingGit(folder);
+  let failing = true;
+  let listings = 0;
+  const run = async (args) => {
+    if (args[0] === "for-each-ref" && args.some((arg) => arg.includes("committerdate"))) listings += 1;
+    if (failing && args[0] === "merge-base") throw new Error("merge-base failed");
+    return raw(args);
+  };
+  const reader = createBranchReader(run);
+  assert.equal(reader.answer(key, []), undefined);
+  await reader.idle();
+  assert.equal(reader.answer(key, []), undefined, "the failed read answers nothing yet and is tried again");
+  await reader.idle();
+  failing = false;
+  assert.equal(reader.answer(key, []), undefined);
+  await reader.idle();
+  assert.equal(reader.answer(key, []).branches.length, 4);
+  assert.equal(listings, 1, "the branch facts were read once for the unchanged tips");
+});
+
+test("the ranking of a chain of 8000 branches runs without exhausting the call stack and gives way to other work", async () => {
+  const count = 8000;
+  const branches = [];
+  const tips = [];
+  for (let index = 0; index <= count; index += 1) {
+    tips.push(String(index).padStart(40, "0"));
+    branches.push({ name: index === 0 ? "main" : `c${String(index).padStart(5, "0")}`, commit: tips[index], committedAt: new Date(0).toISOString(), tip: index });
+  }
+  const size = tips.length;
+  const nearest = Int32Array.from({ length: size }, (_, index) => (index > 1 ? index - 1 : -1));
+  const ownOfMain = Uint32Array.from({ length: size }, (_, index) => index);
+  const facts = { key: "k", defaultBranch: "main", branches, tips, mainTip: 0, totals: Uint32Array.from({ length: size }, (_, index) => index + 1), ownOfMain, merges: new Uint32Array(size), nearest, ownOfNearest: Uint32Array.from({ length: size }, (_, index) => (index > 1 ? 1 : 0)), columns: new Map(), pairs: new Map() };
+  let turns = 0;
+  const ticking = setInterval(() => { turns += 1; }, 0);
+  const order = await rankBranches(facts, new Set());
+  clearInterval(ticking);
+  assert.deepEqual(order.map((branch) => branch.tip), Array.from({ length: count }, (_, index) => index + 1), "each link ranks after the link it was built on");
+  assert.ok(turns > 0, "the ranking gave way to a timer");
 });
