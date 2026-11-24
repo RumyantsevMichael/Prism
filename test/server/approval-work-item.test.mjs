@@ -39,14 +39,15 @@ test("an approval names the initiative and slice it serves, and Attention links 
   // Requirements that start an initiative are approved before its roadmap entry exists, so the id it will take shows unlinked.
   assert.deepEqual(await shownWorkItem(review, await ask(prism, { initiative: "reports" })), { initiative: { id: "reports", title: "reports", known: false }, slice: null });
 
+  assert.deepEqual((await shownWorkItem(review, await ask(prism, { initiative: "reports", slice: "reports" }))).slice, { slug: "reports", title: "reports", known: false }, "a slice the record does not hold yet shows unlinked");
+  // Design starts only on a ready work item, and an initiative without a roadmap entry is none, so its record comes before the entry, which cites the file still waiting for approval.
+  ok(await createInitiative(prism, "reports", { claim: false }));
+  await eventually(async () => (await pendingApprovals(review))[0]?.workItem?.slice?.known === true, 30000, "the card links the slice the record now holds");
+
   await shapedEntry(prism, review, { id: "reports", title: "Monthly reports", intent: "Reports ship.", band: "Now", requirements: ["billing.md§1"] });
   // The waiting card links once the roadmap lists the initiative, without a new ask.
   await eventually(async () => (await pendingApprovals(review))[0]?.workItem?.initiative?.known === true, 30000, "the card links the initiative the roadmap now lists");
   assert.deepEqual(await shownWorkItem(review, await ask(prism, { initiative: "reports" })), { initiative: { id: "reports", title: "Monthly reports", known: true }, slice: null }, "the roadmap entry gives the initiative its title");
-
-  assert.deepEqual((await shownWorkItem(review, await ask(prism, { initiative: "reports", slice: "reports" }))).slice, { slug: "reports", title: "reports", known: false }, "a slice the record does not hold yet shows unlinked");
-  ok(await createInitiative(prism, "reports", { claim: false }));
-  await eventually(async () => (await pendingApprovals(review))[0]?.workItem?.slice?.known === true, 30000, "the card links the slice the record now holds");
   assert.deepEqual(await shownWorkItem(review, await ask(prism, { initiative: "reports", slice: "reports" })), { initiative: { id: "reports", title: "Monthly reports", known: true }, slice: { slug: "reports", title: "Reports", known: true } });
 });
 

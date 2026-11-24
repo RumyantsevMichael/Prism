@@ -32,6 +32,7 @@ const fail = (code: string, message: string, details?: Record<string, unknown>) 
 
 const RECORD_MAX_BYTES = STORE_FILE_BOUNDS["work-item"];
 const MERGES_KEPT = 1000;
+const PROPOSALS_KEPT = 1000;
 /** The lists of a shaping record whose entries carry an identifier that Prism assigns, with the prefix of that identifier. */
 const ENTRY_LISTS = Object.freeze([["inputs", "input"], ["questions", "question"], ["findings", "finding"], ["gaps", "gap"]]);
 const ENTRY_ID = /^(input|question|finding|gap)-[0-9a-f]{8}$/;
@@ -64,7 +65,8 @@ export const UPDATE_WORK_ITEM_SCHEMA = object({
       settles: { type: "string", minLength: 1, maxLength: 1000 },
       blocking: { type: "boolean" }
     }) } }),
-    object({ op: { const: "withdraw_question" }, question: { type: "string", minLength: 1, maxLength: 40 } })
+    object({ op: { const: "withdraw_question" }, question: { type: "string", minLength: 1, maxLength: 40 } }),
+    object({ op: { const: "request_ready" } })
   ] } }
 }, ["projectRoot", "item", "expectedRevision", "operations"]);
 
@@ -103,6 +105,9 @@ export function shapingRecordErrors(raw: any) {
   if (!nullOr(raw.splitInto, (value) => Array.isArray(value) && value.every((part: any) => typeof part === "string"))) errors.push("splitInto must be null or an array of identifiers.");
   if (!nullOr(raw.mergedInto, (value) => typeof value === "string")) errors.push("mergedInto must be null or an identifier.");
   if (!nullOr(raw.changedAt, (value) => typeof value === "string")) errors.push("changedAt must be null or a time.");
+  // A pending proposal and the closed ones with their outcomes are written once the item has one.
+  if (raw.proposal !== undefined && !nullOr(raw.proposal, (value) => isRecord(value) && typeof value.kind === "string" && typeof value.gate === "string")) errors.push("proposal must be null or an object with a kind and a gate.");
+  if (raw.proposals !== undefined && (!Array.isArray(raw.proposals) || raw.proposals.some((value: any) => !isRecord(value)))) errors.push("proposals must be an array of objects.");
   return errors;
 }
 
@@ -153,6 +158,7 @@ export function mergeShapingRecord(versions: any) {
     const adrs = mergeKeyed("The cited ADR", ...[base, local, upstream].map((record: any) => Object.fromEntries(record.adrs.map((file: string) => [file, file]))) as [any, any, any]);
     lists.adrs = mergeOrder("The order of cited ADRs", base.adrs, local.adrs, upstream.adrs, new Set(Object.keys(adrs)));
     lists.merges = mergeHistory(base.merges, local.merges, upstream.merges, MERGES_KEPT);
+    if ([base, local, upstream].some((record: any) => record.proposals !== undefined)) lists.proposals = mergeHistory((base as any).proposals ?? [], (local as any).proposals ?? [], (upstream as any).proposals ?? [], PROPOSALS_KEPT);
     const later = [local.changedAt, upstream.changedAt].filter((value) => typeof value === "string").sort().at(-1) ?? null;
     const scalars = mergeScalars(base, local, upstream, [...Object.keys(lists), "changedAt"]);
     for (const key of new Set([...Object.keys(upstream), ...Object.keys(local), ...Object.keys(base)])) {
@@ -208,15 +214,18 @@ function newId(record: any, prefix: string) {
 
 /**
  * Apply operations to a copy of a shaping record and an entry's requirement references, refusing any that is invalid:
- * { record, requirements, added, asks, withdrawals }, where added holds each requirement reference a cite added that the entry did not hold at that point,
- * asks the questions whose gates the update opens, and withdrawals the gates of the questions it withdraws.
+ * { record, requirements, added, asks, withdrawals, readyRequested }, where added holds each requirement reference a cite added that the entry did not hold at that point,
+ * asks the questions whose gates the update opens, and withdrawals { id, reason } for each gate it closes as withdrawn.
+ * Any change clears the ready mark and withdraws a pending proposal, so a confirmation always covers the record as the person saw it.
  */
 function applyOperations(config: any, current: any, references: string[], operations: any[], at: string) {
   const record = structuredClone(current ?? emptyShapingRecord());
   let requirements = [...references];
   const added: string[] = [];
   const asks: any[] = [];
-  const withdrawals: string[] = [];
+  const withdrawals: { id: string; reason: string }[] = [];
+  const readyRequested = operations.some((operation) => operation.op === "request_ready");
+  if (readyRequested && operations.length > 1) throw fail("validation_failed", "request_ready stands alone in its update, so the confirmation covers the record as it is; nothing changed.");
   for (const operation of operations) {
     switch (operation.op) {
       case "add_input": {
@@ -268,14 +277,33 @@ function applyOperations(config: any, current: any, references: string[], operat
         asked.withdrawn = true;
         const opening = asks.indexOf(asked);
         if (opening !== -1) asks.splice(opening, 1);
-        else if (typeof asked.gate === "string") withdrawals.push(asked.gate);
+        else if (typeof asked.gate === "string") withdrawals.push({ id: asked.gate, reason: WITHDRAWN_QUESTION });
         break;
       }
+      case "request_ready":
+        break;
       default:
         throw fail("validation_failed", `Unsupported operation ${operation.op}.`);
     }
   }
-  return { record, requirements, added, asks, withdrawals };
+  const changed = readyRequested || canonicalJson(requirements) !== canonicalJson(references) || canonicalJson(record) !== canonicalJson(current ?? emptyShapingRecord());
+  if (changed && current) {
+    record.ready = null;
+    if (record.proposal) {
+      withdrawals.push(...proposalGates(record.proposal).map((id) => ({ id, reason: WITHDRAWN_PROPOSAL })));
+      closeProposal(record, { outcome: "withdrawn", at });
+    }
+  }
+  return { record, requirements, added, asks, withdrawals, readyRequested };
+}
+
+// The gates of a proposal: its own, and for a kill the gate of each artifact.
+const proposalGates = (proposal: any) => [proposal.gate, ...(Array.isArray(proposal.artifacts) ? proposal.artifacts.map((artifact: any) => artifact?.gate) : [])].filter((id) => typeof id === "string");
+
+// Close a record's pending proposal, keeping it among the closed ones with its outcome.
+function closeProposal(record: any, outcome: Record<string, unknown>) {
+  record.proposals = [...(record.proposals ?? []), { ...record.proposal, ...outcome }].slice(-PROPOSALS_KEPT);
+  record.proposal = null;
 }
 
 /** Whether a shaping record's rounds let its item cite a requirement file that is not Approved: some round is answered, and no question is open. */
@@ -383,8 +411,11 @@ export async function citedArtifacts(context: any, entry: any, record: any) {
   return cited;
 }
 
-/** The unmet readiness conditions of an open item's cited artifacts, in order: no Approved requirement file, each one that is not Approved, and each Draft ADR that breaks the ADR format. */
-export async function unmetConditions(context: any, cited: any[]) {
+/**
+ * The unmet readiness conditions of an open item, in order: no Approved requirement file, each one that is not Approved, each Draft ADR that breaks the ADR format,
+ * and each blocking question of its shaping record that is neither answered nor withdrawn.
+ */
+export async function unmetConditions(context: any, cited: any[], record: any) {
   const requirements = cited.filter((artifact) => artifact.kind === "requirements");
   const unmet: any[] = [];
   if (!requirements.some((artifact) => artifact.status === "Approved")) unmet.push({ code: "no_approved_requirement" });
@@ -395,6 +426,7 @@ export async function unmetConditions(context: any, cited: any[]) {
     const { findings } = await checkArtifactContent({ path: artifact.path, type: "adr", bytes, status: "Draft" });
     if (findings.length) unmet.push({ code: "draft_adr_nonconforming", path: artifact.path, scope: artifact.scope, findings });
   }
+  for (const asked of record?.questions ?? []) if (asked.blocking && !asked.answer && !asked.withdrawn) unmet.push({ code: "question_unanswered", question: asked.id, text: asked.question });
   return unmet;
 }
 
@@ -408,7 +440,7 @@ export function itemStage(entry: any, record: any, cited: any[]) {
 async function describeItem(context: any, entry: any, record: any) {
   const cited = await citedArtifacts(context, entry, record);
   const stage = itemStage(entry, record, cited);
-  return { cited, stage, unmet: entry.decision ? [] : await unmetConditions(context, cited) };
+  return { cited, stage, unmet: entry.decision ? [] : await unmetConditions(context, cited, record) };
 }
 
 /**
@@ -487,8 +519,17 @@ export async function updateWorkItem(input: any) {
       const at = new Date().toISOString();
       const held = [...(entry.requirements ?? [])];
       const applied = applyOperations(config, current.record, held, input.operations, at);
+      // A request for readiness is checked against the record as it is, and records the proposal whose gate it opens below.
+      const opening: { gate: any; purpose: string }[] = applied.asks.map((asked: any) => ({ gate: questionGate(entry, asked), purpose: "question" }));
+      if (applied.readyRequested) {
+        const readContext = citationContext(input.projectRoot, config, entries);
+        const { cited, unmet } = await describeItem(readContext, entry, applied.record);
+        if (unmet.length) throw fail("readiness_unmet", `${entry.id} cannot be confirmed ready, so no gate was opened. ${describeUnmet(unmet)}`, { item: entry.id, unmet });
+        applied.record.proposal = { kind: "ready", gate: GATE_PENDING };
+        opening.push({ gate: readyGate(entry, cited), purpose: "ready" });
+      }
       const requirementsChanged = canonicalJson(applied.requirements) !== canonicalJson(held);
-      // Requirement references live on the roadmap entry, so a change to them alone neither creates nor rewrites the shaping record.
+      // Requirement references live on the roadmap entry, so a change to them alone neither creates the shaping record nor rewrites it, except to clear a ready mark or a pending proposal.
       const recordChanged = canonicalJson({ ...applied.record, changedAt: null }) !== canonicalJson({ ...(current.record ?? emptyShapingRecord()), changedAt: null });
       const updatedEntry = { ...entry, requirements: applied.requirements };
       const context = citationContext(input.projectRoot, config, entries.map((candidate: any) => candidate.id === entry.id ? updatedEntry : candidate));
@@ -523,7 +564,7 @@ export async function updateWorkItem(input: any) {
       };
       let opened: any[] = [];
       try {
-        opened = await changeQuestionGates(input.projectRoot, entry, applied.asks, applied.withdrawals);
+        opened = await changeGates(input.projectRoot, entry, opening.map((item) => item.gate), applied.withdrawals);
       } catch (error) {
         await restoreReferences();
         throw error;
@@ -533,6 +574,7 @@ export async function updateWorkItem(input: any) {
           const question = record.questions.find((candidate: any) => candidate.id === asked.id);
           question.gate = opened[index].id;
         });
+        if (applied.readyRequested) record.proposal = { kind: "ready", gate: opened[applied.asks.length].id };
         contents = serialize(record);
         try {
           await writeRecord(input.projectRoot, { kind: "work-item", initiative: entry.id }, contents);
@@ -544,12 +586,13 @@ export async function updateWorkItem(input: any) {
         revision = revisionOf(Buffer.from(contents, "utf8"));
       }
       const { stage, unmet } = await describeItem(context, updatedEntry, record);
-      return { item: entry.id, revision, previousRevision: current.revision, record, stage, unmet, openedGates: opened.map((gate) => ({ id: gate.id, kind: gate.kind, purpose: "question" })) };
+      return { item: entry.id, revision, previousRevision: current.revision, record, stage, unmet, openedGates: opened.map((gate, index) => ({ id: gate.id, kind: gate.kind, purpose: opening[index].purpose })) };
     }
   }, fail);
 }
 
 const WITHDRAWN_QUESTION = "The question was withdrawn from the work item's shaping, so it needs no answer.";
+const WITHDRAWN_PROPOSAL = "The work item's shaping changed after this was asked, so it was withdrawn; a new confirmation covers the record as it is now.";
 const STATE_ATTEMPTS = 5;
 
 // The context of a question's gate: the item it shapes, what the answer settles, and whether the item can become ready without it.
@@ -562,11 +605,9 @@ function questionContext(entry: any, asked: any) {
   ].join("\n\n");
 }
 
-// One decision gate per asked question, opened in the item's coordination state as the calling session asks any gate, and each withdrawn question's open gate closed:
-// the opened gates, in question order.
-async function changeQuestionGates(projectRoot: string, entry: any, asks: any[], withdrawals: string[]) {
-  if (!asks.length && !withdrawals.length) return [];
-  const asking = asks.map((asked) => ({
+// The decision gate of an asked question.
+function questionGate(entry: any, asked: any) {
+  return {
     op: "ask",
     kind: "decision",
     question: asked.question,
@@ -574,11 +615,53 @@ async function changeQuestionGates(projectRoot: string, entry: any, asks: any[],
     artifacts: [],
     options: [{ id: "recommended", label: asked.recommended, consequence: "Shaping goes on with the recommended answer, and with your note when you add one." }],
     recommended: { option: "recommended", reason: "This is the answer that shaping recommends; to give another, answer with a note instead." }
-  }));
+  };
+}
+
+const scopeLabel = (scope: any) => scope?.label ? ` (${scope.label})` : "";
+
+// The decision gate that asks the person to confirm an item ready, listing each artifact it cites with its status.
+function readyGate(entry: any, cited: any[]) {
+  const listed = cited.map((artifact) => `- ${artifact.path}${scopeLabel(artifact.scope)}: ${artifact.status ?? "missing"}`);
+  return {
+    op: "ask",
+    kind: "decision",
+    question: `Is the work item ${entry.title} ready for design?`,
+    context: [
+      `Shaping the work item ${entry.title} (${entry.id}): ${entry.intent}`,
+      `It cites:\n${listed.join("\n")}`,
+      "Confirming it ready lets design start on it; any later change to its shaping asks for a new confirmation."
+    ].join("\n\n"),
+    artifacts: [],
+    options: [
+      { id: "ready", label: "Ready", consequence: "The item is ready, and design may start on it." },
+      { id: "not-ready", label: "Not ready", consequence: "The item stays emerging, and your note says what it still needs." }
+    ],
+    recommended: { option: "ready", reason: "Every readiness condition that Prism checks is met." }
+  };
+}
+
+/** One sentence per unmet readiness condition, naming its file or question. */
+export function describeUnmet(unmet: any[]) {
+  return unmet.map((condition) => {
+    switch (condition.code) {
+      case "no_approved_requirement": return "It cites no Approved requirement file.";
+      case "requirement_not_approved": return `It cites ${condition.path}${scopeLabel(condition.scope)}, which is ${condition.status ?? "missing"} rather than Approved.`;
+      case "draft_adr_nonconforming": return `It cites the Draft ADR ${condition.path}${scopeLabel(condition.scope)}, which breaks the ADR format.`;
+      case "question_unanswered": return `Its blocking question ${JSON.stringify(condition.text)} (${condition.question}) is neither answered nor withdrawn.`;
+      case "not_confirmed": return "The person has not confirmed it ready; ask with update_work_item request_ready.";
+      default: return `It has the unmet condition ${condition.code}.`;
+    }
+  }).join(" ");
+}
+
+// The gates an update opens, in the item's coordination state as the calling session asks any gate, and each withdrawn gate that is still open closed: the opened gates, in order.
+async function changeGates(projectRoot: string, entry: any, asking: any[], withdrawals: { id: string; reason: string }[]) {
+  if (!asking.length && !withdrawals.length) return [];
   for (let attempt = 1; ; attempt++) {
     const state = await readCoordinationState({ projectRoot, initiative: entry.id });
     const pending = new Set((state.state?.pending ?? []).map((gate: any) => gate?.id));
-    const closing = withdrawals.filter((id) => pending.has(id)).map((id) => ({ op: "resolve", id, reason: WITHDRAWN_QUESTION }));
+    const closing = withdrawals.filter(({ id }) => pending.has(id)).map(({ id, reason }) => ({ op: "resolve", id, reason }));
     if (!asking.length && !closing.length) return [];
     try {
       const result = await updateCoordinationState({ projectRoot, initiative: entry.id, expectedRevision: state.revision, changes: { gateOperations: [...closing, ...asking] } });
@@ -599,29 +682,69 @@ async function withdrawGates(projectRoot: string, item: string, ids: string[], r
 }
 
 /**
- * Record a person's answer to a work item's question in the review app action that answers its gate: write() records the answer on the gate and returns the action's
- * history entry, or null when nothing changed, and when the gate is an unanswered question of the item's shaping record, the question records
- * answer { text, choice, answeredAt, by } under the record's lock, with text the note for a free answer and the recommended answer followed by the note for recommended,
- * leaving changedAt as it was. Returns what write() returned.
+ * Record a person's answer to a work item's gate in the review app action that answers it: write() records the answer on the gate and returns the action's
+ * history entry, or null when nothing changed. When the gate is an unanswered question of the item's shaping record, the question records
+ * answer { text, choice, answeredAt, by }, with text the note for a free answer and the recommended answer followed by the note for recommended.
+ * When it is the gate of the pending ready proposal, ready records ready { gate, at, by } while no readiness condition is unmet and otherwise closes the proposal
+ * with outcome unmet and the conditions, not-ready closes it with the note, and a free answer closes it as declined with the note.
+ * Both happen under the record's lock and leave changedAt as it was. Returns what write() returned.
  */
 export async function recordWorkItemAnswer({ projectRoot, item, gate, write }: { projectRoot: string; item: string; gate: string; write: () => Promise<any> }) {
   const asking = (record: any) => (record?.questions ?? []).find((asked: any) => asked.gate === gate && !asked.answer && !asked.withdrawn) ?? null;
+  const proposing = (record: any) => record?.proposal?.gate === gate ? record.proposal : null;
   const seen = await readShapingRecord(projectRoot, item).catch(() => null);
-  if (!asking(seen?.record)) return write();
+  if (!asking(seen?.record) && !proposing(seen?.record)) return write();
   return withRecordLock(projectRoot, { kind: "work-item", initiative: item }, async (located: any) => {
     const current = parseShapingRecord(item, await readStoreFileBytes(located.target, RECORD_MAX_BYTES));
     const entry = await write();
     const asked = asking(current.record);
-    if (!entry || !asked) return entry;
+    const proposal = proposing(current.record);
+    if (!entry || (!asked && !proposal)) return entry;
     const choice = entry.after?.choice ?? null;
     const note = typeof entry.after?.note === "string" && entry.after.note.trim() ? entry.after.note.trim() : null;
-    const text = choice === "recommended" ? [asked.recommended, note].filter(Boolean).join(" ") : note ?? "";
     const record = structuredClone(current.record);
-    const question = record.questions.find((candidate: any) => candidate.id === asked.id);
-    question.answer = { text, choice, answeredAt: entry.at, by: entry.by };
+    if (asked) {
+      const text = choice === "recommended" ? [asked.recommended, note].filter(Boolean).join(" ") : note ?? "";
+      const question = record.questions.find((candidate: any) => candidate.id === asked.id);
+      question.answer = { text, choice, answeredAt: entry.at, by: entry.by };
+    } else {
+      const closed = { at: entry.at, by: entry.by, ...(note === null ? {} : { note }) };
+      if (choice === null) closeProposal(record, { outcome: "declined", ...closed });
+      else if (proposal.kind === "ready" && choice === "not-ready") closeProposal(record, { outcome: "not-ready", ...closed });
+      else if (proposal.kind === "ready" && choice === "ready") {
+        // The conditions are read again at the answer, so a requirement that lost its approval since the gate was asked leaves the item emerging.
+        const config = await readWorkflowConfig(projectRoot);
+        const { entries, entry: roadmapItem } = await roadmapEntry(projectRoot, item);
+        const context = citationContext(projectRoot, config, entries);
+        const unmet = roadmapItem.decision ? [] : await unmetConditions(context, await citedArtifacts(context, roadmapItem, record), record);
+        if (unmet.length) closeProposal(record, { outcome: "unmet", unmet, ...closed });
+        else {
+          closeProposal(record, { outcome: "ready", ...closed });
+          record.ready = { gate, at: entry.at, by: entry.by };
+        }
+      } else return entry;
+    }
     await writeRecord(projectRoot, { kind: "work-item", initiative: item }, serialize(record));
     return entry;
   }, fail);
+}
+
+/**
+ * Why design may not start on a roadmap entry: { item, unmet, message } while the entry is an open emerging work item, where unmet lists its readiness conditions
+ * and not_confirmed when its shaping record has no ready mark, or null when the entry is ready, decided, or no roadmap entry has the identifier.
+ */
+export async function emergingRefusal(projectRoot: string, initiative: string) {
+  const roadmap = await readRoadmapRecord(projectRoot);
+  if (!roadmap.valid) return null;
+  const entries = roadmap.record?.initiatives ?? [];
+  const entry = entries.find((candidate: any) => candidate.id === initiative);
+  if (!entry || entry.decision) return null;
+  const config = await readWorkflowConfig(projectRoot);
+  const { record } = await readShapingRecord(projectRoot, entry.id);
+  const { stage, unmet } = await describeItem(citationContext(projectRoot, config, entries), entry, record);
+  if (stage !== "emerging") return null;
+  const conditions = [...unmet, ...(record && !record.ready ? [{ code: "not_confirmed" }] : [])];
+  return { item: entry.id, unmet: conditions, message: `${entry.id} is an emerging work item, so design cannot start on it. ${describeUnmet(conditions)} Shape it with update_work_item until the person confirms it ready; nothing changed.` };
 }
 
 const ROADMAP_ATTEMPTS = 5;
@@ -629,13 +752,13 @@ const ROADMAP_ATTEMPTS = 5;
 export const WORK_ITEM_TOOLS = [
   {
     name: "get_work_item",
-    description: "Read one work item, a roadmap entry addressed by its roadmap identifier as item, refusing an identifier that names no entry with item_unknown. Returns item, title, intent, band, stage (emerging while the entry cites no Approved requirement file or has a shaping record without a ready mark, ready otherwise, or the decision's kind for a decided entry), unmet (the readiness conditions it does not meet, in order: no_approved_requirement, requirement_not_approved with path, scope, and status per cited requirement file that is not Approved, and draft_adr_nonconforming with path, scope, and findings per cited Draft ADR that breaks the ADR format), revision (the SHA-256 of the shaping record, or null before it has one, which update_work_item takes as expectedRevision), record (the shaping record { inputs, questions, findings, gaps, adrs, ready, origin, merges, splitInto, mergedInto, kill, changedAt }, or null), requirements (the entry's requirement references), cited ({ path, scope, kind, status, citedBy } per cited requirement file and ADR, with status null for a file that does not exist and citedBy the other work items that cite it), comments (every comment people left on a cited store artifact after the record's changedAt, or every one while it has none, oldest first, as { artifact: { path, scope }, id, line, text, author, at }), and proposal (null). Read the comments as the person's input to the item.",
+    description: "Read one work item, a roadmap entry addressed by its roadmap identifier as item, refusing an identifier that names no entry with item_unknown. Returns item, title, intent, band, stage (emerging while the entry cites no Approved requirement file or has a shaping record without a ready mark, ready otherwise, or the decision's kind for a decided entry), unmet (the readiness conditions it does not meet, in order: no_approved_requirement, requirement_not_approved with path, scope, and status per cited requirement file that is not Approved, draft_adr_nonconforming with path, scope, and findings per cited Draft ADR that breaks the ADR format, and question_unanswered with question and text per blocking question that is neither answered nor withdrawn), revision (the SHA-256 of the shaping record, or null before it has one, which update_work_item takes as expectedRevision), record (the shaping record { inputs, questions, findings, gaps, adrs, ready, origin, merges, splitInto, mergedInto, kill, changedAt }, or null), requirements (the entry's requirement references), cited ({ path, scope, kind, status, citedBy } per cited requirement file and ADR, with status null for a file that does not exist and citedBy the other work items that cite it), comments (every comment people left on a cited store artifact after the record's changedAt, or every one while it has none, oldest first, as { artifact: { path, scope }, id, line, text, author, at }), and proposal (the pending proposal, such as { kind: \"ready\", gate }, or null). Read the comments as the person's input to the item.",
     inputSchema: GET_WORK_ITEM_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_work_item",
-    description: "Apply 1 to 50 operations to a work item's shaping record at expectedRevision, the revision get_work_item returned, all or none: add_input { link, note } records a link, a URI with a scheme such as https://… or notion://…, or a project-relative path, with a one-line note of at most 300 characters, and never the linked content; add_finding { text, source } records a finding with the link it came from, refusing one without a source with source_missing; add_research_gap { note } records research that could not reach outside sources, never as a finding; cite { requirements?, adrs? } adds requirement references, written as the roadmap writes them such as billing.md§2, to the item's roadmap entry and ADR paths below the configured ADRs folder to the record, ignoring ones already cited, and uncite removes them. ask_round { questions } asks a round of 1 to 5 questions, each { question, recommended (at most 200 characters), settles (at most 1000, what the answer settles), blocking (true when the item cannot become ready without the answer) }, recording each as { id, round, question, recommended, settles, blocking, gate, askedAt, answer: null, withdrawn: false } and opening one decision gate per question in the item's coordination state, which you ask the person and wait on with wait_for_user_gate like any gate; when the person answers in the review app, Prism records answer { text, choice, answeredAt, by } on the question. withdraw_question { question } withdraws an unanswered question by its id and closes its gate, refusing an answered one with question_answered. A cite, or an update_roadmap, that adds a reference to a requirement file that is not Approved to an emerging item is refused with round_unanswered while the item has no answered round, one whose questions are each answered or withdrawn with at least one answered, or has a question that is neither answered nor withdrawn. A link of any other form is refused with link_invalid, an ADR path outside the ADRs folder and any other operation or field with validation_failed, an identifier that names no roadmap entry with item_unknown, a stale expectedRevision with revision_conflict and currentRevision, and any operation on a decided entry with item_closed naming the decision; a requirement reference to a file that breaks its format is refused with artifact_nonconforming as update_roadmap refuses it. No operation records an answer or anything a person said: the person adds to an item by answering its gates and commenting on what it cites. Returns { item, revision, previousRevision, record, stage, unmet, openedGates }, where each entry carries an id that Prism assigns and changedAt is the time of the last update that changed the record, and openedGates lists { id, kind, purpose } for each gate the update opened.",
+    description: "Apply 1 to 50 operations to a work item's shaping record at expectedRevision, the revision get_work_item returned, all or none: add_input { link, note } records a link, a URI with a scheme such as https://… or notion://…, or a project-relative path, with a one-line note of at most 300 characters, and never the linked content; add_finding { text, source } records a finding with the link it came from, refusing one without a source with source_missing; add_research_gap { note } records research that could not reach outside sources, never as a finding; cite { requirements?, adrs? } adds requirement references, written as the roadmap writes them such as billing.md§2, to the item's roadmap entry and ADR paths below the configured ADRs folder to the record, ignoring ones already cited, and uncite removes them. ask_round { questions } asks a round of 1 to 5 questions, each { question, recommended (at most 200 characters), settles (at most 1000, what the answer settles), blocking (true when the item cannot become ready without the answer) }, recording each as { id, round, question, recommended, settles, blocking, gate, askedAt, answer: null, withdrawn: false } and opening one decision gate per question in the item's coordination state, which you ask the person and wait on with wait_for_user_gate like any gate; when the person answers in the review app, Prism records answer { text, choice, answeredAt, by } on the question. withdraw_question { question } withdraws an unanswered question by its id and closes its gate, refusing an answered one with question_answered. request_ready {} stands alone in its update: while no readiness condition is unmet it opens a decision gate with the options ready and not-ready, recommending ready, whose context lists each cited artifact with its status, and records proposal { kind: \"ready\", gate }; with any unmet it is refused with readiness_unmet and unmet, opening no gate. When the person answers ready and every condition is still met, the record holds ready { gate, at, by } and the item is ready; a condition that became unmet closes the proposal with outcome unmet, not-ready closes it with the person's note, and a free answer closes it as declined. Any other update that changes the record or the entry's requirement references clears the ready mark and withdraws a pending proposal, closing its gates, so a confirmation covers the record as the person saw it; closed proposals stay under the record's proposals with their outcomes. Design starts on an item only once it is ready: update_initiative create and a design claim are refused with item_emerging while it is emerging. A cite, or an update_roadmap, that adds a reference to a requirement file that is not Approved to an emerging item is refused with round_unanswered while the item has no answered round, one whose questions are each answered or withdrawn with at least one answered, or has a question that is neither answered nor withdrawn. A link of any other form is refused with link_invalid, an ADR path outside the ADRs folder and any other operation or field with validation_failed, an identifier that names no roadmap entry with item_unknown, a stale expectedRevision with revision_conflict and currentRevision, and any operation on a decided entry with item_closed naming the decision; a requirement reference to a file that breaks its format is refused with artifact_nonconforming as update_roadmap refuses it. No operation records an answer or anything a person said: the person adds to an item by answering its gates and commenting on what it cites. Returns { item, revision, previousRevision, record, stage, unmet, openedGates }, where each entry carries an id that Prism assigns and changedAt is the time of the last update that changed the record, and openedGates lists { id, kind, purpose } for each gate the update opened.",
     inputSchema: UPDATE_WORK_ITEM_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

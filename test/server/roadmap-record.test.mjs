@@ -63,11 +63,12 @@ test("records initiative decisions and orders them within bands", async (context
 
 test("derives planned and in-progress from records and refuses to ship unfinished work", async (context) => {
   const projectRoot = await project(context);
-  let roadmap = await updateRoadmap({ projectRoot, expectedRevision: null, operations: [add("reports", "Now")] });
+  // Design starts only on a ready work item, and an initiative without a roadmap entry is none, so the record comes before the entry that cites no Approved requirement.
   const initiative = await updateInitiative({ projectRoot, initiative: "reports", expectedRevision: null, operations: [
     { op: "create", slug: "reports", title: "Export reports", requirements: ["r.md#1", "r.md#2"] },
     { op: "split", parent: "reports", children: [{ slug: "a", title: "A", requirements: ["r.md#1"] }, { slug: "b", title: "B", requirements: ["r.md#2"] }], evidence: await splitEvidence(projectRoot, "docs/plans/reports", "a") }
   ] });
+  let roadmap = await updateRoadmap({ projectRoot, expectedRevision: null, operations: [add("reports", "Now")] });
   roadmap = await getRoadmap({ projectRoot });
   assert.equal(roadmap.derived[0].state, "planned");
   assert.deepEqual(roadmap.derived[0].progress, { leaves: 2, "not-started": 2, "in-progress": 0, blocked: 0, deferred: 0, done: 0 });

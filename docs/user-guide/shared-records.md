@@ -92,6 +92,14 @@ Pick the recommended answer, with a note if you want to add to it, or answer in 
 An agent can withdraw a question you have not answered, which removes it from Attention.
 Until you have answered a round, and while any question stays open, an emerging item cannot cite a requirement file that is not Approved, so no requirement is drafted before you have answered.
 
+When shaping is done, the agent asks you in Attention whether the item is ready, listing each file it cites with its status.
+Prism asks only while the item cites an Approved requirement file, cites no requirement file that is not Approved, cites no Draft ADR that breaks the ADR format, and has no open question that readiness needs; otherwise the agent's request is refused with `readiness_unmet`, naming each condition.
+Answer Ready to mark the item ready, or Not ready with a note on what it still needs.
+If a condition stopped holding before you answered, such as a cited requirement file losing its approval, your Ready answer leaves the item emerging.
+Any later change to the item's shaping withdraws an open readiness question and clears the ready mark, so your confirmation always covers what you saw.
+Design does not start on an emerging item: creating its initiative, or claiming it for design, is refused with `item_emerging`, naming what is missing.
+A design that links a Draft ADR is refused with `adr_draft` until design decides that ADR by choosing one of its options.
+
 ## Share records between machines
 
 1. Create an empty repository for the store on your Git host, for example `you/prism-store`, and give everyone who works on the project push access to it.

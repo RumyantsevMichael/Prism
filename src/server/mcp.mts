@@ -431,9 +431,9 @@ function stateErrorData(error: any) {
   }
   // A refused component declaration or design names the entry, components, dependency, cycle, slice, or crossing paths it is about,
   // an unfinished scope names the leaves it waits on, a blocked ship names each scope and its blocked dependents, an unconfirmed ship its gate and what changed after it was asked, a ship that an open approval stops each ADR and its gates,
-  // a ship with open work names its gates, claims, and proposals, and a refused change to a shipped initiative names it and its ship time.
+  // a ship with open work names its gates, claims, and proposals, a refused change to a shipped initiative names it and its ship time, and design refused for an emerging item names the item and its unmet conditions.
   if (error instanceof InitiativeError || error instanceof RoadmapError || ["ShippedHistoryError", "UnreadableRoadmapError", "InitiativeGraphError", "VerificationError", "SliceDesignError", "DesignViewError", "ComponentError"].includes(error?.name)) {
-    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState", "entry", "components", "component", "dependency", "cycle", "slice", "paths", "folder", "scope", "waiting", "scopes", "afterGate", "changed", "adrs", "gates", "claims", "proposals", "fixes", "initiative", "shippedAt"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
+    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState", "entry", "components", "component", "dependency", "cycle", "slice", "paths", "folder", "scope", "waiting", "scopes", "afterGate", "changed", "adrs", "gates", "claims", "proposals", "fixes", "initiative", "shippedAt", "item", "unmet"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
   }
   if (error?.name !== "CoordinationStateError") {
     // A refused deferral keeps every problem, because the caller needs each finding's reason to correct the request.
