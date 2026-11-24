@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -9,7 +9,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { writeOverview } from "./fixtures/overview.mjs";
-import { pause } from "./fixtures/wait.mjs";
+import { pause, settled } from "./fixtures/wait.mjs";
 import { INITIATIVE, actionProject, authorOf } from "./fixtures/review-actions.mjs";
 import { defer } from "./fixtures/teardown.mjs";
 
@@ -237,17 +237,32 @@ test("the Stop hook ends a deferred wait with the person's change", async (conte
   assert.match(blocked.reason, /initiative\.continuation/);
 });
 
+// The latest time until which a running wait of any session holds its gates, as the person-change notices of the test's app folder record it, or 0.
+async function heldUntil(root) {
+  const folder = path.join(root, ".app", "person-change-notices");
+  let latest = 0;
+  for (const name of await readdir(folder).catch(() => [])) {
+    const record = await readFile(path.join(folder, name), "utf8").then(JSON.parse, () => null);
+    for (const wait of Array.isArray(record?.waits) ? record.waits : []) if (Number.isFinite(wait?.until)) latest = Math.max(latest, wait.until);
+  }
+  return latest;
+}
+
 // Codex calls a turn's tools after a deferred wait for as long as the turn runs, and its Stop hook starts only when the turn ends.
 test("a Codex deferred wait's answer reaches the session once, though the turn outlasts the deferred call's hold", async (context) => {
   const { root, gateIds } = await actionProject(context);
   const data = await dataDirectory(context);
   const directory = path.join(root, ".app", "gate-waits");
-  const mcp = server(context, root, { data, clientName: "codex-mcp-client", version: "0.170.0", env: { PRISM_DEFERRED_HOLD_MS: "1000" } });
+  // The lease is shorter than the product's, so the turn soon outlasts it, and long enough that a renewal on a busy Windows runner comes before it lapses.
+  const mcp = server(context, root, { data, clientName: "codex-mcp-client", version: "0.170.0", env: { PRISM_DEFERRED_HOLD_MS: "4000" } });
   const meta = codexMeta("codex-session");
   await mcp.call("get_coordination_state", { initiative: INITIATIVE }, meta);
   const deferred = await mcp.call("wait_for_user_gate", { initiative: INITIATIVE, gateIds: [gateIds.review] }, meta);
   assert.equal(deferred.structuredContent.status, "deferred");
-  await pause(3000, "the turn goes on for longer than the deferred call's hold, and no event marks time passing");
+  // The turn goes on until the hold that the deferred call first set has passed, while the server's renewals keep the gates held.
+  const first = await settled(() => heldUntil(root), (until) => until > 0);
+  const outlasted = await settled(async () => Date.now() > first && (await heldUntil(root)) > Date.now(), true, { timeout: 30000 });
+  assert.equal(outlasted, true, "the server renews the hold after the deferred call's first hold has passed");
   await person(root, "gate.answer", { choice: "approve" }, { actionTarget: `gate:${INITIATIVE}/${gateIds.review}` });
   const read = await mcp.call("get_initiative", { initiative: INITIATIVE }, meta);
   assert.deepEqual((changesOf(read) ?? []).map((entry) => entry.action), [], "a result of the turn leaves the answer for the wait that goes on after it");
