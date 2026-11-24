@@ -148,7 +148,8 @@ test("clause 10: a branch whose last commit is older than the threshold is quiet
   const strict = await byName("&quietDays=1");
   assert.equal(strict.get("main").quiet, false, "the default branch is never quiet");
   assert.equal(strict.get("release/2026.11").quiet, true);
-  assert.equal(strict.get("feature/fresh").quiet, false, "a commit within the last day is not quiet");
+  assert.equal(strict.get("feature/fresh").quiet, false, "a commit one whole day old is not quiet at one day");
+  assert.equal(strict.get("feature/report-table").quiet, true, "two whole days is more than one");
 });
 
 test("clause 11: a threshold outside 1 to 365 days, an unknown repository, and a repository with code content off are refused", async (context) => {

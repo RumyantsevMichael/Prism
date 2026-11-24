@@ -68,7 +68,7 @@ const texts = (page) => page.evaluate(() => {
 test("clause 54: prism-line-delta shows added and removed counts in their colors and names them", { skip }, async (context) => {
   const { page } = await catalog(context);
   await mount(page, `<prism-line-delta added="3" removed="2"></prism-line-delta>`);
-  assert.equal(await page.locator("prism-line-delta").evaluate((node) => customElements.get(node.localName) !== undefined), true, "the element is defined");
+  assert.equal(await page.locator("#fixture prism-line-delta").evaluate((node) => customElements.get(node.localName) !== undefined), true, "the element is defined");
   assert.equal((await page.locator("#fixture").innerText()).replace(/\s+/g, " ").trim(), "+3 −2");
   const shown = await texts(page);
   const added = shown.find((item) => item.text === "+3");
@@ -78,12 +78,14 @@ test("clause 54: prism-line-delta shows added and removed counts in their colors
   assert.equal(removed.color, await token(page, "--prism-color-diff-removed"));
   assert.ok(added.x < removed.x, "added comes first");
   assert.match(await page.locator("#fixture").ariaSnapshot(), /3 lines added, 2 lines removed/);
+  await mount(page, `<prism-line-delta added="1" removed="1"></prism-line-delta>`);
+  assert.match(await page.locator("#fixture").ariaSnapshot(), /1 line added, 1 line removed/, "a count of 1 reads in the singular");
 });
 
 test("clause 54: prism-line-delta leaves out a count it is not given", { skip }, async (context) => {
   const { page } = await catalog(context);
   await mount(page, `<prism-line-delta added="5"></prism-line-delta> <prism-line-delta removed="1"></prism-line-delta>`);
-  const [first, second] = await page.locator("prism-line-delta").evaluateAll((nodes) => nodes.map((node) => node.innerText ?? node.textContent));
+  const [first, second] = await page.locator("#fixture prism-line-delta").evaluateAll((nodes) => nodes.map((node) => node.innerText ?? node.textContent));
   assert.equal(first.trim(), "+5");
   assert.equal(second.trim(), "−1");
 });
@@ -92,10 +94,10 @@ test("clause 55: prism-inline-note shows its glyph before its text in the tone's
   const { page } = await catalog(context);
   const long = "Report retry attempts as metrics also changes lines 2–4 of a file whose name is long enough to wrap, so whichever merges second will conflict.";
   await mount(page, `<prism-inline-note tone="warning"><prism-icon slot="start" name="warning" size="xs"></prism-icon>${long}</prism-inline-note>`, "240px");
-  const note = page.locator("prism-inline-note");
+  const note = page.locator("#fixture prism-inline-note");
   const shown = await texts(page);
   assert.equal(shown[0]?.color, await token(page, "--prism-color-warning"));
-  const glyph = await page.locator("prism-inline-note prism-icon").boundingBox();
+  const glyph = await page.locator("#fixture prism-inline-note prism-icon").boundingBox();
   const box = await note.boundingBox();
   assert.ok(glyph && glyph.x < shown[0].x, "the glyph comes before the text");
   assert.ok(box.height > glyph.height * 2, "the long text wraps onto several lines");
@@ -110,7 +112,7 @@ test("clause 56: the catalog lists both elements with a specimen per state and a
     const entry = page.locator(`#entry-${tag}`);
     assert.equal(await entry.count(), 1, `${tag} has a catalog entry`);
     const text = await entry.innerText();
-    assert.match(text, /long text/i, `${tag} shows a long text specimen`);
+    assert.match(text, /long-text/i, `${tag} shows a long text specimen`);
     assert.ok(await entry.locator(tag).count() >= 2, `${tag} has live specimens`);
   }
   assert.ok(await page.locator("#entry-prism-inline-note prism-inline-note[tone=\"warning\"]").count() >= 1);
