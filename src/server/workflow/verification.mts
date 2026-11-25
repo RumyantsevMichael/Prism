@@ -954,6 +954,11 @@ export function verificationBrief(value: any) {
   };
 }
 
+/** How many verification runs are going in this server, so a caller can tell a run that settled from one that still runs. */
+export function runningVerifications() {
+  return jobs.size;
+}
+
 /** Abort every running verification, as the server does when its host disconnects. */
 export function cancelVerifications() {
   for (const job of jobs.values()) job.controller.abort();

@@ -13,7 +13,7 @@ delete process.env.CLAUDE_PLUGIN_DATA;
 // Claude Code sets this in a cloud session; each test sets it only where it checks chat approval.
 delete process.env.CLAUDE_CODE_REMOTE;
 const { getInitiative, initiativeAcknowledgement, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
-const { failingTests, verificationBrief, verifySlice } = await import("../../dist/server/workflow/verification.mjs");
+const { failingTests, runningVerifications, verificationBrief, verifySlice } = await import("../../dist/server/workflow/verification.mjs");
 const { checkSliceGate } = await import("../../dist/server/workflow/slice-gate.mjs");
 const { callConservationTool } = await import("../../dist/server/conservation/conservation-tools.mjs");
 const { getReview, updateReview } = await import("../../dist/server/review/review-ledger.mjs");
@@ -254,8 +254,8 @@ test("a repeat call after an early return gets the finished run's result while t
   const runs = path.join(root, ".prism/initiatives/reports/slices/download/runs");
   const early = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId, maxWaitMs: 1 });
   assert.equal(early.status, "running");
-  // The slice is done once the run settled, since its design marks no review.
-  await settled(async () => (await getInitiative({ projectRoot: root, initiative: INITIATIVE })).record.slices.download.status, "done");
+  // The run settles after the slice is marked done, since its design marks no review, so the wait is for the run itself.
+  await settled(() => runningVerifications(), 0);
   const repeated = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", maxWaitMs: 1 });
   assert.equal(repeated.status, "passed", "the repeat call returns the run that finished after the early return");
   assert.equal(repeated.repeated, true);
@@ -273,8 +273,8 @@ test("a repeat call after the work tree changed runs the command again and says 
   const gateId = await approve(root);
   const runs = path.join(root, ".prism/initiatives/reports/slices/download/runs");
   assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId, maxWaitMs: 1 })).status, "running");
-  // The slice is done once the run settled, since its design marks no review.
-  await settled(async () => (await getInitiative({ projectRoot: root, initiative: INITIATIVE })).record.slices.download.status, "done");
+  // The run settles after the slice is marked done, since its design marks no review, so the wait is for the run itself.
+  await settled(() => runningVerifications(), 0);
   await writeFile(path.join(root, "source.mjs"), "export const value = 2;\n");
   const rerun = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" });
   assert.equal(rerun.status, "passed");
