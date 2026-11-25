@@ -4,7 +4,7 @@ import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { blobOf, eventually, git, isolateGit } from "./fixtures/workspace-view.mjs";
-import { DEADLINE_STRATEGY, METRICS_STRATEGY, STRATEGY, TIDY_STRATEGY, codePlaceWorkspace, commitWork, edited } from "./fixtures/code-place.mjs";
+import { DEADLINE_STRATEGY, METRICS_STRATEGY, STRATEGY, TIDY_STRATEGY, applySteps, codePlaceWorkspace, commitWork, edited } from "./fixtures/code-place.mjs";
 
 // Requirements: docs/requirements/code-place.md §2, §9, §15 to §20, §22, §23, §25, §26, §31.
 // Contract: docs/plans/code-place/slice.md clauses 26 to 39, through GET ./api/code/files, versions, and diff of a workspace page.
@@ -108,6 +108,10 @@ test("clauses 32 to 34: a file shows its base and one version per distinct conte
   assert.deepEqual([deadline.added, deadline.removed, deadline.verified], [3, 2, true]);
   assert.deepEqual([metrics.added, metrics.removed, metrics.verified], [4, 3, true]);
   assert.deepEqual([tidy.added, tidy.removed, tidy.verified], [1, 1, true]);
+  for (const version of got.versions) {
+    const rows = (await get(`diff?repository=api&path=src/retry/strategy.ts&branch=${encodeURIComponent(version.branches[0].branch)}`)).rows;
+    assert.deepEqual([version.added, version.removed], [rows.filter((row) => row.op === "add").length, rows.filter((row) => row.op === "del").length], `${version.branches[0].branch}: the counts are the difference's rows`);
+  }
   assert.equal(typeof deadline.id, "string");
   assert.equal(new Set(got.versions.map((version) => version.id)).size, 3);
 });
@@ -186,10 +190,11 @@ test("clause 38: no Code request leaves file content or a difference in the reco
   }
 });
 
-test("clauses 33 and 39: a push after verification makes the new version unverified at the next fetch", TIMEOUT, async () => {
+test("clauses 33 and 39: a push after verification makes the new version unverified at the next fetch, counted as Git counts its difference", TIMEOUT, async () => {
   const { owner } = await workspace();
   git(owner.root, "checkout", "-q", "claude/tidy");
-  const later = edited(TIDY_STRATEGY, { 10: "  } // tidied" });
+  // Line 9 stays changed, line 10 stays as it is, and a line follows it, so Git counts one changed line and one added line, two hunks with an unchanged line between.
+  const later = edited(TIDY_STRATEGY, { 10: ["  }", "  // tidied"] });
   await writeFile(path.join(owner.root, "src/retry/strategy.ts"), later);
   await commitWork(owner.root, { title: "tidy more" });
   git(owner.root, "push", "-q", "origin", "claude/tidy");
@@ -199,4 +204,24 @@ test("clauses 33 and 39: a push after verification makes the new version unverif
     return got.json?.versions?.find((version) => version.blob === blobOf(later)) ?? null;
   }, 20000, "the pushed version of strategy.ts");
   assert.equal(tidy.verified, false, "no passing run recorded the pushed blob");
+  assert.deepEqual([tidy.added, tidy.removed], [2, 1], "an insertion after an unchanged line is not joined to the change before it");
+  const rows = (await get("diff?repository=api&path=src/retry/strategy.ts&branch=claude%2Ftidy")).rows;
+  assert.deepEqual([tidy.added, tidy.removed], [rows.filter((row) => row.op === "add").length, rows.filter((row) => row.op === "del").length], "the counts are the difference's rows");
+});
+
+// It runs last, since its branches join every later answer of the shared workspace.
+test("clause 35: every pair of many versions that change the same lines is listed, however many versions a file has", TIMEOUT, async () => {
+  const { owner } = await workspace();
+  const crowd = Array.from({ length: 34 }, (_, index) => `crowd/${String(index).padStart(2, "0")}`);
+  await applySteps(owner.root, crowd.map((branch, index) => ({ branch, author: "Lee Park", days: 1, files: { "src/retry/backoff.ts": `export const backoff = (attempt: number) => attempt * ${101 + index};\n` } })));
+  const got = await eventually(async () => {
+    const answer = await (await workspace()).ready("versions?scope=all&repository=api&path=src%2Fretry%2Fbackoff.ts");
+    return answer.json?.versions?.length === crowd.length ? answer.json : null;
+  }, 60000, "the 34 pushed versions of backoff.ts");
+  const order = new Map(got.versions.map((version, index) => [version.id, index]));
+  const pairs = got.conflicts.map((conflict) => [order.get(conflict.first), order.get(conflict.second)]);
+  assert.equal(pairs.length, crowd.length * (crowd.length - 1) / 2, "each of the 561 pairs changes line 1 of the same base, so each conflicts");
+  assert.equal(new Set(pairs.map((pair) => pair.join(" "))).size, pairs.length, "each pair once");
+  assert.ok(pairs.every(([first, second]) => first < second), "a pair names its versions in the order of clause 34");
+  assert.ok(got.conflicts.every((conflict) => JSON.stringify(conflict.lines) === JSON.stringify({ first: [[1, 1]], second: [[1, 1]] })));
 });

@@ -255,11 +255,11 @@ export const DEADLINE_STRATEGY = edited(STRATEGY, {
   2: "  constructor(private attempts = 3, private deadlineMs = 10_000) {}",
   4: ["  shouldRetry(error: Error, attempt: number, elapsedMs: number) {", "    if (elapsedMs >= this.deadlineMs) return false;"]
 });
-/** The metrics slice's strategy.ts: lines 2 to 4 change, which overlaps the deadline slice's lines. */
+/** The metrics slice's strategy.ts: lines 2 to 4 change and a line follows line 4, so Git counts 4 added and 3 removed lines, which overlap the deadline slice's lines. */
 export const METRICS_STRATEGY = edited(STRATEGY, {
   2: "  constructor(private attempts = 3, private metrics = new Metrics()) {}",
   3: "  // Every attempt is counted.",
-  4: ["  shouldRetry(error: Error, attempt: number) {", "    this.metrics.count(\"retry\");"]
+  4: ["  shouldRetry(error: Error, attempt: number): boolean {", "    this.metrics.count(\"retry\");"]
 });
 /** The tidy initiative's strategy.ts: only line 9 changes, far from the other slices' lines. */
 export const TIDY_STRATEGY = edited(STRATEGY, { 9: "    return Math.min(2 ** attempt * 100, 5_000);" });

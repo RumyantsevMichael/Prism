@@ -102,7 +102,8 @@ test("clause 8: a branch that receives merges ranks as a base over a branch with
     { branch: "topic/two", from: "integration", author: "Ana Ruiz", days: 1, files: { "packages/charts/dot.ts": "dot\n" } },
     { branch: "integration", author: "Sam Ortiz", days: 1, merge: "topic/two" }
   ]);
-  const branches = await workspace.byName();
+  // An answer reflects the tips of the latest fetch, so the test reads until it lists topic/two, which is pushed after integration and side.
+  const branches = await eventually(workspace, "web", (map) => map.get("topic/two"));
   assert.equal(branches.get("integration").base, "develop", "integration receives merges, so side, with more commits, is not its base");
   assert.equal(branches.get("side").base, "integration");
   assert.equal(branches.get("side").files, 1);
@@ -129,7 +130,8 @@ test("clause 9: a removed file and a renamed file count as changes", async (cont
   git(work, "commit", "-q", "-m", "cleanup");
   git(work, "push", "-q", "origin", "cleanup");
   git(work, "checkout", "-q", "main");
-  const branches = await workspace.byName();
+  // An answer reflects the tips of the latest fetch, so the test reads until it lists the pushed branch.
+  const branches = await eventually(workspace, "web", (map) => map.get("cleanup"));
   assert.equal(branches.get("cleanup").files, 3, "one removal, and a rename as a removal and an addition");
 });
 
@@ -197,7 +199,7 @@ test("clause 6: owners name each slice whose latest verification run that names 
   assert.equal(branches.get("claude/retry-deadline").files, 1);
 });
 
-// The branches of a repository once a fetch has brought the branch that found() looks for.
+// The branches of a repository once a fetch has brought the branch that found() looks for, since a read within one workspace fetch interval of the latest fetch answers that fetch's tips.
 async function eventually({ ready }, repository, found) {
   let map = new Map();
   await waitFor(async () => {
