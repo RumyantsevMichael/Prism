@@ -855,7 +855,7 @@ function runEntry(item: any, ctx: any) {
     const note = `Prism could not settle ${plural(item.points, "point")} in ${files.length} of the run's ${plural(item.files, "file")}. One answer on the run's page settles all of them, each prefilled with Prism's recommendation.`;
     return {
       row: { icon: "layers", tone: "accent", unread: true, title, meta: escapeHtml(`${plural(item.points, "point")} in ${files.length} of ${plural(item.files, "file")} · Format migration`), end: shortTime(item.askedAt) },
-      detail: detailSheet({ className: "note-migration-question", head: `${badge("Format migration asks you", "accent")}${where}${when(item.askedAt, "attention-time gate-time")}`, title, body: `<p class="attention-note">${escapeHtml(note)}</p>${rows}<div class="gate-actions"><span></span>${openRun(item, "Answer on the run's page", "primary")}</div>` })
+      detail: detailSheet({ className: "note-migration-question", head: `${badge("Format migration asks you", "accent")}${where}${when(item.askedAt, "attention-time gate-time")}`, title, body: `<p class="attention-note">${escapeHtml(note)}</p>${rows}<div class="gate-actions">${openRun(item, "Answer on the run's page", "primary")}</div>` })
     };
   }
   const title = escapeHtml(`${runTitle(item)} failed`);
@@ -871,7 +871,7 @@ function waitingRunEntry(item: any) {
   const title = escapeHtml(`${runTitle(item)} waits for a host`);
   return {
     row: { icon: "clock", tone: "warning", title, meta: escapeHtml(`${item.reason ?? "No host is available on this machine"} · Problem`) },
-    detail: detailSheet({ className: "watch-migration-waiting", head: `${badge("Waits for a host", "warning")}<span class="attention-where">${whereChip(item.scope)}</span>`, title, body: `<p class="watch-detail run-reason">${escapeHtml(item.reason ?? "No host is available on this machine.")}</p><div class="gate-actions"><span></span>${openRun(item, "Open the run")}</div>` })
+    detail: detailSheet({ className: "watch-migration-waiting", head: `${badge("Waits for a host", "warning")}<span class="attention-where">${whereChip(item.scope)}</span>`, title, body: `<p class="watch-detail run-reason">${escapeHtml(item.reason ?? "No host is available on this machine.")}</p><div class="gate-actions">${openRun(item, "Open the run")}</div>` })
   };
 }
 
@@ -1031,12 +1031,21 @@ function renderAnswered(container: any, answered: any, ctx: any) {
 const formatTitle = (item: any) => `${escapeHtml(item.label)} · ${escapeHtml(plural(item.count, "file"))} ${item.count === 1 ? "breaks" : "break"} the format`;
 const formatSummary = (item: any) => item.earlier ? `${item.earlier} of them ${item.earlier === 1 ? "keeps" : "keep"} an earlier Prism format.` : "None of them keeps a Prism format.";
 
-// One nonconforming artifact: its path with its format mark, the scope that holds it, and each broken rule with its message and line.
+// The action of a nonconforming artifact's format migration: run a failed one again, answer one that asks, or open one that runs or waits.
+function migrationAction(artifact: any) {
+  const migration = artifact.migration;
+  if (!migration?.run) return "";
+  if (migration.status === "failed") return `<prism-button slot="action" size="sm" data-migration-rerun="${escapeHtml(migration.run)}">Run again</prism-button>`;
+  const label = migration.status === "asking" ? "Answer" : "Open the run";
+  return `<prism-button slot="action" size="sm" data-artifact="${escapeHtml(runRef(migration))}">${label}</prism-button>`;
+}
+
+// One nonconforming artifact: its path with its format mark, the scope that holds it, each broken rule with its message and line, and its migration's action.
 function formatArtifact(artifact: any) {
   const scope = artifact.scope?.label ?? null;
   const mark = formatBadge({ rules: [...new Set((artifact.findings ?? []).map((finding: any) => finding.rule))].sort(), findings: artifact.findings ?? [] });
   const earlier = artifact.earlierFormat ? `Keeps format version ${artifact.earlierFormat.version}` : "Keeps no Prism format";
-  return `<prism-row wrap icon="document" tone="warning"><span data-code-subject>${escapeHtml(artifact.path)}</span> ${mark}<span slot="description">${escapeHtml(earlier)} · ${plural((artifact.findings ?? []).length, "finding")}</span><span slot="detail">${findingsList(artifact.findings)}</span><prism-chip slot="kind"${scope ? ' tip="The record store scope that holds this file"' : ' tip="A file in this checkout"'}>${escapeHtml(scope ? `Scope ${scope}` : "Checkout")}</prism-chip></prism-row>`;
+  return `<prism-row wrap icon="document" tone="warning"><span data-code-subject>${escapeHtml(artifact.path)}</span> ${mark}<span slot="description">${escapeHtml(earlier)} · ${plural((artifact.findings ?? []).length, "finding")}</span><span slot="detail">${findingsList(artifact.findings)}</span><prism-chip slot="kind"${scope ? ' tip="The record store scope that holds this file"' : ' tip="A file in this checkout"'}>${escapeHtml(scope ? `Scope ${scope}` : "Checkout")}</prism-chip>${migrationAction(artifact)}</prism-row>`;
 }
 
 function formatGroup(label: string, note: string, artifacts: any[]) {
@@ -1055,6 +1064,17 @@ function formatPanel(entry: any) {
 }
 
 // The format findings page: every format whose files break it.
+// A failed format migration run runs again from its sheet or its file's format finding, after the person confirms it.
+function bindReruns(container: any, ctx: any) {
+  for (const button of container.querySelectorAll("[data-migration-rerun]")) {
+    button.addEventListener("click", async () => {
+      button.toggleAttribute("disabled", true);
+      if (await rerunRun(ctx, button.dataset.migrationRerun)) ctx.rerender();
+      else button.toggleAttribute("disabled", false);
+    });
+  }
+}
+
 function renderFormats(container: any, data: any, ctx: any) {
   const filter = data.filter;
   filterLine(container, `${filter.label} · ${filter.items.length} of ${filter.total} ${filter.total === 1 ? "item" : "items"}`, ctx);
@@ -1062,6 +1082,8 @@ function renderFormats(container: any, data: any, ctx: any) {
   container.innerHTML = shown.length
     ? `<div class="format-panels">${shown.map(formatPanel).join("")}</div>`
     : `<div class="attention-nothing">${emptyState("Every file keeps its format", "No requirement, decision, glossary, or feature file breaks its Prism format.")}</div>`;
+  bindLinks(container, ctx);
+  bindReruns(container, ctx);
 }
 
 export function render(container: any, entity: any, ctx: any) {
@@ -1078,8 +1100,13 @@ export function render(container: any, entity: any, ctx: any) {
   const earlier = data.earlier ?? [];
   const recent = data.recentChanges ?? [];
   const claims = data.claims ?? [];
+  // The questions and the failed format migration runs list newest first together, by when each was asked or failed; the notes without a time follow them.
+  const timeOf = (item: any) => item.type === "gate" || item.type === "migration-question" ? item.askedAt : item.type === "migration-failed" ? item.at : null;
+  const millis = (item: any) => { const at = Date.parse(timeOf(item) ?? ""); return Number.isFinite(at) ? at : -Infinity; };
+  const timed = data.needsYou.map((item: any, index: number) => ({ item, index })).filter(({ item }: any) => timeOf(item) !== null)
+    .sort((left: any, right: any) => millis(right.item) - millis(left.item) || left.index - right.index);
+  const notes = data.needsYou.filter((item: any) => timeOf(item) === null);
   const gates = data.needsYou.filter((item: any) => item.type === "gate");
-  const notes = data.needsYou.filter((item: any) => item.type !== "gate");
   const watched = data.watch.length + claims.length;
 
   const permissions = data.permissions ?? [];
@@ -1090,12 +1117,12 @@ export function render(container: any, entity: any, ctx: any) {
       row: { icon: "lock", tone: "warning", unread: true, title: escapeHtml(item.action), meta: escapeHtml(["Permission", sessionPlace(item.initiative, item.host)].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
       detail: permissionDetail(item, permissionDrafts[item.id] ?? {})
     })),
-    ...gates.map((item: any) => ({
+    ...timed.map(({ item, index }: any) => item.type !== "gate" ? { key: `note:${index}`, ...noteEntry(item, ctx) } : {
       key: `gate:${item.id}`,
       row: item.launch && item.kind === "assistance" ? { icon: "question", tone: "info", unread: true, title: escapeHtml(item.question), meta: escapeHtml([NO_RESULT_CHIP, sessionPlace(item.initiative, item.launch.host)].join(" · ")), end: shortTime(item.askedAt) } : { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
       detail: gateDetail(item, ctx)
-    })),
-    ...notes.map((item: any, index: number) => ({ key: `note:${index}`, ...noteEntry(item, ctx) }))
+    }),
+    ...notes.map((item: any) => ({ key: `note:${data.needsYou.indexOf(item)}`, ...noteEntry(item, ctx) }))
   ];
   // A shipped initiative's open questions can no longer be answered, so they list apart from Needs you and raise no count.
   const shippedRows = (data.shippedGates ?? []).map((item: any) => ({
@@ -1154,7 +1181,7 @@ export function render(container: any, entity: any, ctx: any) {
     head.querySelector(".attention-stats")?.remove();
     head.insertAdjacentHTML("beforeend", `<div class="attention-stats">
       ${stat(`${gates.length + permissions.length === 1 ? "question waits" : "questions wait"} on you`, String(gates.length + permissions.length), { tone: gates.length + permissions.length ? "accent" : "success", attributes: ' layout="inline"' })}
-      ${stat(`other ${notes.length === 1 ? "item needs" : "items need"} you`, String(notes.length), { attributes: ' layout="inline"' })}
+      ${stat(`other ${data.needsYou.length - gates.length === 1 ? "item needs" : "items need"} you`, String(data.needsYou.length - gates.length), { attributes: ' layout="inline"' })}
       ${stat(`${watched === 1 ? "thing" : "things"} to watch`, String(watched), { attributes: ' layout="inline"' })}
     </div>`);
   }
@@ -1188,14 +1215,7 @@ export function render(container: any, entity: any, ctx: any) {
   // The page is built out of sight and shows once drawn, so it waits for the first listing of each question's answer, Withdraw, and Continue,
   // which would otherwise move the page under the person when they arrive.
   const actionLists = [...mountAnswers(container, ctx, gates), ...mountGateActions(container, ctx)];
-  // A failed format migration run runs again from its sheet, after the person confirms it.
-  for (const button of container.querySelectorAll("[data-migration-rerun]")) {
-    button.addEventListener("click", async () => {
-      button.toggleAttribute("disabled", true);
-      if (await rerunRun(ctx, button.dataset.migrationRerun)) ctx.rerender();
-      else button.toggleAttribute("disabled", false);
-    });
-  }
+  bindReruns(container, ctx);
   bindPermissions(container, ctx);
   bindArchiveSession(container, ctx);
   bindDocuments(container, ctx);
