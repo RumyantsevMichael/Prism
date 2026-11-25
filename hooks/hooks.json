@@ -96,7 +96,7 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-facts.mjs\"",
             "statusMessage": "Prism: recording session facts",
-            "timeout": 5
+            "timeout": 10
           },
           {
             "type": "command",
