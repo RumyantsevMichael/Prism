@@ -32,13 +32,13 @@ test("§51: the roadmap shows an emerging entry as Emerging with its unmet condi
   assert.equal(sync.workItem.stage, "emerging");
   assert.ok(sync.workItem.unmet.some((condition) => condition.code === "requirement_not_approved"));
   assert.equal(items.find((item) => item.id === "export").state, "envisioned");
-  const roadmap = await readFile(new URL("../../src/server/review/public/views/roadmap.js", import.meta.url), "utf8");
-  assert.match(roadmap, /emerging: "Emerging"/);
-  const element = await import("../../dist/server/review/public/kit/elements/prism-state.js").catch(() => null);
-  const states = element?.STATES ?? (await readFile(new URL("../../src/server/review/public/kit/elements/prism-state.js", import.meta.url), "utf8"));
-  assert.ok(JSON.stringify(states).includes("emerging"), "the state element draws emerging");
-  const catalog = await readFile(new URL("../../src/server/review/public/kit/catalog.js", import.meta.url), "utf8");
-  assert.match(catalog, /state="emerging"/, "the catalog shows the emerging state");
+  const roadmap = await readFile(new URL("../../dist/server/review/public/views/roadmap.js", import.meta.url), "utf8");
+  assert.match(roadmap, /emerging: "Emerging"/, "the roadmap names the emerging state");
+  const { statusOf } = await import("../../dist/server/review/public/kit/statuses.js");
+  const emerging = statusOf("emerging");
+  assert.deepEqual([emerging.known, emerging.label], [true, "Emerging"], "the status registry draws emerging");
+  const catalog = await readFile(new URL("../../dist/server/review/public/kit/catalog.js", import.meta.url), "utf8");
+  assert.match(catalog, /<prism-status value="emerging"/, "the catalog shows the emerging status");
 });
 
 test("§51: an item's page holds its shaping record, its cited artifacts with their statuses, and its unmet conditions", async (context) => {
@@ -57,7 +57,7 @@ test("§51: an item's page holds its shaping record, its cited artifacts with th
   assert.deepEqual(item.cited.map((entry) => [entry.path, entry.status]), expected.cited.map((entry) => [entry.path, entry.status]));
   assert.ok(item.cited.some((entry) => entry.path === DRAFT_REQUIREMENT && entry.status === "Draft"));
   assert.deepEqual(item.unmet, expected.unmet);
-  const page = await readFile(new URL("../../src/server/review/public/views/initiative.js", import.meta.url), "utf8");
+  const page = await readFile(new URL("../../dist/server/review/public/views/initiative.js", import.meta.url), "utf8");
   assert.match(page, /workItem/, "the initiative page renders the work item");
 });
 
