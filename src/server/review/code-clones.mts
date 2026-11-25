@@ -367,8 +367,9 @@ export async function createCodeClones({ directory }: { directory: string }) {
      * When no fetch of the clone ran within freshMs, as on a workspace that no page has open, it starts one and waits for it up to FETCH_WAIT_MS from its start,
      * so an answer follows a push that the remote holds, a slow remote holds a request no longer than that, and an answer for the tips that the clone holds is never withheld;
      * while any fetch runs on, it answers only an answer already read and starts no read, since the fetch may be moving the tips one branch at a time.
+     * With waitMs, a read that this call leaves preparing is awaited up to waitMs from the end of that wait, so a small repository answers at once rather than on a later request.
      */
-    async branches(workspace: any, repository: string, owned: Iterable<string> = [], { freshMs = null }: { freshMs?: number | null } = {}) {
+    async branches(workspace: any, repository: string, owned: Iterable<string> = [], { freshMs = null, waitMs = 0 }: { freshMs?: number | null; waitMs?: number } = {}) {
       const entry = entryOf(workspace, repository);
       if (!entry) return null;
       const folder = folderOf(entry);
@@ -394,7 +395,14 @@ export async function createCodeClones({ directory }: { directory: string }) {
       const reader = branchReaders.get(folder)!;
       // A running fetch may be moving the tips one branch at a time, so while it runs only an answer already read goes out, and no read starts for tips it may still move.
       if (fetching.has(entry.clone)) return reader.ready(tipsKey, owned) ?? { state: "preparing" };
-      const model = reader.answer(tipsKey, owned);
+      let model = reader.answer(tipsKey, owned);
+      if (model === undefined && waitMs > 0) {
+        let timer: NodeJS.Timeout | undefined;
+        const waited = new Promise<void>((resolve) => { timer = setTimeout(resolve, waitMs); });
+        await Promise.race([reader.idle(), waited]);
+        clearTimeout(timer);
+        model = reader.ready(tipsKey, owned);
+      }
       // A read that ended while this request waited held back a fetch that may be due now, which starts while the ready answer goes out.
       if (model !== undefined) fetchIfDue();
       return model ?? { state: "preparing" };

@@ -340,9 +340,9 @@ export async function rankBranches(facts: Facts, owned: Set<string>) {
 }
 
 /**
- * The branch model of a clone: { defaultBranch, branches } with each branch, in name order, as { name, commit, default, base, fork, files, committedAt, people },
- * given the facts that readBranchFacts read and the names of the branches that a slice owns.
- * derived keeps each branch's fork, files, and people by its tip and its base's tip, so a later read reuses them, and it throws Superseded once live() is false.
+ * The branch model of a clone: { defaultBranch, branches } with each branch, in name order, as { name, commit, default, base, fork, files, paths, committedAt, people },
+ * where paths lists the changed files that files counts, in code-point order, or is null with files, given the facts that readBranchFacts read and the names of the branches that a slice owns.
+ * derived keeps each branch's fork, files, paths, and people by its tip and its base's tip, so a later read reuses them, and it throws Superseded once live() is false.
  */
 export async function readBranches(git: Git, facts: Facts, owned: Set<string>, { live = () => true, derived = new Map() }: { live?: Live; derived?: Map<string, any> } = {}) {
   const size = facts.tips.length;
@@ -429,22 +429,23 @@ export async function readBranches(git: Git, facts: Facts, owned: Set<string>, {
   const used = new Set<string>();
   const described = await mapLimit(facts.branches, PARALLEL, async (branch: any, index) => {
     if (index % TURN === TURN - 1) await pause();
-    if (branch === main) return { name: branch.name, commit: branch.commit, default: true, base: null, fork: null, files: 0, committedAt: branch.committedAt, people: { last: null, count: 0 } };
+    if (branch === main) return { name: branch.name, commit: branch.commit, default: true, base: null, fork: null, files: 0, paths: [], committedAt: branch.committedAt, people: { last: null, count: 0 } };
     const base = bases.get(branch.name);
     const key = `${branch.commit}\0${base?.commit ?? ""}`;
     used.add(key);
     if (!derived.has(key)) derived.set(key, await derive(git, branch.commit, base?.commit ?? null));
-    const { fork, files, people } = derived.get(key);
-    return { name: branch.name, commit: branch.commit, default: false, base: fork === null ? null : base!.name, fork, files, committedAt: branch.committedAt, people };
+    const { fork, files, paths, people } = derived.get(key);
+    return { name: branch.name, commit: branch.commit, default: false, base: fork === null ? null : base!.name, fork, files, paths, committedAt: branch.committedAt, people };
   }, live);
   for (const key of derived.keys()) if (!used.has(key)) derived.delete(key);
   return { defaultBranch: facts.defaultBranch, branches: described };
 }
 
-// A branch's fork with its base, the number of files it changes, and its people since the fork, read from commits and trees alone.
+// A branch's fork with its base, the files it changes in code-point order and their number, and its people since the fork, read from commits and trees alone.
 async function derive(git: Git, tip: string, baseTip: string | null) {
   let fork: string | null = null;
   let files: number | null = null;
+  let paths: string[] | null = null;
   if (baseTip) {
     const found = await git(["merge-base", tip, baseTip]);
     fork = found.ok && found.text ? lines(found.text)[0] : null;
@@ -453,7 +454,8 @@ async function derive(git: Git, tip: string, baseTip: string | null) {
     // A changed file differs between the fork and the tip, and the base does not hold it as the tip does now.
     const sinceFork = await changedPaths(git, fork, tip);
     const fromBase = sinceFork.size ? await changedPaths(git, baseTip!, tip) : new Set<string>();
-    files = [...sinceFork].filter((file) => fromBase.has(file)).length;
+    paths = [...sinceFork].filter((file) => fromBase.has(file)).sort(byText);
+    files = paths.length;
   }
   // The author log is read line by line, so only its distinct names are held, however long the history, and a long name is held as its digest,
   // which no name can equal because no author name holds a NUL. A name longer than a streamed runner keeps reaches it as a NUL and its digest,
@@ -470,7 +472,7 @@ async function derive(git: Git, tip: string, baseTip: string | null) {
     const newest = await git(["log", "-1", "--format=%an", ...since]);
     last = newest.ok ? newest.text : null;
   }
-  return { fork, files, people: { last, count: names.size } };
+  return { fork, files, paths, people: { last, count: names.size } };
 }
 
 /**

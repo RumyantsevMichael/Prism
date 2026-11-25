@@ -21,7 +21,8 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, viewWatching, loadAttention, loadClaims, loadDeclaredView, loadFormatMark, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, viewWatching, loadAttention, loadClaims, loadDeclaredView, loadFormatMark, loadHeldClaims, loadEntity, loadNavigation, loadInitiativeView, loadRecordChanges, parseEntityRef, placedInitiatives, searchRecords, slicePresence, workGroups } from "./workspace-model.mjs";
+import { isQuiet, placeAnswer } from "./code-place.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { branchOwners, ownerKey } from "./code-owners.mjs";
 import { frozenTestFile, verificationLog } from "./verification-view.mjs";
@@ -42,7 +43,6 @@ import { createCachedValue } from "./cached-value.mjs";
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 // A line of work is quiet after this many days without a commit, unless a Code request names another threshold.
 const QUIET_DAYS = 30;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 const PUBLIC_DIR = path.join(SERVER_DIR, "public");
 const VENDOR_DIR = path.join(PLUGIN_ROOT, "vendor", "plantuml");
@@ -1241,12 +1241,56 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return { code: "file_not_shown", reason: read.withheld, message: `${read.path} is not available here because ${why}, which the review app does not show.` };
   }
 
+  // The owned branch names of one repository among the keys that branchOwners answers, which its branch model ranks as owned.
+  const ownedIn = (owners: Map<string, any>, repository: string) => {
+    const prefix = ownerKey(repository, "");
+    return [...owners.keys()].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length));
+  };
+
+  // How long the Code place's answer waits for a repository's branch read that it starts, so small repositories answer on the first request.
+  const PLACE_READ_WAIT_MS = 5000;
+
+  // The Code place's answer of the work in progress and the other branches, read from every repository's branch model at once,
+  // since a repository whose fetch is due holds its read for up to the fetch's wait.
+  async function serveCodePlace(response: any, shown: { quietDays: number; showQuiet: boolean }) {
+    const names = await storeRepositories();
+    const owners = await branchOwners(projectRoot);
+    const read = await Promise.all(names.map(async (name) => {
+      const code = workspace?.code ? await workspace.code.state(name) : { state: "off" };
+      const model = workspace?.code && code.state !== "off" ? await workspace.code.branches(name, ownedIn(owners, name), { waitMs: PLACE_READ_WAIT_MS }) : null;
+      return { repository: { name, state: code.state, message: code.message ?? null }, model };
+    }));
+    const models = new Map<string, any>();
+    const preparing: string[] = [];
+    for (const { repository, model } of read) {
+      if (model?.state === "preparing") preparing.push(repository.name);
+      else if (model) models.set(repository.name, model);
+    }
+    // While every repository with a clone is still being read, the answer has nothing to show yet.
+    if (preparing.length && !models.size) {
+      sendJson(response, 202, { state: "preparing" });
+      return;
+    }
+    const groups = await workGroups(projectRoot, await placedInitiatives(projectRoot));
+    const progress = groups.groups.find((group: any) => group.key === "in-progress")?.initiatives ?? [];
+    const work = await Promise.all(progress.map(async ({ id, title }: any) => {
+      const view = await loadInitiativeView(projectRoot, id).catch((): any => null);
+      const slices = view?.record?.slices ?? {};
+      return { initiative: id, title, root: view?.derived?.root ?? null, children: view?.derived?.children ?? {}, titles: Object.fromEntries(Object.entries<any>(slices).map(([slug, slice]) => [slug, slice.title])) };
+    }));
+    sendJson(response, 200, placeAnswer({ repositories: read.map(({ repository }) => repository), models, preparing, owners, work, ...shown }));
+  }
+
   // The code routes of a workspace's page, which read the code clones Prism keeps and never answer a URL of a Git host.
   async function serveCode(response: any, route: string, url: any) {
     const repository = url.searchParams.get("repository");
     const shown = codeShowing(url);
     if (!shown) {
       sendJson(response, 400, { code: "invalid_request", message: "quietDays must be a whole number of days from 1 to 365, and showQuiet must be true or false." });
+      return;
+    }
+    if (route === "/api/code/place") {
+      await serveCodePlace(response, shown);
       return;
     }
     if (!workspace?.code || !repository || !(await storeRepositories()).includes(repository)) {
@@ -1257,16 +1301,15 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     if (route === "/api/code/branches") {
       const owners = await branchOwners(projectRoot);
       const owned = (branch: string) => owners.get(ownerKey(repository, branch)) ?? [];
-      const prefix = ownerKey(repository, "");
-      const model = await workspace.code.branches(repository, [...owners.keys()].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length)));
+      const model = await workspace.code.branches(repository, ownedIn(owners, repository));
       if (model === null) off();
       else if (model.state === "preparing") sendJson(response, 202, { state: "preparing" });
       else {
         const now = Date.now();
-        const branches = model.branches.map(({ commit, ...branch }: any) => ({
+        const branches = model.branches.map(({ commit, paths, ...branch }: any) => ({
           ...branch,
           // Days count whole, so a commit made a day ago is within a threshold of one day.
-          quiet: !branch.default && Math.floor((now - Date.parse(branch.committedAt)) / DAY_MS) > shown.quietDays,
+          quiet: isQuiet(branch, shown.quietDays, now),
           owners: branch.default ? [] : owned(branch.name).map(({ initiative, slice }) => ({ initiative, slice }))
         }));
         sendJson(response, 200, { repository, defaultBranch: model.defaultBranch, branches });
@@ -1680,7 +1723,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null, repositories: await codeRepositories() } : { workspace: checkout };
       const scoped = storeIndex ? { artifactScopes: storeIndex.artifactScopes, scopes: storeIndex.scopes, ...(storeIndex.scopeFilter ? { scopeFilter: storeIndex.scopeFilter, unknownScopes: storeIndex.unknownScopes } : {}), notes: storeIndex.notes } : { artifactScopes: await listArtifactScopes(projectRoot) };
       send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store), watching: await viewWatching(projectRoot).catch(() => null) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, version: appVersion ?? pluginVersion(), ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
-    } else if (["/api/code/branches", "/api/code/tree", "/api/code/compare", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
+    } else if (["/api/code/place", "/api/code/branches", "/api/code/tree", "/api/code/compare", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
       await serveCode(response, route, url);
     } else if (route === "/api/slice-files" && request.method === "GET") {
       const ref = `slice:${url.searchParams.get("initiative") ?? ""}/${url.searchParams.get("slice") ?? ""}`;

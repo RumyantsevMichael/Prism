@@ -1731,10 +1731,7 @@ async function computeNavigation(projectRoot: string) {
   const roadmap = await loadRoadmapView(projectRoot);
   const glossary = await loadGlossary(projectRoot);
   const attention = await loadAttention(projectRoot);
-  const placed = await Promise.all([
-    ...roadmap.items.map((item: any) => ({ id: item.id, title: item.title, band: item.band, state: item.state })),
-    ...roadmap.unlisted.map((id: string) => ({ id, title: id, band: null, state: "unlisted" }))
-  ].map(async (item) => ({ ...item, place: await initiativePlace(projectRoot, item.id) })));
+  const placed = await placedInitiatives(projectRoot, roadmap);
   const listedInitiatives = await Promise.all(placed.map(withSliceTree(projectRoot)));
   // The libraries and diagrams are read once for their counts, the search index, and Changed this week; a library that cannot be read still fails the search index.
   const settled = (promise: any) => promise.then((value: any) => ({ value }), (error: any) => ({ error }));
@@ -1789,7 +1786,17 @@ const WORK_GROUPS = Object.freeze([
   { key: "unlisted", label: "Not on the roadmap" }
 ]);
 
-async function workGroups(projectRoot: string, initiatives: any) {
+/** Every initiative of the roadmap and every initiative record it does not list, as { id, title, band, state, place }, with the place its pages belong to. */
+export async function placedInitiatives(projectRoot: string, roadmap: any = null) {
+  const read = roadmap ?? await loadRoadmapView(projectRoot);
+  return Promise.all([
+    ...read.items.map((item: any) => ({ id: item.id, title: item.title, band: item.band, state: item.state })),
+    ...read.unlisted.map((id: string) => ({ id, title: id, band: null, state: "unlisted" }))
+  ].map(async (item) => ({ ...item, place: await initiativePlace(projectRoot, item.id) })));
+}
+
+/** Work's groups of the initiatives that placedInitiatives lists: { groups: [{ key, label, initiatives: [{ id, title }] }] } in Work's order. */
+export async function workGroups(projectRoot: string, initiatives: any) {
   const live = new Set((await loadClaims(projectRoot).catch(() => ({ claims: [] }))).claims.filter((claim: any) => !claim.expired).map((claim: any) => claim.ref));
   const members = new Map<any, any[]>(WORK_GROUPS.map((group) => [group.key, []]));
   for (const item of initiatives) {
