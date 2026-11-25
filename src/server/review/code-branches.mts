@@ -6,10 +6,14 @@
 // The work grows with the number of branches times a constant: each branch is compared with the default branch, with the branches at the nearest tip of its first-parent history,
 // with the first CANDIDATES branches of the ranking, and, when a slice owns it, with the CANDIDATES owned branches ranked nearest before it, and only those counts are held.
 // Branches at one tip tie on every count, so of those candidates each tip weighs only its earliest ranked branch, however many branches point at it.
-// A branch's first-parent history is listed once and read only up to that nearest tip or the first commit that the default branch holds.
+// A branch's first-parent history is listed once, excluding no commit, and read only up to that nearest tip, a tip that the default branch holds,
+// or as many commits as the branch holds that the default branch lacks, and its other counts exclude that nearest tip, so no count walks the history that a branch shares with another,
+// and a chain of branches each built on the one before costs each branch only its own commits.
 // The ranking and the base choice run without recursion and give way to the server's other work after at most TURN branches.
 // All Git work runs in a background read, one at a time per clone, that a newer set of tips supersedes, and the answers are kept for their tips and default branch,
 // one for each of the latest few sets of owners, so a request with its answer ready does no work that grows faster than the number of branches.
+
+import { createHash } from "node:crypto";
 
 const BRANCHES = "refs/heads/";
 // How many Git commands of one model run at a time.
@@ -18,6 +22,8 @@ const PARALLEL = 8;
 const CANDIDATES = 32;
 // How many branches the ranking or the base choice handles before it gives way to the server's other work.
 const TURN = 500;
+// The longest author name that a branch's people hold as it is; a longer one is held as 12 bytes of its digest.
+const NAME_KEPT = 20;
 // How many sets of owners a clone's reader keeps a ready answer for, at most one model of the clone's branches each.
 const ANSWERS = 8;
 
@@ -105,27 +111,30 @@ async function ownColumn(git: Git, commit: string, tips: string[], tipIndex: Map
   return column;
 }
 
-// The position of the nearest tip in a commit's first-parent history after the commit itself that the default branch lacks, or -1,
-// from one first-parent listing that ends at the first commit the default branch holds and is read only up to that nearest tip, so Git walks the history once.
-async function nearestTip(git: Git, tip: string, mainCommit: string, tipIndex: Map<string, number>, live: Live) {
+// The position of the nearest tip in a commit's first-parent history after the commit itself that the default branch lacks, or -1, given own(tip, default branch) as own.
+// The listing excludes no commit, so Git walks only the commits it prints: it is read up to the first commit that is a tip, which is the nearest tip when the default branch lacks it,
+// and otherwise the default branch holds it and every commit after it. The commits that the default branch lacks come first in that history and number at most own,
+// so the listing stops after own commits with no tip among them, and a history that holds commits the default branch lacks only through merges is read no further than that.
+async function nearestTip(git: Git, tip: string, own: number, ownOfMain: Uint32Array, tipIndex: Map<string, number>, live: Live) {
   stopUnless(live);
   let found = -1;
-  let own = true;
-  await eachLine(git, ["rev-list", "--first-parent", tip, `^${mainCommit}`], (commit) => {
-    if (own) {
-      own = false;
-      return true;
+  let read = 0;
+  await eachLine(git, ["rev-list", "--first-parent", tip], (commit) => {
+    read += 1;
+    const at = read > 1 ? tipIndex.get(commit) : undefined;
+    if (at !== undefined) {
+      if (ownOfMain[at] > 0) found = at;
+      return false;
     }
-    found = tipIndex.get(commit) ?? -1;
-    return found < 0;
+    return read < own;
   });
   return found;
 }
 
 /**
  * The facts of a clone's branches that depend only on their tips and default branch:
- * { key, defaultBranch, branches, tips, mainTip, totals, ownOfMain, merges, nearest, ownOfNearest, columns, pairs },
- * with each branch { name, commit, committedAt, tip } in name order and tip its position in tips, and, by tip position, its commit count, own(tip, default branch),
+ * { key, defaultBranch, branches, tips, mainTip, ownOfMain, merges, nearest, ownOfNearest, columns, pairs },
+ * with each branch { name, commit, committedAt, tip } in name order and tip its position in tips, and, by tip position, own(tip, default branch),
  * its merge commits that the default branch lacks, the position of the nearest tip of its first-parent history or -1, and own(tip, that nearest tip).
  * columns and pairs keep the counts that a base choice for the current owners read, so a later read reuses them.
  * It answers null when the clone names no default branch that it holds, and throws Superseded once live() is false.
@@ -157,18 +166,31 @@ export async function readBranchFacts(git: Git, live: Live = () => true) {
   const mainTip = main.tip;
   stopUnless(live);
   const ownOfMain = await ownColumn(git, main.commit, tips, tipIndex, live);
-  const totals = new Uint32Array(size);
-  const merges = new Uint32Array(size);
+  // Each tip's merges that the default branch lacks are those its nearest tip lacks too, plus those that neither holds, so each count walks only the commits that a tip adds to its nearest tip.
+  const ownMerges = new Uint32Array(size);
   const nearest = new Int32Array(size).fill(-1);
   const ownOfNearest = new Uint32Array(size);
   await mapLimit(tips, PARALLEL, async (tip, row) => {
-    totals[row] = await count(git, [tip]);
-    if (row === mainTip) return;
-    merges[row] = await count(git, ["--merges", tip, `^${main.commit}`]);
-    nearest[row] = await nearestTip(git, tip, main.commit, tipIndex, live);
-    if (nearest[row] >= 0) ownOfNearest[row] = await count(git, [tip, `^${tips[nearest[row]]}`]);
+    if (ownOfMain[row] === 0) return;
+    nearest[row] = await nearestTip(git, tip, ownOfMain[row], ownOfMain, tipIndex, live);
+    const near = nearest[row] >= 0 ? [`^${tips[nearest[row]]}`] : [];
+    if (near.length) ownOfNearest[row] = await count(git, [tip, ...near]);
+    ownMerges[row] = await count(git, ["--merges", tip, ...near, `^${main.commit}`]);
   }, live);
-  return { key, defaultBranch, branches: read, tips, mainTip, totals, ownOfMain, merges, nearest, ownOfNearest, columns: new Map<number, Uint32Array>(), pairs: new Map<number, number>() };
+  // Summed down each chain of nearest tips without recursion: a tip's chain is followed up to a tip already summed, and then summed back down.
+  const merges = new Uint32Array(size);
+  const summed = new Uint8Array(size);
+  const chain: number[] = [];
+  for (let row = 0; row < size; row += 1) {
+    if (row % TURN === TURN - 1) await pause();
+    for (let at = row; at >= 0 && !summed[at] && chain.length < size; at = nearest[at]) chain.push(at);
+    while (chain.length) {
+      const at = chain.pop()!;
+      merges[at] = ownMerges[at] + (nearest[at] >= 0 && summed[nearest[at]] ? merges[nearest[at]] : 0);
+      summed[at] = 1;
+    }
+  }
+  return { key, defaultBranch, branches: read, tips, mainTip, ownOfMain, merges, nearest, ownOfNearest, columns: new Map<number, Uint32Array>(), pairs: new Map<number, number>() };
 }
 
 type Facts = NonNullable<Awaited<ReturnType<typeof readBranchFacts>>>;
@@ -224,21 +246,30 @@ export async function rankBranches(facts: Facts, owned: Set<string>) {
   const placed = new Set<Branch>();
   const placedAt = new Map<number, number>();
   const settled = (tip: number) => (placedAt.get(tip) ?? 0) >= (byTip.get(tip)?.length ?? 0);
-  const put = (branch: Branch) => {
+  // Every branch handled or tip followed counts, so placing a whole chain of nearest tips gives way too.
+  let steps = 0;
+  const step = async () => {
+    if (++steps % TURN === 0) await pause();
+  };
+  const put = async (branch: Branch) => {
     placed.add(branch);
     placedAt.set(branch.tip, (placedAt.get(branch.tip) ?? 0) + 1);
     order.push(branch);
+    await step();
   };
   for (let index = 0; index < ranked.length; index += 1) {
-    if (index % TURN === TURN - 1) await pause();
+    await step();
     const branch = ranked[index];
     if (placed.has(branch)) continue;
     const chain: number[] = [];
-    for (let tip = facts.nearest[branch.tip]; tip >= 0 && !settled(tip) && chain.length < facts.tips.length; tip = facts.nearest[tip]) chain.push(tip);
-    for (let link = chain.length - 1; link >= 0; link -= 1) {
-      for (const other of byTip.get(chain[link]) ?? []) if (!placed.has(other)) put(other);
+    for (let tip = facts.nearest[branch.tip]; tip >= 0 && !settled(tip) && chain.length < facts.tips.length; tip = facts.nearest[tip]) {
+      chain.push(tip);
+      await step();
     }
-    put(branch);
+    for (let link = chain.length - 1; link >= 0; link -= 1) {
+      for (const other of byTip.get(chain[link]) ?? []) if (!placed.has(other)) await put(other);
+    }
+    await put(branch);
   }
   return order;
 }
@@ -301,12 +332,13 @@ export async function readBranches(git: Git, facts: Facts, owned: Set<string>, {
     facts.columns.set(tip, await ownColumn(git, facts.tips[tip], facts.tips, tipIndex, live));
   }
   const wanted = new Set<number>();
-  order.forEach((branch, index) => {
+  for (let index = 0; index < order.length; index += 1) {
+    if (index % TURN === TURN - 1) await pause();
     for (const other of candidates[index]) {
-      const pair = ownPair(branch, other);
+      const pair = ownPair(order[index], other);
       if (pair !== null) wanted.add(pair);
     }
-  });
+  }
   for (const pair of facts.pairs.keys()) if (!wanted.has(pair)) facts.pairs.delete(pair);
   await mapLimit([...wanted].filter((pair) => !facts.pairs.has(pair)), PARALLEL, async (pair) => {
     facts.pairs.set(pair, await count(git, [facts.tips[Math.floor(pair / size)], `^${facts.tips[pair % size]}`]));
@@ -315,14 +347,13 @@ export async function readBranches(git: Git, facts: Facts, owned: Set<string>, {
   for (let index = 0; index < order.length; index += 1) {
     if (index % TURN === TURN - 1) await pause();
     const branch = order[index];
-    const total = facts.totals[branch.tip];
     let chosen: Branch | null = null;
     let fewest = Infinity;
     // The default branch comes first and the candidates follow in ranked order, so a tie goes to the default branch and then to the earlier ranked one.
+    // A candidate that shares no commit with this branch counts every commit of it, as many as any candidate can, so the fewest goes to one that shares a commit
+    // whenever any does, and when it shares none, no allowed candidate does: its fork, read once the base is chosen, is then null and so is its base.
     for (const other of [main, ...candidates[index]]) {
       const owns = known(branch, other);
-      // A branch that holds every commit of this one's history shares none of it when this one holds all its commits apart from it.
-      if (owns >= total && total > 0) continue;
       if (owns < fewest) {
         fewest = owns;
         chosen = other;
@@ -331,14 +362,15 @@ export async function readBranches(git: Git, facts: Facts, owned: Set<string>, {
     bases.set(branch.name, chosen);
   }
   const used = new Set<string>();
-  const described = await mapLimit(facts.branches, PARALLEL, async (branch: any) => {
+  const described = await mapLimit(facts.branches, PARALLEL, async (branch: any, index) => {
+    if (index % TURN === TURN - 1) await pause();
     if (branch === main) return { name: branch.name, commit: branch.commit, default: true, base: null, fork: null, files: 0, committedAt: branch.committedAt, people: { last: null, count: 0 } };
     const base = bases.get(branch.name);
     const key = `${branch.commit}\0${base?.commit ?? ""}`;
     used.add(key);
     if (!derived.has(key)) derived.set(key, await derive(git, branch.commit, base?.commit ?? null));
     const { fork, files, people } = derived.get(key);
-    return { name: branch.name, commit: branch.commit, default: false, base: base?.name ?? null, fork, files, committedAt: branch.committedAt, people };
+    return { name: branch.name, commit: branch.commit, default: false, base: fork === null ? null : base!.name, fork, files, committedAt: branch.committedAt, people };
   }, live);
   for (const key of derived.keys()) if (!used.has(key)) derived.delete(key);
   return { defaultBranch: facts.defaultBranch, branches: described };
@@ -358,9 +390,16 @@ async function derive(git: Git, tip: string, baseTip: string | null) {
     const fromBase = sinceFork.size ? await changedPaths(git, baseTip!, tip) : new Set<string>();
     files = [...sinceFork].filter((file) => fromBase.has(file)).length;
   }
-  const authors = await git(["log", "--format=%an", tip, ...(fork ? [`^${fork}`] : [])]);
-  const names = authors.ok ? lines(authors.text) : [];
-  return { fork, files, people: { last: names[0] ?? null, count: new Set(names).size } };
+  // The author log is read line by line, so only its distinct names are held, however long the history, and a long name is held as its digest,
+  // which no name can equal because no author name holds a NUL.
+  let last: string | null = null;
+  const names = new Set<string>();
+  await eachLine(git, ["log", "--format=%an", tip, ...(fork ? [`^${fork}`] : [])], (name) => {
+    last ??= name;
+    names.add(name.length <= NAME_KEPT ? name : `\0${createHash("sha1").update(name).digest().toString("base64", 0, 12)}`);
+    return true;
+  });
+  return { fork, files, people: { last, count: names.size } };
 }
 
 /**
@@ -396,12 +435,13 @@ export function createBranchReader(git: Git) {
       derived = new Map();
       answers.clear();
       const read = await readBranchFacts(git, live);
-      if (read === null) {
-        keep(job.key, { defaultBranch: null, branches: [] });
-        return;
-      }
+      // A clone that names no default branch it holds answers the same for every set of owners, so its empty answer is kept for its tips as facts are.
+      factsKey = read?.key ?? job.tipsKey;
       facts = read;
-      factsKey = read.key;
+    }
+    if (facts === null) {
+      keep(job.key, { defaultBranch: null, branches: [] });
+      return;
     }
     const model = await readBranches(git, facts!, job.owned, { live, derived });
     // A fetch between the request and the read changes the tips that the read found, so the answer is kept under the tips that it read.

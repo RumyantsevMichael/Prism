@@ -21,7 +21,6 @@ test("many branches at one nearest tip keep the base choice's work per branch co
   const size = tips.length;
   const facts = {
     key: "k", defaultBranch: "main", branches, tips, mainTip: 0,
-    totals: Uint32Array.from({ length: size }, (_, tip) => tip + 1),
     ownOfMain: Uint32Array.from({ length: size }, (_, tip) => (tip === 0 ? 0 : tip === 1 ? 1 : 2)),
     merges: new Uint32Array(size),
     nearest: Int32Array.from({ length: size }, (_, tip) => (tip > 1 ? 1 : -1)),

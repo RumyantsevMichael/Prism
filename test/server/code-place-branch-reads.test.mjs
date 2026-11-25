@@ -222,7 +222,7 @@ test("the ranking of a chain of 8000 branches runs without exhausting the call s
   const size = tips.length;
   const nearest = Int32Array.from({ length: size }, (_, index) => (index > 1 ? index - 1 : -1));
   const ownOfMain = Uint32Array.from({ length: size }, (_, index) => index);
-  const facts = { key: "k", defaultBranch: "main", branches, tips, mainTip: 0, totals: Uint32Array.from({ length: size }, (_, index) => index + 1), ownOfMain, merges: new Uint32Array(size), nearest, ownOfNearest: Uint32Array.from({ length: size }, (_, index) => (index > 1 ? 1 : 0)), columns: new Map(), pairs: new Map() };
+  const facts = { key: "k", defaultBranch: "main", branches, tips, mainTip: 0, ownOfMain, merges: new Uint32Array(size), nearest, ownOfNearest: Uint32Array.from({ length: size }, (_, index) => (index > 1 ? 1 : 0)), columns: new Map(), pairs: new Map() };
   let turns = 0;
   const ticking = setInterval(() => { turns += 1; }, 0);
   const order = await rankBranches(facts, new Set());
