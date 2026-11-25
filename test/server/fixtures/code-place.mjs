@@ -181,6 +181,26 @@ export async function verifiedWork(owner, { initiative, title, slices, scopes = 
   git(root, "checkout", "-q", "main");
 }
 
+/**
+ * An initiative on the roadmap's Now lane, without child slices, that is started but has no line of work yet:
+ * no branch holds its work and no verification run names one, so it is in Work's In progress group and changes no code.
+ */
+export async function startedWork(owner, { initiative, title }) {
+  const { root, server: prism } = owner;
+  const requirements = ["docs/requirements/code.md#1"];
+  ok(await prism.call("update_initiative", { initiative, expectedRevision: null, operations: [{ op: "create", slug: initiative, title, requirements }] }));
+  await writeArtifact(prism, `docs/plans/${initiative}/slice.md`, `# ${title}\n\n## Contract\n1. It works.\n\n## Changes\n- add \`src/x.ts\`: work.\n`);
+  ok(await prism.call("update_roadmap", { expectedRevision: ok(await prism.call("get_roadmap", {})).revision, operations: [{ op: "add_initiative", id: initiative, title, intent: `${title}.`, band: "Now", requirements: ["code.md§1"] }] }));
+  const frozen = `test/${initiative}-${initiative}.test.mjs`;
+  git(root, "checkout", "-q", "main");
+  await writeFile(path.join(root, frozen), "// frozen acceptance test\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", `freeze ${initiative}`);
+  git(root, "push", "-q", "origin", "main");
+  ok(await prism.call("update_initiative", { initiative, expectedRevision: await revision(prism, initiative), operations: [{ op: "accept_design", slug: initiative, frozenTests: [frozen], review: "required" }] }));
+  ok(await prism.call("update_initiative", { initiative, expectedRevision: await revision(prism, initiative), operations: [{ op: "set_status", slug: initiative, status: "in-progress" }] }));
+}
+
 /** Write a slice's files, remove its removed paths, and commit them on the checked-out branch. */
 export async function commitWork(root, { title = "work", files = {}, remove = [] }) {
   for (const [file, contents] of Object.entries(files)) {

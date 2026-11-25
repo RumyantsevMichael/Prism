@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { rm, writeFile } from "node:fs/promises";
+import { rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { blobOf, eventually, git, isolateGit } from "./fixtures/workspace-view.mjs";
-import { DEADLINE_STRATEGY, METRICS_STRATEGY, STRATEGY, TIDY_STRATEGY, applySteps, codePlaceWorkspace, commitWork, edited } from "./fixtures/code-place.mjs";
+import { DEADLINE_STRATEGY, METRICS_STRATEGY, STRATEGY, TIDY_STRATEGY, applySteps, codePlaceWorkspace, commitWork, edited, startedWork } from "./fixtures/code-place.mjs";
 
 // Requirements: docs/requirements/code-place.md §2, §9, §15 to §20, §22, §23, §25, §26, §31.
 // Contract: docs/plans/code-place/slice.md clauses 26 to 39, through GET ./api/code/files, versions, and diff of a workspace page.
@@ -131,7 +131,10 @@ test("clause 32: a new file's base is absent and a removed file's version is a r
 test("clause 35: two versions that change overlapping lines of one base conflict, and far-apart changes do not", TIMEOUT, async () => {
   const got = await versions("all", "api", "src/retry/strategy.ts");
   const [deadline, metrics] = got.versions;
-  assert.deepEqual(got.conflicts, [{ first: deadline.id, second: metrics.id, lines: { first: [[2, 2], [4, 4]], second: [[2, 4]] } }]);
+  assert.deepEqual(got.conflicts, [
+    { version: deadline.id, with: [{ version: metrics.id, lines: { own: [[2, 2], [4, 4]], other: [[2, 4]] } }], more: 0, complete: true },
+    { version: metrics.id, with: [{ version: deadline.id, lines: { own: [[2, 4]], other: [[2, 2], [4, 4]] } }], more: 0, complete: true }
+  ], "each conflicting version names the other, and the versions that change far-apart lines have no entry");
   const narrowed = await versions("work:retries/deadline", "api", "src/retry/strategy.ts");
   assert.deepEqual(narrowed.conflicts, [], "a narrowed file shows only its own version, so nothing conflicts");
 });
@@ -209,8 +212,29 @@ test("clauses 33 and 39: a push after verification makes the new version unverif
   assert.deepEqual([tidy.added, tidy.removed], [rows.filter((row) => row.op === "add").length, rows.filter((row) => row.op === "del").length], "the counts are the difference's rows");
 });
 
-// It runs last, since its branches join every later answer of the shared workspace.
-test("clause 35: every pair of many versions that change the same lines is listed, however many versions a file has", TIMEOUT, async () => {
+// It runs after the clauses' own tests, since it adds a work item and a commit of the default branch to the shared workspace.
+test("clauses 14 and 26: an In progress work item that changes no code yet is a listed scope whose files and versions change nothing", TIMEOUT, async () => {
+  const { owner } = await workspace();
+  await startedWork(owner, { initiative: "waiting", title: "Wait for retry budgets" });
+  const listed = await eventually(async () => (await (await workspace()).ready("place")).json?.work?.find((item) => item.initiative === "waiting") ?? null, 20000, "the started work item in the place's work");
+  assert.deepEqual(listed, { initiative: "waiting", title: "Wait for retry budgets", files: 0, slices: [], branches: [] }, "the place lists the work item with nothing changed");
+  const top = await files("work:waiting", null);
+  assert.equal(top.scope, "work:waiting");
+  assert.deepEqual(top.entries.map(({ path: name, type, state }) => [name, type, state]), [["api", "repository", "on"], ["infra", "repository", "on"], ["mobile", "repository", "off"], ["web", "repository", "on"]]);
+  const src = await files("work:waiting", "api/src");
+  assert.deepEqual(src.entries.map((item) => [item.path, item.touched]), [["api/src/http", false], ["api/src/retry", false]], "no folder holds a changed file");
+  const retry = await files("work:waiting", "api/src/retry");
+  assert.deepEqual(retry.entries.map((item) => [item.path, item.change]), [["api/src/retry/backoff.ts", null], ["api/src/retry/legacy.ts", null], ["api/src/retry/strategy.ts", null]], "the default branch's entries only, none changed");
+  assert.ok(retry.entries.every((item) => item.people.length === 0));
+  const strategy = await versions("work:waiting", "api", "src/retry/strategy.ts");
+  assert.deepEqual([strategy.bases, strategy.versions, strategy.conflicts], [[{ branch: "main", blob: blobOf(STRATEGY) }], [], []], "only the base");
+  const { api } = await workspace();
+  const refused = await api(`files?scope=${encodeURIComponent("work:waiting/nothing")}&folder=api`);
+  assert.deepEqual([refused.status, refused.json?.code], [404, "scope_unknown"], "a slice the place does not list stays unknown");
+});
+
+// It runs after the others, since its branches join every later answer of the shared workspace.
+test("clause 35: each of many versions that change the same lines names at most 16 others and counts the rest, so the answer grows with the versions, not with their pairs", TIMEOUT, async () => {
   const { owner } = await workspace();
   const crowd = Array.from({ length: 34 }, (_, index) => `crowd/${String(index).padStart(2, "0")}`);
   await applySteps(owner.root, crowd.map((branch, index) => ({ branch, author: "Lee Park", days: 1, files: { "src/retry/backoff.ts": `export const backoff = (attempt: number) => attempt * ${101 + index};\n` } })));
@@ -218,10 +242,91 @@ test("clause 35: every pair of many versions that change the same lines is liste
     const answer = await (await workspace()).ready("versions?scope=all&repository=api&path=src%2Fretry%2Fbackoff.ts");
     return answer.json?.versions?.length === crowd.length ? answer.json : null;
   }, 60000, "the 34 pushed versions of backoff.ts");
-  const order = new Map(got.versions.map((version, index) => [version.id, index]));
-  const pairs = got.conflicts.map((conflict) => [order.get(conflict.first), order.get(conflict.second)]);
-  assert.equal(pairs.length, crowd.length * (crowd.length - 1) / 2, "each of the 561 pairs changes line 1 of the same base, so each conflicts");
-  assert.equal(new Set(pairs.map((pair) => pair.join(" "))).size, pairs.length, "each pair once");
-  assert.ok(pairs.every(([first, second]) => first < second), "a pair names its versions in the order of clause 34");
-  assert.ok(got.conflicts.every((conflict) => JSON.stringify(conflict.lines) === JSON.stringify({ first: [[1, 1]], second: [[1, 1]] })));
+  const ids = got.versions.map((version) => version.id);
+  assert.deepEqual(got.conflicts.map((entry) => entry.version), ids, "every version changes line 1 of the same base, so each has an entry, in the order of clause 34");
+  for (const entry of got.conflicts) {
+    const others = ids.filter((id) => id !== entry.version);
+    assert.deepEqual(entry.with.map((other) => other.version), others.slice(0, 16), "it names the first 16 other versions in the order of clause 34");
+    assert.equal(entry.more, others.length - 16, "and counts the 17 it leaves out");
+    assert.equal(entry.complete, true);
+    assert.ok(entry.with.every((other) => JSON.stringify(other.lines) === JSON.stringify({ own: [[1, 1]], other: [[1, 1]] })));
+  }
+});
+
+// It runs after the others but one, since it moves the default branch of the shared workspace.
+test("clause 35: a pair of versions that change many of the same lines names at most 8 ranges a side, the 8th reaching to the last", TIMEOUT, async () => {
+  const { owner } = await workspace();
+  const wide = (mark) => Array.from({ length: 400 }, (_, index) => (mark && index % 4 === 0 ? `${mark} ${index + 1}` : `line ${index + 1}`)).join("\n") + "\n";
+  await applySteps(owner.root, [
+    { branch: "main", files: { "src/retry/wide.ts": wide(null) }, message: "add wide.ts" },
+    { branch: "wide/a", author: "Lee Park", files: { "src/retry/wide.ts": wide("a") } },
+    { branch: "wide/b", author: "Ana Ruiz", files: { "src/retry/wide.ts": wide("b") } }
+  ]);
+  const got = await eventually(async () => {
+    const answer = await (await workspace()).ready("versions?scope=all&repository=api&path=src%2Fretry%2Fwide.ts");
+    return answer.json?.versions?.length === 2 ? answer.json : null;
+  }, 60000, "the two pushed versions of wide.ts");
+  const [first, second] = got.versions.map((version) => version.id);
+  // Each version changes the 100 lines 1, 5, 9, ..., 397, so each has 100 ranges that all meet the other's.
+  const ranges = [[1, 1], [5, 5], [9, 9], [13, 13], [17, 17], [21, 21], [25, 25], [29, 397]];
+  assert.deepEqual(got.conflicts, [
+    { version: first, with: [{ version: second, lines: { own: ranges, other: ranges } }], more: 0, complete: true },
+    { version: second, with: [{ version: first, lines: { own: ranges, other: ranges } }], more: 0, complete: true }
+  ]);
+});
+
+// It runs last, since it pushes branches to web and api and moves their remotes away for a while.
+test("clauses 27 and 37: a read that fails while a remote is away answers 503 read_failed for that repository only, is kept nowhere, and is read again on a later request", TIMEOUT, async () => {
+  const { api, owner, remotes } = await workspace();
+  const NAV_WORKFLOW = "## Components\n- report-ui: packages/reports\n- shell: packages/shell\n- nav: packages/nav\n";
+  const JITTER = "export const jitter = (delay: number) => delay * Math.random();\n";
+  // Reading first fetches every blob that the tree's marks and strategy.ts's versions need of the branches so far.
+  await files("all", null);
+  await files("all", "api/src/retry");
+  await versions("all", "api", "src/retry/strategy.ts");
+  // Each branch brings a blob that the blobless clones have never fetched: web's .prism/workflow.md of feature/nav, and api's new jitter.ts of feature/jitter.
+  await applySteps(remotes.web.work, [{ branch: "feature/nav", author: "Lee Park", files: { ".prism/workflow.md": NAV_WORKFLOW, "packages/nav/menu.ts": "menu\n" } }]);
+  await applySteps(owner.root, [{ branch: "feature/jitter", author: "Lee Park", files: { "src/retry/jitter.ts": JITTER } }]);
+  // The place reads commits and trees only, so waiting for it fetches the new tips and none of their blobs.
+  await eventually(async () => {
+    const place = (await (await workspace()).ready("place")).json;
+    return ["feature/nav", "feature/jitter"].every((name) => place?.branches?.some((line) => line.branch === name)) ? place : null;
+  }, 60000, "the pushed branches feature/nav and feature/jitter");
+  const away = (name) => `${remotes[name].bare}.away`;
+  await rename(remotes.web.bare, away("web"));
+  await rename(remotes.api.bare, away("api"));
+  try {
+    const top = await files("all", null);
+    assert.deepEqual(top.entries.map(({ path: name, error }) => [name, error?.code ?? null]), [["api", null], ["infra", null], ["mobile", null], ["web", "read_failed"]], "only web, whose new .prism/workflow.md cannot be read, is marked, and the other repositories answer");
+    const web = entry(top, "web");
+    assert.deepEqual(web.components, [], "a failed repository's entry lists no component");
+    assert.match(web.error.message, /\bweb\b/, "the mark names the repository");
+    assert.deepEqual(entry(top, "infra").components, [{ name: "infra", branches: 1, declaredOn: [] }], "a repository that reads answers as usual beside the failed one");
+    assert.ok(top.entries.filter((item) => item.path !== "web").every((item) => item.error === null), "every other entry's error is null");
+    const folder = await api(`files?scope=all&folder=${encodeURIComponent("web/packages")}`);
+    assert.deepEqual([folder.status, folder.json?.code], [503, "read_failed"], "a folder of the failed repository answers 503");
+    const retry = await files("all", "api/src/retry");
+    assert.deepEqual(entry(retry, "api/src/retry/jitter.ts").change, { kind: "new", versions: 2 }, "api's tree reads commits and trees only, so it answers while api's remote is away");
+    const failed = await (await workspace()).ready("versions?scope=all&repository=api&path=src%2Fretry%2Fjitter.ts");
+    assert.deepEqual([failed.status, failed.json?.code], [503, "read_failed"], `a version whose blob cannot be read answers 503, never 404: ${failed.body}`);
+    assert.match(failed.json.message, /\bapi\b/);
+    const diff = await api("diff?repository=api&path=src%2Fretry%2Fjitter.ts&branch=feature%2Fjitter");
+    assert.deepEqual([diff.status, diff.json?.code], [503, "read_failed"], diff.body);
+    const again = await (await workspace()).ready("versions?scope=all&repository=api&path=src%2Fretry%2Fjitter.ts");
+    assert.deepEqual([again.status, again.json?.code], [503, "read_failed"], "while the remote stays away, each request reads again and fails again");
+    const strategy = await versions("all", "api", "src/retry/strategy.ts");
+    assert.equal(strategy.versions.length, 3, "a file whose blobs the clone holds answers 200 while the same repository's remote is away");
+  } finally {
+    await rename(away("web"), remotes.web.bare);
+    await rename(away("api"), remotes.api.bare);
+  }
+  // The first request after the remotes return reads again, since no answer, blob, count, or difference of a failed read was kept.
+  const top = await files("all", null);
+  assert.ok(top.entries.every((item) => item.error === null), "no entry is marked once web reads again");
+  const packages = await files("all", "web/packages");
+  assert.deepEqual(entry(packages, "web/packages/nav").components, [{ name: "nav", branches: 1, declaredOn: ["feature/nav"] }], "web's new component shows once its declaration reads");
+  const jitter = await versions("all", "api", "src/retry/jitter.ts");
+  assert.deepEqual(jitter.versions.map((version) => [version.branches[0].branch, version.added, version.removed]), [["feature/jitter", 1, 0]]);
+  const rows = (await get("diff?repository=api&path=src%2Fretry%2Fjitter.ts&branch=feature%2Fjitter")).rows;
+  assert.deepEqual(rows, [{ op: "add", before: null, after: 1, text: "export const jitter = (delay: number) => delay * Math.random();" }]);
 });

@@ -4,7 +4,7 @@ import test from "node:test";
 import { git, isolateGit } from "./fixtures/workspace-view.mjs";
 import { launch, shownTooltip, skip } from "./fixtures/kit-browser.mjs";
 import { buttonNames, choosePlace, eventually, groupHeadings, item, itemNames, open, placeButton, rail, row, shownPlace, shownRef, sidebar } from "./fixtures/places-browser.mjs";
-import { codePlaceWorkspace, codeWorkspace, commitWork } from "./fixtures/code-place.mjs";
+import { codePlaceWorkspace, codeWorkspace, commitWork, startedWork } from "./fixtures/code-place.mjs";
 import { repainted } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/code-place.md §1, §3 to §8, §10 to §13, review-app-places.md §53.
@@ -50,9 +50,10 @@ test("clause 1: the rail holds Code between Knowledge and History, named on focu
   assert.match(await sidebar(page).innerText(), /What the code in flight changes/);
 });
 
-test("clause 1: a workspace whose store registers no repository has no Code place", TIMEOUT, async (context) => {
-  const empty = await codeWorkspace(context, { repositories: [] });
-  const browser = await launch(context);
+// Its workspace is stopped with the shared one after the last test, since stopping a workspace stops every Prism server the helpers started, the shared owner's too.
+test("clause 1: a workspace whose store registers no repository has no Code place", TIMEOUT, async () => {
+  const empty = await codeWorkspace(suite, { repositories: [] });
+  const browser = await launch(suite);
   const page = await open(browser, `${empty.prism.viewer}/w/${empty.id}`, "roadmap");
   assert.equal(await placeButton(page, "Code").count(), 0);
   assert.equal(await placeButton(page, "History").count(), 1);
@@ -191,4 +192,22 @@ test("clause 39: a branch pushed while the place is open appears without a reloa
   git(owner.root, "checkout", "-q", "main");
   const names = await eventually(async () => (await itemNames(sidebar(page))).includes("api · team/late"), true, { timeout: 20000 });
   assert.equal(names, true);
+});
+
+// It runs last, since it adds a work item to the shared workspace's In progress group.
+test("clauses 19 to 21: an In progress work item that changes no code yet is listed and says No changes yet", TIMEOUT, async () => {
+  const { owner } = await workspace();
+  await startedWork(owner, { initiative: "waiting", title: "Wait for retry budgets" });
+  const page = await codePage();
+  const side = sidebar(page);
+  assert.equal(await eventually(async () => (await itemNames(side)).includes("Wait for retry budgets"), true, { timeout: 20000 }), true, "the work item is listed in In progress");
+  const headings = (await side.getByRole("heading", { level: 3 }).allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim());
+  assert.equal(headings[0], "In progress 4");
+  assert.match((await row(side, "Wait for retry budgets").innerText()).replace(/\s+/g, " ").trim(), /Wait for retry budgets No changes yet$/);
+  assert.equal(await item(side, "Wait for retry budgets").getAttribute("aria-expanded"), null, "a work item without a line of work has no rows below it");
+  await row(side, "Wait for retry budgets").focus();
+  assert.equal(await eventually(async () => /Wait for retry budgets · (.+ · )?No changes yet/.test((await shownTooltip(page)) ?? ""), true), true, "its tooltip says it changes nothing yet");
+  await row(side, "Wait for retry budgets").click();
+  assert.equal(await eventually(() => shownRef(page), "code:work/waiting"), "code:work/waiting");
+  assert.equal(await item(side, "Wait for retry budgets").getAttribute("aria-selected"), "true");
 });
