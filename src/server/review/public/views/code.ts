@@ -186,13 +186,16 @@ function neededUrls(current: any, cache: Map<string, any>) {
 }
 
 /**
- * Reads what the page needs and draws it: a first draw shows each answer as it comes, and a redraw reads every answer again and draws once,
- * only when something changed. A read that Prism still prepares is asked again shortly, and a narrowing that the place does not list shows All.
+ * Reads what the page needs and draws it: a first draw shows each answer as it comes, and a redraw reads every answer again and draws each
+ * round's answers over the ones it read last, so the open file redraws once its own reads came rather than after every open folder's listing.
+ * A read that Prism still prepares is asked again shortly, and a narrowing that the place does not list shows All.
  */
 async function sync(current: any, { fresh = false } = {}) {
   const generation = ++current.generation;
   clearTimeout(current.retry);
   const cache = fresh ? new Map() : current.cache;
+  // A redraw shows the answers it read last until each is read again, and keeps an answer that Prism now prepares again until the final draw.
+  const shown = fresh ? new Map(current.cache) : cache;
   if (fresh) {
     current.scope = current.wanted;
     current.unknown = false;
@@ -205,16 +208,17 @@ async function sync(current: any, { fresh = false } = {}) {
       if (!missing.length) break;
       const results = await Promise.all(missing.map(read));
       if (generation !== current.generation) return;
-      missing.forEach((url, index) => cache.set(url, results[index]));
+      missing.forEach((url, index) => {
+        cache.set(url, results[index]);
+        if (shown !== cache && !(preparing(results[index]) && answered(shown.get(url)))) shown.set(url, results[index]);
+      });
       const top = cache.get(filesUrl(current, null));
       if (top?.status === 404 && top.json?.code === "scope_unknown" && current.scope !== "all") {
         current.unknown = true;
         current.scope = "all";
       }
-      if (!fresh) {
-        current.cache = cache;
-        draw(current);
-      }
+      current.cache = shown;
+      draw(current);
     }
     if (generation !== current.generation) return;
     current.cache = cache;
@@ -329,11 +333,14 @@ function conflictsHtml(versions: any, open: any) {
   return notes.map((text: string) => `<prism-inline-note tone="warning">${icon("warning", "start", "xs")}<span>${escapeHtml(text)}</span></prism-inline-note>`).join("");
 }
 
+// A file that the review app does not show, such as a binary file or one over 512 KiB, says so and why; any other refusal says what it was.
+const notShown = (entry: any, otherwise: string) => emptyState(entry.json?.code === "file_not_shown" ? "This file is not shown" : "Not shown", entry.json?.message ?? otherwise);
+
 function contentHtml(current: any, open: any) {
   const entry = current.cache.get(diffUrl(current, open.base ? open.branch : open.branches[0].branch));
   if (!entry || preparing(entry)) return `<prism-spinner label="Reading the file"></prism-spinner>`;
   const diff = answered(entry);
-  if (!diff) return emptyState("Not shown", entry.json?.message ?? "The review app could not read this version of the file.");
+  if (!diff) return notShown(entry, "The review app could not read this version of the file.");
   const language = languageOf(current.file.path);
   if (open.base) {
     const content = diff.rows.map((row: any) => row.text).join("\n");
@@ -367,7 +374,7 @@ function fileHtml(current: any) {
   if (!entry || preparing(entry)) body = `<prism-spinner label="Reading the file's versions"></prism-spinner>`;
   else if (failed(entry)) body = quietNote("Prism could not read this file just now.", "file").replace(' slot="end"', "");
   else if (entry.json?.code === "code_off") body = checkoutHtml(current);
-  else if (!versions) body = emptyState("Not shown", entry.json?.message ?? "The review app could not read this file.");
+  else if (!versions) body = notShown(entry, "The review app could not read this file.");
   else {
     const open = openVersion(versions);
     const diff = current.cache.get(diffUrl(current, open.base ? open.branch : open.branches[0].branch));
