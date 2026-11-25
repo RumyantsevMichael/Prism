@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { eventually as waitFor, git, isolateGit, sha16 } from "./fixtures/workspace-view.mjs";
 import { applySteps, codeWorkspace } from "./fixtures/code-place.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // How Prism reads the branches of a code clone: in the background, one read at a time, from the clone's current tips and default branch,
 // with memory and per-request work that stay bounded as the remote's branch count grows.
@@ -41,37 +43,50 @@ test("the default branch follows the remote's HEAD when it names another branch 
   assert.equal(byName.get("feature/table").base, "develop");
 });
 
-test("a branches request answers at once while a fetch it started waits on a remote that does not answer", async (context) => {
+test("a branches request answers the ready model at once while a fetch it started waits on a remote that does not answer", async (context) => {
   const { api, ready, where } = await codeWorkspace(context, { repositories: [WEB] });
-  assert.equal((await ready("branches?repository=web")).status, 200);
-  // The clone's upload-pack waits until the test releases it, so a fetch hangs as it would on a remote that accepts a connection and never answers.
+  const before = await ready("branches?repository=web");
+  assert.equal(before.status, 200);
+  // The clone's upload-pack marks that it started and waits until the test releases it, so a fetch hangs as it would on a remote that accepts a connection and never answers.
   const held = path.join(where.parent, "held");
   await mkdir(held, { recursive: true });
+  const started = path.join(held, "started");
   const release = path.join(held, "release");
   const waiter = path.join(held, "wait.mjs");
-  await writeFile(waiter, `import { existsSync } from "node:fs";\nconst timer = setInterval(() => { if (existsSync(${JSON.stringify(release)})) { clearInterval(timer); process.exitCode = 1; } }, 50);\n`);
+  await writeFile(waiter, `import { existsSync, writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(started)}, "");\nconst timer = setInterval(() => { if (existsSync(${JSON.stringify(release)})) { clearInterval(timer); process.exitCode = 1; } }, 50);\n`);
   const slash = (file) => file.split(path.sep).join("/");
   const clone = cloneOf(where);
   git(clone, "config", "remote.origin.uploadpack", `"${slash(process.execPath)}" "${slash(waiter)}"`);
   const timed = async () => {
-    const started = Date.now();
+    const begun = Date.now();
     const answer = await api("branches?repository=web");
-    return { status: answer.status, ms: Date.now() - started, json: answer.json };
+    return { status: answer.status, ms: Date.now() - begun, json: answer.json };
   };
   try {
     const answers = [];
     await waitFor(async () => {
       answers.push(await timed());
-      return answers.at(-1).status === 202;
+      return existsSync(started);
     }, 20000, "a request that starts a fetch");
     for (let index = 0; index < 3; index += 1) answers.push(await timed());
-    assert.deepEqual(answers.slice(-4).map((answer) => [answer.status, answer.json]), Array(4).fill([202, { state: "preparing" }]), "the fetch still waits, so the clone is preparing");
-    for (const answer of answers) assert.ok(answer.ms < 5000, `a request answered in ${answer.ms} ms rather than waiting on the fetch`);
+    for (const answer of answers) {
+      assert.deepEqual([answer.status, answer.json], [200, before.json], "the tips did not move, so the ready answer goes out while the fetch waits");
+      assert.ok(answer.ms < 5000, `a request answered in ${answer.ms} ms rather than waiting on the fetch`);
+    }
   } finally {
     git(clone, "config", "--unset", "remote.origin.uploadpack");
     await writeFile(release, "");
   }
   assert.equal((await ready("branches?repository=web")).status, 200, "the clone answers again once the fetch ends");
+});
+
+test("a ready branch answer for unchanged tips stays 200 after one fetch interval with no page open", async (context) => {
+  const { api, ready } = await codeWorkspace(context, { repositories: [{ name: "web", files: { "a.txt": "a\n" }, steps: [] }] });
+  await ready("branches?repository=web");
+  assert.equal((await api("branches?repository=web")).status, 200, "at once");
+  await pause(400, "longer than the test fetch interval, so a fetch is due at the next request");
+  const later = await api("branches?repository=web");
+  assert.equal(later.status, 200, `after the fetch interval: ${later.body}`);
 });
 
 // A repository whose main holds one commit and that holds count more branches, each one empty commit on main, so every branch has its own tip.
@@ -286,7 +301,7 @@ test("branch names are ranked and listed in code-point order, so a name above U+
   assert.deepEqual(model.branches.map((branch) => [branch.name, branch.base]), [["main", null], ["！b", "main"], ["\u{1F600}a", "！b"]]);
 });
 
-test("each branch's first-parent history is listed once and read only up to its nearest tip or the first commit that main holds", async () => {
+test("the commits that main lacks are listed once for every branch, so no first-parent history is read past its nearest tip or the first commit that main holds", async () => {
   // A chain of 40 links, each one commit on the one before, and a branch of 3000 commits on main that holds no other tip.
   const links = Array.from({ length: 40 }, (_, index) => ({ name: `c${String(index).padStart(3, "0")}`, parent: index === 0 ? "main" : `c${String(index - 1).padStart(3, "0")}` }));
   const folder = importRepository(environment, "first-parent", [...links, { name: "long", parent: "main", commits: 3000 }]);
@@ -299,13 +314,11 @@ test("each branch's first-parent history is listed once and read only up to its 
   const byName = new Map(model.branches.map((branch) => [branch.name, branch]));
   for (let index = 1; index < links.length; index += 1) assert.equal(byName.get(links[index].name).base, links[index - 1].name);
   assert.equal(byName.get("long").base, "main");
-  const walks = streams.filter((stream) => stream.args[0] === "rev-list" && stream.args.includes("--first-parent"));
-  assert.equal(walks.length, links.length + 1, "one first-parent listing for each branch other than main, never one for each batch of its history");
-  const tipOf = (name) => git(folder, "rev-parse", name);
-  const ofTip = (name) => walks.find((stream) => stream.args.includes(tipOf(name)));
-  assert.equal(ofTip(links[0].name).taken, 1, "a branch on main reads only its own tip, since its parent is a commit main holds");
-  for (const link of links.slice(1)) assert.equal(ofTip(link.name).taken, 2, `${link.name} reads its tip and its nearest tip, and nothing past it`);
-  assert.equal(ofTip("long").taken, 3000, "a branch with no other tip reads its history up to the first commit that main holds");
+  const main = git(folder, "rev-parse", "main");
+  const walks = streams.filter((stream) => stream.args[0] === "rev-list" && !stream.args.includes("--count"));
+  assert.equal(walks.length, 1, "one listing for all branches, never one for each branch");
+  assert.ok(walks[0].args.includes(`^${main}`), "the listing excludes main, so no commit that main holds is read");
+  assert.equal(walks[0].taken, links.length + 3000, "each commit that main lacks is read once");
 });
 
 test("two sets of owners that share a clone's reader each keep a ready answer, and a change of owners does not stop the running read", async () => {

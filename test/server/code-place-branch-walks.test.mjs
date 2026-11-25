@@ -96,10 +96,40 @@ test("in a chain of branches with merges, no count walks a branch's whole histor
     const own = counts.filter((command) => command.args.includes(facts.tips[tipOf(name)]));
     assert.ok(own.length > 0 && own.every((command) => command.args.includes(`^${nearestTip}`)), `each count of ${name} excludes its nearest tip`);
   }
-  const listings = commands.filter((command) => command.args.includes("--first-parent"));
-  assert.ok(listings.every((command) => command.streamed && !command.args.some((arg) => arg.startsWith("^"))), "a first-parent listing excludes no commit, so Git walks only what is read");
-  const linkListing = listings.find((command) => command.args.includes(facts.tips[tipOf("c19")]));
-  assert.equal(linkListing.taken, 2, "a link reads its tip and its nearest tip");
+  const listings = commands.filter((command) => command.args[0] === "rev-list" && !command.args.includes("--count"));
+  assert.equal(listings.length, 1, "the merges and nearest tips of every branch come from one listing");
+  assert.ok(listings[0].streamed && listings[0].args.includes(`^${facts.tips[facts.mainTip]}`), "the listing is streamed and excludes main");
+  assert.equal(listings[0].taken, commits.length - 1, "each commit that main lacks is read once");
+});
+
+test("branches that each merge one shared side history read it once, not once for each branch", async () => {
+  // main (1 to 3); a side history (4 to 203) on main's first commit that no branch names; and 30 branches, each one merge of main~1 and that side history.
+  const commits = [{ ref: "main" }, { ref: "main", from: 1 }, { ref: "main", from: 2 }];
+  for (let index = 0; index < 200; index += 1) commits.push({ ref: "side", from: index ? commits.length : 1 });
+  const sideTop = commits.length;
+  for (let index = 0; index < 30; index += 1) commits.push({ ref: `f${String(index).padStart(2, "0")}`, from: 2, merge: sideTop });
+  const folder = repository("fan", commits);
+  git(folder, "update-ref", "-d", "refs/heads/side");
+  const { run, commands } = recordingGit(folder);
+  const facts = await readBranchFacts(run);
+  for (const branch of facts.branches) {
+    if (branch.name === "main") continue;
+    assert.equal(facts.merges[branch.tip], 1, `${branch.name} lacks only its own merge`);
+    assert.equal(facts.nearest[branch.tip], -1, `${branch.name}'s first-parent history reaches main at once`);
+  }
+  const walked = commands.filter((command) => command.args[0] === "rev-list");
+  assert.deepEqual(walked.map((command) => command.taken), [200 + 30], "one listing reads the side history and each merge once, and nothing else walks it");
+});
+
+test("an author name longer than a streamed line keeps still counts as one person and names the newest commit", async () => {
+  const long = "L".repeat(5000);
+  const folder = repository("long-author", [
+    { ref: "main" }, { ref: "work", from: 1, author: "alice" }, { ref: "work", from: 2, author: long }, { ref: "work", from: 3, author: "carol" }, { ref: "work", from: 4, author: long }
+  ]);
+  const { run } = recordingGit(folder);
+  const facts = await readBranchFacts(run);
+  const model = await readBranches(run, facts, new Set());
+  assert.deepEqual(model.branches.find((branch) => branch.name === "work").people, { last: long, count: 3 });
 });
 
 test("a branch that shares no commit with any candidate has no base, fork, or files, with no count of its whole history", async () => {

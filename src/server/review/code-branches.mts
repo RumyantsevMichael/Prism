@@ -6,8 +6,8 @@
 // The work grows with the number of branches times a constant: each branch is compared with the default branch, with the branches at the nearest tip of its first-parent history,
 // with the first CANDIDATES branches of the ranking, and, when a slice owns it, with the CANDIDATES owned branches ranked nearest before it, and only those counts are held.
 // Branches at one tip tie on every count, so of those candidates each tip weighs only its earliest ranked branch, however many branches point at it.
-// A branch's first-parent history is listed once, excluding no commit, and read only up to that nearest tip, a tip that the default branch holds,
-// or as many commits as the branch holds that the default branch lacks, and its other counts exclude that nearest tip, so no count walks the history that a branch shares with another,
+// The commits that the default branch lacks are walked once for all branches, which gives each branch its merges that the default branch lacks and its nearest tip,
+// following its first-parent history only through those commits, and its count against that nearest tip excludes it, so no merge count walks the history that branches share,
 // and a chain of branches each built on the one before costs each branch only its own commits.
 // The ranking and the base choice run without recursion and give way to the server's other work after at most TURN branches.
 // All Git work runs in a background read, one at a time per clone, that a newer set of tips supersedes, and the answers are kept for their tips and default branch,
@@ -44,7 +44,8 @@ const byText = byCodePoint;
 const pause = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 // A Git runner, which hands each output line to line as it arrives when it can, answering streamed true, and stops Git once line answers false.
-type Git = (args: string[], options?: { line?: (line: string) => boolean }) => Promise<{ ok: boolean; text: string; stdout: Buffer; streamed?: boolean }>;
+// A streamed line longer than the runner keeps reaches line as a NUL and a digest of it, which no line of Git's output holds.
+type Git = (args: string[], options?: { line?: (line: string) => boolean; maxRecord?: number }) => Promise<{ ok: boolean; text: string; stdout: Buffer; streamed?: boolean }>;
 type Live = () => boolean;
 
 /** Thrown by a read that a newer request superseded, so it stops before its next Git command. */
@@ -77,10 +78,11 @@ const count = async (git: Git, args: string[]) => {
 const lines = (text: string) => text.split("\n").filter(Boolean);
 
 // Hand each line of a Git command's output to take in order until take answers false, as the lines arrive when the runner streams them, so no line after that is read.
-async function eachLine(git: Git, args: string[], take: (line: string) => boolean) {
+async function eachLine(git: Git, args: string[], take: (line: string) => boolean, maxRecord?: number) {
   let going = true;
-  const listed = await git(args, { line: (line) => (going = going && (!line || take(line))) });
+  const listed = await git(args, { line: (line) => (going = going && (!line || take(line))), ...(maxRecord ? { maxRecord } : {}) });
   if (!listed.streamed && listed.ok) for (const line of lines(listed.text)) if (!take(line)) break;
+  return listed.ok;
 }
 
 /** The key of a clone's branch tips and default branch, from its HEAD ref and its branches as { name, commit } in name order, which a newer fetch changes. */
@@ -111,24 +113,84 @@ async function ownColumn(git: Git, commit: string, tips: string[], tipIndex: Map
   return column;
 }
 
-// The position of the nearest tip in a commit's first-parent history after the commit itself that the default branch lacks, or -1, given own(tip, default branch) as own.
-// The listing excludes no commit, so Git walks only the commits it prints: it is read up to the first commit that is a tip, which is the nearest tip when the default branch lacks it,
-// and otherwise the default branch holds it and every commit after it. The commits that the default branch lacks come first in that history and number at most own,
-// so the listing stops after own commits with no tip among them, and a history that holds commits the default branch lacks only through merges is read no further than that.
-async function nearestTip(git: Git, tip: string, own: number, ownOfMain: Uint32Array, tipIndex: Map<string, number>, live: Live) {
-  stopUnless(live);
-  let found = -1;
-  let read = 0;
-  await eachLine(git, ["rev-list", "--first-parent", tip], (commit) => {
-    read += 1;
-    const at = read > 1 ? tipIndex.get(commit) : undefined;
-    if (at !== undefined) {
-      if (ownOfMain[at] > 0) found = at;
-      return false;
+// The longest line of the walk below that a streamed runner keeps: a commit and its parents, so only an octopus merge of over 1.6 million parents passes it.
+const WALK_LINE = 64 * 1024 * 1024;
+
+// A set of tip positions as a bit array that commits share while no tip joins it, with the merges counted for every tip that it holds, and how many pending commits hold it.
+type Reach = { bits: Uint32Array; merges: number; holders: number };
+
+/**
+ * One walk of the commits that some tip holds and the default branch lacks, children before parents, which gives every tip its merge commits that the default branch lacks
+ * and the position of its nearest tip, the first commit of its first-parent history after itself that is a tip and that the default branch lacks, or -1.
+ * Each commit is read once however many tips hold it, so branches that share a history through merges never walk it again each, and a first-parent history is followed
+ * only through commits that the default branch lacks, up to its nearest tip. As Git's ahead-behind does, the walk keeps the set of tips that reach each pending commit,
+ * shared by the commits of one line of history, and a merge counts once for the set that reaches it, which its tips take when no pending commit holds that set any more.
+ * It answers false when Git could not list the walk, which a later read tries again.
+ */
+async function walkLacked(git: Git, mainTip: string, tips: string[], tipIndex: Map<string, number>, merges: Uint32Array, nearest: Int32Array, live: Live) {
+  const words = Math.ceil(tips.length / 32);
+  const pending = new Map<string, { reach: Reach | null; seekers: number[] | null }>();
+  const release = (reach: Reach | null) => {
+    if (!reach || --reach.holders > 0 || !reach.merges) return;
+    for (let word = 0; word < words; word += 1) {
+      for (let bits = reach.bits[word]; bits; bits &= bits - 1) merges[word * 32 + 31 - Math.clz32(bits & -bits)] += reach.merges;
     }
-    return read < own;
-  });
-  return found;
+  };
+  const hold = (reach: Reach) => {
+    reach.holders += 1;
+    return reach;
+  };
+  // A set that no other commit holds and that counted no merge yet is changed in place, and otherwise copied, so no tip takes a merge counted before it joined.
+  const own = (reach: Reach | null) => {
+    if (reach && reach.holders === 1 && !reach.merges) return reach;
+    const made: Reach = { bits: reach ? reach.bits.slice() : new Uint32Array(words), merges: 0, holders: 1 };
+    release(reach);
+    return made;
+  };
+  let read = 0;
+  const listed = await eachLine(git, ["rev-list", "--topo-order", "--parents", "--branches", `^${mainTip}`], (line) => {
+    if (++read % 4096 === 0 && !live()) return false;
+    const [commit, ...parents] = line.split(" ");
+    const found = pending.get(commit) ?? { reach: null, seekers: null };
+    pending.delete(commit);
+    let { reach } = found;
+    let seekers = found.seekers;
+    const row = tipIndex.get(commit);
+    if (row !== undefined) {
+      // A tip is the nearest tip of every first-parent history that reached it, and follows its own from here.
+      for (const seeker of seekers ?? []) nearest[seeker] = row;
+      seekers = [row];
+      reach = own(reach);
+      reach.bits[row >>> 5] |= 1 << (row & 31);
+    }
+    if (!reach) reach = hold({ bits: new Uint32Array(words), merges: 0, holders: 0 });
+    if (parents.length > 1) reach.merges += 1;
+    parents.forEach((parent, index) => {
+      const next = pending.get(parent) ?? { reach: null, seekers: null };
+      if (!next.reach) next.reach = hold(reach!);
+      else if (next.reach !== reach) {
+        const joined = own(next.reach);
+        for (let word = 0; word < words; word += 1) joined.bits[word] |= reach!.bits[word];
+        next.reach = joined;
+      }
+      // Only the first parent carries the first-parent histories on, the longer list taking the shorter, so the seekers move in time that grows with the tips alone.
+      if (index === 0 && seekers?.length) {
+        if (!next.seekers) next.seekers = seekers;
+        else {
+          const [longer, shorter] = next.seekers.length >= seekers.length ? [next.seekers, seekers] : [seekers, next.seekers];
+          for (const seeker of shorter) longer.push(seeker);
+          next.seekers = longer;
+        }
+      }
+      pending.set(parent, next);
+    });
+    release(reach);
+    return true;
+  }, WALK_LINE);
+  stopUnless(live);
+  // The parents left are those the default branch holds, which the walk does not list: their first-parent histories reach no nearest tip, and their sets count their merges.
+  for (const { reach } of pending.values()) release(reach);
+  return listed;
 }
 
 /**
@@ -166,30 +228,14 @@ export async function readBranchFacts(git: Git, live: Live = () => true) {
   const mainTip = main.tip;
   stopUnless(live);
   const ownOfMain = await ownColumn(git, main.commit, tips, tipIndex, live);
-  // Each tip's merges that the default branch lacks are those its nearest tip lacks too, plus those that neither holds, so each count walks only the commits that a tip adds to its nearest tip.
-  const ownMerges = new Uint32Array(size);
+  const merges = new Uint32Array(size);
   const nearest = new Int32Array(size).fill(-1);
   const ownOfNearest = new Uint32Array(size);
+  stopUnless(live);
+  if (ownOfMain.some((own) => own > 0) && !(await walkLacked(git, main.commit, tips, tipIndex, merges, nearest, live))) throw new Error("Git could not list the commits that the default branch lacks");
   await mapLimit(tips, PARALLEL, async (tip, row) => {
-    if (ownOfMain[row] === 0) return;
-    nearest[row] = await nearestTip(git, tip, ownOfMain[row], ownOfMain, tipIndex, live);
-    const near = nearest[row] >= 0 ? [`^${tips[nearest[row]]}`] : [];
-    if (near.length) ownOfNearest[row] = await count(git, [tip, ...near]);
-    ownMerges[row] = await count(git, ["--merges", tip, ...near, `^${main.commit}`]);
+    if (nearest[row] >= 0) ownOfNearest[row] = await count(git, [tip, `^${tips[nearest[row]]}`]);
   }, live);
-  // Summed down each chain of nearest tips without recursion: a tip's chain is followed up to a tip already summed, and then summed back down.
-  const merges = new Uint32Array(size);
-  const summed = new Uint8Array(size);
-  const chain: number[] = [];
-  for (let row = 0; row < size; row += 1) {
-    if (row % TURN === TURN - 1) await pause();
-    for (let at = row; at >= 0 && !summed[at] && chain.length < size; at = nearest[at]) chain.push(at);
-    while (chain.length) {
-      const at = chain.pop()!;
-      merges[at] = ownMerges[at] + (nearest[at] >= 0 && summed[nearest[at]] ? merges[nearest[at]] : 0);
-      summed[at] = 1;
-    }
-  }
   return { key, defaultBranch, branches: read, tips, mainTip, ownOfMain, merges, nearest, ownOfNearest, columns: new Map<number, Uint32Array>(), pairs: new Map<number, number>() };
 }
 
@@ -391,14 +437,20 @@ async function derive(git: Git, tip: string, baseTip: string | null) {
     files = [...sinceFork].filter((file) => fromBase.has(file)).length;
   }
   // The author log is read line by line, so only its distinct names are held, however long the history, and a long name is held as its digest,
-  // which no name can equal because no author name holds a NUL.
+  // which no name can equal because no author name holds a NUL. A name longer than a streamed runner keeps reaches it as a NUL and its digest,
+  // so the newest author's name, when it is such a name, is read again on its own.
+  const since = [tip, ...(fork ? [`^${fork}`] : [])];
   let last: string | null = null;
   const names = new Set<string>();
-  await eachLine(git, ["log", "--format=%an", tip, ...(fork ? [`^${fork}`] : [])], (name) => {
+  await eachLine(git, ["log", "--format=%an", ...since], (name) => {
     last ??= name;
     names.add(name.length <= NAME_KEPT ? name : `\0${createHash("sha1").update(name).digest().toString("base64", 0, 12)}`);
     return true;
   });
+  if ((last as string | null)?.startsWith("\0")) {
+    const newest = await git(["log", "-1", "--format=%an", ...since]);
+    last = newest.ok ? newest.text : null;
+  }
   return { fork, files, people: { last, count: names.size } };
 }
 
@@ -471,10 +523,20 @@ export function createBranchReader(git: Git) {
     running = run;
   }
 
+  const keyOf = (tipsKey: string, names: Set<string>) => `${tipsKey}\0\0${[...names].sort(byText).join("\0")}`;
+
   return {
+    /** The model for these tips and owners when it is read, and otherwise undefined, without queuing a read, for tips that a running fetch may still move. */
+    ready(tipsKey: string, owned: Iterable<string>) {
+      const key = keyOf(tipsKey, new Set(owned));
+      if (!answers.has(key)) return undefined;
+      const model = answers.get(key);
+      keep(key, model);
+      return model;
+    },
     answer(tipsKey: string, owned: Iterable<string>) {
       const names = new Set(owned);
-      const key = `${tipsKey}\0\0${[...names].sort(byText).join("\0")}`;
+      const key = keyOf(tipsKey, names);
       if (answers.has(key)) {
         const model = answers.get(key);
         keep(key, model);

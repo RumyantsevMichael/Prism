@@ -251,10 +251,11 @@ export function runGit(base: string, args: string[], options?: GitOptions) {
 
 /**
  * Run Git and hand each line of its output to take as it arrives, stopping Git once take answers false, for a listing of which a reader needs only the start.
- * A line longer than maxRecord bytes stops the listing and answers ok false. Answers { ok, streamed: true, text: "", stdout } with stdout empty, since the lines went to take.
+ * A line longer than maxRecord bytes reaches take as a NUL followed by the hex SHA-256 of its bytes, which no line of Git's output holds, so the listing goes on with bounded memory.
+ * Answers { ok, streamed: true, text: "", stdout } with stdout empty, since the lines went to take.
  */
 export async function runGitLines(base: string, args: string[], { env = {}, take, maxRecord = 4096 }: { env?: NodeJS.ProcessEnv; take: (line: string) => boolean; maxRecord?: number }) {
-  const listed = await gitRecords(base, args, { separator: 10, maxRecord, env, take: (bytes: Buffer) => take(bytes.toString("utf8")) });
+  const listed = await gitRecords(base, args, { separator: 10, maxRecord, digestLong: true, env, take: (bytes: Buffer) => take(bytes.toString("utf8")) });
   return { ok: listed.ok && !listed.long, streamed: true, text: "", stdout: Buffer.alloc(0), stderr: listed.stderr };
 }
 
@@ -286,11 +287,12 @@ async function git(base: string, args: string[], { env = {}, input, connects = f
  * Run Git and take its output as records, each ended by the separator byte, as they arrive rather than from one buffer: take receives each record's bytes,
  * and Git is stopped once more than limit records arrived, once the records hold more than maxBytes bytes in all, or once one record holds more than maxRecord bytes,
  * so a listing never takes more memory or time than its bounds allow, whatever the tree or history holds.
+ * With digestLong, a record above maxRecord is not kept or refused: its bytes are hashed as they arrive, and take receives a NUL followed by their hex SHA-256 instead.
  * With separator null, take receives the output's chunks as they arrive, bounded by maxBytes alone.
  * take may return a promise, and the output waits for it, so a reader can act on a batch of records before more arrive; take returning false stops the listing.
  * Returns { ok, over, long, stopped, stderr }: over is "count" or "bytes" when a bound on all records was passed, long holds the first bytes of a record above maxRecord, and stopped says take stopped it.
  */
-async function gitRecords(base: string, args: string[], { separator, limit = Infinity, maxBytes = Infinity, maxRecord = Infinity, take, input, env = {} }: { separator: number | null; limit?: number; maxBytes?: number; maxRecord?: number; take: (bytes: Buffer) => unknown; input?: string | Buffer; env?: NodeJS.ProcessEnv }): Promise<GitRecordsResult> {
+async function gitRecords(base: string, args: string[], { separator, limit = Infinity, maxBytes = Infinity, maxRecord = Infinity, digestLong = false, take, input, env = {} }: { separator: number | null; limit?: number; maxBytes?: number; maxRecord?: number; digestLong?: boolean; take: (bytes: Buffer) => unknown; input?: string | Buffer; env?: NodeJS.ProcessEnv }): Promise<GitRecordsResult> {
   const environment = await commandEnvironment(base, args, env, false);
   return new Promise<GitRecordsResult>((resolve) => {
     const child = spawn("git", [...FIXED_CONFIG, "-C", base, ...args], { env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
@@ -299,8 +301,13 @@ async function gitRecords(base: string, args: string[], { separator, limit = Inf
     let errorBytes = 0;
     const stop = () => { done = true; child.kill(); };
     // A record is checked against every bound before take sees it, so nothing past a bound is kept.
-    const record = async (bytesOf: Buffer) => {
-      if (bytesOf.length > maxRecord) { long = Buffer.from(bytesOf.subarray(0, 512)); return false; }
+    const digested = (hash: ReturnType<typeof createHash>) => Buffer.from(`\0${hash.digest("hex")}`);
+    const record = async (whole: Buffer) => {
+      let bytesOf = whole;
+      if (bytesOf.length > maxRecord) {
+        if (!digestLong) { long = Buffer.from(bytesOf.subarray(0, 512)); return false; }
+        bytesOf = digested(createHash("sha256").update(bytesOf));
+      }
       if (++count > limit) { over = "count"; return false; }
       if ((bytes += bytesOf.length + 1) > maxBytes) { over = "bytes"; return false; }
       try {
@@ -313,6 +320,8 @@ async function gitRecords(base: string, args: string[], { separator, limit = Inf
     child.stderr.on("data", (chunk) => { if (errorBytes < GIT_ERRORS_MAX) { errors.push(chunk); errorBytes += chunk.length; } });
     child.stdin.on("error", () => {});
     child.on("error", (error: NodeJS.ErrnoException) => { failure ??= error.code === "ENOENT" ? "Git is not available." : error.message; });
+    // The hash of a record above maxRecord that has not ended yet, when digestLong takes it.
+    let hashing: ReturnType<typeof createHash> | null = null;
     const reading = (async () => {
       let pending = Buffer.alloc(0);
       try {
@@ -325,11 +334,24 @@ async function gitRecords(base: string, args: string[], { separator, limit = Inf
           }
           pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
           let at = 0;
+          if (hashing) {
+            const end = pending.indexOf(separator);
+            if (end < 0) { hashing.update(pending); pending = Buffer.alloc(0); continue; }
+            hashing.update(pending.subarray(0, end));
+            const ended = hashing;
+            hashing = null;
+            at = end + 1;
+            if (!(await record(digested(ended)))) { stop(); pending = Buffer.alloc(0); continue; }
+          }
           for (let end; !done && (end = pending.indexOf(separator, at)) >= 0; at = end + 1) if (!(await record(pending.subarray(at, end)))) stop();
           if (done) { pending = Buffer.alloc(0); continue; }
           pending = Buffer.from(pending.subarray(at));
           // A record that has not ended yet is held only up to its bound.
-          if (pending.length > maxRecord) { long = Buffer.from(pending.subarray(0, 512)); pending = Buffer.alloc(0); stop(); }
+          if (pending.length > maxRecord) {
+            if (digestLong) hashing = createHash("sha256").update(pending);
+            else { long = Buffer.from(pending.subarray(0, 512)); stop(); }
+            pending = Buffer.alloc(0);
+          }
         }
       } catch (error) { if (!done) failure ??= error.message; }
       return pending;
@@ -337,7 +359,8 @@ async function gitRecords(base: string, args: string[], { separator, limit = Inf
     child.on("close", async (code) => {
       const pending = await reading;
       clearTimeout(timer);
-      if (!done && !failure && pending.length && separator !== null) await record(pending);
+      if (!done && !failure && hashing && separator !== null) await record(digested(hashing));
+      else if (!done && !failure && pending.length && separator !== null) await record(pending);
       const stderr = failure ?? Buffer.concat(errors).toString("utf8").trim();
       resolve({ ok: Boolean(over || long || stopped) || (!failure && code === 0), over, long, stopped, stderr });
     });

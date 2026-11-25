@@ -19,6 +19,8 @@ const CODE = "code";
 const SAVED = "code-content.json";
 const REGISTRATION_MAX_BYTES = 64 * 1024;
 const BRANCHES = "refs/heads/";
+// How long a branches request waits for a fetch that a request started because none ran within the fetch interval, from the fetch's start.
+const FETCH_WAIT_MS = 3000;
 // How many branches other than the default one an answer about where a commit is names, so a commit that many branches are built on stays a short answer.
 const BRANCHES_SHOWN = 5;
 
@@ -70,8 +72,8 @@ const NO_PROMPT_CONFIG = ["-c", "core.askPass=", "-c", "credential.interactive=f
 // A command that reads a blob may fetch it from the remote, so it says it connects, and its SSH command is the person's own in batch mode as a fetch's is.
 const git = (folder: string, args: string[], { connects = false }: any = {}) => runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, connects });
 // A Git runner for a clone's branch reader, which streams a command's lines to line when the reader asks, so a listing it stops early is read no further.
-const branchGit = (folder: string) => (args: string[], { line }: { line?: (line: string) => boolean } = {}) =>
-  line ? runGitLines(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, take: line }) : git(folder, args);
+const branchGit = (folder: string) => (args: string[], { line, maxRecord }: { line?: (line: string) => boolean; maxRecord?: number } = {}) =>
+  line ? runGitLines(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, take: line, ...(maxRecord ? { maxRecord } : {}) }) : git(folder, args);
 
 // The branches of a clone, { name, commit } in code-point order of their names, as the branch reader sorts them.
 async function branchesOf(folder: string) {
@@ -163,7 +165,9 @@ export async function createCodeClones({ directory }: { directory: string }) {
   const branchReaders = new Map<string, ReturnType<typeof createBranchReader>>();
   // When each entry's latest fetch started or ended, and the fetch that a Code request started because none ran within the fetch interval, kept apart from the saved entries.
   const attempts = new WeakMap<any, number>();
-  const demanded = new WeakMap<any, Promise<void>>();
+  const demanded = new WeakMap<any, { done: Promise<void>; started: number }>();
+  // How many fetches or clones of each clone folder are under way, whichever entry or request started them.
+  const fetching = new Map<string, number>();
 
   // Clone the remote into a temporary sibling that is renamed into place, so code/ never holds a partial clone, and a failed clone leaves no folder.
   async function cloneInto(entry: any) {
@@ -197,6 +201,8 @@ export async function createCodeClones({ directory }: { directory: string }) {
   // Bring one repository's clone up to date, cloning it when it is not there yet, and record whether its remote could be reached.
   function refresh(entry: any) {
     attempts.set(entry, Date.now());
+    const clone = entry.clone;
+    fetching.set(clone, (fetching.get(clone) ?? 0) + 1);
     return serial(entry.clone, async () => {
       const cloned = await exists(folderOf(entry));
       const outcome = cloned ? await fetchInto(entry) : await cloneInto(entry);
@@ -206,7 +212,11 @@ export async function createCodeClones({ directory }: { directory: string }) {
         ? `Prism could not fetch the code of ${entry.repository}, so it shows what it fetched last: ${outcome.message}`
         : `Prism could not clone the code of ${entry.repository} and tries again at the next fetch: ${outcome.message}` });
       await save();
-    }).finally(() => attempts.set(entry, Date.now()));
+    }).finally(() => {
+      attempts.set(entry, Date.now());
+      if (fetching.get(clone) === 1) fetching.delete(clone);
+      else fetching.set(clone, fetching.get(clone)! - 1);
+    });
   }
 
   // Drop a repository's entry, and its clone once no other entry uses the same remote.
@@ -352,29 +362,40 @@ export async function createCodeClones({ directory }: { directory: string }) {
 
     /**
      * The branch model of the repository's clone, as readBranches answers it for the names of the branches that a slice owns: { defaultBranch, branches },
-     * { state: "preparing" } while Prism still fetches the clone or reads the branches of its current tips and default branch in the background, or null without a clone.
-     * When no fetch of the clone ran within freshMs, as on a workspace that no page has open, it starts one in the background and answers preparing until it ends,
-     * so the answer reads the remote's current tips and a slow remote never holds a request.
+     * { state: "preparing" } while Prism still clones the repository or reads the branches of the clone's current tips and default branch in the background, or null without a clone.
+     * When no fetch of the clone ran within freshMs, as on a workspace that no page has open, it starts one and waits for it up to FETCH_WAIT_MS from its start,
+     * so an answer follows a push that the remote holds, a slow remote holds a request no longer than that, and an answer for the tips that the clone holds is never withheld;
+     * while any fetch runs on, it answers only an answer already read and starts no read, since the fetch may be moving the tips one branch at a time.
      */
     async branches(workspace: any, repository: string, owned: Iterable<string> = [], { freshMs = null }: { freshMs?: number | null } = {}) {
       const entry = entryOf(workspace, repository);
       if (!entry) return null;
       const folder = folderOf(entry);
       // A fetch waits while a read runs, since new tips would supersede it, and freshness counts from the end of the latest fetch, so a slow fetch is not followed by another at once.
-      const due = () => freshMs !== null && !demanded.has(entry) && Date.now() - (attempts.get(entry) ?? 0) > freshMs;
-      const demand = () => demanded.set(entry, refresh(entry).catch(() => {}).finally(() => demanded.delete(entry)));
-      if (due() && !branchReaders.get(folder)?.reading) demand();
+      const fetchIfDue = () => {
+        if (freshMs === null || demanded.has(entry) || branchReaders.get(folder)?.reading || Date.now() - (attempts.get(entry) ?? 0) <= freshMs) return;
+        const started = Date.now();
+        const done = refresh(entry).catch(() => {}).finally(() => demanded.delete(entry));
+        demanded.set(entry, { done, started });
+      };
+      fetchIfDue();
+      const asked = demanded.get(entry);
+      if (asked) {
+        let timer: NodeJS.Timeout | undefined;
+        const waited = new Promise<void>((resolve) => { timer = setTimeout(resolve, Math.max(0, asked.started + FETCH_WAIT_MS - Date.now())); });
+        await Promise.race([asked.done, waited]);
+        clearTimeout(timer);
+      }
       if (!(await exists(folder))) return null;
-      if (demanded.has(entry)) return { state: "preparing" };
       const head = await git(folder, ["symbolic-ref", "--quiet", "HEAD"]);
       const tipsKey = tipsKeyOf(head.ok ? head.text.trim() : "", await branchesOf(folder));
       if (!branchReaders.has(folder)) branchReaders.set(folder, createBranchReader(branchGit(folder)));
-      const model = branchReaders.get(folder)!.answer(tipsKey, owned);
-      // A read that ended while this request waited held back a fetch that is now due, so the answer of tips older than freshMs waits for that fetch.
-      if (model !== undefined && due()) {
-        demand();
-        return { state: "preparing" };
-      }
+      const reader = branchReaders.get(folder)!;
+      // A running fetch may be moving the tips one branch at a time, so while it runs only an answer already read goes out, and no read starts for tips it may still move.
+      if (fetching.has(entry.clone)) return reader.ready(tipsKey, owned) ?? { state: "preparing" };
+      const model = reader.answer(tipsKey, owned);
+      // A read that ended while this request waited held back a fetch that may be due now, which starts while the ready answer goes out.
+      if (model !== undefined) fetchIfDue();
       return model ?? { state: "preparing" };
     },
 
