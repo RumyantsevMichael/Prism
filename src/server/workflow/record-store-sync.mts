@@ -249,6 +249,15 @@ export function runGit(base: string, args: string[], options?: GitOptions) {
   return git(base, args, options);
 }
 
+/**
+ * Run Git and hand each line of its output to take as it arrives, stopping Git once take answers false, for a listing of which a reader needs only the start.
+ * A line longer than maxRecord bytes stops the listing and answers ok false. Answers { ok, streamed: true, text: "", stdout } with stdout empty, since the lines went to take.
+ */
+export async function runGitLines(base: string, args: string[], { env = {}, take, maxRecord = 4096 }: { env?: NodeJS.ProcessEnv; take: (line: string) => boolean; maxRecord?: number }) {
+  const listed = await gitRecords(base, args, { separator: 10, maxRecord, env, take: (bytes: Buffer) => take(bytes.toString("utf8")) });
+  return { ok: listed.ok && !listed.long, streamed: true, text: "", stdout: Buffer.alloc(0), stderr: listed.stderr };
+}
+
 // The most bytes of Git output that a sync takes whole, from one command whose output is bounded by construction: a constant answer, one line for each item that the sync handed it, or a merge of three files within their bounds.
 // Every output that can grow with a store's content or history is read record by record through gitRecords instead, with a bound on its records and their bytes.
 const GIT_OUTPUT_MAX = 64 * 1024 * 1024;

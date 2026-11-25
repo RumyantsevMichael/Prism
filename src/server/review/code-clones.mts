@@ -2,8 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ComponentError, readComponents } from "../workflow/components.mjs";
-import { createBranchReader, tipsKeyOf } from "./code-branches.mjs";
-import { runGit } from "../workflow/record-store-sync.mjs";
+import { byCodePoint, createBranchReader, tipsKeyOf } from "./code-branches.mjs";
+import { runGit, runGitLines } from "../workflow/record-store-sync.mjs";
 import { storeIdentity } from "../workflow/remote-url.mjs";
 import { REPOSITORIES, portableRepositoryName } from "../workflow/repository-names.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
@@ -69,15 +69,18 @@ const NO_PROMPT_CONFIG = ["-c", "core.askPass=", "-c", "credential.interactive=f
 // One Git command in a clone, with the sanitized store environment and timeout, and never a password prompt.
 // A command that reads a blob may fetch it from the remote, so it says it connects, and its SSH command is the person's own in batch mode as a fetch's is.
 const git = (folder: string, args: string[], { connects = false }: any = {}) => runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, connects });
+// A Git runner for a clone's branch reader, which streams a command's lines to line when the reader asks, so a listing it stops early is read no further.
+const branchGit = (folder: string) => (args: string[], { line }: { line?: (line: string) => boolean } = {}) =>
+  line ? runGitLines(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, take: line }) : git(folder, args);
 
-// The branches of a clone, { name, commit } sorted by name.
+// The branches of a clone, { name, commit } in code-point order of their names, as the branch reader sorts them.
 async function branchesOf(folder: string) {
   const listed = await git(folder, ["for-each-ref", "--format=%(refname)%00%(objectname)", BRANCHES]);
   if (!listed.ok) return [];
   return listed.text.split("\n").filter(Boolean).map((line) => {
     const [ref, commit] = line.split("\0");
     return { name: ref.slice(BRANCHES.length), commit };
-  }).sort((left, right) => byText(left.name, right.name));
+  }).sort((left, right) => byCodePoint(left.name, right.name));
 }
 
 // The entries of a tree-ish below a folder, read from trees alone: { path, type, blob } for each blob or tree directly in it.
@@ -365,7 +368,7 @@ export async function createCodeClones({ directory }: { directory: string }) {
       if (demanded.has(entry)) return { state: "preparing" };
       const head = await git(folder, ["symbolic-ref", "--quiet", "HEAD"]);
       const tipsKey = tipsKeyOf(head.ok ? head.text.trim() : "", await branchesOf(folder));
-      if (!branchReaders.has(folder)) branchReaders.set(folder, createBranchReader((args) => git(folder, args)));
+      if (!branchReaders.has(folder)) branchReaders.set(folder, createBranchReader(branchGit(folder)));
       const model = branchReaders.get(folder)!.answer(tipsKey, owned);
       // A read that ended while this request waited held back a fetch that is now due, so the answer of tips older than freshMs waits for that fetch.
       if (model !== undefined && due()) {
@@ -394,7 +397,7 @@ export async function createCodeClones({ directory }: { directory: string }) {
       const defaultBranch = head.ok && head.text.trim().startsWith(BRANCHES) ? head.text.trim().slice(BRANCHES.length) : null;
       const listed = await git(base, ["for-each-ref", "--format=%(refname)", "--contains", commit, BRANCHES]);
       if (!listed.ok) return null;
-      const holding = listed.text.split("\n").filter(Boolean).map((ref) => ref.slice(BRANCHES.length)).sort(byText);
+      const holding = listed.text.split("\n").filter(Boolean).map((ref) => ref.slice(BRANCHES.length)).sort(byCodePoint);
       const others = holding.filter((name) => name !== defaultBranch);
       return { defaultBranch, onDefault: defaultBranch !== null && holding.includes(defaultBranch), branches: others.slice(0, BRANCHES_SHOWN), branchCount: others.length };
     },

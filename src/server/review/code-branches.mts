@@ -5,7 +5,8 @@
 //
 // The work grows with the number of branches times a constant: each branch is compared with the default branch, with the branches at the nearest tip of its first-parent history,
 // with the first CANDIDATES branches of the ranking, and, when a slice owns it, with the CANDIDATES owned branches ranked nearest before it, and only those counts are held.
-// A branch's first-parent history is read only up to that nearest tip or the first commit that the default branch holds.
+// Branches at one tip tie on every count, so of those candidates each tip weighs only its earliest ranked branch, however many branches point at it.
+// A branch's first-parent history is listed once and read only up to that nearest tip or the first commit that the default branch holds.
 // The ranking and the base choice run without recursion and give way to the server's other work after at most TURN branches.
 // All Git work runs in a background read, one at a time per clone, that a newer set of tips or owners supersedes, and the answer is kept for its tips, default branch, and owners,
 // so a request with the answer ready does no work that grows faster than the number of branches.
@@ -18,10 +19,24 @@ const CANDIDATES = 32;
 // How many branches the ranking or the base choice handles before it gives way to the server's other work.
 const TURN = 500;
 
-const byText = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
+// A UTF-16 unit as it sorts in code-point order: a surrogate, which only a character above U+FFFF holds, sorts after every unit from U+E000 to U+FFFF.
+const pointOrder = (unit: number) => (unit >= 0xe000 ? unit - 0x800 : unit >= 0xd800 ? unit + 0x2000 : unit);
+
+/** Compare two names in code-point order, the order in which Git lists refs, rather than JavaScript's order of UTF-16 units. */
+export function byCodePoint(left: string, right: string) {
+  const shorter = Math.min(left.length, right.length);
+  for (let at = 0; at < shorter; at += 1) {
+    const a = left.charCodeAt(at);
+    const b = right.charCodeAt(at);
+    if (a !== b) return pointOrder(a) - pointOrder(b);
+  }
+  return left.length - right.length;
+}
+const byText = byCodePoint;
 const pause = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-type Git = (args: string[]) => Promise<{ ok: boolean; text: string; stdout: Buffer }>;
+// A Git runner, which hands each output line to line as it arrives when it can, answering streamed true, and stops Git once line answers false.
+type Git = (args: string[], options?: { line?: (line: string) => boolean }) => Promise<{ ok: boolean; text: string; stdout: Buffer; streamed?: boolean }>;
 type Live = () => boolean;
 
 /** Thrown by a read that a newer request superseded, so it stops before its next Git command. */
@@ -53,6 +68,13 @@ const count = async (git: Git, args: string[]) => {
 
 const lines = (text: string) => text.split("\n").filter(Boolean);
 
+// Hand each line of a Git command's output to take in order until take answers false, as the lines arrive when the runner streams them, so no line after that is read.
+async function eachLine(git: Git, args: string[], take: (line: string) => boolean) {
+  let going = true;
+  const listed = await git(args, { line: (line) => (going = going && (!line || take(line))) });
+  if (!listed.streamed && listed.ok) for (const line of lines(listed.text)) if (!take(line)) break;
+}
+
 /** The key of a clone's branch tips and default branch, from its HEAD ref and its branches as { name, commit } in name order, which a newer fetch changes. */
 export const tipsKeyOf = (headRef: string, branches: { name: string; commit: string }[]) => [headRef, ...branches.map((branch) => `${branch.name}\0${branch.commit}`)].join("\n");
 
@@ -82,29 +104,20 @@ async function ownColumn(git: Git, commit: string, tips: string[], tipIndex: Map
 }
 
 // The position of the nearest tip in a commit's first-parent history after the commit itself that the default branch lacks, or -1,
-// read in batches that grow, so the history is read no further than that tip or the first commit that the default branch holds.
+// from one first-parent listing that ends at the first commit the default branch holds and is read only up to that nearest tip, so Git walks the history once.
 async function nearestTip(git: Git, tip: string, mainCommit: string, tipIndex: Map<string, number>, live: Live) {
-  let from = tip;
-  let skip = true;
-  for (let batch = 16; ; batch = Math.min(batch * 2, 1024)) {
-    stopUnless(live);
-    const history = await git(["rev-list", "--first-parent", "--parents", `--max-count=${batch}`, from, `^${mainCommit}`]);
-    const listed = history.ok ? lines(history.text) : [];
-    for (const line of listed) {
-      const commit = line.slice(0, line.indexOf(" ") < 0 ? line.length : line.indexOf(" "));
-      if (skip) {
-        skip = false;
-        continue;
-      }
-      const found = tipIndex.get(commit);
-      if (found !== undefined) return found;
+  stopUnless(live);
+  let found = -1;
+  let own = true;
+  await eachLine(git, ["rev-list", "--first-parent", tip, `^${mainCommit}`], (commit) => {
+    if (own) {
+      own = false;
+      return true;
     }
-    if (listed.length < batch) return -1;
-    const parent = listed.at(-1)!.split(" ")[1];
-    if (!parent) return -1;
-    from = parent;
-    skip = false;
-  }
+    found = tipIndex.get(commit) ?? -1;
+    return found < 0;
+  });
+  return found;
 }
 
 /**
@@ -239,12 +252,11 @@ export async function readBranches(git: Git, facts: Facts, owned: Set<string>, {
   const order = await rankBranches(facts, owned);
   // Each branch's candidates other than the default branch, in ranked order: the first CANDIDATES ranked before it, the branches at its nearest tip,
   // and, for an owned branch, the CANDIDATES owned branches ranked nearest before it.
+  // Branches at one tip hold the same commits, so they tie on every count and only the earliest ranked of them can be the base: each tip keeps that one candidate,
+  // so however many branches share a tip, a branch weighs at most 2 * CANDIDATES + 1 candidates.
   const position = new Map(order.map((branch, index) => [branch, index]));
-  const byTip = new Map<number, Branch[]>();
-  for (const branch of order) {
-    if (!byTip.has(branch.tip)) byTip.set(branch.tip, []);
-    byTip.get(branch.tip)!.push(branch);
-  }
+  const firstAtTip = new Map<number, Branch>();
+  for (const branch of order) if (!firstAtTip.has(branch.tip)) firstAtTip.set(branch.tip, branch);
   const first = order.slice(0, CANDIDATES);
   const columnTips = new Set(first.map((branch) => branch.tip).filter((tip) => tip !== facts.mainTip));
   const recent: Branch[] = [];
@@ -252,14 +264,20 @@ export async function readBranches(git: Git, facts: Facts, owned: Set<string>, {
   for (let index = 0; index < order.length; index += 1) {
     if (index % TURN === TURN - 1) await pause();
     const branch = order[index];
-    const found = new Set<Branch>(first.slice(0, index));
-    for (const other of byTip.get(facts.nearest[branch.tip]) ?? []) if (position.get(other)! < index) found.add(other);
+    const found = new Map<number, Branch>();
+    const add = (other: Branch | undefined) => {
+      if (!other || position.get(other)! >= index) return;
+      const kept = found.get(other.tip);
+      if (!kept || position.get(other)! < position.get(kept)!) found.set(other.tip, other);
+    };
+    for (const other of first) add(other);
+    add(firstAtTip.get(facts.nearest[branch.tip]));
     if (owned.has(branch.name)) {
-      for (const other of recent) found.add(other);
+      for (const other of recent) add(other);
       recent.push(branch);
       if (recent.length > CANDIDATES) recent.shift();
     }
-    candidates.push([...found].sort((left, right) => position.get(left)! - position.get(right)!));
+    candidates.push([...found.values()].sort((left, right) => position.get(left)! - position.get(right)!));
   }
   // own(B, C) from the counts that the facts hold, where a pair that no column, the default branch, or the nearest tip covers reads its own count.
   const ownPair = (branch: Branch, other: Branch) => (other.tip === branch.tip || other.tip === facts.mainTip || columnTips.has(other.tip) || facts.nearest[branch.tip] === other.tip

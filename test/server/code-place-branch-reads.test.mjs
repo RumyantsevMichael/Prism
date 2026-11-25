@@ -10,7 +10,7 @@ import { applySteps, codeWorkspace } from "./fixtures/code-place.mjs";
 // with memory and per-request work that stay bounded as the remote's branch count grows.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
-const { createBranchReader, rankBranches, readBranchFacts, tipsKeyOf } = await import("../../dist/server/review/code-branches.mjs");
+const { byCodePoint, createBranchReader, rankBranches, readBranchFacts, tipsKeyOf } = await import("../../dist/server/review/code-branches.mjs");
 
 const WEB = {
   name: "web",
@@ -107,7 +107,7 @@ function countingGit(folder) {
 const keyOf = (folder) => {
   const head = git(folder, "symbolic-ref", "HEAD");
   const branches = git(folder, "for-each-ref", "--format=%(refname:strip=2) %(objectname)", "refs/heads/").split("\n").filter(Boolean)
-    .map((line) => { const [name, commit] = line.split(" "); return { name, commit }; }).sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+    .map((line) => { const [name, commit] = line.split(" "); return { name, commit }; }).sort((left, right) => byCodePoint(left.name, right.name));
   return tipsKeyOf(head, branches);
 };
 
@@ -229,4 +229,81 @@ test("the ranking of a chain of 8000 branches runs without exhausting the call s
   clearInterval(ticking);
   assert.deepEqual(order.map((branch) => branch.tip), Array.from({ length: count }, (_, index) => index + 1), "each link ranks after the link it was built on");
   assert.ok(turns > 0, "the ranking gave way to a timer");
+});
+
+// A bare repository from fast-import items { name, parent, commits }: refs/heads/<name> gets `commits` commits on parent (main, or an earlier item), and main holds one commit.
+function importRepository(parent, label, items) {
+  const folder = path.join(parent, label);
+  git(parent, "init", "-q", "--bare", "-b", "main", folder);
+  const stamp = "1700000000 +0000";
+  const commands = [`commit refs/heads/main\nmark :1\ncommitter Prism Test <test@example.invalid> ${stamp}\ndata 4\nmain\n`];
+  const marks = new Map([["main", 1]]);
+  let mark = 1;
+  for (const { name, parent: from, commits = 1 } of items) {
+    let previous = marks.get(from);
+    for (let index = 0; index < commits; index += 1) {
+      mark += 1;
+      const message = `${name} ${index}`;
+      const body = `${message}\n`;
+      commands.push(`commit refs/heads/${name}\nmark :${mark}\ncommitter Prism Test <test@example.invalid> ${stamp}\ndata ${Buffer.byteLength(message)}\n${message}\nfrom :${previous}\nM 100644 inline ${index}.txt\ndata ${body.length}\n${body}\n`);
+      previous = mark;
+    }
+    marks.set(name, previous);
+  }
+  execFileSync("git", ["-C", folder, "fast-import", "--quiet"], { input: commands.join(""), maxBuffer: 256 * 1024 * 1024 });
+  return folder;
+}
+
+// A Git runner like the review app's, which streams a listing's lines to the reader when it asks, and records each streamed command with the lines the reader took.
+async function streamingGit(folder) {
+  const { runGit, runGitLines } = await import("../../dist/server/workflow/record-store-sync.mjs");
+  const streams = [];
+  let started = 0;
+  const run = (args, { line } = {}) => {
+    started += 1;
+    if (!line) return runGit(folder, args);
+    const stream = { args, taken: 0 };
+    streams.push(stream);
+    return runGitLines(folder, args, { take: (text) => { stream.taken += 1; return line(text); } });
+  };
+  return { run, streams, started: () => started };
+}
+
+test("branch names are ranked and listed in code-point order, so a name above U+FFFF sorts after one from U+E000 to U+FFFF", async () => {
+  assert.ok(byCodePoint("\u{1F600}a", "！b") > 0 && byCodePoint("！b", "\u{1F600}a") < 0, "U+1F600 comes after U+FF01 in code-point order, though its first UTF-16 unit is smaller");
+  assert.ok(byCodePoint("a", "ab") < 0 && byCodePoint("b", "a") > 0 && byCodePoint("same", "same") === 0);
+  const folder = importRepository(environment, "code-points", [{ name: "share", parent: "main" }]);
+  const shared = git(folder, "rev-parse", "share");
+  git(folder, "update-ref", "refs/heads/！b", shared);
+  git(folder, "update-ref", "refs/heads/\u{1F600}a", shared);
+  git(folder, "update-ref", "-d", "refs/heads/share");
+  const reader = createBranchReader(countingGit(folder).run);
+  const key = keyOf(folder);
+  reader.answer(key, []);
+  await reader.idle();
+  const model = reader.answer(key, []);
+  assert.ok(model, "the tips key that the route builds matches the one that the reader keeps");
+  assert.deepEqual(model.branches.map((branch) => [branch.name, branch.base]), [["main", null], ["！b", "main"], ["\u{1F600}a", "！b"]]);
+});
+
+test("each branch's first-parent history is listed once and read only up to its nearest tip or the first commit that main holds", async () => {
+  // A chain of 40 links, each one commit on the one before, and a branch of 3000 commits on main that holds no other tip.
+  const links = Array.from({ length: 40 }, (_, index) => ({ name: `c${String(index).padStart(3, "0")}`, parent: index === 0 ? "main" : `c${String(index - 1).padStart(3, "0")}` }));
+  const folder = importRepository(environment, "first-parent", [...links, { name: "long", parent: "main", commits: 3000 }]);
+  const { run, streams } = await streamingGit(folder);
+  const reader = createBranchReader(run);
+  const key = keyOf(folder);
+  reader.answer(key, []);
+  await reader.idle();
+  const model = reader.answer(key, []);
+  const byName = new Map(model.branches.map((branch) => [branch.name, branch]));
+  for (let index = 1; index < links.length; index += 1) assert.equal(byName.get(links[index].name).base, links[index - 1].name);
+  assert.equal(byName.get("long").base, "main");
+  const walks = streams.filter((stream) => stream.args[0] === "rev-list" && stream.args.includes("--first-parent"));
+  assert.equal(walks.length, links.length + 1, "one first-parent listing for each branch other than main, never one for each batch of its history");
+  const tipOf = (name) => git(folder, "rev-parse", name);
+  const ofTip = (name) => walks.find((stream) => stream.args.includes(tipOf(name)));
+  assert.equal(ofTip(links[0].name).taken, 1, "a branch on main reads only its own tip, since its parent is a commit main holds");
+  for (const link of links.slice(1)) assert.equal(ofTip(link.name).taken, 2, `${link.name} reads its tip and its nearest tip, and nothing past it`);
+  assert.equal(ofTip("long").taken, 3000, "a branch with no other tip reads its history up to the first commit that main holds");
 });
