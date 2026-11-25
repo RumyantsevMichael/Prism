@@ -75,6 +75,8 @@ test("a run's Codex thread runs under a read-only permission profile, readable o
   assert.deepEqual(Object.keys(thread.params.config.mcp_servers), ["prism-run"]);
   assert.equal(thread.params.config.mcp_servers["prism-run"].env.PRISM_MIGRATION_RUN, run);
   assert.equal(thread.params.config.mcp_servers["prism-run"].env.PRISM_MIGRATION_PROJECT, await realpath(root));
+  // Under never, Codex refuses a call that it would ask about, such as finish_migration_run, which is marked destructive, so the run's own server approves its tools.
+  assert.equal(thread.params.config.mcp_servers["prism-run"].default_tools_approval_mode, "approve");
   assert.equal("approvalsReviewer" in thread.params, false, "no automatic reviewer lets a command out of the sandbox");
   const turn = await waitFor(() => hosts.inputs(started.pid).find((message) => message.method === "turn/start") ?? null, { what: "the turn start" });
   assert.equal("sandboxPolicy" in turn.params, false, "the turn keeps the thread's profile");

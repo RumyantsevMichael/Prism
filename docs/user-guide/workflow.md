@@ -152,7 +152,8 @@ When the chosen host is not found or the choice cannot be read, the run starts o
 The session's only prompt is `/prism:migrate-artifact <run id>` for Claude Code, or `$prism:migrate-artifact <run id>` for Codex, so no artifact text reaches its command line or prompt.
 Once the host started, the run is `running` and `get_migration_run` names the session as `launch` with its id and host, and no second session of the run starts while it runs.
 When no host is available, the run waits as `waiting-for-host` with the reason `No host is available on this machine:` and each host's reason, and the next check of the project on a computer where a host is available launches it.
-When a run's session ends, by its exit, a host error, or a stop, while the run is still `starting`, `running`, or `continuing`, the run fails with `The run's session ended before the run finished:` and the session's last reason, and applies nothing.
+When a run's session ends, by its exit, a host error, or a stop, while the run is still `starting`, `running`, or `continuing`, and it has proposed a format migration of every artifact of the set, Prism finishes the run itself, as `finish_migration_run` would, so the run asks you its question or applies.
+When such a session ends before it proposed a migration of every artifact, the run fails with `The run's session ended before the run finished:` and the session's last reason, and applies nothing.
 A session that ends after its run asked its question leaves the run `asking`.
 Once you answer a run's question, the run is `continuing`: Prism resumes its session with the same prompt, or launches a new one on an available host when it cannot be resumed, and the run waits as `waiting-for-host` when none is available.
 Your answer and the move to `continuing` are one write, so a continuation that cannot start fails the run with `The run could not continue after the answer:` and why, and you can run it again, while your answers stay recorded.
