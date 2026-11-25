@@ -171,7 +171,7 @@ function readinessCard(item: any, stage: string) {
   return card("Readiness", body, { eyebrow: unmet.length ? `${plural(unmet.length, "condition")} unmet` : stage === "emerging" ? "Emerging" : "Ready", className: "work-item-readiness" });
 }
 
-// The requirement files and ADRs an item cites, each with its status and the other items that cite it.
+// The requirement files and ADRs an item cites, each with its status and the other items that cite it; a phone-width window keeps the status under the text.
 function citedCard(data: any, item: any, ctx: any) {
   const titles = item.titles ?? {};
   const html = (item.cited ?? []).map((entry: any) => {
@@ -179,7 +179,7 @@ function citedCard(data: any, item: any, ctx: any) {
     const scope = entry.scope?.label ? ` · ${escapeHtml(entry.scope.label)}` : "";
     const name = ctx.hasArtifact?.(entry.path) ? `<a href="./review?artifact=${encodeURIComponent(entry.path)}" data-artifact="${escapeHtml(entry.path)}" data-code-subject>${escapeHtml(entry.path)}</a>` : `<span data-code-subject>${escapeHtml(entry.path)}</span>`;
     const kind = entry.status ? status(entry.status, { attributes: ' slot="kind"' }) : `<span slot="kind" class="muted">Missing</span>`;
-    return `<prism-row wrap icon="${entry.kind === "adrs" ? "scale" : "document"}" tone="accent">${name}<span slot="description">${entry.kind === "adrs" ? "Decision" : "Requirements"}${scope}</span>${also ? `<span slot="detail">${also}</span>` : ""}${kind}</prism-row>`;
+    return `<prism-row wrap stack icon="${entry.kind === "adrs" ? "scale" : "document"}" tone="accent">${name}<span slot="description">${entry.kind === "adrs" ? "Decision" : "Requirements"}${scope}</span>${also ? `<span slot="detail">${also}</span>` : ""}${kind}</prism-row>`;
   }).join("");
   return card("Cited requirements and decisions", html ? rows("Cited requirements and decisions", html) : emptyNote("It cites no requirement file or ADR yet."), { eyebrow: plural(item.cited?.length ?? 0, "artifact"), className: "work-item-cited" });
 }
@@ -191,7 +191,7 @@ function questionsCard(record: any) {
   const html = questions.map((asked: any) => {
     const mark = asked.answer ? badge("Answered", "success") : asked.withdrawn ? badge("Withdrawn") : badge("Unanswered", "warning");
     const detail = asked.answer ? `<span slot="detail">${escapeHtml(asked.answer.text ?? "")}</span>` : "";
-    return `<prism-row wrap icon="question" tone="${asked.answer ? "success" : asked.withdrawn ? "neutral" : "warning"}">${escapeHtml(asked.question)}<span slot="description">Round ${escapeHtml(asked.round)} · ${asked.blocking ? "Needed for readiness" : "Not needed for readiness"}</span>${detail}${mark.replace("<prism-badge", '<prism-badge slot="kind"')}</prism-row>`;
+    return `<prism-row wrap stack icon="question" tone="${asked.answer ? "success" : asked.withdrawn ? "neutral" : "warning"}">${escapeHtml(asked.question)}<span slot="description">Round ${escapeHtml(asked.round)} · ${asked.blocking ? "Needed for readiness" : "Not needed for readiness"}</span>${detail}${mark.replace("<prism-badge", '<prism-badge slot="kind"')}</prism-row>`;
   }).join("");
   const rounds = Math.max(...questions.map((asked: any) => Number(asked.round) || 0));
   return card("Questions", rows("Questions", html), { eyebrow: plural(rounds, "round"), className: "work-item-questions" });
