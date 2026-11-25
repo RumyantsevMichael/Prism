@@ -920,6 +920,23 @@ test("opens the system browser when it presents a review", async (context) => {
   if (process.platform !== "win32") assert.equal(await waitForMarker(browser.marker), "opened");
 });
 
+test("present_review tells the agent when no browser opener took the URL", { skip: process.platform === "win32" && "it fails the browser through open and xdg-open stubs on PATH, and Windows opens the browser through rundll32" }, async (context) => {
+  const root = await projectFixture(context, "present-without-browser", "artifact.md");
+  const browser = await browserStub(context);
+  // Both stubs fail as xdg-open does on a machine with no browser, after recording that they ran.
+  for (const command of ["open", "xdg-open"]) await writeFile(path.join(path.dirname(browser.marker), command), "#!/bin/sh\nprintf opened > \"$PRISM_BROWSER_MARKER\"\nexit 3\n");
+  const mcp = mcpProcess(context, root, undefined, browser.environment);
+
+  await initialize(mcp);
+  const review = await callTool(mcp, 2, "present_review", { projectRoot: root, artifact: "docs/artifact.md" });
+
+  assert.equal(await waitForMarker(browser.marker), "opened", "Prism tried the opener");
+  assert.equal(review.result.structuredContent.opened, false);
+  assert.equal(review.result.structuredContent.openFailed, true);
+  assert.match(review.result.content[0].text, /could not open the user's browser on this machine/);
+  assert.match(review.result.content[0].text, /can only read/);
+});
+
 test("present_review gathers the presented tabs into the tab group the agent names", async (context) => {
   const root = await projectFixture(context, "present-group", "artifact.md");
   const browser = await browserStub(context);
