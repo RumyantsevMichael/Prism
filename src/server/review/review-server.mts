@@ -1433,10 +1433,6 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const entries = await workspace.code.tree(repository, folder);
       if (entries === null) off();
       else sendJson(response, 200, { repository, folder, entries });
-    } else if (route === "/api/code/compare") {
-      const compared = await workspace.code.compare(repository, url.searchParams.get("base") || null);
-      if (compared === null) sendJson(response, 404, { code: "branch_unknown", message: "The clone of that repository holds no such branch, or its code content is off." });
-      else sendJson(response, 200, { repository, ...compared });
     } else if (route === "/api/code/file") {
       const read = await workspace.code.file(repository, { branch: url.searchParams.get("branch"), commit: url.searchParams.get("commit"), path: url.searchParams.get("path") });
       if (read?.withheld) sendJson(response, 404, withheldAnswer(read));
@@ -1827,13 +1823,19 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       }
       const available = new Set([...artifacts, ...sources, ...(storeIndex?.every ?? []), ...(workspace ? await codeRefs() : [])]);
       const snapshot = await followMovedRecords(available);
+      // A code file's tab is the Code place's file view, which says itself when no version of the file is shown, so it is never missing while its repository is registered.
+      const repositories = workspace ? await storeRepositories() : [];
+      for (const tab of snapshot.openTabs) {
+        const repository = parseCodeRef(tab)?.repository;
+        if (repository && repositories.includes(repository)) available.add(tab);
+      }
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref: any) => entityExists(projectRoot, ref));
       // A workspace read through its store's clone alone has no checkout to name.
       const checkout = workspace && await isStoreWithoutCheckout(projectRoot) ? null : await readWorkspaceIdentity(projectRoot);
       const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null, repositories: await codeRepositories() } : { workspace: checkout };
       const scoped = storeIndex ? { artifactScopes: storeIndex.artifactScopes, scopes: storeIndex.scopes, ...(storeIndex.scopeFilter ? { scopeFilter: storeIndex.scopeFilter, unknownScopes: storeIndex.unknownScopes } : {}), notes: storeIndex.notes } : { artifactScopes: await listArtifactScopes(projectRoot) };
       send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store), watching: await viewWatching(projectRoot).catch(() => null) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, version: appVersion ?? pluginVersion(), ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
-    } else if (["/api/code/place", "/api/code/files", "/api/code/versions", "/api/code/diff", "/api/code/branches", "/api/code/tree", "/api/code/compare", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
+    } else if (["/api/code/place", "/api/code/files", "/api/code/versions", "/api/code/diff", "/api/code/branches", "/api/code/tree", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
       await serveCode(response, route, url);
     } else if (route === "/api/slice-files" && request.method === "GET") {
       const ref = `slice:${url.searchParams.get("initiative") ?? ""}/${url.searchParams.get("slice") ?? ""}`;
@@ -1951,10 +1953,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         send(response, 404, "The item no longer exists in this project.");
         return;
       }
-      if (parseEntityRef(ref)?.kind === "code" && workspace) {
-        // The page leaves out when each clone was last fetched, so a fetch that brings nothing new does not redraw the page the person is reading.
-        const repositories = (await codeRepositories()).map(({ name, code: { fetchedAt, ...code } }) => ({ name, code }));
-        sendJson(response, 200, { ref, kind: "code", data: { repositories } });
+      if ((parseEntityRef(ref)?.kind === "code" || parseCodeRef(ref)) && workspace) {
+        // Every Code address, a code file's among them, answers the Code page, which reads its tree, versions, and differences from the Code routes itself;
+        // the page names each repository's state alone, so a fetch that moves a branch tip does not draw the page the person is reading again.
+        const repositories = (await codeRepositories()).map(({ name, code }) => ({ name, state: code.state, message: code.message ?? null }));
+        sendJson(response, 200, { ref, kind: "code", data: { repositories, file: parseCodeRef(ref) } });
         return;
       }
       const entity: any = await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() });

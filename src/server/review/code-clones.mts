@@ -496,35 +496,6 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
     },
 
     /**
-     * How every other branch differs from one branch, read from trees alone, so no file's contents are fetched:
-     * { base, branches: [{ branch, changes: [{ path, change: "added" | "modified" | "deleted" }] }] } with base the branch named, or else the branch the remote's HEAD names,
-     * or null without a clone or with no such branch.
-     */
-    async compare(workspace: any, repository: string, base = null) {
-      const folder = await cloneOf(workspace, repository);
-      if (!folder) return null;
-      const branches = await branchesOf(folder);
-      const head = await git(folder, ["symbolic-ref", "--quiet", "HEAD"]);
-      const named = base ?? (head.ok && head.text.trim().startsWith(BRANCHES) ? head.text.trim().slice(BRANCHES.length) : branches[0]?.name ?? null);
-      const from = branches.find((branch) => branch.name === named);
-      if (!from) return null;
-      const CHANGES: Record<string, any> = { A: "added", M: "modified", D: "deleted", T: "modified" };
-      const compared = [];
-      for (const branch of branches) {
-        if (branch.name === from.name) continue;
-        const listed = branch.commit === from.commit ? null : await git(folder, ["diff-tree", "-r", "-z", "--no-renames", "--name-status", from.commit, branch.commit]);
-        const fields = listed?.ok ? listed.stdout.toString("utf8").split("\0").filter(Boolean) : [];
-        const changes = [];
-        for (let index = 0; index + 1 < fields.length; index += 2) {
-          const change = CHANGES[fields[index][0]];
-          if (change) changes.push({ path: fields[index + 1], change });
-        }
-        compared.push({ branch: branch.name, changes });
-      }
-      return { base: from.name, branches: compared };
-    },
-
-    /**
      * The branch model of the repository's clone, as readBranches answers it for the names of the branches that a slice owns: { defaultBranch, branches },
      * { state: "preparing" } while Prism still clones the repository or reads the branches of the clone's current tips and default branch in the background, or null without a clone.
      * When no fetch of the clone ran within freshMs, as on a workspace that no page has open, it starts one and waits for it up to FETCH_WAIT_MS from its start,

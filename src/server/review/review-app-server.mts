@@ -332,7 +332,6 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
           folder: codeFolder,
           state: (repository: string) => code.state(view.id, repository),
           tree: (repository: string, folder: string) => code.tree(view.id, repository, folder),
-          compare: (repository: string, base: string) => code.compare(view.id, repository, (base as any)),
           branches: (repository: string, owned: Iterable<string>, { waitMs = 0 }: { waitMs?: number } = {}) => code.branches(view.id, repository, owned, { freshMs: workspaceFetchMs, waitMs }),
           file: (repository: string, at: any) => code.file(view.id, repository, at),
           defaultFile: (repository: string, file: string) => code.defaultFile(view.id, repository, file),

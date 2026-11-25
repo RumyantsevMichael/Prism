@@ -15,6 +15,7 @@ import { connectionState, recordProbe, STOPPED_MESSAGE } from "./views/connectio
 import { badgedIcon, notificationText, shouldNotify, signalTitle } from "./views/attention-signal.js";
 import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-tab.js";
 import { createPageBar } from "./views/page-bar.js";
+import { refreshCodePage } from "./views/code.js";
 import { DEFAULT_PLACE, PLACES, placeNamed, placeOf } from "./views/places.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createAgentsMenu } from "./views/agents-menu.js";
@@ -746,6 +747,12 @@ function openRef(given: any, { keep = false, fromHistory = false, keepDrawer = f
   const moved = selectedPath !== path;
   selectedPath = path;
   lastSnapshot = "";
+  // Every Code address belongs to the Code place, so opening one, as from a record's link to a code file, presses Code on the rail.
+  if (placeOf(path) === "code" && currentPlace !== "code" && placeShown("code")) {
+    currentPlace = "code";
+    storePlace("code");
+    void loadCodePlace();
+  }
   updateLocation(path, moved && !fromHistory);
   if ((navDrawer! as any).isOpen && !keepDrawer) (navDrawer! as any).close();
   if (sidebarFlyoutOpen() && !keepDrawer) setSidebarFlyout(false);
@@ -1155,8 +1162,9 @@ function onStreamEvent(name: string, data: any) {
     // The project's records changed, so the index and the open view are read again now rather than at the next check.
     refreshIndex?.();
   } else if (name === "code") {
-    // A fetch moved a repository's branch tips, so the Code place reads its work and branches again now.
+    // A fetch moved a repository's branch tips, so the Code place reads its work and branches again now, and an open Code page its tree and file.
     void loadCodePlace();
+    refreshCodePage();
   } else if (name === "session") {
     sessionConnected = true;
     try {
@@ -2398,8 +2406,11 @@ function loadCodePlace(): Promise<void> {
     const answer = response?.ok ? await response.json().catch(() => null) : null;
     // A failed read keeps the work and branches the sidebar shows.
     if (!answer || !Array.isArray(answer.work)) return;
+    const changed = JSON.stringify(codePlace?.answer) !== JSON.stringify(answer);
     codePlace = { query, answer };
     if (currentPlace === "code") renderNavigation();
+    // The Code page names its narrowing by the place's titles and shows what the work changes, so it reads again when the work or branches changed.
+    if (changed) refreshCodePage();
   })().finally(() => {
     codePlaceRead = null;
   });
@@ -3000,6 +3011,8 @@ async function showEntity(path: any) {
   const snapshot = JSON.stringify(entity);
   if (path !== selectedPath) return;
   if (snapshot === lastSnapshot) {
+    // The Code page reads its tree and open file again on each check, since a push changes them without changing the page's own answer.
+    if (entity.kind === "code") refreshCodePage();
     setBusy(false);
     return;
   }
@@ -3007,7 +3020,8 @@ async function showEntity(path: any) {
   const label = entityLabel(entity);
   const state = viewState(path);
   const memory: any = beginRebuild(path);
-  memory.stage.innerHTML = `
+  // The Code page is its files tree beside the open file, under the place's own head, so it has no page header of its own.
+  memory.stage.innerHTML = entity.kind === "code" ? "" : `
     <header class="artifact-header">
       <div>
         <h1>${escapeHtml(label.title)}</h1>
@@ -3033,6 +3047,13 @@ async function showEntity(path: any) {
     // The Code page turns a repository's code content on or off with the tab's write session, and then reads the page again.
     canWrite: () => Boolean(writeSession()),
     setCode: (repository: string, enabled: any) => setCodeContent(repository, enabled),
+    // The Code page reads the narrowing the place shows, the person's quiet-branch preferences, the place's work and branches, and opens a file's address.
+    codeNarrowing: () => codeNarrowed,
+    codeQuery,
+    codeAnswer: () => shownCodeAnswer(),
+    narrowingLabel: (ref: string) => currentContext?.ref === ref ? currentContext.value.trail.at(-1)?.label ?? null : null,
+    pageHref,
+    openRef: (ref: string, options: any = {}) => openRef(ref, options),
     refresh: () => {
       lastSnapshot = "";
       if (path === selectedPath) void showArtifact(path);
@@ -3102,7 +3123,8 @@ async function showArtifact(path: any) {
     return;
   }
   refreshHeld = false;
-  if (parseEntityRef(path)) {
+  // A code file's address opens the Code place's file view, which is the Code page with that file open.
+  if (parseEntityRef(path) || isCodeRef(path)) {
     await showEntity(path);
     return;
   }
@@ -3255,7 +3277,7 @@ function viewContext(path: any, state: any) {
     // A view's own read route, such as a slice's frozen test or run log, answers JSON, and a refusal throws its text.
     fetchJson: (url: string) => fetchJson(url),
     fetchEvidence: (id: string) => fetchJson(`./api/evidence?id=${encodeURIComponent(id)}`),
-    hasArtifact: (artifactPath: string) => availableArtifacts.has(localTab(artifactPath)) || Boolean(parseEntityRef(artifactPath)),
+    hasArtifact: (artifactPath: string) => availableArtifacts.has(localTab(artifactPath)) || Boolean(parseEntityRef(artifactPath)) || isCodeRef(artifactPath),
     // A store artifact's scope label, which the record views show beside it, or null for any other file.
     scopeLabel: (artifactPath: string) => refScopes.get(localTab(artifactPath)) ?? null,
     // The scope filter of Knowledge: whether a scope label is shown, the chosen labels or null for every scope, the store's scopes by label, and a way back to every scope.
@@ -3265,7 +3287,7 @@ function viewContext(path: any, state: any) {
     showAllScopes: () => setScopeFilter(null),
     openArtifact(given: any, options: any = {}) {
       const artifactPath = localTab(given);
-      if (!availableArtifacts.has(artifactPath) && !parseEntityRef(artifactPath)) {
+      if (!availableArtifacts.has(artifactPath) && !parseEntityRef(artifactPath) && !isCodeRef(artifactPath)) {
         showToast(`Not a reviewable artifact: ${artifactPath}`);
         return;
       }
@@ -3768,6 +3790,7 @@ async function initialize() {
     if (keys.some((key: string) => key.startsWith("code."))) {
       renderNavigation();
       void loadCodePlace();
+      refreshCodePage();
     }
   });
   navDrawer!.addEventListener("prism-close", closeDrawer);
