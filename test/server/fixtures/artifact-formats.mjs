@@ -177,7 +177,8 @@ export function commitAll(root, message = "Add artifacts", date = "2026-03-14T10
 /** A Git checkout on main with a local identity, the workflow config, and the given files; files defaults to the conforming set. */
 export async function formatProject(context, files = CONFORMING) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-formats-")));
-  defer(context, () => rm(root, { recursive: true, force: true }));
+  // Windows can keep a file of the project for a moment after the review server and browser that used it have stopped, so the removal retries.
+  defer(context, () => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
   git(root, "init", "-q", "-b", "main");
   git(root, "config", "user.name", AUTHOR.name);
   git(root, "config", "user.email", AUTHOR.email);
