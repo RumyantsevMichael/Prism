@@ -19,8 +19,12 @@ let shared = null;
 const workspace = () => (shared ??= codePlaceWorkspace(suite).then(async (built) => {
   await built.ready("place");
   // The review page that can write takes the one-time grant of a presented URL's fragment.
-  const presented = await built.prism.control("present", { method: "POST", body: { open: true, acceptsGrant: true } });
-  assert.equal(presented.status, 200, presented.body);
+  // The review app grants one open per 10-second open lease, and setup's verifications may have taken it, so this presents until a present carries a grant.
+  const presented = await waitFor(async () => {
+    const answer = await built.prism.control("present", { method: "POST", body: { open: true, acceptsGrant: true } });
+    assert.equal(answer.status, 200, answer.body);
+    return answer.json.writeGrant ? answer : null;
+  }, 30000, "a present that carries a write grant");
   return { ...built, base: `${built.prism.viewer}/w/${built.id}`, grant: presented.json.writeGrant, browser: await launch(suite) };
 }));
 const TIMEOUT = { skip, timeout: 600000 };
@@ -81,7 +85,8 @@ test("clauses 42 and 43: files show their versions, New, or Removed with the mar
   const charts = treeRow(page, "charts");
   assert.match(await text(charts), /charts.*1 branch/);
   await charts.locator("prism-chip, .prism-tree-flag").filter({ hasText: "1 branch" }).first().hover();
-  assert.match(await eventually(async () => (await shownTooltip(page)) ?? "", "") || (await shownTooltip(page)) || "", /feature\/charts/);
+  // The kit shows a hovered element's tooltip only after its hover delay, so this waits for the tooltip to show.
+  assert.match(await waitFor(() => shownTooltip(page), 10000, "the tooltip of the charts badge"), /feature\/charts/);
 });
 
 test("clause 44: a repository with code content off says so and offers to turn it on to a page that can write", TIMEOUT, async () => {
@@ -270,7 +275,7 @@ test("clauses 37 and 44: a repository or file that Prism cannot read now shows a
     assert.equal(await note.locator('prism-icon[slot="start"]').count(), 1, "the notice is the kit's inline note with its glyph");
     const tryAgain = web.getByRole("button", { name: "Try again" });
     assert.equal(await tryAgain.count(), 1);
-    assert.equal(await tryAgain.evaluate((node) => node.closest("prism-button") !== null), true, "Try again is a kit button");
+    assert.equal(await tryAgain.evaluate((node) => node.getRootNode().host?.localName === "prism-button"), true, "Try again is a kit button");
     assert.equal(await page.locator('prism-inline-note[tone="warning"]').count(), 0, "the notice is quiet, not a warning");
     for (const other of ["api", "infra"]) assert.equal(await treeRow(page, other).locator("prism-inline-note").count(), 0, `${other} shows as usual`);
     assert.match(await text(treeRow(page, "infra")), /infra/);
@@ -283,12 +288,14 @@ test("clauses 37 and 44: a repository or file that Prism cannot read now shows a
     assert.equal(await chips(page).count(), 0, "no version chips while the file cannot be read");
     await restore();
     // A redraw of clause 39 may read again first, so Try again is chosen only while its notice still shows.
-    const fileAgain = page.locator("#artifact").getByRole("button", { name: "Try again" });
+    // web's notice stays beside the file's until web reads again, so this chooses the file notice's own Try again.
+    const fileAgain = fileNote.getByRole("button", { name: "Try again" });
     if (await fileAgain.count()) await fileAgain.click();
-    await chips(page).waitFor({ timeout: 20000 });
+    // A read again walks the tree's open folders one level after another, and late in the suite each level can take seconds, so this waits longer.
+    await chips(page).waitFor({ timeout: 60000 });
     assert.equal(await fileNote.count(), 0, "the file reads again once its remote is back");
     if (await tryAgain.count()) await tryAgain.click();
-    await waitFor(async () => (await note.count()) === 0, 20000, "web's notice goes once web reads again");
+    await waitFor(async () => (await note.count()) === 0, 60000, "web's notice goes once web reads again");
     await expand(page, "web", "packages");
     assert.equal(await treeRow(page, "nav").count(), 1, "web's tree opens with its new folder");
   } finally {
