@@ -7,6 +7,7 @@ import { CONFORMING, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs"
 import { AUDIT, AUDIT_SOURCE, auditContent, auditProposal, readRun, runCheckout, runFor, runStore } from "./fixtures/format-migration-runs.mjs";
 import { escapes, launch, openPage, skip as noBrowser, waitForView } from "./fixtures/kit-browser.mjs";
 import { startActionReview } from "./fixtures/review-actions.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // A format migration run's page shows its set, statement maps, and status, words each asked point with its recommendation prefilled, and offers one answer while the run asks
 // and the rerun once it failed, built from the UI kit with every run and artifact text set as text.
@@ -100,6 +101,36 @@ test("clause 7: a failed run's page shows the reason and offers the rerun", { sk
   assert.ok(await page.getByRole("button", { name: /run (it )?again|rerun/i }).count() >= 1, "the rerun is offered");
   assert.equal(await page.getByRole("button", { name: /^answer/i }).count(), 0, "a failed run offers no answer");
   assert.equal(await page.evaluate(() => window.__owned ?? null), null);
+});
+
+test("a failed run's Attention sheet puts its two actions apart at the sheet's end, lists by its time among the questions, and its file's format finding offers the rerun", { skip, timeout: 120000 }, async (context) => {
+  const { page, run } = await opened(context, { ...CONFORMING, [PATHS.requirements]: UNANCHORED }, async (call) => {
+    const id = await runFor(call, PATHS.requirements);
+    // A question asked before the run failed lists after the failure, since Needs you lists the newest first.
+    assert.equal((await call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "exports", title: "Exports", intent: "Export the records.", band: "Now" }] })).refused, false);
+    const asked = await call("update_coordination_state", { initiative: "exports", expectedRevision: null, changes: { gateOperations: [{ op: "ask", kind: "decision", question: "Keep the old export layout?", context: "Two scripts still read it.", artifacts: [], options: [{ id: "keep", label: "Keep", consequence: "Both layouts." }, { id: "drop", label: "Drop", consequence: "Only the new one." }], recommended: { option: "keep", reason: "Both scripts read it." } }] } });
+    assert.equal(asked.refused, false, asked.text);
+    await pause(20, "the failure must be at least a millisecond newer than the question, which no event marks");
+    assert.equal((await call("fail_migration_run", { run: id, reason: "The section numbers are ambiguous." })).refused, false);
+    return { run: id };
+  }, { open: () => [] });
+  const titles = await page.locator("[data-needs-you] prism-inbox-item, prism-inbox-item").allInnerTexts();
+  const failedAt = titles.findIndex((text) => text.includes("failed"));
+  const questionAt = titles.findIndex((text) => text.includes("Keep the old export layout?"));
+  assert.ok(failedAt >= 0 && questionAt >= 0 && failedAt < questionAt, `the newer failure lists before the older question: ${JSON.stringify(titles)}`);
+  await page.getByText("Requirements in this checkout failed").first().click();
+  const open = page.locator(".note-migration-failed prism-button", { hasText: "Open the run" });
+  const rerun = page.locator(".note-migration-failed prism-button", { hasText: "Run again" });
+  await rerun.waitFor();
+  const [left, right, sheet] = [await open.boundingBox(), await rerun.boundingBox(), await page.locator(".note-migration-failed .gate-actions").boundingBox()];
+  assert.ok(right.x - (left.x + left.width) >= 8, `the buttons keep a gap: ${JSON.stringify([left, right])}`);
+  assert.ok(sheet.x + sheet.width - (right.x + right.width) <= 1, "the actions sit at the sheet's end");
+  await page.getByText("Format findings").first().click();
+  const finding = page.locator("prism-row", { hasText: PATHS.requirements }).locator("prism-button[data-migration-rerun]");
+  await finding.waitFor();
+  assert.equal(await finding.getAttribute("data-migration-rerun"), run);
+  await finding.click();
+  await page.getByText("Run the format migration again?").first().waitFor();
 });
 
 const applied = async (call) => {

@@ -490,11 +490,13 @@ export function codexInterruptRequest({ threadId, turnId }: { threadId: string |
 /**
  * The command that continues a host session in a terminal, or null for an id that breaks HOST_SESSION_ID_PATTERN; an ACP agent's is
  * its declared resumeCommand with {session} replaced, and null without one or once the agent is no longer offered.
+ * Codex's names the sandbox mode of the launch's access, since Codex can refuse to resume without one a thread that ran under a permission profile
+ * of the thread's own configuration, and so a read-only run stays read-only in the person's terminal.
  */
-export function resumeCommandOf(host: string, hostSessionId: unknown, env: NodeJS.ProcessEnv = process.env) {
+export function resumeCommandOf(host: string, hostSessionId: unknown, env: NodeJS.ProcessEnv = process.env, { access = "full" }: { access?: string } = {}) {
   if (!validHostSessionId(hostSessionId)) return null;
   if (host === "claude-code") return `claude --resume ${hostSessionId}`;
-  if (host === "codex") return `codex resume ${hostSessionId}`;
+  if (host === "codex") return `codex resume --sandbox ${readOnly(access) ? "read-only" : CODEX_POLICY.sandbox} ${hostSessionId}`;
   const template = isAcpHost(host) ? acpHostDefinition(host, env)?.acp.resumeCommand : null;
   return template ? template.replaceAll("{session}", hostSessionId) : null;
 }

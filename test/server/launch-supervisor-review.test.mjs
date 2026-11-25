@@ -50,7 +50,9 @@ test("a Codex thread id that is unsafe on a command line names no session", () =
     assert.throws(() => codexThreadRequest({ checkout: "/work/demo", hostSessionId: threadId, resume: true }), threadId);
   }
   assert.equal(feed("codex", [answer(1, {}), answer(2, { thread: { id: CODEX_THREAD } })]).hostSessionId, CODEX_THREAD);
-  assert.equal(resumeCommandOf("codex", CODEX_THREAD), `codex resume ${CODEX_THREAD}`);
+  // Codex can refuse to resume a thread without a sandbox mode, so the command names the launch's, and a read-only run stays read-only.
+  assert.equal(resumeCommandOf("codex", CODEX_THREAD), `codex resume --sandbox workspace-write ${CODEX_THREAD}`);
+  assert.equal(resumeCommandOf("codex", CODEX_THREAD, process.env, { access: "read-only" }), `codex resume --sandbox read-only ${CODEX_THREAD}`);
 });
 
 test("a run that names an unsafe thread id has no resume command and cannot be resumed", { skip: posixOnly }, async (t) => {

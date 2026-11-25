@@ -840,6 +840,29 @@
   background: var(--prism-color-sunken);
 }
 
+
+/* The actions at the foot of a format migration run's Attention sheet and page: the hint, when there is one, then the buttons at the end. */
+.gate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--prism-space-4);
+  min-width: 0;
+}
+
+.gate-hint {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
 .gate-error {
   min-width: 0;
   margin: 0;
