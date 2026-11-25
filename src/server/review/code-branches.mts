@@ -8,8 +8,8 @@
 // Branches at one tip tie on every count, so of those candidates each tip weighs only its earliest ranked branch, however many branches point at it.
 // A branch's first-parent history is listed once and read only up to that nearest tip or the first commit that the default branch holds.
 // The ranking and the base choice run without recursion and give way to the server's other work after at most TURN branches.
-// All Git work runs in a background read, one at a time per clone, that a newer set of tips or owners supersedes, and the answer is kept for its tips, default branch, and owners,
-// so a request with the answer ready does no work that grows faster than the number of branches.
+// All Git work runs in a background read, one at a time per clone, that a newer set of tips supersedes, and the answers are kept for their tips and default branch,
+// one for each of the latest few sets of owners, so a request with its answer ready does no work that grows faster than the number of branches.
 
 const BRANCHES = "refs/heads/";
 // How many Git commands of one model run at a time.
@@ -18,6 +18,8 @@ const PARALLEL = 8;
 const CANDIDATES = 32;
 // How many branches the ranking or the base choice handles before it gives way to the server's other work.
 const TURN = 500;
+// How many sets of owners a clone's reader keeps a ready answer for, at most one model of the clone's branches each.
+const ANSWERS = 8;
 
 // A UTF-16 unit as it sorts in code-point order: a surrogate, which only a character above U+FFFF holds, sorts after every unit from U+E000 to U+FFFF.
 const pointOrder = (unit: number) => (unit >= 0xe000 ? unit - 0x800 : unit >= 0xd800 ? unit + 0x2000 : unit);
@@ -362,35 +364,48 @@ async function derive(git: Git, tip: string, baseTip: string | null) {
 }
 
 /**
- * The branch reader of one clone, which runs at most one read at a time and keeps the latest answer.
- * answer(tipsKey, owned) gives the model for the clone's current tips key and owned branch names when it is read, and otherwise starts or retargets the background read and gives undefined;
- * a read whose tips or owners a later call changed stops before its next Git command, and the newest one starts when it ends.
+ * The branch reader of one clone, which runs at most one read at a time and keeps the answers of the latest ANSWERS sets of owners for the clone's current tips,
+ * since workspaces that share a clone each name their own owned branches.
+ * answer(tipsKey, owned) gives the model for the clone's current tips key and owned branch names when it is read, and otherwise queues its read and gives undefined;
+ * a read whose tips a later call changed stops before its next Git command, and a read for other owners runs to its end, so each set of owners asked is answered in turn.
  */
 export function createBranchReader(git: Git) {
+  type Job = { key: string; tipsKey: string; owned: Set<string> };
   let facts: Facts | null = null;
   let factsKey: string | null = null;
-  let done: { key: string; model: any } | null = null;
-  let wanted: { key: string; tipsKey: string; owned: Set<string> } | null = null;
+  // The ready answers by key, least recently asked first.
+  const answers = new Map<string, any>();
+  // The reads asked for and not yet started, oldest first, all of the newest tips asked.
+  const queued = new Map<string, Job>();
+  let latest: string | null = null;
   let running: Promise<void> | null = null;
   let derived = new Map<string, any>();
 
-  async function readOne(job: { key: string; tipsKey: string; owned: Set<string> }) {
+  const keep = (key: string, model: any) => {
+    answers.delete(key);
+    answers.set(key, model);
+    while (answers.size > ANSWERS) answers.delete(answers.keys().next().value!);
+  };
+
+  async function readOne(job: Job) {
+    const live = () => latest === job.tipsKey;
     if (factsKey !== job.tipsKey) {
-      // Only the newest tips' facts are kept, so a read holds the counts of one set of tips at a time.
+      // Only the newest tips' facts and answers are kept, so a read holds the counts of one set of tips at a time.
       facts = null;
       factsKey = null;
       derived = new Map();
-      const read = await readBranchFacts(git, () => wanted?.tipsKey === job.tipsKey);
+      answers.clear();
+      const read = await readBranchFacts(git, live);
       if (read === null) {
-        done = { key: job.key, model: { defaultBranch: null, branches: [] } };
+        keep(job.key, { defaultBranch: null, branches: [] });
         return;
       }
       facts = read;
       factsKey = read.key;
     }
-    const model = await readBranches(git, facts!, job.owned, { live: () => wanted?.key === job.key, derived });
+    const model = await readBranches(git, facts!, job.owned, { live, derived });
     // A fetch between the request and the read changes the tips that the read found, so the answer is kept under the tips that it read.
-    done = { key: `${factsKey}\0\0${[...job.owned].sort(byText).join("\0")}`, model };
+    keep(`${factsKey}\0\0${[...job.owned].sort(byText).join("\0")}`, model);
   }
 
   function start() {
@@ -398,14 +413,14 @@ export function createBranchReader(git: Git) {
     run = (async () => {
       await null;
       try {
-        let last = null;
-        while (wanted && wanted !== last && done?.key !== wanted.key) {
-          last = wanted;
+        while (queued.size) {
+          const job: Job = queued.values().next().value!;
+          queued.delete(job.key);
+          if (answers.has(job.key)) continue;
           try {
-            await readOne(wanted);
-          } catch (error) {
-            // A failed read is tried again at the next request, from the facts already read for the same tips.
-            if (!(error instanceof Superseded)) wanted = null;
+            await readOne(job);
+          } catch {
+            // A superseded read is dropped, and a failed one is tried again at the next request, from the facts already read for the same tips.
           }
         }
       } finally {
@@ -420,8 +435,17 @@ export function createBranchReader(git: Git) {
     answer(tipsKey: string, owned: Iterable<string>) {
       const names = new Set(owned);
       const key = `${tipsKey}\0\0${[...names].sort(byText).join("\0")}`;
-      if (done?.key === key) return done.model;
-      if (wanted?.key !== key) wanted = { key, tipsKey, owned: names };
+      if (answers.has(key)) {
+        const model = answers.get(key);
+        keep(key, model);
+        return model;
+      }
+      if (latest !== tipsKey) {
+        latest = tipsKey;
+        queued.clear();
+      }
+      if (!queued.has(key)) queued.set(key, { key, tipsKey, owned: names });
+      while (queued.size > ANSWERS) queued.delete(queued.keys().next().value!);
       if (!running) start();
       return undefined;
     },

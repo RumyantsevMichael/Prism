@@ -307,3 +307,23 @@ test("each branch's first-parent history is listed once and read only up to its 
   for (const link of links.slice(1)) assert.equal(ofTip(link.name).taken, 2, `${link.name} reads its tip and its nearest tip, and nothing past it`);
   assert.equal(ofTip("long").taken, 3000, "a branch with no other tip reads its history up to the first commit that main holds");
 });
+
+test("two sets of owners that share a clone's reader each keep a ready answer, and a change of owners does not stop the running read", async () => {
+  const folder = manyBranches(environment, 60);
+  const { run, counts } = countingGit(folder);
+  const reader = createBranchReader(run);
+  const key = keyOf(folder);
+  const ownedA = ["b0001", "b0003"];
+  const ownedB = ["b0002", "b0004"];
+  assert.equal(reader.answer(key, ownedA), undefined);
+  assert.equal(reader.answer(key, ownedB), undefined, "the second workspace's owners wait for the read that runs");
+  await reader.idle();
+  assert.ok(reader.answer(key, ownedA), "the read for the first owners ran to its end");
+  assert.ok(reader.answer(key, ownedB), "the read for the second owners followed it");
+  const started = counts.started;
+  for (let index = 0; index < 10; index += 1) {
+    assert.ok(reader.answer(key, index % 2 ? ownedA : ownedB), "each set of owners answers ready while the tips stay");
+  }
+  await reader.idle();
+  assert.equal(counts.started, started, "alternating owners run no Git command");
+});
