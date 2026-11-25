@@ -137,7 +137,7 @@ export function page({ picked = false, only = false, mode = "both" } = {}) {
 
 export const CSS = `
 #artifact.cv-host{padding:0}
-.cv-ide{display:grid;grid-template-columns:minmax(240px,320px) minmax(0,1fr);height:100%;min-height:0}
+.cv-ide{display:grid;grid-template-columns:minmax(240px,var(--prism-list-width)) minmax(0,1fr);height:100%;min-height:0}
 .cv-tree-pane{border-inline-end:1px solid var(--prism-color-line);padding:var(--prism-space-2);overflow:auto;display:flex;flex-direction:column;gap:var(--prism-space-2)}
 .cv-tree-tools{display:flex;flex-direction:column;gap:var(--prism-space-2)}
 .cv-scope{margin:0;font-size:var(--prism-font-size-sm);color:var(--prism-color-ink-muted)}
