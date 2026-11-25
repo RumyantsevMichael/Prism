@@ -392,9 +392,12 @@ export function codexThreadRequest({ checkout, hostSessionId, resume, coordinato
   // A read-only thread's configuration names Prism's scoped server as its only MCP server, in place of those of the person's own configuration,
   // and defines the permission profile that the thread selects, on a launch and on each resume alike.
   // A migration run asks the person through its own tools, so its thread gets no start note, which names the gate tools that it cannot call.
+  // Under the approval policy never, Codex refuses a call to an MCP tool that it would ask about, such as one marked destructive, so the scoped server,
+  // which lists only the run's own tools, approves each of its tools.
   const readOnlyPolicy = () => {
     const { profile, ...selected } = codexReadOnly(checkout, rootsOf(readRoots));
-    return { ...selected, config: { mcp_servers: { [MIGRATION_SERVER]: requiredServer(migrationServer) }, permissions: { [CODEX_READ_ONLY_PROFILE]: profile } } };
+    const server = { ...(requiredServer(migrationServer) as object), default_tools_approval_mode: "approve" };
+    return { ...selected, config: { mcp_servers: { [MIGRATION_SERVER]: server }, permissions: { [CODEX_READ_ONLY_PROFILE]: profile } } };
   };
   const policy = readOnly(access) ? readOnlyPolicy() : { ...CODEX_POLICY, developerInstructions: LAUNCH_NOTE };
   if (!resume) return { method: "thread/start", params: { cwd: checkout, ...policy, ...chosen } };

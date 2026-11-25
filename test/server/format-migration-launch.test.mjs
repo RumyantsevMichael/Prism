@@ -7,7 +7,7 @@ import { AUDIT, AUDIT_SOURCE, auditProposal, listedTools, readRun, runCheckout, 
 import { pause } from "./fixtures/wait.mjs";
 
 // Prism launches each format migration run on this machine at once, on the first available host with a small model when no host and model are chosen,
-// with the migrate-artifact prompt alone, and fails a run whose session ends before it finishes.
+// with the migrate-artifact prompt alone, and fails a run whose session ends before it proposed a migration of every artifact.
 
 const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scripts" : false;
 const UNANCHORED = REQUIREMENT.replace('<a id="2"></a>\n', "");
@@ -108,6 +108,19 @@ test("clause 6: a session that ends after the run asked its question leaves the 
   await pause(8000, "the check is that the ended session starts no other one and leaves the run asking, which no event marks");
   assert.equal(hosts.runs("claude").length, 1);
   assert.equal((await readRun(call, run)).status, "asking", "the person's answer is still awaited");
+});
+
+test("a session that ends with a proposal for every artifact but never finished the run has Prism finish it, so the run asks its question", { skip: posixOnly }, async (context) => {
+  const { call } = await runCheckout(context, { ...CONFORMING, [AUDIT]: AUDIT_SOURCE }, { plans: { claude: [{ hold: 6000 }] } });
+  const run = await runFor(call, AUDIT);
+  const bare = await call("propose_migration", auditProposal(run));
+  const asked = bare.value.points.map((point) => ({ point, recommendation: "Leave it unknown until the team decides." }));
+  assert.equal((await call("propose_migration", auditProposal(run, { asked }))).refused, false);
+  // The stub's turn ends six seconds after it started without calling finish_migration_run, which ends the session.
+  const ended = await statusOf(call, run, ["asking", "failed"]);
+  assert.equal(ended.status, "asking", ended.failure?.reason);
+  assert.equal(ended.question.points.length, asked.length, "it asks every point the proposal asked");
+  assert.equal(ended.result, null, "nothing is applied before the person answers");
 });
 
 test("clauses 7, 9: continueMigrationRun resumes the run's session with the same prompt, and no agent tool continues or launches a run", { skip: posixOnly }, async (context) => {
