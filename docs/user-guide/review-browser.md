@@ -44,6 +44,7 @@ It keeps one size whichever section shows, and a section longer than the dialog 
 On a phone Settings fills the window and opens on its list of sections; choosing one shows that section, and **All settings** returns to the list.
 **Appearance** offers the themes System, Light, and Dark and the densities Compact and Comfortable.
 A choice applies at once, and System follows the operating system again.
+In a workspace whose store registers a repository, **Appearance** also offers **Quiet branches after**, a whole number of days from 1 to 365, 30 by default, after which the [Code place](#the-code-place) hides a branch with no newer commit; Enter or leaving the field saves it among your preferences, and a number outside that range is marked and not saved.
 **Layout** shows or hides the sidebar on windows wider than 1100 pixels and returns the sidebar to its default width.
 **Personal** shows your [personal settings](workflow.md#personal-settings), which stay on this machine and apply to every project and every host you run Prism in: **Questions** (Question tool or Numbered options), **Review browser** (Auto, Internal, or External), **Open at session start** (On or Off), and **Offer Prism** (Ask or Off).
 Each row shows the value Prism uses and where it comes from: **Your choice**, **Adopted from a repository's configuration**, **From this repository's configuration**, or **Default**.
@@ -64,7 +65,8 @@ The catalog's own toolbar changes its theme, density, and width for that tab onl
 The top bar holds the Prism mark, the workspace switcher, the search button that opens the Jump palette, and the **Agents** button.
 The status bar at the bottom starts with **Settings**, then shows where the project's records live, naming a shared store, with their sync state, whose color the store icon takes, and ends with the repository index.
 Times in words, such as when a question was asked, how long ago the records synced, or how long a claim has left, count on while the page is open, and hovering one shows the exact date and time.
-The rail at the left edge switches between five places, and the sidebar beside it shows only the current place, under its title and a line that says what it holds.
+The rail at the left edge switches between the places Attention, Work, Roadmap, Knowledge, Code, and History, and the sidebar beside it shows only the current place, under its title, whose tooltip says what the place holds.
+**Code** shows on the rail only in a workspace whose store registers at least one repository, and a checkout's own page has no Code place.
 **Attention** shows what waits on you, and the rail's Attention button carries the number of recorded questions that wait for an answer.
 Its sidebar lists **Everything**, then under **By kind** **Questions**, **Review findings**, **Failed verifications**, **Blocked work**, **Ready to ship**, **Problems**, and **Format findings**, each with its count, also at 0, then under **By work** the three initiatives with the most items and a row such as `2 more` that shows the rest below it, and under **Answered** **Answered in the last 7 days**.
 **Work** lists each initiative that has an initiative record and is neither shipped nor superseded, with its slices, under the groups **In progress**, **Blocked**, **Designed, not started**, and **Not on the roadmap**, each with its count, and leaves out an empty group.
@@ -964,11 +966,27 @@ A link that names no artifact and no file keeps its text and shows **link not fo
 An image, a link inside a fenced code block of backticks or tildes, and a link inside inline code are not links.
 The Jump palette lists each store artifact once, names its scope in its row, and finds only the artifacts of the scopes the filter shows.
 
+### The Code place
+
+**Code** shows what the code in flight changes, across every repository of the workspace.
+Its sidebar starts with a **Filter work and branches** field and **All work and branches**, with the number of lines of work it shows, where a line of work is one pushed branch of one repository other than its default branch.
+**In progress** lists each initiative of Work's **In progress** group with its status and the number of files its lines of work change, or **No changes yet** while no pushed branch holds its work.
+Below an initiative with slices, each slice that changes code shows its phase, the agent that holds it, **Waits** while a question it asked waits for your answer, and its number of changed files.
+A slice, or an initiative without slices, whose work lies on more than one branch lists one row per branch, such as `api · claude/signed-download`, with its number of changed files.
+**Other branches** lists the pushed branches that no slice owns and that change a file, newest commit first, each with its last author, or the number of people who committed since it started, and its number of changed files.
+Hovering or focusing a row names its title, each of its branches with the branch it started from, such as `api · claude/signed-download, from main`, its agent or person, and its number of changed files.
+Prism reads which branch a branch started from from its Git history, since Git records none, so the hover shows that reading.
+A branch whose last commit is older than **Quiet branches after** in Settings is quiet, and the note below the groups says how many are hidden, such as `1 quiet branch is hidden: no push in 30 days. Show them`; **Show them** lists them with the other branches until **Hide them**, and the review app keeps that choice among your preferences.
+The filter keeps the rows whose title, repository, or branch holds the text you type, with the rows that hold them, and Escape clears it.
+Choosing a row opens the Code page narrowed to it, at an address such as `review?artifact=code:work/retries/deadline` or `review?artifact=code:branch/api/feature/http`, and choosing Code on the rail opens **All work and branches** the first time and then the Code address you showed last.
+The sidebar follows pushes and new verification runs within one workspace fetch interval, without a reload.
+A link to a code file, `code:<repository>:<path>`, opens in the Code place too.
+
 A store that holds no artifacts yet, because no Prism session moved a checkout's files into it, shows a note in Knowledge's sidebar that names its repositories and says that each keeps its artifacts in its checkouts until a Prism session there moves them into the store.
 
 ### Code content
 
-The **Code** page under **Knowledge** shows one repository of the workspace at a time, which the repository menu at the start of its toolbar picks.
+The Code place's page shows one repository of the workspace at a time, which the repository menu at the start of its toolbar picks.
 Its **Repositories** button opens a dialog that lists each repository with its code content state: **Off**, **On**, or **Unreachable**.
 Choose **Turn code content on** there for a repository to have Prism keep a clone of its code on this machine, also when this machine has no checkout of it.
 Prism clones the first remote that the store's registration of the repository lists, with the machine's Git configuration and credential helpers and without asking for a password on a terminal, into `code/` of its state directory, one clone per remote.

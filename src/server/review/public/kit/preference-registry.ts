@@ -25,7 +25,10 @@ export const PREFERENCES: Readonly<Record<string, any>> = Object.freeze({
   "library.requirements.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["scope", "status", "area", "initiative", "none"]), default: "scope" }),
   "library.decisions.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["scope", "area", "status", "initiative", "none"]), default: "scope" }),
   "library.diagrams.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["scope", "owner", "kind", "none"]), default: "scope" }),
-  "library.glossary.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["scope", "none"]), default: "scope" })
+  "library.glossary.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["scope", "none"]), default: "scope" }),
+  // The Code place hides a line of work with no commit for more than this many whole days, until the person shows the quiet branches.
+  "code.quietDays": Object.freeze({ kind: "integer", min: 1, max: 365, default: 30 }),
+  "code.showQuiet": Object.freeze({ kind: "boolean", default: false })
 });
 
 export const DEFAULT_PREFERENCES = Object.freeze(Object.fromEntries(Object.entries<any>(PREFERENCES).map(([key, entry]) => [key, entry.default])));

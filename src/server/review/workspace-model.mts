@@ -1842,11 +1842,14 @@ async function initiativeTree(projectRoot: string, id: string) {
   const title = view.roadmapItem?.title ?? view.record?.slices?.[view.derived?.root]?.title ?? id;
   const scope = { kind: "initiative", id, title, state: view.roadmapItem?.state ?? (view.exists ? "unlisted" : "envisioned"), valid: view.valid, tree: [] as any[] };
   if (!view.derived) return { scope, view };
+  // A slice waits on the person while a user gate of its own is asked and nobody answered it, which the Code place's sidebar flags.
+  const pending = await readCoordinationState({ projectRoot, initiative: id }).then((read: any) => read?.state?.pending ?? []).catch((): any[] => []);
+  const waiting = new Set(pending.filter((gate: any) => gate && typeof gate === "object" && typeof gate.slice === "string" && !gate.answer).map((gate: any) => gate.slice));
   const visit = (slug: string, depth: number) => {
     const slice = view.record.slices[slug];
     const children = view.derived.children[slug] ?? [];
     const review = view.slices[slug]?.review;
-    scope.tree.push({ slug, title: slice.title, status: slice.status, depth, parent: slice.parent, hasChildren: children.length > 0, complete: Boolean(view.derived.complete[slug]), blocking: review && !review.invalid ? review.blocking : 0, ...slicePhase(slice) });
+    scope.tree.push({ slug, title: slice.title, status: slice.status, depth, parent: slice.parent, hasChildren: children.length > 0, complete: Boolean(view.derived.complete[slug]), blocking: review && !review.invalid ? review.blocking : 0, ...(waiting.has(slug) ? { waits: true } : {}), ...slicePhase(slice) });
     for (const child of children) visit(child, depth + 1);
   };
   visit(view.derived.root, 0);
@@ -1866,7 +1869,7 @@ async function libraryScope(projectRoot: string, section: string) {
   return { kind: "library", section, entries: library.entries.map((entry: any) => ({ path: entry.path, title: entry.title, status: entry.status, topic: entry.topic, ...(entry.scope ? { scope: entry.scope } : {}) })) };
 }
 
-const PLACE_LABELS: Readonly<Record<string, any>> = Object.freeze({ attention: "Attention", work: "Work", roadmap: "Roadmap", knowledge: "Knowledge", history: "History" });
+const PLACE_LABELS: Readonly<Record<string, any>> = Object.freeze({ attention: "Attention", work: "Work", roadmap: "Roadmap", knowledge: "Knowledge", code: "Code", history: "History" });
 // The pages of Attention's and Knowledge's own addresses, by the part after their place's prefix.
 const PLACE_PAGE_LABELS: Readonly<Record<string, any>> = Object.freeze({
   attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", formats: "Format findings", answered: "Answered in the last 7 days", "roadmap-questions": "Roadmap questions" },
@@ -1920,8 +1923,9 @@ export async function entityContext(projectRoot: string, ref: any) {
   if (ref === "attention" || ref === "roadmap") return { trail: [placeCrumb(ref, ref)], scope: { kind: "global" }, place: ref };
   if (parsed?.kind === "requirements" || parsed?.kind === "decisions") return { trail: [placeCrumb("knowledge"), { ref, label: SECTION_LABELS[parsed.kind] }], scope: await libraryScope(projectRoot, parsed.kind), place: "knowledge" };
   if (parsed?.kind === "glossary") return { trail: [placeCrumb("knowledge"), { ref, label: "Glossary" }], scope: { kind: "global" }, place: "knowledge" };
-  // A workspace's code content belongs with its records in Knowledge.
-  if (parsed?.kind === "code") return { trail: [placeCrumb("knowledge"), { ref, label: "Code" }], scope: { kind: "global" }, place: "knowledge" };
+  // Every Code address belongs to the Code place, whose crumb leads its trail: All work and branches, a narrowing to a work item, slice, or line of work, and a code file.
+  if (parsed?.kind === "code") return { trail: [placeCrumb("code", "code"), ...(ref === "code" ? [] : [{ ref, label: await codeNarrowingLabel(projectRoot, parsed) }])], scope: { kind: "global" }, place: "code" };
+  if (typeof ref === "string" && CODE_FILE_REF.test(ref)) return { trail: [placeCrumb("code", "code"), { ref, label: ref }], scope: { kind: "global" }, place: "code" };
   // The Agents page belongs to no place of the rail, so its trail is its own name, whichever group its address shows.
   if (parsed?.kind === "agents") return { trail: [{ ref, label: SECTION_LABELS.agents }], scope: { kind: "global" }, place: null };
   if (parsed?.kind === "initiative" || parsed?.kind === "slice") return initiativeContext(projectRoot, parsed.id, { slug: parsed.kind === "slice" ? parsed.slug : null });
@@ -1982,9 +1986,25 @@ function bandRank(roadmap: any, id: string) {
   return rank < 0 ? null : rank + 1;
 }
 
+// A code file of a workspace's repository, code:<repository>:<path>, which the Code place's file view shows.
+const CODE_FILE_REF = /^code:[^:/]+:./;
+
+// The name of what a Code address narrows to: the work item's or slice's title, or `<repository> · <branch>`.
+async function codeNarrowingLabel(projectRoot: string, parsed: any) {
+  if (parsed.branch) return `${parsed.branch.repository} · ${parsed.branch.branch}`;
+  const { scope } = await initiativeTree(projectRoot, parsed.work.initiative).catch(() => ({ scope: null as any }));
+  if (!parsed.work.slice) return scope?.title ?? parsed.work.initiative;
+  return scope?.tree?.find((node: any) => node.slug === parsed.work.slice)?.title ?? parsed.work.slice;
+}
+
 // Entity tabs name Prism concepts rather than files, so they never collide with artifact paths, which always carry an extension.
 export function parseEntityRef(ref: any): any {
   if (SECTION_REFS.includes(ref)) return { kind: ref };
+  // The Code place's narrowing addresses: a work item, a slice, or a line of work, whose branch may hold `/`; a code file, code:<repository>:<path>, is no entity.
+  let code = /^code:work\/([A-Za-z0-9_-]+)(?:\/([A-Za-z0-9_-]+))?$/.exec(ref ?? "");
+  if (code) return { kind: "code", work: { initiative: code[1], slice: code[2] ?? null } };
+  code = /^code:branch\/([^/:\s]+)\/(\S+)$/.exec(ref ?? "");
+  if (code) return { kind: "code", branch: { repository: code[1], branch: code[2] } };
   // The Launched sessions address, as a restored tab or an old link, opens the Agents page that replaced it.
   if (ref === "launches") return { kind: "agents" };
   // The Agents page with one Show choice made.

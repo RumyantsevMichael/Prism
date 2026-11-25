@@ -157,6 +157,10 @@
               <span value="comfortable">Comfortable</span>
             </prism-segmented>
           </div>
+          <div class="settings-row" id="settings-quiet-row" hidden>
+            <div><strong>Code</strong><span class="settings-hint">The Code place hides a branch whose last commit is older than this many days, until you show the quiet branches.</span></div>
+            <prism-field id="settings-quiet-days" type="number" label="Quiet branches after" min="1" max="365" step="1" value="30"></prism-field>
+          </div>
         </section>
         <section class="settings-section" data-section="layout" aria-labelledby="settings-layout" hidden>
           <h3 id="settings-layout">Layout</h3>

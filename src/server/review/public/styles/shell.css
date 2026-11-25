@@ -503,6 +503,10 @@ body {
   display: none;
 }
 
+.settings-row[hidden] {
+  display: none;
+}
+
 .settings-section h3 {
   margin: 0 0 var(--prism-space-4);
   font-size: var(--prism-font-size-md);
@@ -1246,4 +1250,9 @@ body {
 .open-documents {
   flex: none;
   width: 100%;
+}
+
+/* The Code sidebar's quiet note ends with a link, Show them or Hide them, whose two words stay together on one line. */
+.prism-foot-note-link {
+  white-space: nowrap;
 }

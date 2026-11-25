@@ -15,7 +15,7 @@ import { connectionState, recordProbe, STOPPED_MESSAGE } from "./views/connectio
 import { badgedIcon, notificationText, shouldNotify, signalTitle } from "./views/attention-signal.js";
 import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-tab.js";
 import { createPageBar } from "./views/page-bar.js";
-import { DEFAULT_PLACE, PLACES, placeNamed } from "./views/places.js";
+import { DEFAULT_PLACE, PLACES, placeNamed, placeOf } from "./views/places.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createAgentsMenu } from "./views/agents-menu.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
@@ -1154,6 +1154,9 @@ function onStreamEvent(name: string, data: any) {
   } else if (name === "records") {
     // The project's records changed, so the index and the open view are read again now rather than at the next check.
     refreshIndex?.();
+  } else if (name === "code") {
+    // A fetch moved a repository's branch tips, so the Code place reads its work and branches again now.
+    void loadCodePlace();
   } else if (name === "session") {
     sessionConnected = true;
     try {
@@ -1328,6 +1331,18 @@ function startSettings() {
   });
   sidebarChoice!.addEventListener("change", (event) => setSidebarCollapsed((event as any).detail?.value === "hidden"));
   document!.getElementById("settings-sidebar-reset")!.addEventListener("click", () => setSidebarWidth(null, { remember: true }));
+  // The quiet-branch threshold is saved once the person commits a whole number of days in its range, with Enter or by leaving the field.
+  const quietDays: any = document.getElementById("settings-quiet-days");
+  const saveQuietDays = () => {
+    const control = quietDays.control;
+    const days = Number(control?.value);
+    if (!control?.validity.valid || !Number.isInteger(days) || days === preference("code.quietDays")) return;
+    void setPreference("code.quietDays", days).catch(() => showToast("The Code place uses the new threshold here, but the review app could not store it."));
+  };
+  quietDays.addEventListener("change", saveQuietDays);
+  quietDays.addEventListener("keydown", (event: any) => {
+    if (event.key === "Enter") saveQuietDays();
+  });
   for (const choice of settingsDialog!.querySelectorAll<HTMLElement>("prism-segmented[data-setting]")) {
     choice.addEventListener("change", (event) => savePersonalSetting(choice.dataset.setting, (event as any).detail?.value));
   }
@@ -1346,6 +1361,9 @@ function openSettings() {
   document!.getElementById("settings-store-name")!.textContent = store!.hidden ? "No record store" : store!.getAttribute("data-name") || "Record store";
   document!.getElementById("settings-store-state")!.textContent = store!.hidden ? "This workspace keeps no records yet." : (store!.getAttribute("tip") ?? "").split("\n")[0];
   document!.getElementById("settings-store-open")!.hidden = store!.hidden;
+  // The quiet-branch threshold belongs to the Code place, so Settings offers it in a workspace that has one.
+  document.getElementById("settings-quiet-row")!.hidden = !codeRepositories.length;
+  (document.getElementById("settings-quiet-days") as any).value = String(preference("code.quietDays"));
   if (settingsDialog!.querySelector('.settings-section[data-section="agents"]:not([hidden])')) void codingAgents?.refresh();
   // On a phone Settings opens on its list of sections.
   settingsDialog!.querySelector<HTMLElement>(".settings")!.dataset.pane = "list";
@@ -1696,12 +1714,13 @@ function kitElement(tag: any, attributes: any = {}, text = "") {
   return node;
 }
 
-function treeItem(value: any, label: string, { selected = false, expanded = false, start = [], end = [], children = [], tip = null, href = pageHref(value) }: any = {}) {
+function treeItem(value: any, label: string, { selected = false, expanded = false, start = [], end = [], children = [], tip = null, href = pageHref(value), meta = null }: any = {}) {
   const item = document.createElement("prism-tree-item");
   item.setAttribute("value", value);
   item.setAttribute("label", label);
   if (href) item.setAttribute("href", href);
   if (tip) item.setAttribute("tip", tip);
+  if (meta !== null && meta !== undefined && meta !== "") item.setAttribute("meta", String(meta));
   item.toggleAttribute("selected", selected);
   item.toggleAttribute("expanded", expanded);
   for (const node of start) {
@@ -1963,9 +1982,11 @@ let pendingLane: any = null;
 }
 
 const addressedPlace = new URLSearchParams(location.search).get("place");
-// An address that names a store artifact or a code file and no place opens Knowledge, whose sidebar holds the store's scopes and the scope filter.
-const addressedRecord = /^(store|code):/.test(new URLSearchParams(location.search).get("artifact") ?? "");
-let currentPlace = placeNamed((addressedPlace as any)) ? addressedPlace : addressedRecord ? "knowledge" : readStoredPlace() ?? DEFAULT_PLACE;
+// An address that names a store artifact and no place opens Knowledge, whose sidebar holds the store's scopes and the scope filter,
+// and a Code address, a code file among them, opens the Code place.
+const addressedRef = new URLSearchParams(location.search).get("artifact") ?? "";
+const addressedRecord = /^store:/.test(addressedRef) ? "knowledge" : placeOf(addressedRef) === "code" ? "code" : null;
+let currentPlace = placeNamed((addressedPlace as any)) ? addressedPlace : addressedRecord ?? readStoredPlace() ?? DEFAULT_PLACE;
 if (placeNamed((addressedPlace as any))) storePlace((addressedPlace as any));
 
 // The page names no place until it knows the current one, and names it at once, before the workspace loads, so a person whose place is History never sees Attention first.
@@ -1990,21 +2011,43 @@ function choosePlace(name: string, { fromRail = false, keep = false }: any = {})
   renderNavigation();
   // Roadmap opens its page as a sidebar link would, in a kept tab from a Ctrl or Cmd click; in the drawer the place shows first,
   // and the drawer closes once the page has opened and the person has seen the place switch, as it does after any page chosen in it.
-  if (fromRail && name === "roadmap") {
+  // Code opens on All work and branches the first time, and then on the address it showed last, so its sidebar's chosen row and its page agree.
+  if (fromRail && (name === "roadmap" || name === "code")) {
+    const ref = name === "code" ? readCodeAddress() ?? "code" : "roadmap";
     const drawn = (navDrawer! as any).isOpen;
-    const shown = openRef("roadmap", { keep, keepDrawer: true });
-    if (drawn) closeDrawerAfter(shown, "roadmap");
+    const shown = openRef(ref, { keep, keepDrawer: true });
+    if (drawn) closeDrawerAfter(shown, ref);
   }
+  if (name === "code") void loadCodePlace();
+}
+
+// A place shows on the rail while it has something to show: Code only in a workspace whose store registers a repository.
+const placeShown = (name: string) => name !== "code" || codeRepositories.length > 0;
+
+// The current place, or the default place once the current one is not shown, as after the workspace's last repository left its store.
+function keepShownPlace() {
+  if (placeShown((currentPlace as any))) return;
+  currentPlace = DEFAULT_PLACE;
+  storePlace(DEFAULT_PLACE);
 }
 
 // The rail's place buttons, in the order of PLACES; the Attention button counts the recorded questions that wait for an answer.
 function renderRail(rail: any, questions: any) {
   const items = new Map([...rail.querySelectorAll("prism-rail-item[data-place]")].map((item) => [item.dataset.place, item]));
-  for (const place of PLACES) {
+  for (const [index, place] of PLACES.entries()) {
     let item = items.get(place.name);
+    if (!placeShown(place.name)) {
+      item?.remove();
+      items.delete(place.name);
+      continue;
+    }
     if (!item) {
       item = kitElement("prism-rail-item", { "data-place": place.name, value: place.name, label: place.label, icon: place.icon });
-      rail.append(item);
+      // A place that shows later, such as Code once a repository is registered, takes its place in the rail's order.
+      const next = PLACES.slice(index + 1).map((later) => items.get(later.name)).find(Boolean);
+      if (next) next.before(item);
+      else rail.append(item);
+      items.set(place.name, item);
     }
     item.setAttribute("pressed", String(place.name === currentPlace));
     if (place.name === "attention" && questions > 0) {
@@ -2023,6 +2066,7 @@ const PLACE_NAVIGATION: Record<string, any> = {
   work: workNavigation,
   roadmap: roadmapNavigation,
   knowledge: knowledgeNavigation,
+  code: codeNavigation,
   history: historyNavigation
 };
 
@@ -2276,8 +2320,7 @@ function knowledgeNavigation() {
       row("requirements", ENTITY_LABELS.requirements, "list", count(shown("requirements"))),
       row("decisions", ENTITY_LABELS.decisions, "scale", count(shown("decisions"))),
       row("glossary", "Glossary", "book", glossary.exists ? count(shown("terms")) : [element("span", "nav-state", "missing")]),
-      row("knowledge:diagrams", "Diagrams", "diagram", count(shown("diagrams"))),
-      ...(codeRepositories.length ? [row("code", ENTITY_LABELS.code, "code", [])] : [])
+      row("knowledge:diagrams", "Diagrams", "diagram", count(shown("diagrams")))
     ])
   ];
 }
@@ -2305,18 +2348,236 @@ function historyNavigation() {
   }))];
 }
 
+// The Code place's last address in this browser, which choosing Code on the rail opens again, and the last narrowing it showed,
+// which stays the chosen row while a code file of that narrowing is open.
+const CODE_ADDRESS_KEY = "prism.review.code.address";
+const isCodeNarrowing = (ref: any) => ref === "code" || parseEntityRef(ref ?? "")?.kind === "code";
+let codeNarrowed = "code";
+
+function readCodeAddress() {
+  try {
+    const stored = localStorage.getItem(CODE_ADDRESS_KEY);
+    return stored && placeOf(stored) === "code" ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberCodeAddress(ref: any) {
+  if (typeof ref !== "string" || placeOf(ref) !== "code") return;
+  if (isCodeNarrowing(ref)) codeNarrowed = ref;
+  try {
+    if (localStorage.getItem(CODE_ADDRESS_KEY) !== ref) localStorage.setItem(CODE_ADDRESS_KEY, ref);
+  } catch {
+    // A browser without storage opens the Code place on All work and branches.
+  }
+}
+
+// The latest answer of api/code/place for the person's quiet-branch preferences, and the read under way, one at a time;
+// while Prism still prepares the branches of new tips it answers 202, and the page asks again shortly.
+let codePlace: any = null;
+let codePlaceRead: Promise<void> | null = null;
+let codePlaceRetry: any = null;
+const CODE_PREPARING_RETRY_MS = 1000;
+
+function codeQuery() {
+  return `quietDays=${encodeURIComponent(preference("code.quietDays"))}&showQuiet=${preference("code.showQuiet") ? "true" : "false"}`;
+}
+
+function loadCodePlace(): Promise<void> {
+  if (!codeRepositories.length) return Promise.resolve();
+  if (codePlaceRead) return codePlaceRead.then(() => (codePlace?.query === codeQuery() ? undefined : loadCodePlace()));
+  clearTimeout(codePlaceRetry);
+  const query = codeQuery();
+  codePlaceRead = (async () => {
+    const response = await appFetch(`./api/code/place?${query}`, { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);
+    if (response?.status === 202) {
+      codePlaceRetry = setTimeout(() => void loadCodePlace(), CODE_PREPARING_RETRY_MS);
+      return;
+    }
+    const answer = response?.ok ? await response.json().catch(() => null) : null;
+    // A failed read keeps the work and branches the sidebar shows.
+    if (!answer || !Array.isArray(answer.work)) return;
+    codePlace = { query, answer };
+    if (currentPlace === "code") renderNavigation();
+  })().finally(() => {
+    codePlaceRead = null;
+  });
+  return codePlaceRead;
+}
+
+// The Code sidebar's filter field stays one element across renders, so typing in it keeps its focus and its text.
+let codeFilterField: any = null;
+
+function codeFilter() {
+  if (!codeFilterField) {
+    codeFilterField = kitElement("prism-field", { type: "search", variant: "filter", label: "Filter work and branches", placeholder: "Filter work and branches", class: "nav-filter" });
+    const icon = navIcon("filter");
+    icon.slot = "start";
+    icon.setAttribute("size", "sm");
+    codeFilterField.append(icon);
+    codeFilterField.addEventListener("input", () => renderNavigation());
+    codeFilterField.addEventListener("keydown", (event: any) => {
+      if (event.key !== "Escape" || !codeFilterField.value) return;
+      event.preventDefault();
+      event.stopPropagation();
+      codeFilterField.value = "";
+      renderNavigation();
+    });
+  }
+  return codeFilterField;
+}
+
+const filesChanged = (files: number) => `${files} ${files === 1 ? "file" : "files"} changed`;
+const lineName = (line: any) => `${line.repository} · ${line.branch}`;
+const lineFacts = (line: any) => `${lineName(line)}, ${line.base ? `from ${line.base}` : "sharing no history with another branch"}`;
+const codeBranchRef = (line: any) => `code:branch/${line.repository}/${line.branch}`;
+// The person an other branch names: its last author while one person committed since its fork, and how many people otherwise.
+const branchPerson = (line: any) => !line.people?.count ? null : line.people.count === 1 ? line.people.last : `${line.people.count} people`;
+
+// The slices of an initiative's tree at and below `slug`.
+function sliceAndBelow(nodes: any[], slug: string) {
+  const found = nodes.filter((node) => node.slug === slug);
+  for (let index = 0; index < found.length; index += 1) found.push(...nodes.filter((node) => node.parent === found[index].slug));
+  return found;
+}
+
+/**
+ * Code: the filter, All work and branches with the number of lines of work, In progress with each work item, its slices, and their lines of work,
+ * Other branches newest first, and the note on quiet branches; the filter keeps the rows whose title, repository, or branch holds its text, with the rows that hold them.
+ */
+function codeNavigation() {
+  const field = codeFilter();
+  const typed = (field.value ?? "").trim();
+  const query = typed.toLowerCase();
+  const answer = shownCodeAnswer();
+  const chosen = isCodeNarrowing(selectedPath) ? selectedPath : placeOf(selectedPath) === "code" ? codeNarrowed : null;
+  const matches = (text: any) => !query || String(text ?? "").toLowerCase().includes(query);
+  const linesMatch = (lines: any[]) => lines.some((line) => matches(line.repository) || matches(line.branch));
+  const byId = new Map((navigation.initiatives ?? []).map((item: any) => [item.id, item]));
+  const toggled = (ref: string) => treeToggles.get(ref) ?? true;
+  const all = treeItem("code", "All work and branches", { selected: chosen === "code", start: [navIcon("code")], meta: answer ? answer.lines : null, tip: answer ? `All work and branches · ${answer.lines} ${answer.lines === 1 ? "line of work" : "lines of work"}` : "All work and branches" });
+  const parts = [field, tree("Code", [all])];
+  if (!answer) {
+    parts.push(element("p", "nav-note", "Prism is reading the branches of every repository."));
+    return parts;
+  }
+  // The agent of a slice's claim, or of a claim below it, as the Work sidebar names a claim's holder; an owned line of work without one names an agent.
+  const claimOf = (initiative: string, nodes: any[]) => nodes.map((node) => claimIndex?.claimFor(`slice:${initiative}/${node.slug}`)).find(Boolean) ?? null;
+  const agentOf = (claim: any) => claim ? [claim.host, claim.model].filter(Boolean).join(" · ") || claim.label : "Agent";
+  const lineRow = (line: any, who: any, end: any[] = []) => {
+    const ref = codeBranchRef(line);
+    const tip = [lineFacts(line), who, typeof line.files === "number" ? filesChanged(line.files) : null].filter(Boolean).join(" · ");
+    return treeItem(ref, lineName(line), { selected: chosen === ref, start: [navIcon("branch")], end, meta: typeof line.files === "number" ? line.files : null, tip });
+  };
+  // A row with more than one line of work lists them below it; with one, its line of work is named on its hover alone.
+  const withLines = (ref: string, title: string, lines: any[], who: any, files: number, options: any, own: boolean) => {
+    const shown = own ? lines : lines.filter((line) => matches(line.repository) || matches(line.branch));
+    const children = lines.length > 1 ? shown.map((line) => lineRow(line, who)) : [];
+    const tip = [title, ...lines.map(lineFacts), lines.length ? who : null, files ? filesChanged(files) : "No changes yet"].filter(Boolean).join(" · ");
+    return treeItem(ref, title, { ...options, selected: chosen === ref, children, expanded: children.length > 0 && toggled(ref), meta: files ? files : "No changes yet", tip });
+  };
+  const workRows: any[] = [];
+  for (const work of answer.work) {
+    const listed: any = byId.get(work.initiative) ?? {};
+    const nodes: any[] = listed.tree ?? [];
+    const ref = `code:work/${work.initiative}`;
+    const state = listed.state ?? "in-progress";
+    const glyph = kitElement("prism-status", { value: state, label: STATE_WORDS[state] ?? state, "glyph-only": true });
+    const ownMatch = matches(work.title);
+    if (!work.slices.length) {
+      const claim = claimOf(work.initiative, nodes);
+      if (!ownMatch && !linesMatch(work.branches)) continue;
+      workRows.push(withLines(ref, work.title, work.branches, work.branches.length ? agentOf(claim) : null, work.files, { start: [glyph], end: claim ? [claimElement(claim, "avatar")] : [] }, ownMatch || !linesMatch(work.branches)));
+      continue;
+    }
+    const sliceRows = [];
+    for (const slice of work.slices) {
+      const below = sliceAndBelow(nodes, slice.slice);
+      const node = below[0] ?? { slug: slice.slice, title: slice.title, status: "in-progress" };
+      const sliceRef = `code:work/${work.initiative}/${slice.slice}`;
+      const sliceMatch = ownMatch || matches(slice.title);
+      if (!sliceMatch && !linesMatch(slice.branches)) continue;
+      const claim = claimOf(work.initiative, below);
+      const start = [];
+      if (node.hasChildren) {
+        const split = branchState(work.initiative, nodes, node.slug);
+        start.push(kitElement("prism-status", { value: split, label: `Split · ${STATE_WORDS[split]}`, "glyph-only": true }));
+      } else {
+        const phase = slicePhaseStep(node);
+        start.push(kitElement("prism-phase", { phase: phase?.[0] ?? null, label: [phase ? phase[1] : null, STATUS_WORDS[node.status] ?? node.status].filter(Boolean).join(" · ") }));
+      }
+      const end = [];
+      if (below.some((each) => each.waits)) end.push(element("span", "prism-tree-flag is-warning", "Waits"));
+      if (claim) end.push(claimElement(claim, "avatar"));
+      sliceRows.push(withLines(sliceRef, slice.title, slice.branches, agentOf(claim), slice.files, { start, end }, sliceMatch || !linesMatch(slice.branches)));
+    }
+    if (!ownMatch && !sliceRows.length) continue;
+    const tip = [work.title, STATE_WORDS[state] ?? state, work.files ? filesChanged(work.files) : "No changes yet"].join(" · ");
+    workRows.push(treeItem(ref, work.title, { selected: chosen === ref, start: [glyph], children: sliceRows, expanded: sliceRows.length > 0 && toggled(ref), meta: work.files ? work.files : "No changes yet", tip }));
+  }
+  const otherRows = answer.branches.filter((line: any) => matches(line.repository) || matches(line.branch)).map((line: any) => {
+    const person = branchPerson(line);
+    const when = shortDate(line.committedAt);
+    const row = lineRow(line, [person, when ? `last commit ${when}` : null, line.quiet ? "quiet" : null].filter(Boolean).join(" · ") || null, person ? [kitElement("prism-avatar", { kind: "person", name: person, size: "sm" })] : []);
+    return row;
+  });
+  if (workRows.length) parts.push(section("In progress", (workRows.length as any)), tree("In progress", workRows, { branching: true }));
+  if (otherRows.length) parts.push(section("Other branches", (otherRows.length as any)), tree("Other branches", otherRows));
+  if (!workRows.length && !otherRows.length) parts.push(element("p", "nav-note", typed ? `No work or branch matches "${typed}".` : "No work or branch changes code yet."));
+  if (answer.preparing?.length) parts.push(element("p", "nav-note", `Prism is still reading the branches of ${answer.preparing.join(", ")}.`));
+  const quietNote = codeQuietNote(answer);
+  if (quietNote) parts.push(quietNote);
+  return parts;
+}
+
+// The answer as the person's choice shows it: an answer read while quiet branches showed leaves them out at once once the person hides them,
+// counting them as hidden, while the read for the new choice goes on.
+function shownCodeAnswer() {
+  const answer = codePlace?.answer ?? null;
+  if (!answer || preference("code.showQuiet") || !answer.branches.some((line: any) => line.quiet)) return answer;
+  const quiet = answer.branches.filter((line: any) => line.quiet).length;
+  return { ...answer, lines: answer.lines - quiet, branches: answer.branches.filter((line: any) => !line.quiet), quiet: { ...answer.quiet, hidden: answer.quiet.hidden + quiet } };
+}
+
+// The note on quiet lines of work below the groups: how many are hidden and why, with a link that shows them, or how many are shown, with one that hides them.
+function codeQuietNote(answer: any) {
+  const showing = Boolean(preference("code.showQuiet"));
+  const shown = answer.branches.filter((line: any) => line.quiet).length;
+  const count = showing ? shown : answer.quiet.hidden;
+  if (!count) return null;
+  const text = showing
+    ? `${count === 1 ? "1 quiet branch is" : `${count} quiet branches are`} shown. `
+    : `${count === 1 ? "1 quiet branch is" : `${count} quiet branches are`} hidden: no push in ${answer.quiet.days} days. `;
+  const link = element("a", "prism-foot-note-link", showing ? "Hide them" : "Show them");
+  link.setAttribute("href", "#");
+  link.addEventListener("click", (event: any) => {
+    event.preventDefault();
+    void setPreference("code.showQuiet", !showing).catch(() => showToast("The quiet branches show here, but the review app could not store the choice."));
+  });
+  const foot = element("p", "prism-foot-note");
+  const glyph = element("span", "prism-foot-note-glyph");
+  glyph.append(kitElement("prism-icon", { name: "clock", size: "xs" }));
+  const words = element("span", "", text);
+  words.append(link);
+  foot.append(glyph, words);
+  return foot;
+}
+
 // The rail, the current place's head, and the place's own navigation; the sidebar changes only when the person chooses a place,
 // and marks the open page only when the place lists it.
 let navigationKey = "";
 
 function renderNavigation() {
+  keepShownPlace();
+  rememberCodeAddress(selectedPath);
   const scope = currentContext?.ref === selectedPath ? currentContext.value.scope : { kind: "global" };
   const attention: any = navigation.attention ?? {};
   void updateAttentionSignals(attention.gates ?? 0);
   for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label, claim.host, claim.model]) : [];
-  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, (navigation as any).places, navigation.glossary, (navigation as any).library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, currentPlace === "knowledge" ? [lastSlice, touchedCount] : null, storeSignature, scopeFilter && [...scopeFilter]]);
+  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, (navigation as any).places, navigation.glossary, (navigation as any).library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, currentPlace === "knowledge" ? [lastSlice, touchedCount] : null, currentPlace === "code" ? [codePlace, codeQuery(), codeFilterField?.value ?? "", codeNarrowed] : null, storeSignature, scopeFilter && [...scopeFilter]]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
@@ -3269,6 +3530,8 @@ async function initialize() {
     return;
   }
   useStoreRefs(index);
+  keepShownPlace();
+  if (currentPlace === "code") void loadCodePlace();
   const data = localSession(index);
   startHistory();
   watchHistoryLeave();
@@ -3502,6 +3765,10 @@ async function initialize() {
   onPreferencesChange((keys: any, preferences: any) => {
     if (keys.includes("sidebar.collapsed") && preferences["sidebar.collapsed"] !== shell!.classList.contains("sidebar-collapsed")) setSidebarCollapsed(preferences["sidebar.collapsed"], { remember: false });
     if (keys.includes("sidebar.width")) setSidebarWidth(preferences["sidebar.width"]);
+    if (keys.some((key: string) => key.startsWith("code."))) {
+      renderNavigation();
+      void loadCodePlace();
+    }
   });
   navDrawer!.addEventListener("prism-close", closeDrawer);
   watchDrawerWidth();
@@ -3659,6 +3926,8 @@ async function initialize() {
         await panel;
         // Knowledge's sidebar counts the remembered slice's records, which can change without the navigation changing; the Touched page counts them as it draws.
         if (currentPlace === "knowledge" && lastSlice && selectedPath !== "knowledge:touched") await countTouched(lastSlice);
+        // The Code place's work and branches follow pushes and store syncs, which change no navigation, so it reads them on every check.
+        if (currentPlace === "code") await loadCodePlace();
       }
     } catch {
     }
