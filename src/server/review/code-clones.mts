@@ -70,10 +70,11 @@ const NO_PROMPT_CONFIG = ["-c", "core.askPass=", "-c", "credential.interactive=f
 
 // One Git command in a clone, with the sanitized store environment and timeout, and never a password prompt.
 // A command that reads a blob may fetch it from the remote, so it says it connects, and its SSH command is the person's own in batch mode as a fetch's is.
-const git = (folder: string, args: string[], { connects = false }: any = {}) => runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, connects });
-// A Git runner for a clone's branch reader, which streams a command's lines to line when the reader asks, so a listing it stops early is read no further.
-const branchGit = (folder: string) => (args: string[], { line, maxRecord }: { line?: (line: string) => boolean; maxRecord?: number } = {}) =>
-  line ? runGitLines(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, take: line, ...(maxRecord ? { maxRecord } : {}) }) : git(folder, args);
+const git = (folder: string, args: string[], { connects = false, input }: any = {}) => runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, connects, ...(input !== undefined ? { input } : {}) });
+// A Git runner for a clone's branch reader, which streams a command's lines to line when the reader asks, so a listing it stops early is read no further,
+// and writes input, when given, to Git's standard input.
+const branchGit = (folder: string) => (args: string[], { line, maxRecord, input }: { line?: (line: string) => boolean; maxRecord?: number; input?: string } = {}) =>
+  line ? runGitLines(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, take: line, ...(maxRecord ? { maxRecord } : {}), ...(input !== undefined ? { input } : {}) }) : git(folder, args, { input });
 
 // The branches of a clone, { name, commit } in code-point order of their names, as the branch reader sorts them.
 async function branchesOf(folder: string) {

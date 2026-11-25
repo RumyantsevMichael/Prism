@@ -103,10 +103,10 @@ function manyBranches(parent, count) {
   return folder;
 }
 
-// A Git runner for a folder that counts the commands it runs and the most that run at once.
+// A Git runner for a folder that counts the commands it runs and the most that run at once, and writes a command's input to Git.
 function countingGit(folder) {
   const counts = { started: 0, running: 0, most: 0 };
-  const run = (args) => new Promise((resolve) => {
+  const run = (args, { input } = {}) => new Promise((resolve) => {
     counts.started += 1;
     counts.running += 1;
     counts.most = Math.max(counts.most, counts.running);
@@ -114,7 +114,8 @@ function countingGit(folder) {
       counts.running -= 1;
       resolve({ ok: !error, stdout, text: stdout.toString("utf8").trim() });
     });
-    child.stdin?.end();
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(input ?? "");
   });
   return { run, counts };
 }
@@ -269,17 +270,18 @@ function importRepository(parent, label, items) {
   return folder;
 }
 
-// A Git runner like the review app's, which streams a listing's lines to the reader when it asks, and records each streamed command with the lines the reader took.
+// A Git runner like the review app's, which streams a listing's lines to the reader when it asks, within the longest line it asks for, and writes its input to Git,
+// and records each streamed command with its input and the lines the reader took.
 async function streamingGit(folder) {
   const { runGit, runGitLines } = await import("../../dist/server/workflow/record-store-sync.mjs");
   const streams = [];
   let started = 0;
-  const run = (args, { line } = {}) => {
+  const run = (args, { line, maxRecord, input } = {}) => {
     started += 1;
-    if (!line) return runGit(folder, args);
-    const stream = { args, taken: 0 };
+    if (!line) return runGit(folder, args, input === undefined ? {} : { input });
+    const stream = { args, input, taken: 0 };
     streams.push(stream);
-    return runGitLines(folder, args, { take: (text) => { stream.taken += 1; return line(text); } });
+    return runGitLines(folder, args, { input, ...(maxRecord ? { maxRecord } : {}), take: (text) => { stream.taken += 1; return line(text); } });
   };
   return { run, streams, started: () => started };
 }
@@ -315,9 +317,10 @@ test("the commits that main lacks are listed once for every branch, so no first-
   for (let index = 1; index < links.length; index += 1) assert.equal(byName.get(links[index].name).base, links[index - 1].name);
   assert.equal(byName.get("long").base, "main");
   const main = git(folder, "rev-parse", "main");
-  const walks = streams.filter((stream) => stream.args[0] === "rev-list" && !stream.args.includes("--count"));
-  assert.equal(walks.length, 1, "one listing for all branches, never one for each branch");
-  assert.ok(walks[0].args.includes(`^${main}`), "the listing excludes main, so no commit that main holds is read");
+  const walks = streams.filter((stream) => stream.args[0] === "rev-list" && !stream.args.includes("--count") && stream.input?.endsWith(`\n^${main}\n`));
+  assert.equal(walks.length, 1, "one listing against main for all branches, never one for each branch");
+  assert.ok(walks[0].args.includes("--stdin") && walks[0].input.split("\n").filter((line) => line && !line.startsWith("^")).length === links.length + 2,
+    "the listing is handed every tip that the facts listed, and excludes main, so no commit that main holds is read");
   assert.equal(walks[0].taken, links.length + 3000, "each commit that main lacks is read once");
 });
 

@@ -251,11 +251,12 @@ export function runGit(base: string, args: string[], options?: GitOptions) {
 
 /**
  * Run Git and hand each line of its output to take as it arrives, stopping Git once take answers false, for a listing of which a reader needs only the start.
+ * input, when given, is written to Git's standard input, as a --stdin listing of commits reads it.
  * A line longer than maxRecord bytes reaches take as a NUL followed by the hex SHA-256 of its bytes, which no line of Git's output holds, so the listing goes on with bounded memory.
  * Answers { ok, streamed: true, text: "", stdout } with stdout empty, since the lines went to take.
  */
-export async function runGitLines(base: string, args: string[], { env = {}, take, maxRecord = 4096 }: { env?: NodeJS.ProcessEnv; take: (line: string) => boolean; maxRecord?: number }) {
-  const listed = await gitRecords(base, args, { separator: 10, maxRecord, digestLong: true, env, take: (bytes: Buffer) => take(bytes.toString("utf8")) });
+export async function runGitLines(base: string, args: string[], { env = {}, take, maxRecord = 4096, input }: { env?: NodeJS.ProcessEnv; take: (line: string) => boolean; maxRecord?: number; input?: string | Buffer }) {
+  const listed = await gitRecords(base, args, { separator: 10, maxRecord, digestLong: true, env, input, take: (bytes: Buffer) => take(bytes.toString("utf8")) });
   return { ok: listed.ok && !listed.long, streamed: true, text: "", stdout: Buffer.alloc(0), stderr: listed.stderr };
 }
 
