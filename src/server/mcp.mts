@@ -246,6 +246,9 @@ async function requestedGroup(argumentsValue: any) {
 }
 
 // A session that fell back to its own review server tells the agent, so two review pages for one project reach the user as a known cause.
+// A presentation whose browser open failed leaves the person only the URL, and a tab opened from it can only read.
+const OPEN_FAILED_TEXT = "Prism could not open the user's browser on this machine, so no review tab that can make changes opened; the Prism log names each opener that failed. Tell the user that this URL opens a tab that can only read, so they answer its gates in the conversation.";
+
 function reviewContent(url: string, review: any) {
   const fallback = review.privateServer?.();
   return fallback
@@ -2018,7 +2021,7 @@ async function callTool(name: string, argumentsValue: any = {}, metadata: any, r
   }
   if (name === "present_review") {
     const opened = await review.open(requestedTabs(argumentsValue), await requestedGroup(argumentsValue));
-    return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, ...await reviewSessionContent(review), ...privateServerContent(review) } };
+    return { content: [{ type: "text", text: `${reviewContent(opened.url, review)}${opened.openFailed ? `\n${OPEN_FAILED_TEXT}` : ""}` }], structuredContent: { ...opened, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "list_reviewable_artifacts") {
     const artifacts = await listArtifacts(review.projectRoot);

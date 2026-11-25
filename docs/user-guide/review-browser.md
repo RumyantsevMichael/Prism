@@ -242,6 +242,7 @@ Nothing starts until you confirm the launch, resume, or wake outside the browser
 Answering a question starts no session by itself, here or when an answer arrives from another machine through the shared records.
 Continue is unavailable while a session waits on the question or the asking session is open, since that session reads your answer itself, and for a session that Prism launched, which resumes from its launched session.
 An answered requirement or ADR approval whose asking session Prism recorded stays under Answered with its answer, so you can continue its work, until a newer approval of the same file is asked or for 7 days.
+Under **Needs you**, after the permission requests, the questions, each format migration run that asks you, and each failed format migration run list together, newest first by when each was asked or failed, and the problems and notes without a time follow them.
 Attention also lists blocked slices, open findings, failed verifications, and active work.
 In a window as narrow as a phone, Attention opens on its list, and picking an item shows its card in place of the list, with **All items** to go back.
 A slice that is not done is a failed verification while its latest verification run failed, with the reason in words, such as `The tests failed, 2 tests failed`, until a later run passes or the slice is done.
@@ -250,6 +251,7 @@ Each filtered item opens where it is handled: a question opens Attention with th
 Questions are the recorded questions that wait for an answer and the notes left for you; problems are unreadable or invalid records, a missing or invalid roadmap, initiatives with a record that the roadmap does not list, the roadmap's open questions, and workflow settings warnings.
 Format findings are the requirement files, ADRs, glossaries, and feature files that break their Prism format, one item per kind of file, as `check_artifacts` reports them, in the checkout and in every record store scope the checkout sees.
 The page `attention:formats`, which an agent can also open with `present_review`, shows each kind with its count, its files that keep an earlier Prism format under **Earlier Prism format** apart from the others under **No Prism format**, each file's path and the scope that holds it, and each broken rule with its message and line.
+A file whose format migration failed offers **Run again**, which runs that migration again after you confirm it, one whose migration asks you offers **Answer**, and one whose migration runs or waits for a host offers **Open the run**.
 Every file that breaks its format counts, and nothing hides one; a changed file shows its new findings the next time the page loads, and a file that comes to keep its format leaves the count.
 **Answered in the last 7 days** lists the questions answered or closed in the last 7 days, newest first, each with its initiative and slice and your answer or the reason the agent closed it.
 Under Earlier questions it shows the 20 most recently closed questions with your answer, or with the reason the agent gave when it closed a question you had not answered in the browser.
@@ -297,8 +299,19 @@ Only a tab that Prism opened for you can make changes.
 When Prism opens the browser, for a presentation, a session start, or `prism review`, the address it opens carries a one-time grant after `#write=`, which the tab exchanges for a write session as it loads and then removes from its address.
 The grant works once and only within two minutes, and the write session stays with that one browser tab, also across reloads and when you switch it to another checkout of the same review app.
 A review URL that an agent prints, or that a tool returns, carries no grant, so a tab opened from it, a second tab on the same address, or a bookmark can only read.
-A read-only tab says `This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.`, and its controls are disabled.
+A read-only tab says `This tab can only read.`, then why, then `To make changes, run prism review in this project, or ask the agent to present the review.`, and its controls are disabled.
+The reason is one of these:
+
+| Reason the tab shows | What happened |
+|---|---|
+| `It was opened from a review link, and only a tab that Prism opens itself can make changes.` | The tab was opened from a review URL, a bookmark, history, or a copied address, which carry no grant. |
+| `The link that Prism opened it with was already used or was more than two minutes old.` | The tab loaded the address Prism opened, but the grant in it no longer worked. |
+| `Its write session ended, because the review app restarted.` | The review app refused the tab's write session, so the tab dropped it. |
+
 To get a tab that can make changes, run `prism review` in the project, or ask the agent to present the review, which opens the system browser, while no tab that can make changes is open.
+Prism opens the browser with `open` on macOS, through the Windows URL handler on Windows, and with `xdg-open` on Linux.
+Under WSL it tries the Windows URL handler first, through the `rundll32.exe` that Windows puts on the WSL path, so the review opens in your Windows browser, and then `wslview` and `xdg-open`.
+When no opener takes the address, the agent's result and `prism review` say that Prism could not open a browser and that the URL opens a tab that can only read, so answer gates in the conversation, and the [Prism log](#logs) names each opener that failed with its reason as a `browser_open_failed` warning.
 The review app keeps the write sessions it issued when a newer session replaces it on the same port, and accepts none after it exits and starts again, so after such a restart open the review again the same way.
 Only a tab that can make changes counts as an open review tab, so a read-only tab never stops Prism from opening a tab that can.
 A session of an earlier Prism release that presents through a newer review app opens only tabs that can read, so for that session any open review tab still counts and it opens no further tab.
@@ -362,7 +375,7 @@ On a slice page's card, picking an option applies it at once.
 A change that needs your confirmation opens a dialog that says what it lets agents do, with **Confirm** and **Cancel**; Esc or **Cancel** leaves the setting as it was.
 Every control works with Tab, Enter, and Space.
 When an agent or another tab changed the setting after the page showed it, the page refuses your change, shows the current value, and says `Someone changed this since you opened it; it now shows the current value.`
-The card checks for changes every few seconds and at once when any tab applies an action, so it shows a value an agent set without a reload.
+The card checks for changes when the records change and at once when any tab applies an action, so it shows a value an agent set without a reload, and otherwise every 30 seconds, or every few seconds while the tab has lost its connection to the review app.
 In a tab that can only read, the card shows the read-only notice and its controls are disabled.
 A question's answer shows the situation the agent described, what each option does, and the option the agent recommends with its reason, when the agent gave them.
 
@@ -555,7 +568,7 @@ A run on an ACP agent fails with `<label> stopped: <reason>.` when the agent sto
 A format migration run's session reads only.
 It runs in an empty folder of its own, `launch-work/<launch id>` in the review app folder, outside the checkout, and that folder is removed with its launch.
 Claude Code runs with `--tools ""`, so it has no built-in tool and reads no file, `--mcp-config` naming only Prism's own server, `prism-run`, scoped to the run, with `--strict-mcp-config`, so no MCP server of your own configuration or of another plugin loads, `--settings` with `disableClaudeAiConnectors` and `ENABLE_CLAUDEAI_MCP_SERVERS=false`, so no claude.ai connector loads, an `--allowedTools` list of that server's five tools alone, a `--disallowedTools` list that denies `Read` of the checkout and everything below it, which wins over any allow rule or added folder in your own Claude Code settings, naming a Windows checkout as Claude Code matches it, such as `//c/Users/me/api`, no `--add-dir`, and `--permission-mode dontAsk` in place of the automatic permission mode, so no shell command runs, and the prompt is `/prism:migrate-artifact <run id>`.
-Codex runs with the approval policy `never` and the permission profile `prism-read-only`, which the thread's configuration defines and which reads only in its folder, Prism's own folder, Codex's plugin cache and install folder, and the platform's minimal ones, writes nowhere, and has no network; the same configuration's `mcp_servers` names only Prism's scoped server, and the prompt is `$prism:migrate-artifact <run id>`.
+Codex runs with the approval policy `never` and the permission profile `prism-read-only`, which the thread's configuration defines and which reads only in its folder, Prism's own folder, Codex's plugin cache, the folder of each link on the way from the Codex that Prism started to its real program, that program's own folder, and the platform's minimal ones, writes nowhere, and has no network; the same configuration's `mcp_servers` names only Prism's scoped server, with `default_tools_approval_mode` set to `approve`, because under `never` Codex refuses a call to any tool it would ask about, such as `finish_migration_run`, and the prompt is `$prism:migrate-artifact <run id>`.
 Whether Codex replaces your own `mcp_servers` with that configuration or adds it to them is not confirmed, and an MCP server that Codex loads runs outside its sandbox, so keep MCP servers that read your files out of the Codex configuration of a computer that runs Prism's own runs on Codex.
 The session's environment holds `PRISM_MIGRATION_RUN` with the run's id and `PRISM_MIGRATION_PROJECT` with the checkout's real path, and a Prism server started with them lists and takes only `get_migration_run`, `get_artifact`, `propose_migration`, `finish_migration_run`, and `fail_migration_run`, each for that run and that project only, so a call may leave `projectRoot` out.
 There `get_migration_run` also gives the configured paths, whether a record store is configured, each source's Git history, and `format`, the set type's current format with the path and exact text of its reference in the Prism that serves the run, which the session takes in place of reading the reference file, and `get_artifact` reads the run's artifacts and the files of their type under its configured path, by that type's extension and name rules, in the checkout too and without a store, and refuses every other path, every dot-file, and everything in a dot-folder, such as `.env`, `.prism`, or `.git/config`, and every other call with `migration_scope`.
@@ -655,7 +668,7 @@ A session that ended without a result offers **Answer**, which opens its card on
 A claim offers no action.
 
 The details of a session on an ACP agent start with the usage the agent reported for its last run: **Tokens** with the total and the cached tokens, such as `182,400 (12,000 cached)`, **Context** as the used and whole context, such as `61,200 of 200,000`, and **Cost** with its currency, such as `0.42 USD`, each `Not reported by <agent>` when the agent gave none.
-The details hold the session's reason, the command that continues it in a terminal while no run runs and the host reported its session id, `claude --resume <session id>`, `codex resume <thread id>`, or an ACP agent's declared `resumeCommand` with `{session}` replaced, with the folder to run it in and **Copy**, which copies the command, and the session's own actions, such as **Resume**.
+The details hold the session's reason, the command that continues it in a terminal while no run runs and the host reported its session id, `claude --resume <session id>`, `codex resume --sandbox workspace-write <thread id>`, or `codex resume --sandbox read-only <thread id>` for a format migration run, so the session keeps its launch's sandbox in your terminal, or an ACP agent's declared `resumeCommand` with `{session}` replaced, with the folder to run it in and **Copy**, which copies the command, and the session's own actions, such as **Resume**.
 The page reads the list again every 5 seconds and after each action you apply there, and moves a claim to **Claims that expired** once its lease passes.
 In a tab that cannot make changes the page says so, **Stop**, **Archive**, **Unarchive**, and **Archive all ended** stay unavailable with the tip `This tab can only read.`, and the details offer no action, while **Answer** still opens the question.
 With no agent and no launched session it says `No agent works on this workspace, and nothing was launched on this computer.`.
@@ -1096,6 +1109,7 @@ The log records each process start and stop, index builds with their phases, dur
 A tool call that Prism refuses with a reason you can act on, such as an invalid argument, is information named `request_refused` with that reason's code, if it has one, not a warning.
 Each record store sync that commits, merges, or pushes records is information named `store_synced`, a sync that fails is a warning named `store_sync_failed` with its reason, once until the reason changes, and a sync with nothing to share leaves no line.
 It also records each time a process stops answering for more than a second, with what it was doing at the time, such as the index phase of the component being built.
+Each browser opener that cannot start or exits with an error is a warning named `browser_open_failed` with the opener's command and reason.
 Past 5 MiB the file moves to `prism.log.1`, replacing the older one.
 Set `PRISM_LOG_LEVEL` to `debug`, `info` (the default), `warn`, `error`, or `off`, and set `PRISM_LOG_DIR` to write the log to another folder.
 An MCP server also writes its warnings and errors to its error output, which the agent host keeps with its own logs.

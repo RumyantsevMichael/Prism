@@ -11,13 +11,19 @@ const asker = { known: true, harness: "Claude Code", machine: "vm", checkout: "a
 const file = (path, record) => ({ path, available: true, ...(record ? { record } : {}) });
 const gate = (kind, extra = {}) => ({ type: "gate", id: `gate-${kind}`, kind, question: `A ${kind} question?`, context: "What happened first.", askedAt: "2026-11-24T00:00:00.000Z", initiative, slice, phase: { status: "in-progress", designed: false }, artifacts: [], asker, ...extra });
 
-test("the phase tag and the lifecycle steps show on review gates only", () => {
-  for (const kind of ["visual-review", "correctness"]) assert.match(gateDetail(gate(kind), ctx), /class="gate-steps"/, `${kind} shows its steps`);
+test("the phase gate tag shows on review gates only, and no gate repeats it as a lifecycle", () => {
+  for (const kind of ["visual-review", "correctness"]) { const card = gateDetail(gate(kind), ctx); assert.match(card, /<div class="gate-chips"><prism-chip>[^]*?<\/prism-chip><prism-phase variant="tag"/, `${kind} names its kind, then its phase gate`); assert.doesNotMatch(card, /prism-stepper/, `${kind} shows no lifecycle`); }
   for (const kind of ["decision", "assistance"]) {
     const card = gateDetail(gate(kind, { options: [{ id: "a", label: "A", consequence: "A happens." }, { id: "b", label: "B", consequence: "B happens." }], recommended: { option: "a", reason: "Because." } }), ctx);
-    assert.doesNotMatch(card, /gate-steps/, `${kind} shows no steps`);
-    assert.match(card, /class="gate-work"[^]*Export reports[^]*Sign exported reports/, `${kind} names its work under the question`);
+    assert.doesNotMatch(card, /variant="tag"|prism-stepper/, `${kind} shows no phase gate`);
+    assert.match(card, /<prism-phase slot="kind" phase="design">Design<\/prism-phase>/, `${kind} shows the slice phase in its work row`);
+    assert.match(card, /class="prism-rows gate-work"[^]*Sign exported reports[^]*Slice of [^]*Export reports/, `${kind} names its work as a row under the question`);
   }
+});
+
+test("a gate of an initiative without a slice names the initiative alone", () => {
+  const card = gateDetail(gate("assistance", { slice: null }), ctx);
+  assert.match(card, /<prism-row wrap icon="roadmap"[^>]*>[^]*Export reports[^]*<span slot="description">Initiative<\/span>/);
 });
 
 test("a gate without documents leaves the Documents list out", () => {
@@ -55,6 +61,14 @@ test("an approval names its document once, as a row with its title and kind", ()
   assert.equal(card.split('<span data-code-subject>docs/requirements/billing.md</span>').length - 1, 1, "the path shows once as text");
   assert.doesNotMatch(card, /<dt>File<\/dt>/, "no File row repeats it");
   assert.match(card, /data-side-artifact="docs\/requirements\/billing.md"/);
+});
+
+test("an approval names the work it serves under its question, as other gates do", () => {
+  const workItem = { initiative: { id: "reports", title: "Export reports", known: true }, slice: { slug: "sign", title: "Sign exported reports", known: true } };
+  const card = gateDetail({ ...gate("approval"), workItem, artifact: { path: "docs/requirements/billing.md", scope: "payments", kind: "requirements", title: "Billing" } }, ctx);
+  const head = card.slice(0, card.indexOf("</header>"));
+  assert.match(head, /class="prism-rows gate-work approval-work"[^]*Sign exported reports[^]*Slice of [^]*Export reports/, "the work sits under the question as a row");
+  assert.doesNotMatch(card, /Asked for/, "no metadata row repeats it");
 });
 
 test("the answer panel says who asked with a warning icon whose tooltip explains, and the Send button shows who receives the answer", () => {

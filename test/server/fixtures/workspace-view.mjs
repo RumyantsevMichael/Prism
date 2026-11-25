@@ -169,12 +169,13 @@ export async function pushToRemote(where, bare, files, message = "another machin
   await commitFiles(work, files, message);
   // This machine's servers push their own store writes in the background, so one can land between the clone and the push.
   // Another machine then does what Git asks of it: it rebases its commit onto the remote's new work, keeping its own version of a file both changed, and pushes again.
+  // A push that lands while the remote updates main for another push is refused as a failed ref lock rather than a non-fast-forward, and is handled the same way.
   for (let attempt = 1; ; attempt += 1) {
     try {
       git(work, "push", "-q", "origin", "HEAD:main");
       break;
     } catch (error) {
-      if (attempt >= 10 || !/\[rejected\]|fetch first|non-fast-forward/.test(`${error.stderr ?? ""}${error.message}`)) throw error;
+      if (attempt >= 10 || !/\[(?:remote )?rejected\]|fetch first|non-fast-forward|cannot lock ref/.test(`${error.stderr ?? ""}${error.message}`)) throw error;
       git(work, "pull", "-q", "--rebase", "-X", "theirs", "origin", "main");
     }
   }

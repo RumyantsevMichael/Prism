@@ -102,21 +102,46 @@ export async function launch(context) {
   return browser;
 }
 
-/** Opens a page that records browser errors; `blockOtherHosts` makes every host but 127.0.0.1 unreachable. */
-export async function openPage(browser, url, { colorScheme = "light", reducedMotion = "no-preference", viewport = { width: 1280, height: 800 }, blockOtherHosts = false } = {}) {
+// Chromium fails every request in flight, loopback ones too, when the operating system reports a network change, as a Windows runner's adapters sometimes do.
+// A page whose scripts failed that way never starts, through no fault of the page, so it loads again.
+export const NETWORK_CHANGE_REASONS = new Set(["net::ERR_NETWORK_CHANGED"]);
+const NETWORK_CHANGE_LOADS = 3;
+
+/**
+ * Opens a page that records browser errors; `blockOtherHosts` makes every host but 127.0.0.1 unreachable.
+ * A load that a network change broke is repeated, up to three loads in all; `reloadReasons` names the failure reasons that count as one.
+ * `prepare` receives the browser context before the first load, to route its requests.
+ */
+export async function openPage(browser, url, { colorScheme = "light", reducedMotion = "no-preference", viewport = { width: 1280, height: 800 }, blockOtherHosts = false, reloadReasons = NETWORK_CHANGE_REASONS, prepare = null } = {}) {
   const context = await browser.newContext({ colorScheme, reducedMotion, viewport });
   if (blockOtherHosts) await context.route((target) => target.hostname !== "127.0.0.1", (route) => route.abort());
+  if (prepare) await prepare(context);
   const page = await context.newPage();
   page.errors = [];
+  page.loads = 0;
+  let networkChanged = false;
   page.on("pageerror", (error) => page.errors.push(error.message));
   // A failed load other than one a navigation cancelled is named in the test's output, with its resource and the browser's reason.
   page.on("requestfailed", (request) => {
     const reason = request.failure()?.errorText ?? "";
+    if (reloadReasons.has(reason)) networkChanged = true;
     if (reason !== "net::ERR_ABORTED") console.log(`# request failed: ${new URL(request.url()).pathname.replace(/^\/session\/[^/]+/, "")} ${reason}`);
   });
-  await page.goto(url);
-  await settle(page);
-  return page;
+  for (;;) {
+    networkChanged = false;
+    page.errors.length = 0;
+    page.loads += 1;
+    const last = page.loads >= NETWORK_CHANGE_LOADS;
+    try {
+      await page.goto(url);
+    } catch (error) {
+      if (last || ![...reloadReasons].some((reason) => error.message.includes(reason))) throw error;
+      continue;
+    }
+    await settle(page);
+    if (!networkChanged || last) return page;
+    console.log(`# a network change broke load ${page.loads} of ${url}; loading it again`);
+  }
 }
 
 /** Waits until the page has loaded, its fonts are ready, and a rendering view, if any, is no longer busy. */

@@ -1,9 +1,9 @@
 import { createServer } from "node:http";
 import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup, openerOf } from "./public/views/tab-groups.js";
 import { randomBytes } from "node:crypto";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
+import { openBrowser } from "./browser-opener.mjs";
 import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT, pluginVersion } from "../plugin-root.mjs";
@@ -12,11 +12,11 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { listComponents } from "../workflow/components.mjs";
 import { artifactKinds, parseWorkflowConfig, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, recordStoreOf, listRecordEntries, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile, withRecordReads } from "../workflow/record-store.mjs";
-import { artifactStoreLocation, readStoreArtifact, readStoreArtifactAt, reviewStoreArtifact, reviewStoreArtifactAt, storeArtifactLocation, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
+import { ANSWERED_APPROVAL_KEPT_MS, answeredApprovalGates, artifactStoreLocation, pendingApprovalGates, readStoreArtifact, readStoreArtifactAt, reviewStoreArtifact, reviewStoreArtifactAt, storeArtifactLocation, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
 import { codeRefOf, parseCodeRef, resolveLinks } from "./artifact-links.mjs";
 import { checkoutsOnMachine, knownComponents, registeredRepositories } from "./workspaces.mjs";
 import { withoutCredentials } from "../workflow/remote-url.mjs";
-import { readWorkspaceName } from "../workflow/roadmap.mjs";
+import { readRoadmap, readWorkspaceName } from "../workflow/roadmap.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
@@ -41,6 +41,7 @@ import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
 import { createCachedValue } from "./cached-value.mjs";
+import { validUntil } from "../workflow/view-validity.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 // A line of work is quiet after this many days without a commit, unless a Code request names another threshold.
@@ -230,6 +231,18 @@ async function artifactStoreRefusal(projectRoot: string) {
 
 // The checkout's tracked files under its artifact paths that an available store does not hold, which the browser shows beside the store's status; the browser itself never moves them:
 // awaitingMove counts those that an agent's tool call still moves or reports, and keptInCheckout those that a move kept for a person to settle.
+// Each shown action list reads its target again at every check and whenever the page draws it, and an approval card's listing reads every requirement and ADR and the roadmap,
+// so a listing answers those reads as the views are reused; an answered gate leaves the list at the end of its kept week even when no file changes.
+const actionListingReads = {
+  roadmap: (root: string) => rememberView(root, "actions-roadmap", () => readRoadmap(root)),
+  pendingApprovalGates: (root: string) => rememberView(root, "pending-approval-gates", () => pendingApprovalGates(root)),
+  answeredApprovalGates: (root: string) => rememberView(root, "answered-approval-gates", async () => {
+    const gates = await answeredApprovalGates(root);
+    for (const gate of gates) validUntil((Date.parse(gate.answer?.answeredAt ?? "") || 0) + ANSWERED_APPROVAL_KEPT_MS);
+    return gates;
+  })
+};
+
 async function checkoutArtifactsOf(projectRoot: string, store: any) {
   if (store.kind === "project" || store.unavailable) return {};
   return artifactsInCheckout(projectRoot);
@@ -685,21 +698,7 @@ export function publicAsset(route: string) {
   return isInside(root, file) ? { file, type: ASSET_TYPES.get(extension) } : null;
 }
 
-export function openBrowser(url: any) {
-  const platform = process.platform;
-  // cmd.exe's start would read an & in the URL's query as a second command, so Windows opens the URL through the shell's URL handler.
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "rundll32" : "xdg-open";
-  const args = platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
-  try {
-    // A browser that the opener starts inherits its working folder, so it starts in the home folder and never keeps a project folder busy, which Windows would refuse to remove or rename.
-    const child = spawn(command, args, { cwd: homedir(), detached: true, stdio: "ignore", windowsHide: true });
-    child.on("error", () => {});
-    child.unref();
-    return true;
-  } catch {
-    return false;
-  }
-}
+export { openBrowser };
 
 /** The open tabs whose file the review no longer lists, or whose entity no longer resolves, in tab order. */
 export async function findMissingTabs(tabs: any, available: any, entityResolves: any) {
@@ -1182,7 +1181,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const sources = new Map();
     for (const member of await workspace?.checkouts?.() ?? []) {
       if (!member.repository) continue;
-      const files = await listReviewSources(member.root).catch(() => null);
+      // The kept listing of each checkout, renewed behind as a checkout page's listing is, since listing a checkout checks every file.
+      const files = await reviewListing(member.root).get().then((listing: any) => listing.sources, () => null);
       if (files === null) continue;
       const known = sources.get(member.repository) ?? new Set();
       for (const file of files) known.add(file);
@@ -1873,7 +1873,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       send(response, 200, JSON.stringify(await inSessionOrder(() => updateSession(body))), "application/json; charset=utf-8");
     } else if (route === "/api/actions" && request.method === "GET") {
       try {
-        const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer, checkouts: await checkoutRoots() });
+        const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer, checkouts: await checkoutRoots(), reads: actionListingReads });
         sendJson(response, 200, { target: listed.target, writable: writableRequest(request), actions: listed.actions });
       } catch (error) {
         sendActionError(response, error);
@@ -2150,7 +2150,7 @@ export async function startReviewServer(options: any = {}) {
       if (!opened) {
         review.releaseBrowserOpen();
       }
-      return { url, opened, ...review.getSession() };
+      return { url, opened, ...(opened ? {} : { openFailed: true }), ...review.getSession() };
     },
     close() {
       review.closeViewers();

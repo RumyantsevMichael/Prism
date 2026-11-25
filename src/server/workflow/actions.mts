@@ -11,6 +11,7 @@ import { isStoreWithoutCheckout, recordStoreOf } from "./record-store.mjs";
 import { runGit } from "./record-store-sync.mjs";
 import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { withoutCredentials } from "./remote-url.mjs";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readRoadmap } from "./roadmap.mjs";
 import { roadmapEntry, shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction, validEarlierName } from "./state.mjs";
@@ -145,9 +146,16 @@ export async function listActionTargets({ projectRoot, kind, checkouts = null }:
   return { targets: (await indexComponents(projectRoot, checkouts)).map((component) => `index:${component.identity}`) };
 }
 
+/**
+ * Reads that a caller who lists actions again and again may answer from its own cache of the project's records: { roadmap, pendingApprovalGates, answeredApprovalGates },
+ * each taking the project root and answering as the function of the same name does; a listing without them, and every applied action, reads the records afresh.
+ */
+const listingReads = new AsyncLocalStorage<any>();
+const readsOf = () => listingReads.getStore() ?? {};
+
 async function initiativeExists(projectRoot: string, initiative: string, record: any) {
   if (record) return true;
-  const roadmap = await readRoadmap(projectRoot).catch(() => null);
+  const roadmap = await (readsOf().roadmap ?? readRoadmap)(projectRoot).catch(() => null);
   return Boolean(roadmap?.loaded?.record?.initiatives?.some((item: any) => item.id === initiative));
 }
 
@@ -160,7 +168,7 @@ const storeRefused = (error: any) => error?.name === "ArtifactError" && typeof e
 async function pendingApprovals(projectRoot: string, id: string) {
   const config = await readWorkflowConfig(projectRoot);
   if ((config.workspace?.store ?? null) === null) return [];
-  const gates = await pendingApprovalGates(projectRoot).catch((error) => {
+  const gates = await (readsOf().pendingApprovalGates ?? pendingApprovalGates)(projectRoot).catch((error: any) => {
     if (error?.code === "store_not_configured") return [];
     throw storeRefused(error) ? storeRefusal(error) : error;
   });
@@ -281,7 +289,7 @@ async function askerOf(projectRoot: string, key: { initiative?: string; gate: st
 async function answeredApprovals(projectRoot: string, id: string) {
   const config = await readWorkflowConfig(projectRoot);
   if ((config.workspace?.store ?? null) === null) return [];
-  const gates = await answeredApprovalGates(projectRoot).catch((error) => {
+  const gates = await (readsOf().answeredApprovalGates ?? answeredApprovalGates)(projectRoot).catch((error: any) => {
     if (error?.code === "store_not_configured") return [];
     throw storeRefused(error) ? storeRefusal(error) : error;
   });
@@ -1247,11 +1255,11 @@ export const prismIndexer = Object.freeze({
 
 // ---- Listing ----
 
-/** The actions that apply to a target: { target, actions }, available or not. */
-export async function listActions({ projectRoot, target, indexer = prismIndexer, env = process.env, checkouts = null }: { projectRoot: string; target: string; indexer?: any; env?: NodeJS.ProcessEnv; checkouts?: any }) {
+/** The actions that apply to a target: { target, actions }, available or not; reads, when given, answers the record reads that listingReads names. */
+export async function listActions({ projectRoot, target, indexer = prismIndexer, env = process.env, checkouts = null, reads = null }: { projectRoot: string; target: string; indexer?: any; env?: NodeJS.ProcessEnv; checkouts?: any; reads?: any }) {
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
-  const context = await readTarget(projectRoot, parsed, indexer, undefined, env, checkouts);
+  const context = await listingReads.run(reads ?? {}, () => readTarget(projectRoot, parsed, indexer, undefined, env, checkouts));
   return { target, actions: definitionsFor(parsed.kind).filter((definition: any) => definition.listed !== false).map((definition) => view(definition, context)) };
 }
 

@@ -2,6 +2,9 @@ import { startStandaloneReview, startWorkspacesReview } from "./review/review-se
 
 const USAGE = "Usage: prism review [artifact-path]\n       prism review --workspaces\n\nOpens the Prism review browser for the project in the current directory.\nWithout an artifact path, the browser opens on Attention.\nWith --workspaces, it opens the review app's list of workspaces from any folder.\n";
 
+// No opener on this machine took the URL, so the tab that could make changes never appeared.
+const OPEN_FAILED = "prism review: Prism could not open a browser on this machine, so no tab that can make changes opened; the URL above opens a tab that can only read, and the Prism log names each opener that failed.\n";
+
 const [command = "review", artifactPath, ...extra] = process.argv.slice(2);
 if (["-h", "--help", "help"].includes(command) || ["-h", "--help"].includes(artifactPath)) {
   process.stdout.write(USAGE);
@@ -17,7 +20,8 @@ if (["-h", "--help", "help"].includes(command) || ["-h", "--help"].includes(arti
     process.exit(1);
   }
   process.stdout.write(`${result.url}\n`);
-  if (!result.opened) process.stderr.write("prism review: no new browser tab opened; an open review tab can switch workspaces; the URL above opens a tab that can only read.\n");
+  if (result.openFailed) process.stderr.write(OPEN_FAILED);
+  else if (!result.opened) process.stderr.write("prism review: no new browser tab opened; an open review tab can switch workspaces; the URL above opens a tab that can only read.\n");
 } else {
   let result;
   try {
@@ -27,6 +31,7 @@ if (["-h", "--help", "help"].includes(command) || ["-h", "--help"].includes(arti
     process.exit(1);
   }
   process.stdout.write(`${result.url}\n`);
+  if (result.openFailed) process.stderr.write(OPEN_FAILED);
   // The shared review app keeps serving after this command returns; only a review served by this command needs it to keep running.
   if (result.held) {
     const close = async () => {
@@ -35,7 +40,7 @@ if (["-h", "--help", "help"].includes(command) || ["-h", "--help"].includes(arti
     };
     process.once("SIGINT", close);
     process.once("SIGTERM", close);
-  } else if (!result.opened) {
+  } else if (!result.opened && !result.openFailed) {
     process.stderr.write("prism review: no new browser tab opened; a review tab that is open or opening shows this project or a notice with its link and can make changes; the URL above opens a tab that can only read.\n");
   }
 }

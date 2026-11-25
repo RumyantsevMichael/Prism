@@ -1146,7 +1146,8 @@ const headerStatus = (text: any) => typeof text === "string" ? /^Status:\s*(\S.*
 async function loadFormats(projectRoot: string) {
   let artifacts: any[] = [];
   try {
-    artifacts = (await checkArtifacts({ projectRoot })).artifacts;
+    // The check reads every artifact, so it is reused as the views are; a changed artifact or a run's record changes the version and checks again.
+    artifacts = await remember(projectRoot, `format-check:${projectRoot}`, async () => (await checkArtifacts({ projectRoot })).artifacts);
     // The lists of the same request mark artifacts from this check rather than checking them again.
     await prime(projectRoot, marksKey(projectRoot), markLookup(artifacts));
   } catch {

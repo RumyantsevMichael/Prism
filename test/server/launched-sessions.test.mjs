@@ -114,7 +114,7 @@ test("a Codex launch runs app-server, starts a thread with the automatic review 
   assert.equal(run.env.PRISM_LAUNCH, launch.id);
   for (const name of STRIPPED) assert.equal(run.env[name], null, `${name} must not reach the launched host`);
   assert.equal(finished.hostLabel, "Codex");
-  assert.deepEqual(finished.resumeCommand, { command: `codex resume ${CODEX_THREAD}`, cwd: fixture.root });
+  assert.deepEqual(finished.resumeCommand, { command: `codex resume --sandbox workspace-write ${CODEX_THREAD}`, cwd: fixture.root });
 });
 
 test("a second launch of an initiative is refused while one runs on this machine, and another initiative still launches", { skip: posixOnly }, async (t) => {

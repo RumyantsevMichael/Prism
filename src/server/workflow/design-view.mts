@@ -6,7 +6,7 @@ import { inArtifactStore, listStoreArtifacts, locateRecord, readArtifactBytes, r
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { checkFolderViews, listedViews, viewProblems } from "./diagram-check.mjs";
 import { contractClauses, listItems as items, section } from "./view-declarations.mjs";
-import { acceptedDesign, readFrozenTestOf } from "./slice-design.mjs";
+import { acceptedDesign, frozenDigest, frozenTestContent, readFrozenTestOf } from "./slice-design.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { refuseShipped } from "./shipped-history.mjs";
 
@@ -148,7 +148,7 @@ export async function updateDesignView(input: any) {
     try {
       const bytes = await readFrozenTestOf(root, initiative, file);
       if (bytes === null) problems.push(`${file} does not exist.`);
-      else files.set(file, { sha256: sha256(bytes), content: bytes.toString("utf8") });
+      else files.set(file, { sha256: sha256(bytes), frozenSha256: frozenDigest(bytes), content: bytes.toString("utf8") });
     } catch (error) { problems.push(error.message); }
   }
   input.examples.forEach((item: any, index: number) => {
@@ -162,7 +162,7 @@ export async function updateDesignView(input: any) {
     schemaVersion: 1,
     writtenAt: new Date().toISOString(),
     design: { path: design.path, contractSha256: contractDigest(clauses) },
-    tests: [...files].map(([file, value]) => ({ path: file, sha256: value.sha256 })).sort((a, b) => a.path.localeCompare(b.path)),
+    tests: [...files].map(([file, value]) => ({ path: file, sha256: value.sha256, frozenSha256: value.frozenSha256 })).sort((a, b) => a.path.localeCompare(b.path)),
     examples: input.examples.map(({ clause, file, test, example }: { clause: any; file: string; test: any; example: any }) => ({ clause, file, test, example: example.trim() }))
   };
   const key = { kind: "design-view", initiative, slice };
@@ -252,6 +252,24 @@ function unitPlaces(index: any, change: any) {
 
 export const describeActual = (item: any) => item.unit ? `${ACTUAL[item.action] ?? item.action} \`${item.unit}\`` : `${ACTUAL[item.action] ?? item.action} the file`;
 
+// Before acceptance a cited test is compared with the work tree, where the design is still being written.
+async function workTreeMismatch(root: string, initiative: string, test: any) {
+  const bytes = await readFrozenTestOf(root, initiative, test.path).catch(() => null);
+  if (bytes === null) return `${test.path} no longer exists.`;
+  return sha256(bytes) === test.sha256 ? null : `${test.path} changed after the examples were written.`;
+}
+
+// After acceptance a cited test is compared with the version the design froze, read from the work tree or a kept copy while one holds it, else by its recorded digest.
+async function frozenMismatch(root: string, initiative: string, owners: string[], test: any, frozen: any) {
+  let bytes = null;
+  for (const owner of owners) {
+    const content = await frozenTestContent(root, initiative, owner, test.path).catch(() => null);
+    if (content && content.state !== "changed") { bytes = content.bytes; break; }
+  }
+  const same = bytes ? sha256(bytes) === test.sha256 : (test.frozenSha256 ?? test.sha256) === frozen.sha256;
+  return same ? null : `${test.path} changed after the examples were written, before the design froze it.`;
+}
+
 /**
  * What the review browser shows for a designed slice: the contract's clauses with their examples and gaps,
  * the planned changes, and, once the verified result has a derived change map, planned versus actual.
@@ -266,17 +284,21 @@ export async function loadDesignView(projectRoot: string, initiative: string, sl
   const planned = plannedChanges(design.source, governing.design.source);
   if (!clauses.length && !planned.changes.length) return null;
   // A slice of a split scope reads the scope's examples, unless it has its own.
-  const stored = await storedView(root, initiative, slice) ?? (inherited ? await storedView(root, initiative, governing.slug) : null);
+  const own = await storedView(root, initiative, slice);
+  const stored = own ?? (inherited ? await storedView(root, initiative, governing.slug) : null);
   const stale = [];
   let examples = [];
   if (stored?.invalid || (stored && !Array.isArray(stored.examples))) stale.push("The stored examples are not readable.");
   else if (stored) {
     examples = stored.examples;
     if (stored.design?.contractSha256 !== contractDigest(clauses)) stale.push("The contract changed after the examples were written.");
+    // Once a design is accepted, its examples describe the tests it froze, so a later edit to a test, such as work after the slice landed, does not make them stale.
+    const owners = [...new Set([own ? slice : governing.slug, slice])];
+    const accepted = (await Promise.all(owners.map((owner) => acceptedDesign(root, initiative, owner)))).filter(Boolean);
     for (const test of stored.tests ?? []) {
-      const bytes = await readFrozenTestOf(root, initiative, test.path).catch(() => null);
-      if (bytes === null) stale.push(`${test.path} no longer exists.`);
-      else if (sha256(bytes) !== test.sha256) stale.push(`${test.path} changed after the examples were written.`);
+      const frozen = accepted.flatMap((design: any) => design.frozenTests).find((item: any) => item.path === test.path);
+      const problem = frozen ? await frozenMismatch(root, initiative, owners, test, frozen) : await workTreeMismatch(root, initiative, test);
+      if (problem) stale.push(problem);
     }
   }
   const allClauses = clauses.map((text, index) => ({ number: index + 1, text, examples: examples.filter((item: any) => item.clause === index + 1) }));
