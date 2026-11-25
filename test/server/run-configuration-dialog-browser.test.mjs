@@ -177,7 +177,8 @@ test("clause 5: a host this computer lacks shows unavailable with its reason and
   await s.open();
   const options = await s.dialog.getByRole("radiogroup", { name: "Host" }).getByRole("radio").evaluateAll((items) => items.map((item) => [item.value, item.disabled]));
   assert.deepEqual(options, [["claude-code", false], ["codex", true]]);
-  assert.match(await s.dialog.innerText(), /Codex was not found: no codex executable on PATH\./);
+  const missing = /Codex was not found: no codex executable on PATH\./;
+  assert.match(await settled(() => s.dialog.innerText(), (text) => missing.test(text)), missing);
   assert.equal(await launchLabel(s.dialog), "Launch with Claude Code");
   assert.deepEqual(s.page.errors, []);
 });
@@ -185,7 +186,9 @@ test("clause 5: a host this computer lacks shows unavailable with its reason and
 test("clause 6: without any supported host the dialog says so, names the hosts Prism supports, and offers no launch", { skip: skipHere, timeout: 90000 }, async (t) => {
   const s = await runPage(t, { hosts: [] });
   await s.open();
-  assert.match(await s.dialog.innerText(), /No host that Prism supports was found on this computer\. Prism supports Claude Code and Codex\./);
+  // The dialog reads the hosts after it opens and says Loading… until then.
+  const none = /No host that Prism supports was found on this computer\. Prism supports Claude Code and Codex\./;
+  assert.match(await settled(() => s.dialog.innerText(), (text) => none.test(text)), none);
   const button = s.dialog.getByRole("button", { name: /^Launch/ });
   assert.equal(await button.count(), 1);
   assert.equal(await enabled(button), false, "the launch cannot be pressed");
