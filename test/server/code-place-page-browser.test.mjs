@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { rm } from "node:fs/promises";
+import { rename, rm } from "node:fs/promises";
 import test from "node:test";
 import { eventually as waitFor, git, isolateGit, requirementFile, writeArtifact } from "./fixtures/workspace-view.mjs";
 import { launch, openPage, reviewUrl, shownTooltip, skip, waitForView } from "./fixtures/kit-browser.mjs";
 import { choosePlace, drawer, eventually, open, placeButton, shownRef, sidebar, tabs } from "./fixtures/places-browser.mjs";
-import { codePlaceWorkspace, commitWork } from "./fixtures/code-place.mjs";
+import { applySteps, codePlaceWorkspace, commitWork, startedWork } from "./fixtures/code-place.mjs";
 import { repainted } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/code-place.md §2, §3, §9, §10, §14 to §19, §22 to §24, §26 to §29.
-// Contract: docs/plans/code-place/slice.md clauses 3 to 5 and 39 to 49, through the review page of a workspace in a browser.
+// Contract: docs/plans/code-place/slice.md clauses 3 to 5, 37, and 39 to 49, through the review page of a workspace in a browser.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -216,4 +216,82 @@ test("clause 39: a push to an open file's line of work redraws the open file wit
   git(owner.root, "checkout", "-q", "main");
   assert.equal(await eventually(() => chips(page).locator("prism-chip").count(), 5, { timeout: 20000 }), 5, "the new version joins the open file");
   assert.equal(await shownRef(page), "code:api:src/retry/strategy.ts");
+});
+
+// It runs after the clauses' own tests, since it adds a work item and a commit of the default branch to the shared workspace.
+test("clauses 4, 40, and 41: a listed work item that changes no code yet narrows the tree to no touched file, with no note, and All files shows the base", TIMEOUT, async () => {
+  const { owner, browser, base } = await workspace();
+  await startedWork(owner, { initiative: "waiting", title: "Wait for retry budgets" });
+  const page = await open(browser, base, "code:work/waiting");
+  const artifact = page.locator("#artifact");
+  assert.equal(await eventually(async () => /Showing what Wait for retry budgets changes/.test(await text(artifact)), true, { timeout: 20000 }), true, "the page narrows to the listed work item");
+  assert.doesNotMatch(await text(artifact), /changes no code that the Code place shows/, "a listed work item is no unknown address");
+  const files = page.getByRole("radiogroup", { name: "Files" }).or(page.getByRole("group", { name: "Files" }));
+  assert.equal(await files.getByRole("radio", { name: "Touched" }).getAttribute("aria-checked"), "true");
+  await repainted(page);
+  assert.equal(await tree(page).getByRole("treeitem").count(), 0, "Touched shows no row when no shown version changes a file");
+  await files.getByRole("radio", { name: "All files" }).click();
+  await tree(page).waitFor({ timeout: 10000 });
+  await treeRow(page, "api").waitFor({ timeout: 10000 });
+  await expand(page, "api", "src", "retry");
+  assert.doesNotMatch(await text(treeRow(page, "strategy.ts")), /versions/, "the base alone is no version to count");
+  assert.equal(await treeRow(page, "metrics.ts").count(), 0, "another work item's new file is not part of this tree");
+});
+
+// It runs last, since it pushes branches to web and api and moves their remotes away for a while.
+test("clauses 37 and 44: a repository or file that Prism cannot read now shows a quiet notice with Try again, and the other repositories show as usual", TIMEOUT, async () => {
+  const shared = await workspace();
+  const { owner, remotes } = shared;
+  // Reading first fetches every blob that the tree's marks and strategy.ts's versions need of the branches so far.
+  for (const route of ["files?scope=all", "files?scope=all&folder=api%2Fsrc%2Fretry", "versions?scope=all&repository=api&path=src%2Fretry%2Fstrategy.ts"]) assert.equal((await shared.ready(route)).status, 200, route);
+  // Each branch brings a blob that the blobless clones have never fetched: web's .prism/workflow.md of feature/nav, and api's new jitter.ts of feature/jitter.
+  await applySteps(remotes.web.work, [{ branch: "feature/nav", author: "Lee Park", files: { ".prism/workflow.md": "## Components\n- report-ui: packages/reports\n- shell: packages/shell\n- nav: packages/nav\n", "packages/nav/menu.ts": "menu\n" } }]);
+  await applySteps(owner.root, [{ branch: "feature/jitter", author: "Lee Park", files: { "src/retry/jitter.ts": "export const jitter = (delay: number) => delay * Math.random();\n" } }]);
+  await waitFor(async () => {
+    const place = (await shared.ready("place")).json;
+    return ["feature/nav", "feature/jitter"].every((name) => place?.branches?.some((line) => line.branch === name));
+  }, 60000, "the pushed branches feature/nav and feature/jitter");
+  const away = (name) => `${remotes[name].bare}.away`;
+  await rename(remotes.web.bare, away("web"));
+  await rename(remotes.api.bare, away("api"));
+  let restored = false;
+  const restore = async () => {
+    if (restored) return;
+    restored = true;
+    await rename(away("web"), remotes.web.bare);
+    await rename(away("api"), remotes.api.bare);
+  };
+  try {
+    const page = await codePage();
+    const web = treeRow(page, "web");
+    const note = web.locator('prism-inline-note[tone="info"]');
+    await note.waitFor({ timeout: 20000 });
+    assert.match(await text(note), /Prism could not read web just now\./);
+    assert.equal(await note.locator('prism-icon[slot="start"]').count(), 1, "the notice is the kit's inline note with its glyph");
+    const tryAgain = web.getByRole("button", { name: "Try again" });
+    assert.equal(await tryAgain.count(), 1);
+    assert.equal(await tryAgain.evaluate((node) => node.closest("prism-button") !== null), true, "Try again is a kit button");
+    assert.equal(await page.locator('prism-inline-note[tone="warning"]').count(), 0, "the notice is quiet, not a warning");
+    for (const other of ["api", "infra"]) assert.equal(await treeRow(page, other).locator("prism-inline-note").count(), 0, `${other} shows as usual`);
+    assert.match(await text(treeRow(page, "infra")), /infra/);
+    await openFile(page, ["api", "src", "retry"], "strategy.ts");
+    assert.ok(await chips(page).locator("prism-chip").count() >= 4, "a file of api whose blobs the clone holds opens while api's remote is away");
+    await treeRow(page, "jitter.ts").locator(":scope > a").first().click();
+    const fileNote = page.locator('#artifact prism-inline-note[tone="info"]').filter({ hasText: "Prism could not read this file just now." });
+    await fileNote.waitFor({ timeout: 20000 });
+    assert.match(await text(page.locator("#artifact")), /api \/ src\/retry\/jitter\.ts/, "the file head stays");
+    assert.equal(await chips(page).count(), 0, "no version chips while the file cannot be read");
+    await restore();
+    // A redraw of clause 39 may read again first, so Try again is chosen only while its notice still shows.
+    const fileAgain = page.locator("#artifact").getByRole("button", { name: "Try again" });
+    if (await fileAgain.count()) await fileAgain.click();
+    await chips(page).waitFor({ timeout: 20000 });
+    assert.equal(await fileNote.count(), 0, "the file reads again once its remote is back");
+    if (await tryAgain.count()) await tryAgain.click();
+    await waitFor(async () => (await note.count()) === 0, 20000, "web's notice goes once web reads again");
+    await expand(page, "web", "packages");
+    assert.equal(await treeRow(page, "nav").count(), 1, "web's tree opens with its new folder");
+  } finally {
+    await restore();
+  }
 });
