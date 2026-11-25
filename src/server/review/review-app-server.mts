@@ -305,7 +305,10 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   // The one review of a workspace, read through root, with the fetch timer that its connected pages drive.
   function makeView({ id, kind, identity, urls, root }: { id: string; kind: any; identity: string; urls: any; root: string }) {
     const view: any = { id, kind, identity, urls, usedAt: addedUsage.get(id) ?? 0, review: null, watch: null, storeRoot: null, get root() { return this.review!.projectRoot; } };
-    view.watch = watchWorkspace({ base: () => syncedClone(view), label: () => remoteLabel(view.urls[0]) ?? view.identity, intervalMs: workspaceFetchMs, maxMs: workspaceFetchMaxMs, fetchCode: () => code.fetchAll(view.id) });
+    view.watch = watchWorkspace({ base: () => syncedClone(view), label: () => remoteLabel(view.urls[0]) ?? view.identity, intervalMs: workspaceFetchMs, maxMs: workspaceFetchMaxMs, fetchCode: async () => {
+      // A fetch that moves a branch tip changes the Code place's answers, so the workspace's open pages hear of it and redraw.
+      if (await code.fetchAll(view.id)) view.review?.notify("code", {});
+    } });
     view.review = createProjectReview({ projectRoot: root, baseUrl: `http://127.0.0.1:${port}${viewerPrefix()}/w/${view.id}`, instance, appVersion: pluginVersion,
       onViewer: (sendNotice: any) => {
         view.usedAt = ++sequence;
@@ -335,7 +338,8 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
           reachable: (repository: string, commit: string) => code.reachable(view.id, repository, commit),
           branchesHolding: (repository: string, commit: string) => code.branchesHolding(view.id, repository, commit),
           blobs: (repository: string, commit: string, paths: string[]) => code.blobs(view.id, repository, commit, paths),
-          components: (repository: string) => code.components(view.id, repository)
+          components: (repository: string) => code.components(view.id, repository),
+          contents: (repository: string) => code.contents(view.id, repository)
         } } });
     workspaces.set(view.id, view);
     return view;
