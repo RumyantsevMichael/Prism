@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { splitEvidence } from "./fixtures/split-evidence.mjs";
+import { settled } from "./fixtures/wait.mjs";
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-verify-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -12,7 +13,7 @@ delete process.env.CLAUDE_PLUGIN_DATA;
 // Claude Code sets this in a cloud session; each test sets it only where it checks chat approval.
 delete process.env.CLAUDE_CODE_REMOTE;
 const { getInitiative, initiativeAcknowledgement, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
-const { failingTests, verificationBrief, verifySlice } = await import("../../dist/server/workflow/verification.mjs");
+const { failingTests, runningVerifications, verificationBrief, verifySlice } = await import("../../dist/server/workflow/verification.mjs");
 const { checkSliceGate } = await import("../../dist/server/workflow/slice-gate.mjs");
 const { callConservationTool } = await import("../../dist/server/conservation/conservation-tools.mjs");
 const { getReview, updateReview } = await import("../../dist/server/review/review-ledger.mjs");
@@ -244,6 +245,42 @@ test("a run past its timeout fails, and an early return keeps the same run going
   const timedOut = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" });
   assert.equal(timedOut.reason, "timed_out");
   assert.equal(timedOut.timedOut, true);
+});
+
+test("a repeat call after an early return gets the finished run's result while the work tree is unchanged", async (context) => {
+  const root = await project(context, `${node} sleep.mjs 300`);
+  await accept(root);
+  const gateId = await approve(root);
+  const runs = path.join(root, ".prism/initiatives/reports/slices/download/runs");
+  const early = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId, maxWaitMs: 1 });
+  assert.equal(early.status, "running");
+  // The run settles after the slice is marked done, since its design marks no review, so the wait is for the run itself.
+  await settled(() => runningVerifications(), 0);
+  const repeated = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", maxWaitMs: 1 });
+  assert.equal(repeated.status, "passed", "the repeat call returns the run that finished after the early return");
+  assert.equal(repeated.repeated, true);
+  assert.match(repeated.repeatMessage, /unchanged/);
+  assert.equal((await readdir(runs)).length, 1, "the repeat call started no run");
+  assert.equal(verificationBrief(repeated).repeated, true, "the brief says the result is a finished run's");
+  const again = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" });
+  assert.equal(again.repeated, undefined, "a returned result is not returned again, so a later call runs the command");
+  assert.equal((await readdir(runs)).length, 2);
+});
+
+test("a repeat call after the work tree changed runs the command again and says why", async (context) => {
+  const root = await project(context, `${node} sleep.mjs 300`);
+  await accept(root);
+  const gateId = await approve(root);
+  const runs = path.join(root, ".prism/initiatives/reports/slices/download/runs");
+  assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId, maxWaitMs: 1 })).status, "running");
+  // The run settles after the slice is marked done, since its design marks no review, so the wait is for the run itself.
+  await settled(() => runningVerifications(), 0);
+  await writeFile(path.join(root, "source.mjs"), "export const value = 2;\n");
+  const rerun = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" });
+  assert.equal(rerun.status, "passed");
+  assert.equal(rerun.repeated, undefined);
+  assert.match(verificationBrief(rerun).rerunMessage, /work tree changed/);
+  assert.equal((await readdir(runs)).length, 2);
 });
 
 test("cancelling the call stops the run", async (context) => {
