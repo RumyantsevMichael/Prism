@@ -508,7 +508,7 @@ export async function checkoutOf(root: string, config: any, tree: string | null 
   return { repository, remote, branch, head, dirty, host: hostName() };
 }
 
-// One run per slice at a time: a repeated call joins the running one, so a host that returns early can call again to keep waiting.
+// One run per slice at a time: a repeated call joins the running one, or gets the result of one that settled after it returned, so a host that returns early can call again to keep waiting.
 const jobs = new Map();
 
 const REASONS: Record<string, string> = {
@@ -553,24 +553,60 @@ export async function verifySlice({ projectRoot, initiative, slice, approvalGate
     if (reviewBrowserUnreachable()) return { status: "approval_needed", gateId: allowed.gateId, ...names, chatApproval: true, message: `The user cannot open the review browser from this cloud session. Ask them in chat whether Prism may run this exact test command in ${where}: ${command}. When they allow it, call verify_slice again with approvalGate ${allowed.gateId} and chatApproval quoting their answer word for word.` };
     return { status: "approval_needed", gateId: allowed.gateId, ...names, message: `The user must allow the test command in the review browser first. Wait with wait_for_user_gate on ${allowed.gateId}, then call verify_slice again with approvalGate ${allowed.gateId}.` };
   }
-  const waited = await awaitJob(`${root}\0${initiative}\0${slice}`, `${command}\0${cwd}`, (jobSignal: any, progress: any) => verificationRun({ root, initiative, slice, target, key: allowed.key, design, dataDirectory, signal: jobSignal, onProgress: progress })
-    .then((run) => completeSlice(root, initiative, slice, design, run)), { signal, onProgress, maxWaitMs });
-  if (waited.running) return { status: "running", ...names, startedAt: waited.startedAt, message: "The run continues in the Prism server. Call verify_slice again with the same arguments to keep waiting for its result." };
-  return waited.finished.reason === "cancelled" && signal?.aborted ? { status: "cancelled" } : resultOf(waited.finished);
+  const jobKey = `${root}\0${initiative}\0${slice}`;
+  const signature = `${command}\0${cwd}\0${design.acceptedAt}\0${design.startTree ?? ""}`;
+  const unreturned = jobs.has(jobKey) ? null : unreturnedRuns.get(jobKey);
+  let rerunMessage = null;
+  if (unreturned) {
+    unreturnedRuns.delete(jobKey);
+    const change = await changeSince(root, target, design, unreturned, signature);
+    if (!change) return { ...resultOf(unreturned.run), repeated: true, repeatMessage: `This is the result of the run that finished at ${unreturned.run.finishedAt}, which no call had returned yet. The work tree and the frozen tests are unchanged since it started, so the command did not run again.` };
+    rerunMessage = `${change}, so the command ran again.`;
+  }
+  const waited = await awaitJob(jobKey, signature, (jobSignal: any, progress: any) => verificationRun({ root, initiative, slice, target, key: allowed.key, design, dataDirectory, signal: jobSignal, onProgress: progress })
+    .then((run) => completeSlice(root, initiative, slice, design, run)), { signal, onProgress, maxWaitMs, keepUnreturned: true });
+  const rerun = rerunMessage ? { rerunMessage } : {};
+  if (waited.running) return { status: "running", ...names, startedAt: waited.startedAt, ...rerun, message: "The run continues in the Prism server. Call verify_slice again with the same arguments to keep waiting for its result." };
+  return waited.finished.reason === "cancelled" && signal?.aborted ? { status: "cancelled" } : { ...resultOf(waited.finished), ...rerun };
+}
+
+// A slice's run that settled after every waiting call had returned early, kept until a call returns it, so a host that cannot hold a long call still gets the result: { signature, run }.
+const unreturnedRuns = new Map();
+// A run that changed files while it ran, or was cancelled, tells the caller to run again, so its result is never returned in place of a new run.
+const RERUN_REASONS = new Set(["cancelled", "tracked_files_changed"]);
+
+// Why an unreturned run's result no longer stands, as the start of the answer's sentence, or null when it still does.
+async function changeSince(root: string, target: any, design: any, unreturned: any, signature: string) {
+  const { run } = unreturned;
+  const since = `since the run that finished at ${run.finishedAt} started`;
+  if (unreturned.signature !== signature) return `The test command, its folder, or the slice's design changed ${since}`;
+  if (!treeId(run.tree) || RERUN_REASONS.has(run.reason)) return `The run that finished at ${run.finishedAt} tested no single state of the work tree`;
+  const frozen = await checkFrozenTests(root, design.frozenTests);
+  if (frozen.changed.length || frozen.missing.length) return `The frozen tests changed ${since}`;
+  const tree = await contentTree(root, target.config).catch(() => null);
+  return tree === run.tree ? null : `The work tree changed ${since}`;
 }
 
 /**
  * Join the running job under a key when it runs the same work, named by its signature, or start a new one, and wait for it up to maxWaitMs:
  * { finished } with its result, or { running, startedAt } when the wait ended first, so a host that returns early can call again to keep waiting.
  */
-async function awaitJob(jobKey: any, signature: any, start: any, { signal, onProgress, maxWaitMs }: { signal: any; onProgress: any; maxWaitMs: any }, info: any = null) {
+async function awaitJob(jobKey: any, signature: any, start: any, { signal, onProgress, maxWaitMs, keepUnreturned = false }: { signal: any; onProgress: any; maxWaitMs: any; keepUnreturned?: boolean }, info: any = null) {
   let job = jobs.get(jobKey);
   if (!job || job.signature !== signature) {
     const controller = new AbortController();
     const listeners = new Set<any>();
-    job = { signature, controller, listeners, startedAt: new Date().toISOString(), promise: null, info };
+    job = { signature, controller, listeners, startedAt: new Date().toISOString(), promise: null, info, waiting: 0 };
+    const started = job;
+    if (keepUnreturned) unreturnedRuns.delete(jobKey);
+    // A run that settles while no call waits on it is kept, so the next call with the same arguments can return it; a waiting call returns it itself.
     job.promise = start(controller.signal, (seconds: any, latest: any) => listeners.forEach((listener) => listener(seconds, latest)))
-      .finally(() => { if (jobs.get(jobKey) === job) jobs.delete(jobKey); });
+      .then((finished: any) => {
+        // Only the returned tail of the output is kept, so a long log does not stay in memory.
+        if (keepUnreturned && !started.waiting) unreturnedRuns.set(jobKey, { signature, run: { ...finished, output: tail(finished.output ?? "", RETURNED_TAIL_CHARS) } });
+        return finished;
+      })
+      .finally(() => { if (jobs.get(jobKey) === started) jobs.delete(jobKey); });
     // A caller that returned early no longer awaits the run, so its failure must not go unhandled.
     job.promise.catch(() => {});
     jobs.set(jobKey, job);
@@ -581,11 +617,13 @@ async function awaitJob(jobKey: any, signature: any, start: any, { signal, onPro
   // A call cancelled while verification read the design and the approval has already fired its abort, so the run stops now.
   if (signal?.aborted) abort();
   let timer;
+  job.waiting += 1;
   try {
     const early = Number.isFinite(maxWaitMs) ? new Promise((resolve) => { timer = setTimeout(() => resolve(null), maxWaitMs); }) : new Promise(() => {});
     const finished = await Promise.race([job.promise, early]);
     return finished === null ? { running: true, startedAt: job.startedAt, info: job.info } : { finished };
   } finally {
+    job.waiting -= 1;
     clearTimeout(timer);
     signal?.removeEventListener("abort", abort);
     if (onProgress) job.listeners.delete(onProgress);
@@ -906,6 +944,8 @@ export function verificationBrief(value: any) {
     // Marking the slice done writes the initiative record, so the caller's next update needs this revision.
     ...(value.initiativeRevision ? { initiativeRevision: value.initiativeRevision } : {}),
     ...(value.statusMessage ? { statusMessage: value.statusMessage } : {}),
+    ...(value.repeated ? { repeated: true, repeatMessage: value.repeatMessage } : {}),
+    ...(value.rerunMessage ? { rerunMessage: value.rerunMessage } : {}),
     durationMs: value.durationMs,
     run: value.path,
     ...(value.log ? { log: value.log } : {}),
