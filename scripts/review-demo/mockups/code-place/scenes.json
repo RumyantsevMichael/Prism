@@ -1,5 +1,5 @@
 {
-  "source": "The scenes of the Code place mockups approved on 23 November 2026, drawn by injecting content.mjs's markup into the demo app.",
+  "source": "The scenes of the Code place mockups approved on 23 November 2026, drawn by injecting content.mjs's markup into the demo app; on 25 November 2026 the markup's work items, slices, claims, waits, and versions were aligned with the demo's records, so the pictures keep the approved layout with the earlier data.",
   "scenes": [
     { "name": "all", "picture": "code-all-1440-light.png", "width": 1440, "height": 900, "theme": "light", "pick": "", "picked": false, "only": false },
     { "name": "all", "picture": "code-all-1440-dark.png", "width": 1440, "height": 900, "theme": "dark", "pick": "", "picked": false, "only": false },

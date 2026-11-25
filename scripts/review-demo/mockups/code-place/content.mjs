@@ -17,18 +17,16 @@ export function sidebar(pick = "") {
   const sel = (v) => pick === v;
   const branch = (v, repo, name, end, tip) => item(v, `${repo} · ${name}`, { start: icon("branch"), end, tip, selected: sel(v) });
   return `<prism-field type="search" variant="filter" label="Filter work and branches" placeholder="Filter work and branches" class="nav-filter"><prism-icon name="filter" slot="start" size="sm"></prism-icon></prism-field>
-  <prism-tree label="Code">${item("all", "All work and branches", { start: icon("code"), end: meta("7"), selected: sel("") })}</prism-tree>
-  ${heading("In progress", 2)}
+  <prism-tree label="Code">${item("all", "All work and branches", { start: icon("code"), end: meta("6"), selected: sel("") })}</prism-tree>
+  ${heading("In progress", 1)}
   <prism-tree label="In progress" branching>
-    ${item("i:retry", "Harden request retries", { start: status("in-progress", "In progress"), expanded: true, children: [
-      item("s:deadline", "Retry timed-out requests until a deadline", { start: phase("build", "Build"), end: `${agent("Claude Code")}${meta("4")}`, selected: sel("s:deadline"), tip: "api · claude/retry-deadline, from main · Claude Code · Opus 5.5 · 4 files changed" }),
-      item("s:metrics", "Report retry attempts as metrics", { start: phase("build", "Build"), end: `${flag("Waits")}${agent("Codex")}${meta("3")}`, tip: "api · codex/retry-metrics, from main · Codex · gpt-5.5 · waiting for you" })
+    ${item("i:retry", "Harden request retries", { start: status("in-progress", "In progress"), end: meta("8"), expanded: true, tip: "Harden request retries · In progress · 8 files changed", children: [
+      item("s:observe", "Observe retry behavior", { start: status("in-progress", "Split · In progress"), end: `${agent("Claude on vm")}${meta("4")}`, expanded: true, tip: "Observe retry behavior · api · codex/retry-metrics, from main · web · codex/retry-metrics, from develop · Claude on vm · 4 files changed", children: [
+        branch("b:metrics-api", "api", "codex/retry-metrics", meta("2"), "api · codex/retry-metrics, from main · Claude on vm · 2 files changed"),
+        branch("b:metrics-web", "web", "codex/retry-metrics", meta("2"), "web · codex/retry-metrics, from develop · Claude on vm · 2 files changed")
+      ].join("") }),
+      item("s:deadline", "Retry timed-out requests until a total deadline", { start: phase("design", "Design · In progress"), end: `${flag("Waits")}${agent("Michael on mbp")}${meta("5")}`, selected: sel("s:deadline"), tip: "Retry timed-out requests until a total deadline · api · claude/retry-deadline, from main · Claude Code · 5 files changed" })
     ].join("") })}
-    ${item("i:export", "Export activity reports", { start: status("in-progress", "In progress"), expanded: true, children:
-      item("s:download", "Download signed reports", { start: phase("build", "Build"), end: `${agent("Claude Code")}${meta("5")}`, expanded: true, tip: "Changes two repositories", children: [
-        branch("b:dl-api", "api", "claude/signed-download", meta("3"), "api · claude/signed-download, from main · 3 files"),
-        branch("b:dl-web", "web", "claude/signed-download", meta("2"), "web · claude/signed-download, from develop · 2 files")
-      ].join("") }) })}
   </prism-tree>
   ${heading("Other branches", 3)}
   <prism-tree label="Other branches">
@@ -41,7 +39,10 @@ export function sidebar(pick = "") {
 
 // The files tree: repositories at the top, component badges on the folders their workspace config declares.
 const comp = (name, tip = "") => `<prism-chip slot="end" class="cv-comp" tone="neutral"${tip ? ` tip="${esc(tip)}"` : ""}><prism-icon slot="start" name="layers" size="xs" aria-hidden="true"></prism-icon>${esc(name)}</prism-chip>`;
-const who = (...names) => `<span slot="end" class="cv-who">${names.map((n) => n === "Dana Kim" ? `<prism-avatar kind="person" name="Dana Kim" hue="2" size="sm"></prism-avatar>` : `<prism-avatar kind="agent" name="${n}" size="sm"></prism-avatar>`).join("")}</span>`;
+// The people marks: an owning slice's agent as the Code answers name it, its claim's host and model or Agent, and a person of a branch nobody owns.
+const PEOPLE = { "Dana Kim": 2, "5 people": 3 };
+const who = (...names) => `<span slot="end" class="cv-who">${names.map((n) => n in PEOPLE ? `<prism-avatar kind="person" name="${esc(n)}" hue="${PEOPLE[n]}" size="sm"></prism-avatar>` : `<prism-avatar kind="agent" name="${esc(n)}" size="sm"></prism-avatar>`).join("")}</span>`;
+const METRICS = "Claude Code · claude-sonnet-5-5";
 const folder = (label, inner, { end = "", open = true, repo = false, dim = false } = {}) => `<prism-tree-item label="${esc(label)}" value="${esc(label)}"${open ? " expanded" : ""}${dim ? ' class="cv-dim"' : ""}>${icon(repo ? "code" : "tree")}${end}${inner}</prism-tree-item>`;
 const file = (label, { end = "", selected = false, dim = false } = {}) => `<prism-tree-item label="${esc(label)}" value="${esc(label)}"${selected ? " selected" : ""}${dim ? ' class="cv-dim"' : ""}>${icon("file")}${end}</prism-tree-item>`;
 
@@ -51,30 +52,31 @@ export function filesTree({ only = false } = {}) {
   const api = folder("api", [
     folder("src", [
       folder("retry", [
-        f("strategy.ts", true, { end: `${flag("3 versions")}${who("Claude Code", "Codex")}`, selected: true }),
+        f("strategy.ts", true, { end: only ? `${flag("2 versions")}${who("Claude Code")}` : `${flag("3 versions")}${who("Claude Code", METRICS)}`, selected: true }),
         f("deadline.ts", true, { end: `${flag("New", "is-muted")}${who("Claude Code")}` }),
         f("legacy.ts", true, { end: `${flag("Removed", "is-muted")}${who("Claude Code")}` }),
-        f("metrics.ts", !only, { end: only ? "" : `${flag("New", "is-muted")}${who("Codex")}` }),
+        f("metrics.ts", !only, { end: only ? "" : `${flag("New", "is-muted")}${who(METRICS)}` }),
         f("backoff.ts", false, {})
       ].join(""), { end: comp("retry") }),
       folder("http", f("client.ts", true, { end: `${flag("2 versions")}${who("Claude Code")}` }), { end: comp("http-client") }),
-      only ? "" : folder("reports", "", { open: false, end: `${comp("reports")}${who("Claude Code")}` })
+      only ? "" : folder("reports", "", { open: false, end: comp("reports") })
     ].join("")),
     folder("docs", f("retries.feature", true, { end: `${flag("2 versions")}${who("Claude Code")}` })),
     f("package.json", false, {})
   ].join(""), { repo: true });
   const web = only ? "" : folder("web", [
     folder("packages", [
-      folder("reports", "", { open: false, end: `${comp("report-ui")}${who("Claude Code", "Dana Kim")}` }),
+      folder("reports", "", { open: false, end: `${comp("report-ui")}${who("Agent", "Dana Kim")}` }),
       folder("charts", "", { open: false, end: `${comp("charts", "Declared only on feature/report-table")}${flag("1 branch", "is-muted")}` }),
-      folder("shell", "", { open: false, end: comp("shell") })
+      folder("shell", "", { open: false, end: `${comp("shell")}${who("5 people")}` })
     ].join(""))
   ].join(""), { repo: true });
   const infra = only ? "" : folder("infra", "", { repo: true, open: false, end: comp("infra", "The whole repository is one component") });
   return `<prism-tree label="Files of every repository" class="cv-tree">${api}${web}${infra}</prism-tree>`;
 }
 
-const DIFF = [
+// The difference of each version of api/src/retry/strategy.ts from its fork on main: the deadline slice's, and the metrics slice's, which opens first on All work and branches because its slice comes first in the sidebar.
+const DEADLINE = [
   ["same", 1, 1, "export class RequestRetryStrategy {"],
   ["del", 2, null, "  constructor(private attempts = 3) {}"],
   ["add", null, 2, "  constructor(private attempts = 3, private deadlineMs = 10_000) {}"],
@@ -90,7 +92,24 @@ const DIFF = [
   ["same", 10, 11, "  }"],
   ["same", 11, 12, "}"]
 ];
-const diffTable = () => `<div class="diff-scroll cv-code"><table class="line-diff"><tbody>${DIFF.map(([op, a, b, t]) => `<tr class="diff-${op}"><td class="diff-num">${a ?? ""}</td><td class="diff-num">${b ?? ""}</td><td class="diff-text"><span class="diff-mark" aria-hidden="true">${op === "add" ? "+" : op === "del" ? "−" : " "}</span>${esc(t)}</td></tr>`).join("")}</tbody></table></div>`;
+const METRICS_DIFF = [
+  ["add", null, 1, "import { RetryMetrics } from \"./metrics\";"],
+  ["add", null, 2, ""],
+  ["same", 1, 3, "export class RequestRetryStrategy {"],
+  ["del", 2, null, "  constructor(private attempts = 3) {}"],
+  ["add", null, 4, "  constructor(private attempts = 3, private metrics = new RetryMetrics()) {}"],
+  ["same", 3, 5, ""],
+  ["same", 4, 6, "  shouldRetry(error: Error, attempt: number) {"],
+  ["same", 5, 7, "    return attempt < this.attempts && error.name === \"TimeoutError\";"],
+  ["same", 6, 8, "  }"],
+  ["same", 7, 9, ""],
+  ["same", 8, 10, "  delayFor(attempt: number) {"],
+  ["add", null, 11, "    this.metrics.retried(attempt);"],
+  ["same", 9, 12, "    return Math.min(2 ** attempt * 100, 2_000);"],
+  ["same", 10, 13, "  }"],
+  ["same", 11, 14, "}"]
+];
+const diffTable = (rows) => `<div class="diff-scroll cv-code"><table class="line-diff"><tbody>${rows.map(([op, a, b, t]) => `<tr class="diff-${op}"><td class="diff-num">${a ?? ""}</td><td class="diff-num">${b ?? ""}</td><td class="diff-text"><span class="diff-mark" aria-hidden="true">${op === "add" ? "+" : op === "del" ? "−" : " "}</span>${esc(t)}</td></tr>`).join("")}</tbody></table></div>`;
 
 const chip = (label, metaText, { pressed = false, start = "", tip = "" } = {}) => `<prism-chip interactive pressed="${pressed}"${tip ? ` tip="${esc(tip)}"` : ""}>${start}${esc(label)}<span slot="meta">${metaText}</span></prism-chip>`;
 export function fileView({ picked = false } = {}) {
@@ -98,12 +117,12 @@ export function fileView({ picked = false } = {}) {
   return `<div class="cv-file">
     <div class="cv-file-head"><span class="cv-path"><span class="cv-repo">api</span> / src/retry/strategy.ts</span><prism-chip tone="neutral" class="cv-comp"><prism-icon slot="start" name="layers" size="xs" aria-hidden="true"></prism-icon>retry</prism-chip></div>
     <div class="cv-versions" role="group" aria-label="Versions of this file">
-      ${chip("main", "base", { start: `<prism-icon slot="start" name="check-circle" size="xs"></prism-icon>`, tip: "The version on main · last changed 4 days ago" })}
-      ${chip("Retry timed-out requests…", `<span class="cv-add">+3</span> <span class="cv-del">−2</span> · verified`, { pressed: true, start: av("agent", "Claude Code"), tip: "api · claude/retry-deadline, from main · Claude Code · Opus 5.5" })}
-      ${picked ? "" : chip("Report retry attempts…", `<span class="cv-add">+4</span> <span class="cv-del">−1</span>`, { start: av("agent", "Codex"), tip: "api · codex/retry-metrics, from main · Codex · gpt-5.5" })}
+      ${chip("main", "base", { start: `<prism-icon slot="start" name="check-circle" size="xs"></prism-icon>`, tip: "The file on main" })}
+      ${picked ? "" : chip("Emit retry metrics", `<span class="cv-add">+4</span> <span class="cv-del">−1</span>`, { pressed: true, start: av("agent", METRICS), tip: `api · codex/retry-metrics, from main · ${METRICS}` })}
+      ${chip("Retry timed-out requests until a total deadline", `<span class="cv-add">+3</span> <span class="cv-del">−2</span> · verified`, { pressed: picked, start: av("agent", "Claude Code"), tip: "api · claude/retry-deadline, from main · Claude Code" })}
     </div>
-    ${picked ? "" : `<p class="cv-overlap"><prism-icon name="warning" size="xs" aria-hidden="true"></prism-icon><span>Report retry attempts also changes lines 2–4, so whichever merges second will conflict.</span></p>`}
-    ${diffTable()}
+    ${picked ? "" : `<p class="cv-overlap"><prism-icon name="warning" size="xs" aria-hidden="true"></prism-icon><span>Retry timed-out requests until a total deadline also changes lines 2–2, so whichever merges second will conflict.</span></p>`}
+    ${diffTable(picked ? DEADLINE : METRICS_DIFF)}
   </div>`;
 }
 
@@ -111,7 +130,7 @@ export function page({ picked = false, only = false, mode = "both" } = {}) {
   if (mode === "file") return `<div class="cv-ide cv-one"><section class="cv-view"><prism-button size="sm" variant="ghost" class="cv-back"><prism-icon name="back" size="xs" aria-hidden="true"></prism-icon><span>Files</span></prism-button>${fileView({ picked })}</section></div>`;
   return `<div class="cv-ide${mode === "tree" ? " cv-one" : ""}">
     <aside class="cv-tree-pane">
-      <div class="cv-tree-tools">${picked ? `<p class="cv-scope">Showing what <b>Retry timed-out requests until a deadline</b> changes</p>` : ""}<prism-segmented label="Files" value="${only ? "touched" : "all"}"><prism-option value="all"${only ? "" : " selected"}>All files</prism-option><prism-option value="touched"${only ? " selected" : ""}>Touched</prism-option></prism-segmented></div>
+      <div class="cv-tree-tools">${picked ? `<p class="cv-scope">Showing what <b>Retry timed-out requests until a total deadline</b> changes</p>` : ""}<prism-segmented label="Files" value="${only ? "touched" : "all"}"><prism-option value="all"${only ? "" : " selected"}>All files</prism-option><prism-option value="touched"${only ? " selected" : ""}>Touched</prism-option></prism-segmented></div>
       ${filesTree({ only })}
     </aside>
     ${mode === "tree" ? "" : `<section class="cv-view">${fileView({ picked })}</section>`}
