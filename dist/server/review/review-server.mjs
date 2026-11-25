@@ -2,9 +2,9 @@
 import { createServer } from "node:http";
 import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup, openerOf } from "./public/views/tab-groups.js";
 import { randomBytes } from "node:crypto";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
+import { openBrowser } from "./browser-opener.mjs";
 import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT, pluginVersion } from "../plugin-root.mjs";
@@ -13,11 +13,11 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { listComponents } from "../workflow/components.mjs";
 import { artifactKinds, parseWorkflowConfig, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, recordStoreOf, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile, withRecordReads } from "../workflow/record-store.mjs";
-import { artifactStoreLocation, readStoreArtifact, readStoreArtifactAt, reviewStoreArtifact, reviewStoreArtifactAt, storeArtifactLocation, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
+import { ANSWERED_APPROVAL_KEPT_MS, answeredApprovalGates, artifactStoreLocation, pendingApprovalGates, readStoreArtifact, readStoreArtifactAt, reviewStoreArtifact, reviewStoreArtifactAt, storeArtifactLocation, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
 import { codeRefOf, parseCodeRef, resolveLinks } from "./artifact-links.mjs";
 import { checkoutsOnMachine, knownComponents, registeredRepositories } from "./workspaces.mjs";
 import { withoutCredentials } from "../workflow/remote-url.mjs";
-import { readWorkspaceName } from "../workflow/roadmap.mjs";
+import { readRoadmap, readWorkspaceName } from "../workflow/roadmap.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
@@ -38,6 +38,7 @@ import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
 import { createCachedValue } from "./cached-value.mjs";
+import { validUntil } from "../workflow/view-validity.mjs";
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(SERVER_DIR, "public");
 const VENDOR_DIR = path.join(PLUGIN_ROOT, "vendor", "plantuml");
@@ -188,6 +189,15 @@ async function storeArtifactEntries(projectRoot) {
 async function artifactStoreRefusal(projectRoot) {
   return (await describeRecordStore(projectRoot).catch(() => null))?.unavailable ?? null;
 }
+const actionListingReads = {
+  roadmap: (root) => rememberView(root, "actions-roadmap", () => readRoadmap(root)),
+  pendingApprovalGates: (root) => rememberView(root, "pending-approval-gates", () => pendingApprovalGates(root)),
+  answeredApprovalGates: (root) => rememberView(root, "answered-approval-gates", async () => {
+    const gates = await answeredApprovalGates(root);
+    for (const gate of gates) validUntil((Date.parse(gate.answer?.answeredAt ?? "") || 0) + ANSWERED_APPROVAL_KEPT_MS);
+    return gates;
+  })
+};
 async function checkoutArtifactsOf(projectRoot, store) {
   if (store.kind === "project" || store.unavailable) return {};
   return artifactsInCheckout(projectRoot);
@@ -560,20 +570,6 @@ function publicAsset(route) {
   const root = path.join(PUBLIC_DIR, folder);
   const file = path.join(root, ...parts);
   return isInside(root, file) ? { file, type: ASSET_TYPES.get(extension) } : null;
-}
-function openBrowser(url) {
-  const platform = process.platform;
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "rundll32" : "xdg-open";
-  const args = platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
-  try {
-    const child = spawn(command, args, { cwd: homedir(), detached: true, stdio: "ignore", windowsHide: true });
-    child.on("error", () => {
-    });
-    child.unref();
-    return true;
-  } catch {
-    return false;
-  }
 }
 async function findMissingTabs(tabs, available, entityResolves) {
   const missing = [];
@@ -991,7 +987,7 @@ function createProjectReview({
     const sources = /* @__PURE__ */ new Map();
     for (const member of await workspace?.checkouts?.() ?? []) {
       if (!member.repository) continue;
-      const files = await listReviewSources(member.root).catch(() => null);
+      const files = await reviewListing(member.root).get().then((listing) => listing.sources, () => null);
       if (files === null) continue;
       const known = sources.get(member.repository) ?? /* @__PURE__ */ new Set();
       for (const file of files) known.add(file);
@@ -1417,7 +1413,7 @@ function createProjectReview({
       send(response, 200, JSON.stringify(await inSessionOrder(() => updateSession(body))), "application/json; charset=utf-8");
     } else if (route === "/api/actions" && request.method === "GET") {
       try {
-        const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer, checkouts: await checkoutRoots() });
+        const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer, checkouts: await checkoutRoots(), reads: actionListingReads });
         sendJson(response, 200, { target: listed.target, writable: writableRequest(request), actions: listed.actions });
       } catch (error) {
         sendActionError(response, error);
@@ -1664,7 +1660,7 @@ async function startReviewServer(options = {}) {
       if (!opened) {
         review.releaseBrowserOpen();
       }
-      return { url, opened, ...review.getSession() };
+      return { url, opened, ...opened ? {} : { openFailed: true }, ...review.getSession() };
     },
     close() {
       review.closeViewers();

@@ -955,7 +955,7 @@ const headerStatus = (text) => typeof text === "string" ? /^Status:\s*(\S.*?)\s*
 async function loadFormats(projectRoot) {
   let artifacts = [];
   try {
-    artifacts = (await checkArtifacts({ projectRoot })).artifacts;
+    artifacts = await remember(projectRoot, `format-check:${projectRoot}`, async () => (await checkArtifacts({ projectRoot })).artifacts);
     await prime(projectRoot, marksKey(projectRoot), markLookup(artifacts));
   } catch {
     artifacts = [];

@@ -1,7 +1,7 @@
 // Generated from src/server/session/launched-sessions.mts by scripts/native-build/compile.mjs.
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { lstat, realpath, stat } from "node:fs/promises";
+import { lstat, readlink, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -163,8 +163,8 @@ async function migrationReadRoots(checkout, host, env = process.env, executable 
   const home = os.homedir();
   const hostHome = host === "codex" ? env.CODEX_HOME || path.join(home, ".codex") : env.CLAUDE_CONFIG_DIR || path.join(home, ".claude");
   const roots = [];
-  const install = executable ? await installFolder(executable) : null;
-  for (const candidate of [PRISM_ROOT, path.join(hostHome, "plugins", "cache"), ...install ? [install] : []]) {
+  const install = executable && path.isAbsolute(executable) ? await installFolders(executable) : [];
+  for (const candidate of [PRISM_ROOT, path.join(hostHome, "plugins", "cache"), ...install]) {
     let real;
     try {
       real = await realpath(candidate);
@@ -178,17 +178,33 @@ async function migrationReadRoots(checkout, host, env = process.env, executable 
   }
   return roots;
 }
-async function installFolder(executable) {
+async function installFolders(executable) {
+  const folders = /* @__PURE__ */ new Set();
+  let current = path.resolve(executable);
+  for (let hops = 0; hops < 40; hops += 1) {
+    const parts2 = current.split(path.sep);
+    let link = -1;
+    for (let index = 1; index < parts2.length && link < 0; index += 1) {
+      const prefix = parts2.slice(0, index + 1).join(path.sep) || path.sep;
+      if ((await lstat(prefix).catch(() => null))?.isSymbolicLink()) link = index;
+    }
+    if (link < 0) break;
+    const holder = parts2.slice(0, link).join(path.sep) || path.sep;
+    folders.add(holder);
+    const target = await readlink(parts2.slice(0, link + 1).join(path.sep)).catch(() => null);
+    if (target === null) return [];
+    current = path.resolve(holder, target, ...parts2.slice(link + 1));
+  }
   let real;
   try {
     real = await realpath(executable);
   } catch {
-    return null;
+    return [];
   }
   const parts = real.split(path.sep);
   const modules = parts.lastIndexOf("node_modules");
-  if (modules >= 0 && parts[modules + 1]?.startsWith("@")) return parts.slice(0, modules + 2).join(path.sep);
-  return path.dirname(real);
+  folders.add(modules >= 0 && parts[modules + 1]?.startsWith("@") ? parts.slice(0, modules + 2).join(path.sep) : path.dirname(real));
+  return [...folders];
 }
 async function launchSession({ checkout, subject, host, coordinator, access = "full", readRoots = [], answeredGate = null, env }) {
   const resolved = await resolveHost(host, env);

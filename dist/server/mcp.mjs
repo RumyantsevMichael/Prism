@@ -204,6 +204,7 @@ async function requestedGroup(argumentsValue) {
   const model = callIsMainAgent() ? await readAgentModel(holder).catch(() => null) : null;
   return { group: argumentsValue.group, by: { holder, ...claimHost() ? { host: claimHost() } : {}, ...model ? { model } : {} } };
 }
+const OPEN_FAILED_TEXT = "Prism could not open the user's browser on this machine, so no review tab that can make changes opened; the Prism log names each opener that failed. Tell the user that this URL opens a tab that can only read, so they answer its gates in the conversation.";
 function reviewContent(url, review) {
   const fallback = review.privateServer?.();
   return fallback ? `Human review URL: ${url}
@@ -1861,7 +1862,8 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   }
   if (name === "present_review") {
     const opened = await review.open(requestedTabs(argumentsValue), await requestedGroup(argumentsValue));
-    return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, ...await reviewSessionContent(review), ...privateServerContent(review) } };
+    return { content: [{ type: "text", text: `${reviewContent(opened.url, review)}${opened.openFailed ? `
+${OPEN_FAILED_TEXT}` : ""}` }], structuredContent: { ...opened, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "list_reviewable_artifacts") {
     const artifacts = await listArtifacts(review.projectRoot);

@@ -70,7 +70,7 @@ async function appBackedReview(client, projectRoot, { startSession, openBrowser:
     open: (tabs, { group, by } = {}) => viaApp(async () => {
       const answer = await client.present(projectRoot, { tabs: normalizeTabs(tabs), ...group === void 0 ? {} : { group }, ...by ? { by } : {}, open: true });
       const opened = answer.open ? Boolean(await browserOpener(withWriteGrant(answer.url, answer.writeGrant))) : false;
-      return { url: answer.url, opened, ...answer.session };
+      return { url: answer.url, opened, ...answer.open && !opened ? { openFailed: true } : {}, ...answer.session };
     }, (review) => review.open(tabs, { ...group === void 0 ? {} : { group }, ...by ? { by } : {} })),
     viewerCount: async () => {
       if (!session && !former.length) return 1;
@@ -174,7 +174,7 @@ async function startWorkspacesReview({ env = process.env, openBrowser: browserOp
   try {
     const answer = await client.presentRoot();
     const opened = answer.open ? Boolean(await browserOpener(withWriteGrant(answer.url, answer.writeGrant))) : false;
-    return { url: answer.url, opened };
+    return { url: answer.url, opened, ...answer.open && !opened ? { openFailed: true } : {} };
   } finally {
     await client.close();
   }

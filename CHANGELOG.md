@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.34.0](https://github.com/RumyantsevMichael/Prism/compare/v0.33.0...v0.34.0) (2026-11-25)
+
+
+### Added
+
+* **review:** name a gate's work as a row under its question ([#470](https://github.com/RumyantsevMichael/Prism/issues/470)) ([176a818](https://github.com/RumyantsevMichael/Prism/commit/176a818b5e90c85859ce4ff1dfce8fc3283897a7)), closes [#454](https://github.com/RumyantsevMichael/Prism/issues/454)
+
+
+### Fixed
+
+* judge an accepted design's test examples against its frozen tests ([#473](https://github.com/RumyantsevMichael/Prism/issues/473)) ([4639841](https://github.com/RumyantsevMichael/Prism/commit/463984157476375794b5c9b58866184b2e197d67)), closes [#472](https://github.com/RumyantsevMichael/Prism/issues/472)
+* **launch:** let Codex migration runs start on macOS installs ([#457](https://github.com/RumyantsevMichael/Prism/issues/457)) ([20ce2d7](https://github.com/RumyantsevMichael/Prism/commit/20ce2d7afebfdac4471d93be3ecc96c4767bf2fb)), closes [#59](https://github.com/RumyantsevMichael/Prism/issues/59)
+* load a browser test page again when a network change broke it ([#463](https://github.com/RumyantsevMichael/Prism/issues/463)) ([a524408](https://github.com/RumyantsevMichael/Prism/commit/a524408543283eb9ce533294c79d1551f70e246e)), closes [#262](https://github.com/RumyantsevMichael/Prism/issues/262)
+* **review:** report a browser that never opened and say why a tab is read-only ([#469](https://github.com/RumyantsevMichael/Prism/issues/469)) ([713aa90](https://github.com/RumyantsevMichael/Prism/commit/713aa906cdc035259965dbdd3f2f9dfca909e2f8))
+* stop the review app's idle rebuild loop and repeated reads ([#464](https://github.com/RumyantsevMichael/Prism/issues/464)) ([29db9d7](https://github.com/RumyantsevMichael/Prism/commit/29db9d75cfcfe6abca39620f3ea721264cb328f0)), closes [#418](https://github.com/RumyantsevMichael/Prism/issues/418)
+* wait for the Codex deferred hold's renewal instead of a fixed sleep ([#459](https://github.com/RumyantsevMichael/Prism/issues/459)) ([8493de6](https://github.com/RumyantsevMichael/Prism/commit/8493de6bd46d54250fb9630d6999fbfa06608c95)), closes [#458](https://github.com/RumyantsevMichael/Prism/issues/458)
+
 ## [0.33.0](https://github.com/RumyantsevMichael/Prism/compare/v0.32.0...v0.33.0) (2026-11-24)
 
 

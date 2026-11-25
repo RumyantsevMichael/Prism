@@ -257,6 +257,7 @@ export {
   checkFrozenTests,
   designProblems,
   digestFrozenTests,
+  frozenDigest,
   frozenTestContent,
   installFrozenTests,
   latestDependentsRun,

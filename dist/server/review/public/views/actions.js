@@ -3,6 +3,15 @@ import { badge, escapeHtml } from "./util.js";
 import { coalesce } from "./poller.js";
 import { createRunChoices, createRunOptionsReader, HOST_HINT, hostFieldOf, hostLeader, isRunAction, isRunField, runFieldsFixed } from "./run-choices.js";
 const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
+const READ_ONLY_REASONS = {
+  link: "It was opened from a review link, and only a tab that Prism opens itself can make changes.",
+  grant: "The link that Prism opened it with was already used or was more than two minutes old.",
+  ended: "Its write session ended, because the review app restarted."
+};
+let readOnlyReason = "link";
+function noteReadOnlyReason(reason) {
+  if (reason in READ_ONLY_REASONS) readOnlyReason = reason;
+}
 const STALE_MESSAGE = "Someone changed this since you opened it; it now shows the current value.";
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const normalized = (value) => typeof value === "string" ? value.trim() ? value.trim() : null : Array.isArray(value) ? value.length ? value : null : value ?? null;
@@ -86,7 +95,9 @@ function valueText(action, input = currentInput(action)) {
   return isRecord(action.value) ? Object.values(action.value).filter((item) => item !== null).join(", ") : String(action.value);
 }
 function readOnlyNotice() {
-  return `<p class="notice action-notice" role="note">${escapeHtml(READ_ONLY_NOTICE).replace("prism review", "<code>prism review</code>")}</p>`;
+  const [first, ...rest] = READ_ONLY_NOTICE.split(". ");
+  const text = `${first}. ${READ_ONLY_REASONS[readOnlyReason]} ${rest.join(". ")}`;
+  return `<p class="notice action-notice" role="note">${escapeHtml(text).replace("prism review", "<code>prism review</code>")}</p>`;
 }
 const keyOf = (target, action) => `${target}|${action.id}`;
 let sequence = 0;
@@ -774,11 +785,13 @@ function mountInitiativeSettings(slot, { target, eyebrow, ctx }) {
 }
 export {
   READ_ONLY_NOTICE,
+  READ_ONLY_REASONS,
   STALE_MESSAGE,
   actionFormState,
   createActionList,
   currentInput,
   mountInitiativeSettings,
+  noteReadOnlyReason,
   readOnlyNotice,
   requestInput,
   shownActionEntries,

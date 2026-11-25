@@ -95,15 +95,20 @@ const PHASE_KINDS = /* @__PURE__ */ new Set(["visual-review", "correctness"]);
 function gateHead(item, ctx, time) {
   const phase = PHASE_KINDS.has(item.kind) ? gatePhase(item) : null;
   const tag = phase !== null && phase < PHASES.length ? `<prism-phase variant="tag" phase="${PHASES[phase][0]}">${escapeHtml(PHASE_GATES[PHASES[phase][0]])}</prism-phase>` : "";
-  return `<div class="gate-chips">${tag}${kindChip(item)}${when(time, "attention-time gate-time")}</div>
+  return `<div class="gate-chips">${kindChip(item)}${tag}${when(time, "attention-time gate-time")}</div>
     <h3 class="gate-question">${escapeHtml(item.question)}</h3>
-    ${item.kind === "approval" ? "" : gateWork(item, ctx)}`;
+    ${item.kind === "approval" ? servedWork(item, ctx) : gateWork(item, ctx)}`;
+}
+function workRow(initiative, slice, phase, extra = "") {
+  const tag = phase !== null && phase < PHASES.length ? `<prism-phase slot="kind" phase="${PHASES[phase][0]}">${escapeHtml(PHASES[phase][1])}</prism-phase>` : "";
+  const row = slice ? `<prism-row wrap${tag ? " stack" : ""} icon="layers" tone="accent">${slice}<span slot="description">Slice of ${initiative}</span>${tag}</prism-row>` : `<prism-row wrap icon="roadmap" tone="neutral">${initiative}<span slot="description">Initiative</span></prism-row>`;
+  return `<div class="prism-rows gate-work${extra}" role="list" aria-label="Work">${row}</div>`;
 }
 function gateWork(item, ctx) {
   if (!item.initiative) return "";
-  const parts = [artifactLink(`initiative:${item.initiative.id}`, ctx, item.initiative.title)];
-  if (item.slice) parts.push(artifactLink(`slice:${item.initiative.id}/${item.slice.slug}`, ctx, item.slice.title));
-  return `<p class="gate-work">${parts.join('<span class="crumb-separator" aria-hidden="true">\u203A</span>')}</p>`;
+  const initiative = artifactLink(`initiative:${item.initiative.id}`, ctx, item.initiative.title);
+  const slice = item.slice ? artifactLink(`slice:${item.initiative.id}/${item.slice.slug}`, ctx, item.slice.title) : null;
+  return workRow(initiative, slice, item.slice && !PHASE_KINDS.has(item.kind) ? gatePhase(item) : null);
 }
 const ASKER_STATES = {
   waiting: { label: "Waits for your answer", icon: "check-circle", tone: "success", tip: () => "Waits for your answer. This session is waiting on this question and picks up your answer within a minute or so." },
@@ -148,12 +153,6 @@ function sendTo(item) {
   const asker = item.asker;
   if (!asker?.known) return "";
   return `<prism-avatar class="gate-send-to" kind="agent" size="sm" name="${escapeHtml(askerName(asker))}" tip="${escapeHtml(`Your answer goes to ${askerName(asker)}`)}"${asker.state === "waiting" ? " live" : ""}></prism-avatar>`;
-}
-function gateSteps(item) {
-  if (!PHASE_KINDS.has(item.kind)) return "";
-  const current = gatePhase(item);
-  if (current === null) return "";
-  return `<prism-stepper class="gate-steps" label="Where this slice is in the workflow">${PHASES.map(([phase, label], index) => `<prism-step phase="${phase}" state="${index < current ? "done" : index === current ? "current" : "upcoming"}">${label}</prism-step>`).join("")}</prism-stepper>`;
 }
 function gateContext(item, ctx) {
   if (!item.context) return "";
@@ -250,10 +249,10 @@ function servedWork(item, ctx) {
   const work = item.workItem;
   if (!work?.initiative) return "";
   const { initiative, slice } = work;
-  const unknown = (id, why) => `<span class="approval-work-part"><code class="approval-path" data-code-subject>${escapeHtml(id)}</code> <span class="muted">${why}</span></span>`;
-  const parts = [initiative.known ? `<span class="approval-work-part">${artifactLink(`initiative:${initiative.id}`, ctx, initiative.title)}</span>` : unknown(initiative.id, "not on the roadmap yet")];
-  if (slice) parts.push(initiative.known && slice.known ? `<span class="approval-work-part">${artifactLink(`slice:${initiative.id}/${slice.slug}`, ctx, slice.title)}</span>` : unknown(slice.slug, "no slice yet"));
-  return `<span class="approval-work">${parts.join('<span class="approval-work-separator" aria-hidden="true">\u203A</span>')}</span>`;
+  const unknown = (id, why) => `<span class="approval-work-part"><span data-code-subject>${escapeHtml(id)}</span> <span class="muted">${why}</span></span>`;
+  const named = initiative.known ? artifactLink(`initiative:${initiative.id}`, ctx, initiative.title) : unknown(initiative.id, "not on the roadmap yet");
+  const part = slice ? initiative.known && slice.known ? artifactLink(`slice:${initiative.id}/${slice.slug}`, ctx, slice.title) : unknown(slice.slug, "no slice yet") : null;
+  return workRow(named, part, null, " approval-work");
 }
 function approvalDocument(item, ctx) {
   const path = item.artifact.path;
@@ -270,7 +269,6 @@ function approvalSubject(item, ctx) {
   return `${keyValues([
     ["Document", approvalDocument(item, ctx)],
     ["Scope", chip(escapeHtml(scope))],
-    ["Asked for", servedWork(item, ctx)],
     ["Approving records", change]
   ])}
     ${item.ambiguous ? `<p class="notice">Another pending approval holds this question's id, so an answer cannot tell which file it approves and is refused. The agent asks again for the file it means.</p>` : ""}
@@ -298,7 +296,6 @@ function gateDetail(item, ctx) {
   return `<article class="gate attention-item gate-${escapeHtml(item.kind)}" aria-label="${escapeHtml(GATE_LABELS[item.kind] ?? "Question")}">
     <header class="gate-head">
       ${gateHead(item, ctx, item.askedAt)}
-      ${gateSteps(item)}
     </header>
     <div class="gate-body">
       <div class="gate-main">

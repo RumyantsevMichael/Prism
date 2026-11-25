@@ -32,7 +32,8 @@ function reasonOf(type, target) {
   if (type === "9p" || type === "virtiofs") return "virtual";
   return "network";
 }
-const skipped = (relative) => relative.split(/[\\/]/).some((segment) => SKIPPED.has(segment));
+const transient = (name) => name.endsWith(".lock") || name.startsWith(".") && name.endsWith(".tmp");
+const skipped = (relative) => relative.split(/[\\/]/).some((segment) => SKIPPED.has(segment)) || transient(path.basename(relative));
 const gitHead = (root) => new Promise((resolve) => {
   execFile("git", ["-C", root, "rev-parse", "--verify", "--quiet", "HEAD"], { timeout: 1e4, windowsHide: true }, (error, stdout) => resolve(error ? "" : stdout.trim()));
 });
@@ -46,7 +47,7 @@ async function listing(folder, lines, relative = "") {
   }
   entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
   for (const entry of entries) {
-    if (SKIPPED.has(entry.name)) continue;
+    if (SKIPPED.has(entry.name) || !entry.isDirectory() && transient(entry.name)) continue;
     const child = relative ? `${relative}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
       lines.push(`${folder}\0${child}\0d`);
@@ -57,23 +58,41 @@ async function listing(folder, lines, relative = "") {
     }
   }
 }
-async function folderListing(folder, lines, relative = "") {
-  const info = await lstat(path.join(folder, relative)).catch(() => null);
-  lines.push(`${folder}\0${relative}\0${info ? info.mtimeMs : "gone"}`);
-  let entries;
-  try {
-    entries = await readdir(path.join(folder, relative), { withFileTypes: true });
-  } catch {
+async function folderListing(folder, lines, details, relative = "") {
+  const absolute = path.join(folder, relative);
+  const info = await lstat(absolute).catch(() => null);
+  if (!info) {
+    lines.push(`${folder}\0${relative}\0gone`);
+    details.delete(absolute);
     return;
   }
-  entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-  for (const entry of entries) {
-    if (entry.isDirectory() && !SKIPPED.has(entry.name)) await folderListing(folder, lines, relative ? `${relative}/${entry.name}` : entry.name);
+  let entries;
+  try {
+    entries = await readdir(absolute, { withFileTypes: true });
+  } catch {
+    lines.push(`${folder}\0${relative}\0unreadable`);
+    return;
   }
+  const kept = details.get(absolute);
+  if (kept && kept.mtime === info.mtimeMs) lines.push(kept.line);
+  else {
+    const own = [];
+    for (const entry of entries) {
+      if (SKIPPED.has(entry.name) || entry.isDirectory() || transient(entry.name)) continue;
+      const file = await lstat(path.join(absolute, entry.name)).catch(() => null);
+      own.push(`${entry.name}\0${file ? `${file.size}\0${file.mtimeMs}` : "gone"}`);
+    }
+    const line = `${folder}\0${relative}\0${createHash("sha256").update(own.sort().join("\n")).digest("hex")}`;
+    details.set(absolute, { mtime: info.mtimeMs, line });
+    lines.push(line);
+  }
+  const folders = entries.filter((entry) => entry.isDirectory() && !SKIPPED.has(entry.name)).map((entry) => entry.name).sort();
+  lines.push(`${folder}\0${relative}\0folders\0${folders.join("\0")}`);
+  for (const name of folders) await folderListing(folder, lines, details, relative ? `${relative}/${name}` : name);
 }
-async function quickSignatureOf(targets) {
+async function quickSignatureOf(targets, details = /* @__PURE__ */ new Map()) {
   const lines = [];
-  for (const folder of targets.folders) await folderListing(folder, lines);
+  for (const folder of targets.folders) await folderListing(folder, lines, details);
   for (const file of targets.files) {
     const info = await lstat(file).catch(() => null);
     lines.push(`file\0${file}\0${info ? `${info.size}\0${info.mtimeMs}` : "gone"}`);
@@ -293,7 +312,7 @@ function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVerifyMs =
     state.targets = targets;
     const unwatched = anyUnwatched(state) ? unwatchedOf(state) : none();
     state.partialSignature = await signatureOf(unwatched);
-    state.quickSignature = await quickSignatureOf(unwatched);
+    state.quickSignature = await quickSignatureOf(unwatched, state.folderDetails);
     state.checkedAt = now();
     state.partialAt = state.checkedAt;
   }
@@ -303,18 +322,18 @@ function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVerifyMs =
       const signature2 = await signatureOf(unwatched);
       if (state.partialSignature !== null && signature2 !== state.partialSignature) state.version += 1;
       state.partialSignature = signature2;
-      state.quickSignature = await quickSignatureOf(unwatched);
+      state.quickSignature = await quickSignatureOf(unwatched, state.folderDetails);
       state.partialAt = now();
       return;
     }
-    const signature = await quickSignatureOf(unwatched);
+    const signature = await quickSignatureOf(unwatched, state.folderDetails);
     if (state.quickSignature !== null && signature !== state.quickSignature) state.version += 1;
     state.quickSignature = signature;
   }
   async function current(root) {
     let state = roots.get(root);
     if (!state) {
-      state = { version: 0, watchers: [], watched: /* @__PURE__ */ new Set(), reasons: /* @__PURE__ */ new Map(), targetsKey: null, targets: null, signature: null, partialSignature: null, quickSignature: null, checkedAt: -Infinity, partialAt: -Infinity, checking: null, targetsOf: () => targetsOf(root) };
+      state = { version: 0, watchers: [], watched: /* @__PURE__ */ new Set(), reasons: /* @__PURE__ */ new Map(), folderDetails: /* @__PURE__ */ new Map(), targetsKey: null, targets: null, signature: null, partialSignature: null, quickSignature: null, checkedAt: -Infinity, partialAt: -Infinity, checking: null, targetsOf: () => targetsOf(root) };
       roots.set(root, state);
     }
     if (now() - state.checkedAt >= watchedVerifyMs || !state.targets) {
@@ -353,5 +372,6 @@ function createViewVersions({ targetsOf, verifyMs = VERIFY_MS, watchedVerifyMs =
 export {
   VERIFY_MS,
   WATCHED_VERIFY_MS,
-  createViewVersions
+  createViewVersions,
+  transient
 };

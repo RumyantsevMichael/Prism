@@ -19,7 +19,7 @@ import { DEFAULT_PLACE, PLACES, placeNamed } from "./views/places.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createAgentsMenu } from "./views/agents-menu.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
-import { createActionList, readOnlyNotice, shownActionEntries } from "./views/actions.js";
+import { createActionList, noteReadOnlyReason, readOnlyNotice, shownActionEntries } from "./views/actions.js";
 import { createCodingAgents } from "./views/coding-agents.js";
 import { artifactChangesView, artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
@@ -78,6 +78,7 @@ let refreshIndex = null;
 const INDEX_CHECK_MS = 5e3;
 const INDEX_UNJOINED_MS = 1500;
 const ACTION_CHECK_MS = 4500;
+const ACTION_JOINED_MS = 3e4;
 let saveQueue = Promise.resolve();
 const STORE_REF = "store:";
 const isStoreRef = (path) => typeof path === "string" && path.startsWith(STORE_REF);
@@ -164,6 +165,12 @@ function appFetch(url, options = {}) {
     if (response.status === 404 && response.headers.get("X-Prism-Link") === "expired" && !expiredLink) {
       expiredLink = true;
       location.reload();
+    }
+    if (response.status === 403 && rest.headers?.["X-Prism-Write"]) {
+      void response.clone().json().then((answer) => {
+        if (answer?.code === "write_forbidden") endWriteSession();
+      }, () => {
+      });
     }
     return response;
   });
@@ -349,6 +356,13 @@ function writeSession() {
     return null;
   }
 }
+function endWriteSession() {
+  noteReadOnlyReason("ended");
+  try {
+    sessionStorage.removeItem(WRITE_SESSION_KEY);
+  } catch {
+  }
+}
 function writeHeaders() {
   const token = writeSession();
   return token ? { "X-Prism-Write": token } : {};
@@ -359,6 +373,7 @@ const actionApi = {
     const response = await appFetch(`./api/actions?target=${encodeURIComponent(target)}`, { cache: "no-store", headers: writeHeaders() });
     const listing = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(new Error(listing.message ?? "The actions could not be read."), { code: listing.code });
+    if (listing.writable === false && writeSession()) endWriteSession();
     return listing;
   },
   // An action that waits on the person, such as an approval confirmed in a native dialog, passes a longer deadlineMs.
@@ -409,7 +424,9 @@ async function takeWriteGrant() {
     const response = await appFetch("./api/write-session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grant }) });
     const answer = await response.json().catch(() => ({}));
     if (response.ok && typeof answer.token === "string") sessionStorage.setItem(WRITE_SESSION_KEY, answer.token);
+    else noteReadOnlyReason("grant");
   } catch {
+    noteReadOnlyReason("grant");
   }
 }
 function updateLocation(path, push = false) {
@@ -956,6 +973,7 @@ function onStreamEvent(name, data) {
     if (data?.artifact?.path && data.artifact.path === selectedPath) void showArtifact(selectedPath);
   } else if (name === "records") {
     refreshIndex?.();
+    if (connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
   } else if (name === "session") {
     sessionConnected = true;
     try {
@@ -3068,7 +3086,7 @@ async function initialize() {
     renderTabs();
     await showArtifact(selectedPath);
   }
-  void createPoller({ interval: ACTION_CHECK_MS, run: () => {
+  void createPoller({ interval: () => sessionConnected ? ACTION_JOINED_MS : ACTION_CHECK_MS, run: () => {
     if (connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
   } }).start();
   const indexPoller = createPoller({ interval: () => sessionConnected ? INDEX_CHECK_MS : INDEX_UNJOINED_MS, run: async () => {

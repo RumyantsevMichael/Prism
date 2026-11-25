@@ -12,6 +12,7 @@ import { isStoreWithoutCheckout, recordStoreOf } from "./record-store.mjs";
 import { runGit } from "./record-store-sync.mjs";
 import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { withoutCredentials } from "./remote-url.mjs";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readRoadmap } from "./roadmap.mjs";
 import { roadmapEntry, shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction, validEarlierName } from "./state.mjs";
@@ -116,9 +117,11 @@ async function listActionTargets({ projectRoot, kind, checkouts = null }) {
   if (kind !== "index") throw fail("unknown_target", "Only index targets are listed.");
   return { targets: (await indexComponents(projectRoot, checkouts)).map((component) => `index:${component.identity}`) };
 }
+const listingReads = new AsyncLocalStorage();
+const readsOf = () => listingReads.getStore() ?? {};
 async function initiativeExists(projectRoot, initiative, record) {
   if (record) return true;
-  const roadmap = await readRoadmap(projectRoot).catch(() => null);
+  const roadmap = await (readsOf().roadmap ?? readRoadmap)(projectRoot).catch(() => null);
   return Boolean(roadmap?.loaded?.record?.initiatives?.some((item) => item.id === initiative));
 }
 const storeRefusal = (error) => fail(error.code, error.message, { unavailable: true });
@@ -126,7 +129,7 @@ const storeRefused = (error) => error?.name === "ArtifactError" && typeof error.
 async function pendingApprovals(projectRoot, id) {
   const config = await readWorkflowConfig(projectRoot);
   if ((config.workspace?.store ?? null) === null) return [];
-  const gates = await pendingApprovalGates(projectRoot).catch((error) => {
+  const gates = await (readsOf().pendingApprovalGates ?? pendingApprovalGates)(projectRoot).catch((error) => {
     if (error?.code === "store_not_configured") return [];
     throw storeRefused(error) ? storeRefusal(error) : error;
   });
@@ -225,7 +228,7 @@ async function askerOf(projectRoot, key, env) {
 async function answeredApprovals(projectRoot, id) {
   const config = await readWorkflowConfig(projectRoot);
   if ((config.workspace?.store ?? null) === null) return [];
-  const gates = await answeredApprovalGates(projectRoot).catch((error) => {
+  const gates = await (readsOf().answeredApprovalGates ?? answeredApprovalGates)(projectRoot).catch((error) => {
     if (error?.code === "store_not_configured") return [];
     throw storeRefused(error) ? storeRefusal(error) : error;
   });
@@ -1028,10 +1031,10 @@ const prismIndexer = Object.freeze({
     void startIndexRebuild(projectRoot, { component: { identity: component.identity, folder: component.folder } });
   }
 });
-async function listActions({ projectRoot, target, indexer = prismIndexer, env = process.env, checkouts = null }) {
+async function listActions({ projectRoot, target, indexer = prismIndexer, env = process.env, checkouts = null, reads = null }) {
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
-  const context = await readTarget(projectRoot, parsed, indexer, void 0, env, checkouts);
+  const context = await listingReads.run(reads ?? {}, () => readTarget(projectRoot, parsed, indexer, void 0, env, checkouts));
   return { target, actions: definitionsFor(parsed.kind).filter((definition) => definition.listed !== false).map((definition) => view(definition, context)) };
 }
 const optionValues = (item) => item.options.map((entry) => entry.value);
