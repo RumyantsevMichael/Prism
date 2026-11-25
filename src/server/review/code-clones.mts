@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "
 import os from "node:os";
 import path from "node:path";
 import { ComponentError, readComponents } from "../workflow/components.mjs";
+import { ReadFailed, byteCache } from "./byte-cache.mjs";
 import { byCodePoint, createBranchReader, tipsKeyOf } from "./code-branches.mjs";
 import { runGit, runGitLines } from "../workflow/record-store-sync.mjs";
 import { storeIdentity } from "../workflow/remote-url.mjs";
@@ -121,46 +122,39 @@ async function blobBytes(folder: string, blob: any) {
 const literalGit = (folder: string, args: string[], { connects = false }: { connects?: boolean } = {}) =>
   runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: { ...NO_PROMPT_ENV, GIT_LITERAL_PATHSPECS: "1" }, connects });
 const isObject = (value: any) => typeof value === "string" && /^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(value);
-// How many tree listings of one clone the file reads keep, by commit and folder, which never change for a commit.
-const LISTINGS_KEPT = 256;
-// How many components declarations of one clone the file reads keep, by blob.
-const DECLARATIONS_KEPT = 256;
-// How many shown checks, differences without context, merge bases, and merge checks of one clone the file reads keep, each by the objects it names:
-// small answers, since a kept difference holds its hunks' lines only while it is kept and no text is kept.
-const KEPT = 1024;
-// How many commits' components declarations of one clone the file reads keep, a few names each, so a tree that many branches show reads each commit's declaration once.
-const COMMITS_KEPT = 8192;
-
-// Keep a value in a map of at most limit entries, dropping the one least recently kept.
-function keepAtMost<K, V>(map: Map<K, V>, key: K, value: V, limit: number) {
-  map.delete(key);
-  map.set(key, value);
-  while (map.size > limit) map.delete(map.keys().next().value!);
-  return value;
-}
+// The bytes of tree listings that the file reads of one clone keep, by commit and folder, which never change for a commit:
+// a listing is about 220 bytes of memory for each entry, so a folder of 200000 entries, about 44 MB, is read but never kept, and the kept listings never exceed this bound however many commits a file is read at.
+const LISTINGS_BYTES = 16 * 1024 * 1024;
+// The bytes of components declarations, by blob and by commit, and of small answers, the blob of one path at one commit, whether a blob is shown, and a merge check,
+// that the file reads of one clone keep; each small answer is a few hundred bytes at most, so each cache holds a few thousand of them.
+const DECLARATIONS_BYTES = 4 * 1024 * 1024;
+const SMALL_BYTES = 1024 * 1024;
+// The estimated bytes of memory that a kept value holds.
+const jsonBytes = (value: any) => 2 * (JSON.stringify(value)?.length ?? 4) + 64;
+const listingBytes = (listed: { name: string }[]) => listed.reduce((sum, entry) => sum + 2 * entry.name.length + 220, 64);
 
 /**
  * The file reads of one clone that the Code place's files, versions, and differences need, given commits and blobs that the clone's branch model names
  * and paths that codeFolder accepts: tree listings and blobs at a commit read from trees alone, and a blob's bytes, a difference, or a merge check fetched only for the opened path.
+ * What it keeps is bounded by bytes, as LISTINGS_BYTES, DECLARATIONS_BYTES, and SMALL_BYTES state, and no text or difference is kept.
+ * A Git read that fails, such as a lazy fetch of a blob while the remote is unreachable, throws ReadFailed rather than answering as if the clone held nothing there,
+ * and no cache keeps it, so a later read runs Git again; run is the Git runner, which a test may replace.
  * Nothing is written outside a temporary folder that a merge check of a removed or absent side uses and deletes.
  */
-function cloneContents(folder: string, repository: string) {
-  const listings = new Map<string, any>();
-  const declarations = new Map<string, any>();
-  const shown = new Map<string, Promise<any>>();
-  const differences = new Map<string, Promise<any[] | null>>();
-  const merges = new Map<string, Promise<boolean | null>>();
-  const bases = new Map<string, Promise<string | null>>();
-  const atCommits = new Map<string, Promise<any>>();
+export function cloneContents(folder: string, repository: string, { run = literalGit }: { run?: typeof literalGit } = {}) {
+  const failed = (what: string) => new ReadFailed(`Prism could not read ${what} from its clone of ${repository} now, for example because its remote is unreachable for an object that the clone has not fetched yet, so it keeps no answer and reads again at the next request.`);
+  const listings = byteCache<{ name: string; type: string; blob: string | null }[]>(LISTINGS_BYTES, listingBytes);
+  const declarations = byteCache<any>(DECLARATIONS_BYTES, jsonBytes);
+  const atCommits = byteCache<any>(DECLARATIONS_BYTES, jsonBytes);
+  const blobs = byteCache<string | null>(SMALL_BYTES, jsonBytes);
+  const shown = byteCache<any>(SMALL_BYTES, jsonBytes);
+  const merges = byteCache<boolean | null>(SMALL_BYTES, jsonBytes);
   // The files and folders directly in a folder of a commit, "" for the root, as { name, type, blob }.
   async function entries(commit: string, below: string) {
     if (!isObject(commit)) return [];
-    const key = `${commit}\0${below}`;
-    const kept = listings.get(key);
-    if (kept) return keepAtMost(listings, key, kept, LISTINGS_KEPT);
-    const read = (async () => {
-      const listed = await literalGit(folder, ["ls-tree", "-z", commit, ...(below ? ["--", `${below}/`] : [])]);
-      if (!listed.ok) return [];
+    return listings.read(`${commit}\0${below}`, async () => {
+      const listed = await run(folder, ["ls-tree", "-z", commit, ...(below ? ["--", `${below}/`] : [])]);
+      if (!listed.ok) throw failed("a folder's entries");
       const prefix = below ? `${below}/` : "";
       return listed.stdout.toString("utf8").split("\0").filter(Boolean).flatMap((line) => {
         const tab = line.indexOf("\t");
@@ -169,65 +163,59 @@ function cloneContents(folder: string, repository: string) {
         if ((type !== "blob" && type !== "tree") || !file.startsWith(prefix) || file.slice(prefix.length).includes("/")) return [];
         return [{ name: file.slice(prefix.length), type: type === "tree" ? "folder" : "file", blob: type === "blob" ? object : null }];
       });
-    })();
-    keepAtMost(listings, key, read, LISTINGS_KEPT);
-    return read;
+    });
   }
-  // The blob of a file at a commit, or null where the commit holds no file there.
+  // The blob of a file at a commit, or null where the commit holds no file there, read as that one path, so no read lists the folder that holds it.
   async function blobOf(commit: string | null, file: string) {
     if (!commit || !isObject(commit)) return null;
-    const slash = file.lastIndexOf("/");
-    const found = (await entries(commit, slash < 0 ? "" : file.slice(0, slash))).find((entry: any) => entry.name === file.slice(slash + 1) && entry.type === "file");
-    return found?.blob ?? null;
+    return blobs.read(`${commit}\0${file}`, async () => {
+      const listed = await run(folder, ["ls-tree", "-z", commit, "--", file]);
+      if (!listed.ok) throw failed("a file's object");
+      const line = listed.stdout.toString("utf8").split("\0").find((item) => item.slice(item.indexOf("\t") + 1) === file);
+      if (!line) return null;
+      const [, type, object] = line.slice(0, line.indexOf("\t")).split(" ");
+      return type === "blob" && isObject(object) ? object : null;
+    });
   }
-  // A blob's text: { text, lines } for a shown file, { withheld: "binary" | "too_large" } for one the review app does not show, or null when it cannot be read.
+  // A blob's text: { text, lines } for a shown file, { withheld: "binary" | "too_large" } for one the review app does not show, or null for a value that names no object.
   async function read(blob: string) {
     if (!isObject(blob)) return null;
-    const size = await literalGit(folder, ["cat-file", "-s", blob], { connects: true });
-    if (!size.ok) return null;
+    const size = await run(folder, ["cat-file", "-s", blob], { connects: true });
+    if (!size.ok) throw failed("a file's content");
     if (Number(size.text) > SOURCE_SIZE_LIMIT) return { withheld: "too_large" };
-    const bytes = await literalGit(folder, ["cat-file", "blob", blob], { connects: true });
-    if (!bytes.ok || bytes.stdout.length > SOURCE_SIZE_LIMIT) return null;
+    const bytes = await run(folder, ["cat-file", "blob", blob], { connects: true });
+    if (!bytes.ok) throw failed("a file's content");
+    if (bytes.stdout.length > SOURCE_SIZE_LIMIT) return { withheld: "too_large" };
     if (bytes.stdout.includes(0)) return { withheld: "binary" };
     const text = bytes.stdout.toString("utf8");
     return { text, lines: text === "" ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0) };
   }
-  // Whether the review app shows a blob, kept by blob: { lines } for a shown file, { withheld } for one it does not show, or null when it cannot be read.
+  // Whether the review app shows a blob, kept by blob: { lines } for a shown file, { withheld } for one it does not show, or null for a value that names no object.
   async function shownOf(blob: string) {
-    if (shown.has(blob)) return keepAtMost(shown, blob, shown.get(blob)!, KEPT);
-    const looked = read(blob).then((text) => (text === null ? null : "withheld" in text ? { withheld: text.withheld } : { lines: text.lines as number }));
-    keepAtMost(shown, blob, looked, KEPT);
-    return looked;
+    return shown.read(blob, () => read(blob).then((text) => (text === null ? null : "withheld" in text ? { withheld: text.withheld } : { lines: text.lines as number })));
   }
-  // Git's difference of two blobs that the caller found shown as hunks { before: [from, count], after: [from, count], lines }, or null when Git cannot diff them:
+  // Git's difference of two blobs that the caller found shown as hunks { before: [from, count], after: [from, count], lines }, or null for a value that names no object:
   // when whole, with lines context lines, enough to cover every unchanged line, and each hunk's lines "+", "-", or " " and its text;
-  // otherwise without context and without lines, kept by the two blobs.
+  // otherwise without context and with each hunk's lines empty. Nothing is kept.
   async function diff(before: string, after: string, { whole = false, lines = 0 }: { whole?: boolean; lines?: number } = {}): Promise<any[] | null> {
     if (!isObject(before) || !isObject(after)) return null;
-    const key = `${before}\0${after}`;
-    if (!whole) {
-      if (differences.has(key)) return keepAtMost(differences, key, differences.get(key)!, KEPT);
-      return keepAtMost(differences, key, diff(before, after, { whole: true, lines: 0 }).then((hunks) => hunks?.map(({ before: from, after: to }) => ({ before: from, after: to, lines: [] })) ?? null), KEPT);
-    }
-    const listed = await literalGit(folder, ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-algorithm=myers", `--unified=${lines}`, before, after], { connects: true });
-    if (!listed.ok) return null;
+    const listed = await run(folder, ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-algorithm=myers", `--unified=${whole ? lines : 0}`, before, after], { connects: true });
+    if (!listed.ok) throw failed("a file's difference");
     const hunks: any[] = [];
     for (const line of listed.stdout.toString("utf8").split("\n")) {
       const head = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
       if (head) hunks.push({ before: [Number(head[1]), head[2] === undefined ? 1 : Number(head[2])], after: [Number(head[3]), head[4] === undefined ? 1 : Number(head[4])], lines: [] });
-      else if (hunks.length && (line.startsWith("+") || line.startsWith("-") || line.startsWith(" "))) hunks.at(-1).lines.push(line);
+      else if (whole && hunks.length && (line.startsWith("+") || line.startsWith("-") || line.startsWith(" "))) hunks.at(-1).lines.push(line);
     }
     return hunks;
   }
   // Whether Git's three-way merge of a file conflicts, from the blobs of the merge base and of two sides, a null blob being a file absent there:
-  // true or false, or null when Git could not merge them or a side is not shown. Blobs are merged in Git's object store,
+  // true or false, or null when a side is not shown. Blobs are merged in Git's object store,
   // and a merge with an absent side, or by a Git without merge-file --object-id, writes the three texts to a temporary folder that it deletes.
   async function conflicts(base: string | null, first: string | null, second: string | null) {
-    const key = `${base ?? ""}\0${first ?? ""}\0${second ?? ""}`;
-    if (merges.has(key)) return keepAtMost(merges, key, merges.get(key)!, KEPT);
-    const checked = (async () => {
+    return merges.read(`${base ?? ""}\0${first ?? ""}\0${second ?? ""}`, async () => {
       if (base && first && second) {
-        const merged = await literalGit(folder, ["merge-file", "-p", "-q", "--object-id", first, base, second], { connects: true });
+        const merged = await run(folder, ["merge-file", "-p", "-q", "--object-id", first, base, second], { connects: true });
         if (merged.ok) return false;
         if (merged.code > 0 && merged.code < 128) return true;
       }
@@ -237,37 +225,24 @@ function cloneContents(folder: string, repository: string) {
       try {
         const files = ["first", "base", "second"].map((name) => path.join(temporary, name));
         await Promise.all(files.map((file, index) => writeFile(file, texts[index] as string, { mode: 0o600 })));
-        const merged = await literalGit(temporary, ["merge-file", "-p", "-q", ...files]);
+        const merged = await run(temporary, ["merge-file", "-p", "-q", ...files]);
         if (merged.ok) return false;
-        return merged.code > 0 && merged.code < 128 ? true : null;
+        if (merged.code > 0 && merged.code < 128) return true;
+        throw failed("a merge check");
       } finally {
         await rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       }
-    })();
-    keepAtMost(merges, key, checked, KEPT);
-    return checked;
-  }
-  // The merge base of two commits, or null when they share none.
-  async function mergeBase(first: string, second: string) {
-    if (!isObject(first) || !isObject(second)) return null;
-    const key = `${first}\0${second}`;
-    if (bases.has(key)) return keepAtMost(bases, key, bases.get(key)!, KEPT);
-    const found = literalGit(folder, ["merge-base", first, second]).then((listed) => (listed.ok && isObject(listed.text.split("\n")[0]) ? listed.text.split("\n")[0] : null));
-    keepAtMost(bases, key, found, KEPT);
-    return found;
+    });
   }
   // The components that a commit's .prism/workflow.md declares, as { declared: [{ name, folder }], file } with file false when the commit holds none,
   // or null when it cannot be read or declares them wrongly.
   async function components(commit: string): Promise<{ declared: { name: string; folder: string }[]; file: boolean } | null> {
-    if (atCommits.has(commit)) return keepAtMost(atCommits, commit, atCommits.get(commit)!, COMMITS_KEPT);
-    return keepAtMost(atCommits, commit, declaredAt(commit), COMMITS_KEPT);
+    return atCommits.read(commit, () => declaredAt(commit));
   }
   async function declaredAt(commit: string) {
     const blob = await blobOf(commit, ".prism/workflow.md");
     if (!blob) return { declared: [], file: false };
-    const kept = declarations.get(blob);
-    if (kept) return keepAtMost(declarations, blob, kept, DECLARATIONS_KEPT);
-    const declared = (async () => {
+    return declarations.read(blob, async () => {
       const text = await read(blob);
       if (!text || !("text" in text)) return null;
       try { return { declared: readComponents(parseWorkflowConfig(text.text as string)).declared.map((component: any) => ({ name: component.name, folder: component.folder })), file: true }; }
@@ -275,18 +250,18 @@ function cloneContents(folder: string, repository: string) {
         if (error instanceof ComponentError) return null;
         throw error;
       }
-    })();
-    keepAtMost(declarations, blob, declared, DECLARATIONS_KEPT);
-    return declared;
+    });
   }
-  return { repository, entries, blobOf, read, shownOf, diff, conflicts, mergeBase, components };
+  return { repository, entries, blobOf, read, shownOf, diff, conflicts, components };
 }
 
 /**
  * The code content of one app folder: which repositories of which workspace have it on, each one's clone, and what the clones answer.
  * Every change and fetch of one clone runs one at a time, and the set of repositories with code content on is saved in the app folder after each change.
+ * Whenever any fetch or clone, whether a workspace's fetch or one that a Code request started, changes a clone's branch tips or default branch,
+ * onTipsMoved is called once for each workspace with code content on from that clone, after the fetch has ended.
  */
-export async function createCodeClones({ directory }: { directory: string }) {
+export async function createCodeClones({ directory, onTipsMoved = () => {} }: { directory: string; onTipsMoved?: (workspace: any) => void }) {
   const codeDirectory = path.join(directory, CODE);
   const savedFile = path.join(directory, SAVED);
   // Each entry is { workspace, repository, remote, clone, state, message, fetchedAt }, with clone the folder name below code/ and state on or unreachable.
@@ -367,24 +342,42 @@ export async function createCodeClones({ directory }: { directory: string }) {
     return { ok: true };
   }
 
-  // Bring one repository's clone up to date, cloning it when it is not there yet, and record whether its remote could be reached.
-  function refresh(entry: any) {
+  // The key of a clone's branch tips and default branch, "" while it has no clone.
+  async function tipsOf(folder: string) {
+    if (!(await exists(folder))) return "";
+    const head = await git(folder, ["symbolic-ref", "--quiet", "HEAD"]);
+    return tipsKeyOf(head.ok ? head.text.trim() : "", await branchesOf(folder));
+  }
+
+  // Bring one repository's clone up to date, cloning it when it is not there yet, and record whether its remote could be reached,
+  // answering whether the fetch changed the clone's branch tips or default branch.
+  function refresh(entry: any): Promise<boolean> {
     attempts.set(entry, Date.now());
     const clone = entry.clone;
     fetching.set(clone, (fetching.get(clone) ?? 0) + 1);
+    let moved = false;
     return serial(entry.clone, async () => {
       const cloned = await exists(folderOf(entry));
+      const before = await tipsOf(folderOf(entry));
       const outcome = cloned ? await fetchInto(entry) : await cloneInto(entry);
-      if (!entries.includes(entry)) return;
+      // A fetch that fails may still have moved some tips, so the tips are compared whatever its outcome.
+      moved = (await tipsOf(folderOf(entry))) !== before;
+      if (!entries.includes(entry)) return moved;
       if (outcome.ok) Object.assign(entry, { state: "on", message: null, fetchedAt: new Date().toISOString() });
       else Object.assign(entry, { state: "unreachable", message: cloned
         ? `Prism could not fetch the code of ${entry.repository}, so it shows what it fetched last: ${outcome.message}`
         : `Prism could not clone the code of ${entry.repository} and tries again at the next fetch: ${outcome.message}` });
       await save();
+      return moved;
     }).finally(() => {
       attempts.set(entry, Date.now());
       if (fetching.get(clone) === 1) fetching.delete(clone);
       else fetching.set(clone, fetching.get(clone)! - 1);
+      // The workspaces hear of moved tips once the fetch has ended, so a page that asks again reads the new tips rather than an answer held while the fetch ran.
+      if (!moved) return;
+      for (const workspace of new Set(entries.filter((item) => item.clone === clone).map((item) => item.workspace))) {
+        try { onTipsMoved(workspace); } catch { /* A listener's failure never fails the fetch. */ }
+      }
     });
   }
 
@@ -455,16 +448,7 @@ export async function createCodeClones({ directory }: { directory: string }) {
 
     /** Fetch every repository of a workspace whose code content is on, answering whether any fetch changed a clone's branch tips or default branch. */
     async fetchAll(workspace: any) {
-      const tipsOf = async (entry: any) => {
-        if (!(await exists(folderOf(entry)))) return "";
-        const head = await git(folderOf(entry), ["symbolic-ref", "--quiet", "HEAD"]);
-        return tipsKeyOf(head.ok ? head.text.trim() : "", await branchesOf(folderOf(entry)));
-      };
-      const changed = await Promise.all(entries.filter((entry) => entry.workspace === workspace).map(async (entry) => {
-        const before = await tipsOf(entry);
-        await refresh(entry);
-        return (await tipsOf(entry)) !== before;
-      }));
+      const changed = await Promise.all(entries.filter((entry) => entry.workspace === workspace).map((entry) => refresh(entry)));
       return changed.some(Boolean);
     },
 
@@ -556,7 +540,7 @@ export async function createCodeClones({ directory }: { directory: string }) {
       const fetchIfDue = () => {
         if (freshMs === null || demanded.has(entry) || branchReaders.get(folder)?.reading || Date.now() - (attempts.get(entry) ?? 0) <= freshMs) return;
         const started = Date.now();
-        const done = refresh(entry).catch(() => {}).finally(() => demanded.delete(entry));
+        const done = refresh(entry).then(() => {}, () => {}).finally(() => demanded.delete(entry));
         demanded.set(entry, { done, started });
       };
       fetchIfDue();

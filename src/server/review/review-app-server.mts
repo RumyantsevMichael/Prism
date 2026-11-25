@@ -134,7 +134,9 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   // The workspaces a person added from a store URL, which stay listed until the person removes them, and when each one's own page was last opened.
   const added = await createAddedWorkspaces({ directory });
   // The repositories whose code content a person turned on, each with a blobless clone in the app folder's code/, which every workspace fetch also fetches.
-  const code = await createCodeClones({ directory });
+  // Any fetch that moves a clone's branch tips, whether the workspace's own or one that a Code request started, changes the Code place's answers,
+  // so the open pages of each workspace with that clone's code content on hear of it and redraw.
+  const code = await createCodeClones({ directory, onTipsMoved: (id: any) => workspaces.get(id)?.review?.notify("code", {}) });
   const addedUsage = new Map();
   let openGrantedAt = -Infinity;
   // Recency is a counter rather than a clock, so projects touched within one millisecond keep their order.
@@ -306,8 +308,8 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   function makeView({ id, kind, identity, urls, root }: { id: string; kind: any; identity: string; urls: any; root: string }) {
     const view: any = { id, kind, identity, urls, usedAt: addedUsage.get(id) ?? 0, review: null, watch: null, storeRoot: null, get root() { return this.review!.projectRoot; } };
     view.watch = watchWorkspace({ base: () => syncedClone(view), label: () => remoteLabel(view.urls[0]) ?? view.identity, intervalMs: workspaceFetchMs, maxMs: workspaceFetchMaxMs, fetchCode: async () => {
-      // A fetch that moves a branch tip changes the Code place's answers, so the workspace's open pages hear of it and redraw.
-      if (await code.fetchAll(view.id)) view.review?.notify("code", {});
+      // A fetch that moves a branch tip raises the code event through the clones' onTipsMoved.
+      await code.fetchAll(view.id);
     } });
     view.review = createProjectReview({ projectRoot: root, baseUrl: `http://127.0.0.1:${port}${viewerPrefix()}/w/${view.id}`, instance, appVersion: pluginVersion,
       onViewer: (sendNotice: any) => {

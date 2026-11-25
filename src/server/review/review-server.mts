@@ -23,7 +23,8 @@ import { readIndexingStatus } from "../repository-intelligence/index-status.mjs"
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, viewWatching, loadAttention, loadClaims, loadDeclaredView, loadFormatMark, loadHeldClaims, loadEntity, loadNavigation, loadInitiativeView, loadRecordChanges, parseEntityRef, placedInitiatives, searchRecords, slicePresence, workGroups } from "./workspace-model.mjs";
 import { isQuiet, placeAnswer } from "./code-place.mjs";
-import { fileDiff, fileVersions, listFiles, scopeLines } from "./code-versions.mjs";
+import { ReadFailed, keptAnswers } from "./byte-cache.mjs";
+import { answerKey, fileDiff, fileVersions, listFiles, readSlot, scopeLines, stopping, withVerified } from "./code-versions.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { branchOwners, ownerKey } from "./code-owners.mjs";
 import { frozenTestFile, verificationLog } from "./verification-view.mjs";
@@ -1304,19 +1305,24 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return files;
   }
 
-  // How long a request for a folder's entries or a file's versions waits for its reads, which go on in the background past it and keep what they read,
-  // so a folder or file that many branches show answers 202 preparing until its reads are done rather than holding the request.
+  // How long a request for a folder's entries or a file's versions waits for its reads, which go on in the background past it,
+  // so a folder or file that many branches show answers 202 preparing until its reads are done rather than holding the request;
+  // each finished answer is kept for its key, everything of the branch models that it reads, so the request after a 202 answers it without reading again,
+  // with FILES_KEPT_BYTES of answers kept in all besides the latest one, and at most FILES_RUNS reads going on at once, each of at most PARALLEL Git processes,
+  // with a read for a newer key of the same slot, its route, scope, quiet settings, and folder or path, as after tips move, stopping the earlier read at its next Git step;
+  // a top-level listing that marks a repository's failed read is never kept, so a later request reads that repository again.
   const FILES_WAIT_MS = 5000;
-  const fileReads = new Map<string, Promise<any>>();
-  // One read at a time for each key, which a later request with the same key joins: its answer, or null while it still runs after FILES_WAIT_MS.
-  async function boundedRead(key: string, read: () => Promise<any>) {
-    if (!fileReads.has(key)) fileReads.set(key, read().finally(() => fileReads.delete(key)));
-    let timer: NodeJS.Timeout | undefined;
-    const waited = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), FILES_WAIT_MS); });
-    const answer = await Promise.race([fileReads.get(key)!, waited]);
-    clearTimeout(timer);
-    return answer;
-  }
+  const FILES_KEPT_BYTES = 64 * 1024 * 1024;
+  const FILES_RUNS = 8;
+  const fileAnswers = keptAnswers({ waitMs: FILES_WAIT_MS, maxBytes: FILES_KEPT_BYTES, maxRuns: FILES_RUNS, keep: (answer) => !answer?.preparing && !answer?.entries?.some((entry: any) => entry.error) });
+  // A kept answer's read, or its failed Git read's error, which is answered as stated and never kept, so a later request reads again.
+  const readAnswer = async (key: string, work: (signal: AbortSignal) => Promise<any>, slot: string) => {
+    try { return await fileAnswers.read(key, work, slot); }
+    catch (error) {
+      if (error instanceof ReadFailed) return { error };
+      throw error;
+    }
+  };
 
   // The Code place's files tree, a file's versions, and a version's difference, for the lines of work of the scope that a request names.
   async function serveCodeFiles(response: any, route: string, url: any, shown: { quietDays: number; showQuiet: boolean }) {
@@ -1335,7 +1341,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const contents = state.models.has(repository) ? await contentsOf(repository) : null;
       if (!contents) return fail({ status: 404, code: "code_off", message: `The code content of ${repository} is off or not fetched yet, so this machine keeps no clone of it.` });
       if (!file) return fail({ status: 404, code: "file_unavailable", message: "The path must name a file below the repository's root." });
-      const answer: any = await fileDiff(state, repository, file, url.searchParams.get("branch") ?? "", contents);
+      const answer: any = await fileDiff(state, repository, file, url.searchParams.get("branch") ?? "", contents).catch((error) => {
+        if (error instanceof ReadFailed) return { error };
+        throw error;
+      });
       if (answer.error) fail(answer.error);
       else sendJson(response, 200, answer);
       return;
@@ -1347,8 +1356,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const named = url.searchParams.get("folder");
       const folder = named === null || named === "" ? null : workspace.code.folder(named);
       if (named !== null && named !== "" && !folder) return fail({ status: 400, code: "invalid_request", message: "The folder must be a repository or a path below a repository's root." });
-      const key = JSON.stringify(["files", folder, lines.map((line) => [line.repository, line.name, line.branch.commit, line.owners]), state.answer.repositories]);
-      const listed: any = await boundedRead(key, () => listFiles(state, lines, folder, contentsOf));
+      const key = JSON.stringify(["files", folder, answerKey(state, lines), state.answer.repositories, state.answer.preparing]);
+      const listed: any = await readAnswer(key, (signal) => listFiles(state, lines, folder, async (name) => {
+        const contents = await contentsOf(name);
+        return contents && stopping(contents, signal);
+      }), readSlot("files", scope, shown, folder));
       if (listed === null) sendJson(response, 202, { state: "preparing" });
       else if (listed.error) fail(listed.error);
       else if (listed.preparing) sendJson(response, 202, { state: "preparing" });
@@ -1362,12 +1374,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const contents = state.models.has(repository) ? await contentsOf(repository) : null;
     if (!contents) return fail({ status: 404, code: "code_off", message: `The code content of ${repository} is off or not fetched yet, so this machine keeps no clone of it.` });
     if (!file) return fail({ status: 404, code: "file_unavailable", message: "The path must name a file below the repository's root." });
-    // One read at a time for each file and set of shown tips, which a later request joins.
-    const key = JSON.stringify(["versions", repository, file, lines.map((line) => [line.repository, line.name, line.branch.commit, line.owners])]);
-    const answer: any = await boundedRead(key, () => fileVersions(state, lines, repository, file, contents, (owner) => verifiedFiles(repository, owner)));
+    // One read at a time for each file and key of what it reads, which a later request joins.
+    // The verified marks are read for each request, so a run that a store sync brings shows on an answer kept for unchanged tips.
+    const key = JSON.stringify(["versions", repository, file, answerKey(state, lines)]);
+    const answer: any = await readAnswer(key, (signal) => fileVersions(state, lines, repository, file, stopping(contents, signal)), readSlot("versions", scope, shown, repository, file));
     if (answer === null) sendJson(response, 202, { state: "preparing" });
     else if (answer.error) fail(answer.error);
-    else sendJson(response, 200, answer);
+    else sendJson(response, 200, await withVerified(answer, (owner: any) => verifiedFiles(repository, owner)));
   }
 
   // The code routes of a workspace's page, which read the code clones Prism keeps and never answer a URL of a Git host.
@@ -1938,7 +1951,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         send(response, 404, "The item no longer exists in this project.");
         return;
       }
-      if (ref === "code" && workspace) {
+      if (parseEntityRef(ref)?.kind === "code" && workspace) {
         // The page leaves out when each clone was last fetched, so a fetch that brings nothing new does not redraw the page the person is reading.
         const repositories = (await codeRepositories()).map(({ name, code: { fetchedAt, ...code } }) => ({ name, code }));
         sendJson(response, 200, { ref, kind: "code", data: { repositories } });
