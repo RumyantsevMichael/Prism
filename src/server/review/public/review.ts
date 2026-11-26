@@ -92,6 +92,19 @@ const INDEX_UNJOINED_MS = 1500;
 // often while the event stream is down and seldom while it is joined, since a list read costs the server a read of every record it names.
 const ACTION_CHECK_MS = 4500;
 const ACTION_JOINED_MS = 30000;
+// An open Code page reads every open folder's listing and its open file again when a fetch moved a repository's branch tips, when the place's work and branches change,
+// and on an index check after the records changed; the other index checks read them again while the event stream is down, and otherwise every 30 s,
+// since every listing costs the server a read of each repository's branches, and a fetch, a record, or the place's answer names every change they show.
+const CODE_JOINED_MS = 30000;
+let codeCheckedAt = 0;
+let codeCheckAsked = false;
+
+function codeCheckDue() {
+  if (sessionConnected && !codeCheckAsked && Date.now() - codeCheckedAt < CODE_JOINED_MS) return false;
+  codeCheckAsked = false;
+  codeCheckedAt = Date.now();
+  return true;
+}
 let saveQueue = Promise.resolve();
 // A workspace's page names each store artifact by its store location, store:<location>, in its tabs, links, and URLs, never by a checkout's path:
 // a checkout path that a record view or an older link names opens as the store artifact it names.
@@ -1179,6 +1192,7 @@ function onStreamEvent(name: string, data: any) {
     if (data?.artifact?.path && data.artifact.path === selectedPath) void showArtifact(selectedPath);
   } else if (name === "records") {
     // The project's records changed, so the index, the open view, and the shown action lists are read again now rather than at the next check.
+    codeCheckAsked = true;
     refreshIndex?.();
     if (connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
   } else if (name === "code") {
@@ -1742,8 +1756,31 @@ function kitElement(tag: any, attributes: any = {}, text = "") {
   return node;
 }
 
+// The sidebar's rows by value as it drew them last, and the rows of the draw under way, which keeps a row the draw leaves as it was:
+// a redraw then moves that row rather than replacing it, so a reader of the sidebar, a screen reader among them, never meets a row that left the page while it still shows.
+let drawnRows = new Map<string, any>();
+let drawingRows: Map<string, any> | null = null;
+
+function keptRow(value: string, label: string, { selected, expanded, tip, href, meta, content, children }: any) {
+  const kept = drawingRows ? drawnRows.get(value) : null;
+  if (!kept || kept.rowContent !== content || kept.rowChildren.length !== children.length || kept.rowChildren.some((child: any, index: number) => child !== children[index])) return null;
+  const same = (name: string, wanted: any) => kept.getAttribute(name) === (wanted === null || wanted === undefined || wanted === "" ? null : String(wanted));
+  if (!same("label", label) || !same("tip", tip) || !same("href", href) || !same("meta", meta) || kept.hasAttribute("selected") !== Boolean(selected) || kept.hasAttribute("expanded") !== Boolean(expanded)) return null;
+  drawnRows.delete(value);
+  return kept;
+}
+
 function treeItem(value: any, label: string, { selected = false, expanded = false, start = [], end = [], children = [], tip = null, href = pageHref(value), meta = null }: any = {}) {
-  const item = document.createElement("prism-tree-item");
+  const content = JSON.stringify([start.map((node: any) => node.outerHTML ?? node.textContent), end.map((node: any) => node.outerHTML ?? node.textContent)]);
+  const kept = keptRow(String(value), label, { selected, expanded, tip, href, meta, content, children });
+  if (kept) {
+    drawingRows!.set(String(value), kept);
+    return kept;
+  }
+  const item: any = document.createElement("prism-tree-item");
+  item.rowContent = content;
+  item.rowChildren = children;
+  if (drawingRows && !drawingRows.has(String(value))) drawingRows.set(String(value), item);
   item.setAttribute("value", value);
   item.setAttribute("label", label);
   if (href) item.setAttribute("href", href);
@@ -2618,7 +2655,15 @@ function renderNavigation() {
   // A field of the place, such as Work's filter, is the same element after the render, so it keeps the focus and the caret it had.
   const field = document.activeElement?.closest?.("prism-field");
   const typing = field && navRoot!.contains(field) ? { field, start: (document!.activeElement as any).selectionStart, end: (document!.activeElement as any).selectionEnd } : null;
-  navRoot!.replaceChildren(...PLACE_NAVIGATION[place!.name]({ scope, entity }));
+  drawingRows = new Map();
+  let drawn;
+  try {
+    drawn = PLACE_NAVIGATION[place!.name]({ scope, entity });
+  } finally {
+    drawnRows = drawingRows;
+    drawingRows = null;
+  }
+  navRoot!.replaceChildren(...drawn);
   if (typing && navRoot!.contains(typing.field) && (typing.field as any).control) {
     (typing.field as any).control.focus();
     try {
@@ -3014,7 +3059,7 @@ function modeButtons(state: any, path: any) {
   });
 }
 
-async function showEntity(path: any) {
+async function showEntity(path: any, { check = false }: any = {}) {
   const response = await appFetch(`./api/entity?ref=${encodeURIComponent(path)}`, { cache: "no-store" });
   if (response.status === 404) {
     showMissing(path);
@@ -3031,8 +3076,8 @@ async function showEntity(path: any) {
   const snapshot = JSON.stringify(entity);
   if (path !== selectedPath) return;
   if (snapshot === lastSnapshot) {
-    // The Code page reads its tree and open file again on each check, since a push changes them without changing the page's own answer.
-    if (entity.kind === "code") refreshCodePage();
+    // The Code page reads its tree and open file again on a check that is due for it, since a push or a record changes them without changing the page's own answer.
+    if (entity.kind === "code" && (!check || codeCheckDue())) refreshCodePage();
     setBusy(false);
     return;
   }
@@ -3131,7 +3176,7 @@ function noteTouched(slice: string, answer: any) {
   if (currentPlace === "knowledge") renderNavigation();
 }
 
-async function showArtifact(path: any) {
+async function showArtifact(path: any, { check = false }: any = {}) {
   rememberSlice(path);
   await refreshContext(path);
   if (path !== selectedPath) {
@@ -3145,7 +3190,7 @@ async function showArtifact(path: any) {
   refreshHeld = false;
   // A code file's address opens the Code place's file view, which is the Code page with that file open.
   if (parseEntityRef(path) || isCodeRef(path)) {
-    await showEntity(path);
+    await showEntity(path, { check });
     return;
   }
   const response = await appFetch(`./api/artifact?${artifactQuery(path)}`, { cache: "no-store" });
@@ -3964,7 +4009,7 @@ async function initialize() {
         // A failed probe leaves the open view as it is rather than replacing it with an error.
         const panel = sidePanel.isOpen() ? sidePanel.refresh().catch(() => {}) : null;
         if (selectedPath) {
-          await showArtifact(selectedPath);
+          await showArtifact(selectedPath, { check: true });
         }
         await panel;
         // Knowledge's sidebar counts the remembered slice's records, which can change without the navigation changing; the Touched page counts them as it draws.

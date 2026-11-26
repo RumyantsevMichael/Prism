@@ -289,7 +289,7 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
   // The commits that the branches of a clone hold, by clone folder and branch tips, so a page that asks about many commits lists the history once.
   const heldCommits = new Map();
   async function commitsOf(folder: string) {
-    const tips = (await branchesOf(folder)).map((branch) => branch.commit).join(" ");
+    const tips = (await keptBranches(folder)).map((branch) => branch.commit).join(" ");
     const cached = heldCommits.get(folder);
     if (cached?.tips === tips) return cached.commits;
     // rev-list reads only commits the clone holds, so no question about a commit that no branch holds reaches the remote.
@@ -312,6 +312,27 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
   const demanded = new WeakMap<any, { done: Promise<void>; started: number }>();
   // How many fetches or clones of each clone folder are under way, whichever entry or request started them.
   const fetching = new Map<string, number>();
+  // The HEAD and branch tips of each clone folder as read since its latest fetch, clone, or removal ended, the only changes to a clone's refs, which all go through refresh and forget.
+  // Every open Code page asks for its place and for each open folder at once, and each request reads the refs of every repository,
+  // so between two fetches the requests share one read instead of each starting two Git processes per repository.
+  // While a fetch runs, the refs read before it stand, since the fetch may be moving the tips one branch at a time and keeps every commit they name; a read without them asks Git and is not kept.
+  const keptRefs = new Map<string, Promise<{ head: any; branches: { name: string; commit: string }[] }>>();
+  const readRefs = async (folder: string) => ({ head: await git(folder, ["symbolic-ref", "--quiet", "HEAD"]), branches: await branchesOf(folder) });
+  function refsOf(folder: string) {
+    let kept = keptRefs.get(folder);
+    if (!kept && fetching.has(path.basename(folder))) return readRefs(folder);
+    if (!kept) {
+      const read = readRefs(folder);
+      kept = read;
+      keptRefs.set(folder, read);
+      // A read that failed, as for a clone being replaced, is not kept, so the next request asks Git again.
+      read.then((refs) => { if (!refs.head.ok && keptRefs.get(folder) === read) keptRefs.delete(folder); }, () => { if (keptRefs.get(folder) === read) keptRefs.delete(folder); });
+    }
+    return kept;
+  }
+  // Copies, so no caller changes the kept branches of another.
+  const headOf = async (folder: string) => (await refsOf(folder)).head;
+  const keptBranches = async (folder: string) => (await refsOf(folder)).branches.map((branch) => ({ ...branch }));
 
   // Clone the remote into a temporary sibling that is renamed into place, so code/ never holds a partial clone, and a failed clone leaves no folder.
   async function cloneInto(entry: any) {
@@ -371,6 +392,7 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
       return moved;
     }).finally(() => {
       attempts.set(entry, Date.now());
+      keptRefs.delete(folderOf(entry));
       if (fetching.get(clone) === 1) fetching.delete(clone);
       else fetching.set(clone, fetching.get(clone)! - 1);
       // The workspaces hear of moved tips once the fetch has ended, so a page that asks again reads the new tips rather than an answer held while the fetch ran.
@@ -389,6 +411,7 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
     await serial(entry.clone, () => rm(folderOf(entry), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
     for (const key of defaultFiles.keys()) if (key.startsWith(`${folderOf(entry)}\0`)) defaultFiles.delete(key);
     heldCommits.delete(folderOf(entry));
+    keptRefs.delete(folderOf(entry));
     branchReaders.delete(folderOf(entry));
     fileReads.delete(folderOf(entry));
   }
@@ -396,7 +419,7 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
   // A repository's code state: off, on with its branches, or unreachable with Git's reason and the branches of the clone it fetched last, none when it never cloned.
   async function stateOf(entry: any) {
     if (!entry) return { state: "off" };
-    const branches = await exists(folderOf(entry)) ? await branchesOf(folderOf(entry)) : [];
+    const branches = await exists(folderOf(entry)) ? await keptBranches(folderOf(entry)) : [];
     if (entry.state === "unreachable") return { state: "unreachable", message: entry.message, branches, fetchedAt: entry.fetchedAt };
     return { state: "on", branches, fetchedAt: entry.fetchedAt };
   }
@@ -457,7 +480,7 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
       const base = await cloneOf(workspace, repository);
       if (!base) return null;
       const byPath = new Map();
-      for (const branch of await branchesOf(base)) {
+      for (const branch of await keptBranches(base)) {
         for (const entry of await treeEntries(base, branch.commit, folder)) {
           const key = `${entry.type}\0${entry.path}`;
           if (!byPath.has(key)) byPath.set(key, { path: entry.path, type: entry.type, branches: [] });
@@ -475,7 +498,7 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
     async file(workspace: any, repository: string, { branch = null, commit = null, path: file }: { branch?: string | null; commit?: string | null; path: any }) {
       const base = await cloneOf(workspace, repository);
       if (!base || typeof file !== "string" || codeFolder(file) === null || codeFolder(file) === "" || secretPath(file)) return null;
-      const branches = await branchesOf(base);
+      const branches = await keptBranches(base);
       let at = null;
       if (branch !== null) at = branches.find((item) => item.name === branch)?.commit ?? null;
       // Only a commit on a branch of the clone is read, so no read asks the remote for a commit that no branch holds.
@@ -500,6 +523,7 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
      * { state: "preparing" } while Prism still clones the repository or reads the branches of the clone's current tips and default branch in the background, or null without a clone.
      * When no fetch of the clone ran within freshMs, as on a workspace that no page has open, it starts one and waits for it up to FETCH_WAIT_MS from its start,
      * so an answer follows a push that the remote holds, a slow remote holds a request no longer than that, and an answer for the tips that the clone holds is never withheld;
+     * a fetch already under way, such as the one an open page's fetch timer started, is not followed by another, and its end tells the workspace when it moved the tips;
      * while any fetch runs on, it answers only an answer already read and starts no read, since the fetch may be moving the tips one branch at a time.
      * With waitMs, a read that this call leaves preparing is awaited up to waitMs from the end of that wait, so a small repository answers at once rather than on a later request.
      */
@@ -509,7 +533,7 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
       const folder = folderOf(entry);
       // A fetch waits while a read runs, since new tips would supersede it, and freshness counts from the end of the latest fetch, so a slow fetch is not followed by another at once.
       const fetchIfDue = () => {
-        if (freshMs === null || demanded.has(entry) || branchReaders.get(folder)?.reading || Date.now() - (attempts.get(entry) ?? 0) <= freshMs) return;
+        if (freshMs === null || demanded.has(entry) || fetching.has(entry.clone) || branchReaders.get(folder)?.reading || Date.now() - (attempts.get(entry) ?? 0) <= freshMs) return;
         const started = Date.now();
         const done = refresh(entry).then(() => {}, () => {}).finally(() => demanded.delete(entry));
         demanded.set(entry, { done, started });
@@ -523,8 +547,8 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
         clearTimeout(timer);
       }
       if (!(await exists(folder))) return null;
-      const head = await git(folder, ["symbolic-ref", "--quiet", "HEAD"]);
-      const tipsKey = tipsKeyOf(head.ok ? head.text.trim() : "", await branchesOf(folder));
+      const head = await headOf(folder);
+      const tipsKey = tipsKeyOf(head.ok ? head.text.trim() : "", await keptBranches(folder));
       if (!branchReaders.has(folder)) branchReaders.set(folder, createBranchReader(branchGit(folder)));
       const reader = branchReaders.get(folder)!;
       // A running fetch may be moving the tips one branch at a time, so while it runs only an answer already read goes out, and no read starts for tips it may still move.
@@ -565,7 +589,7 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
     async branchesHolding(workspace: any, repository: string, commit: string) {
       const base = await cloneOf(workspace, repository);
       if (!base || !isCommit(commit) || !(await commitsOf(base)).has(commit)) return null;
-      const head = await git(base, ["symbolic-ref", "--quiet", "HEAD"]);
+      const head = await headOf(base);
       const defaultBranch = head.ok && head.text.trim().startsWith(BRANCHES) ? head.text.trim().slice(BRANCHES.length) : null;
       const listed = await git(base, ["for-each-ref", "--format=%(refname)", "--contains", commit, BRANCHES]);
       if (!listed.ok) return null;
@@ -589,7 +613,7 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
     async defaultFile(workspace: any, repository: string, file: string) {
       const base = await cloneOf(workspace, repository);
       if (!base) return null;
-      const head = await git(base, ["symbolic-ref", "--quiet", "HEAD"]);
+      const head = await headOf(base);
       if (!head.ok || !head.text.startsWith(BRANCHES)) return null;
       return this.file(workspace, repository, { branch: head.text.slice(BRANCHES.length), path: file });
     },
@@ -598,9 +622,9 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
     async defaultFiles(workspace: any, repository: string) {
       const base = await cloneOf(workspace, repository);
       if (!base) return null;
-      const head = await git(base, ["symbolic-ref", "--quiet", "HEAD"]);
+      const head = await headOf(base);
       if (!head.ok || !head.text.startsWith(BRANCHES)) return null;
-      const commit = (await branchesOf(base)).find((item) => item.name === head.text.slice(BRANCHES.length))?.commit;
+      const commit = (await keptBranches(base)).find((item) => item.name === head.text.slice(BRANCHES.length))?.commit;
       if (!commit) return null;
       const key = `${base}\0${commit}`;
       if (!defaultFiles.has(key)) {
@@ -616,7 +640,7 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
       if (!base) return null;
       const found = new Map();
       const problems = [];
-      for (const branch of await branchesOf(base)) {
+      for (const branch of await keptBranches(base)) {
         const blob = await blobAt(base, branch.commit, ".prism/workflow.md");
         if (!blob) continue;
         const bytes = await blobBytes(base, blob);

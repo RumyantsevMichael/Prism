@@ -9,7 +9,8 @@
 //   { type: "event", name, data }          an event of the stream, whose data names the project page it belongs to
 //   { type: "joined", tab, stream }        a tab joined, so the leader leaves the stream for it once the tab's own lock is free
 
-const EVENTS = ["session", "action", "notice"];
+// Every event the server writes to a project page, so each tab hears a change to the records and a fetch that moved a repository's branch tips as its own stream would tell it.
+const EVENTS = ["session", "action", "notice", "records", "code"];
 const JOIN_RETRY_MS = 2000;
 
 function tabId() {
