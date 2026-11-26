@@ -48,12 +48,14 @@ test("a branches request answers the ready model at once while a fetch it starte
   const before = await ready("branches?repository=web");
   assert.equal(before.status, 200);
   // The clone's upload-pack marks that it started and waits until the test releases it, so a fetch hangs as it would on a remote that accepts a connection and never answers.
+  // It also ends once its folder is gone, so a test that ends early never leaves it running, and it marks that it ended, so the test waits for the fetch to end.
   const held = path.join(where.parent, "held");
   await mkdir(held, { recursive: true });
   const started = path.join(held, "started");
   const release = path.join(held, "release");
-  const waiter = path.join(held, "wait.mjs");
-  await writeFile(waiter, `import { existsSync, writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(started)}, "");\nconst timer = setInterval(() => { if (existsSync(${JSON.stringify(release)})) { clearInterval(timer); process.exitCode = 1; } }, 50);\n`);
+  const ended = path.join(held, "ended");
+  const waiter = path.join(where.parent, "wait.mjs");
+  await writeFile(waiter, `import { existsSync, writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(started)}, "");\nconst timer = setInterval(() => {\n  if (existsSync(${JSON.stringify(release)}) || !existsSync(${JSON.stringify(held)})) {\n    clearInterval(timer);\n    try { writeFileSync(${JSON.stringify(ended)}, ""); } catch {}\n    process.exitCode = 1;\n  }\n}, 50);\n`);
   const slash = (file) => file.split(path.sep).join("/");
   const clone = cloneOf(where);
   git(clone, "config", "remote.origin.uploadpack", `"${slash(process.execPath)}" "${slash(waiter)}"`);
@@ -76,6 +78,7 @@ test("a branches request answers the ready model at once while a fetch it starte
   } finally {
     git(clone, "config", "--unset", "remote.origin.uploadpack");
     await writeFile(release, "");
+    if (existsSync(started)) await waitFor(() => existsSync(ended), 20000, "the held upload-pack ends once released");
   }
   assert.equal((await ready("branches?repository=web")).status, 200, "the clone answers again once the fetch ends");
 });

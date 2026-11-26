@@ -28,6 +28,24 @@ const workspace = () => (shared ??= codePlaceWorkspace(suite).then(async (built)
   return { ...built, base: `${built.prism.viewer}/w/${built.id}`, grant: presented.json.writeGrant, browser: await launch(suite) };
 }));
 const TIMEOUT = { skip, timeout: 600000 };
+// Each test closes the pages it opened, since every open page reads its tree again after each push and check, and a dozen of them slow a Windows runner's later tests past their waits.
+test.afterEach(async () => {
+  const built = await shared?.catch(() => null);
+  for (const context of built?.browser.contexts() ?? []) await context.close();
+});
+
+// Windows refuses to rename a folder that a running Git process works in, as the server's fetch of a code remote does for a moment, so the rename is tried again for a while.
+async function moveFolder(from, to) {
+  const deadline = Date.now() + 30000;
+  for (;;) {
+    try {
+      return await rename(from, to);
+    } catch (error) {
+      if (!["EBUSY", "EPERM", "EACCES"].includes(error.code) || Date.now() > deadline) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
 
 const tree = (page) => page.getByRole("tree", { name: "Files of every repository" });
 const treeRow = (page, name) => tree(page).getByRole("treeitem", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`) }).first();
@@ -257,14 +275,14 @@ test("clauses 37 and 44: a repository or file that Prism cannot read now shows a
     return ["feature/nav", "feature/jitter"].every((name) => place?.branches?.some((line) => line.branch === name));
   }, 60000, "the pushed branches feature/nav and feature/jitter");
   const away = (name) => `${remotes[name].bare}.away`;
-  await rename(remotes.web.bare, away("web"));
-  await rename(remotes.api.bare, away("api"));
+  await moveFolder(remotes.web.bare, away("web"));
+  await moveFolder(remotes.api.bare, away("api"));
   let restored = false;
   const restore = async () => {
     if (restored) return;
     restored = true;
-    await rename(away("web"), remotes.web.bare);
-    await rename(away("api"), remotes.api.bare);
+    await moveFolder(away("web"), remotes.web.bare);
+    await moveFolder(away("api"), remotes.api.bare);
   };
   try {
     const page = await codePage();
