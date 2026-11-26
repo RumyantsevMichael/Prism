@@ -236,13 +236,15 @@ async function ownColumn(git: Git, commit: string, tips: string[], tipIndex: Map
  * with each branch { name, commit, committedAt, tip } in name order and tip its position in tips, and, by tip position, own(tip, default branch),
  * its merge commits that the default branch lacks, the position of the nearest tip of its first-parent history or -1, and own(tip, that nearest tip).
  * columns and pairs keep the counts that a base choice for the current owners read, so a later read reuses them.
- * It answers null when the clone names no default branch that it holds, and throws Superseded once live() is false.
+ * It answers null when the clone names no default branch that it holds, throws Superseded once live() is false,
+ * and throws an Error when Git cannot read HEAD or list the branches, as while another Git process rewrites HEAD on Windows, so no answer is kept for that failed read.
  */
 export async function readBranchFacts(git: Git, live: Live = () => true) {
   const head = await git(["symbolic-ref", "--quiet", "HEAD"]);
-  const headRef = head.ok ? head.text.trim() : "";
+  if (!head.ok) throw new Error("Git could not read the clone's HEAD.");
+  const headRef = head.text.trim();
   const listed = await git(["for-each-ref", "--format=%(refname)%00%(objectname)%00%(committerdate:unix)", BRANCHES]);
-  if (!listed.ok) return null;
+  if (!listed.ok) throw new Error("Git could not list the clone's branches.");
   const read = lines(listed.text).map((line) => {
     const [ref, commit, date] = line.split("\0");
     return { name: ref.slice(BRANCHES.length), commit, committedAt: new Date(Number(date) * 1000).toISOString(), tip: 0 };

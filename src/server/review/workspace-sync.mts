@@ -22,7 +22,7 @@ export function gitReason(message: any) {
 const iso = (time: any) => time === null ? null : new Date(time).toISOString();
 
 /**
- * The fetch timer of one workspace: { viewers(count), state(), stop() }.
+ * The fetch timer of one workspace: { viewers(count), state(), stop() }, where stop() answers once a fetch under way has ended.
  * base() answers the folder of the store's managed clone, or null while the workspace has no clone to sync, and label() names the store without credentials in messages.
  * viewers(count) passes the number of the workspace's connected pages; state() answers { state, lastSyncedAt, lastAttemptAt, nextFetchAt, message }, with state syncing only while a fetch runs before any fetch succeeded.
  * sync(base) runs one record store sync, which commits the app's own record writes, fetches and merges the upstream, and pushes.
@@ -120,10 +120,12 @@ export function watchWorkspace({ base, label, intervalMs = WORKSPACE_FETCH_MS, m
         message: failure
       };
     },
+    /** Stop the timer, answering once the fetch under way, if any, has ended, so no Git process of it still works in a folder that the caller removes next. */
     stop() {
       stopped = true;
       clearTimeout(timer);
       timer = null;
+      return Promise.resolve(running).then(() => {}, () => {});
     }
   };
 }

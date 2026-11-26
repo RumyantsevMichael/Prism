@@ -70,13 +70,23 @@ export async function registeredRemotes(folder: string) {
 const NO_PROMPT_ENV = { GIT_ASKPASS: "", SSH_ASKPASS: "", SSH_ASKPASS_REQUIRE: "never", GCM_INTERACTIVE: "never" };
 const NO_PROMPT_CONFIG = ["-c", "core.askPass=", "-c", "credential.interactive=false"];
 
+// Every Git command of a clone that has not ended yet, with the folder it runs in, so an app that closes waits for those in its own code folder,
+// since Windows refuses to remove or rename a folder or a file that a running Git process holds.
+const working = new Map<Promise<unknown>, string>();
+function tracked<T>(folder: string, command: Promise<T>) {
+  working.set(command, folder);
+  const end = () => { working.delete(command); };
+  command.then(end, end);
+  return command;
+}
+
 // One Git command in a clone, with the sanitized store environment and timeout, and never a password prompt.
 // A command that reads a blob may fetch it from the remote, so it says it connects, and its SSH command is the person's own in batch mode as a fetch's is.
-const git = (folder: string, args: string[], { connects = false, input }: any = {}) => runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, connects, ...(input !== undefined ? { input } : {}) });
+const git = (folder: string, args: string[], { connects = false, input }: any = {}) => tracked(folder, runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, connects, ...(input !== undefined ? { input } : {}) }));
 // A Git runner for a clone's branch reader, which streams a command's lines to line when the reader asks, so a listing it stops early is read no further,
 // and writes input, when given, to Git's standard input.
 const branchGit = (folder: string) => (args: string[], { line, maxRecord, input }: { line?: (line: string) => boolean; maxRecord?: number; input?: string } = {}) =>
-  line ? runGitLines(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, take: line, ...(maxRecord ? { maxRecord } : {}), ...(input !== undefined ? { input } : {}) }) : git(folder, args, { input });
+  line ? tracked(folder, runGitLines(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, take: line, ...(maxRecord ? { maxRecord } : {}), ...(input !== undefined ? { input } : {}) })) : git(folder, args, { input });
 
 // The branches of a clone, { name, commit } in code-point order of their names, as the branch reader sorts them.
 async function branchesOf(folder: string) {
@@ -120,7 +130,7 @@ async function blobBytes(folder: string, blob: any) {
 
 // The Git commands of a clone's file reads, whose paths Git takes literally, so no pathspec magic in a requested path widens what a read names.
 const literalGit = (folder: string, args: string[], { connects = false }: { connects?: boolean } = {}) =>
-  runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: { ...NO_PROMPT_ENV, GIT_LITERAL_PATHSPECS: "1" }, connects });
+  tracked(folder, runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: { ...NO_PROMPT_ENV, GIT_LITERAL_PATHSPECS: "1" }, connects }));
 const isObject = (value: any) => typeof value === "string" && /^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(value);
 // The bytes of tree listings that the file reads of one clone keep, by commit and folder, which never change for a commit:
 // a listing is about 220 bytes of memory for each entry, so a folder of 200000 entries, about 44 MB, is read but never kept, and the kept listings never exceed this bound however many commits a file is read at.
@@ -312,6 +322,9 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
   const demanded = new WeakMap<any, { done: Promise<void>; started: number }>();
   // How many fetches or clones of each clone folder are under way, whichever entry or request started them.
   const fetching = new Map<string, number>();
+  // The fetches and clones under way, which close waits for, and whether the app closed, after which no fetch starts.
+  const refreshing = new Set<Promise<boolean>>();
+  let closed = false;
   // The HEAD and branch tips of each clone folder as read since its latest fetch, clone, or removal ended, the only changes to a clone's refs, which all go through refresh and forget.
   // Every open Code page asks for its place and for each open folder at once, and each request reads the refs of every repository,
   // so between two fetches the requests share one read instead of each starting two Git processes per repository.
@@ -359,7 +372,11 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
     if (!fetched.ok) return { ok: false, message: reasonOf(fetched) };
     const head = await git(folder, ["ls-remote", "--symref", "origin", "HEAD"]);
     const named = /^ref: (refs\/heads\/\S+)\tHEAD$/m.exec(head.ok ? head.text : "")?.[1];
-    if (named) await git(folder, ["symbolic-ref", "HEAD", named]);
+    // HEAD is written only when the remote's HEAD moved, so a fetch never rewrites the file that a concurrent read of the clone opens, which Windows can refuse.
+    if (named) {
+      const current = await git(folder, ["symbolic-ref", "--quiet", "HEAD"]);
+      if (!current.ok || current.text.trim() !== named) await git(folder, ["symbolic-ref", "HEAD", named]);
+    }
     return { ok: true };
   }
 
@@ -373,11 +390,12 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
   // Bring one repository's clone up to date, cloning it when it is not there yet, and record whether its remote could be reached,
   // answering whether the fetch changed the clone's branch tips or default branch.
   function refresh(entry: any): Promise<boolean> {
+    if (closed) return Promise.resolve(false);
     attempts.set(entry, Date.now());
     const clone = entry.clone;
     fetching.set(clone, (fetching.get(clone) ?? 0) + 1);
     let moved = false;
-    return serial(entry.clone, async () => {
+    const run = serial(entry.clone, async () => {
       const cloned = await exists(folderOf(entry));
       const before = await tipsOf(folderOf(entry));
       const outcome = cloned ? await fetchInto(entry) : await cloneInto(entry);
@@ -401,6 +419,10 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
         try { onTipsMoved(workspace); } catch { /* A listener's failure never fails the fetch. */ }
       }
     });
+    refreshing.add(run);
+    const end = () => { refreshing.delete(run); };
+    run.then(end, end);
+    return run;
   }
 
   // Drop a repository's entry, and its clone once no other entry uses the same remote.
@@ -431,6 +453,17 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
   }
 
   return {
+    /**
+     * Start no fetch from now on, and answer once every fetch and clone under way and every Git command in the code folder has ended,
+     * so no Git process of the closed app still holds a file or folder that its caller removes next, which Windows refuses.
+     */
+    async close() {
+      closed = true;
+      await Promise.allSettled([...refreshing]);
+      const mine = () => [...working].filter(([, folder]) => folder === codeDirectory || folder.startsWith(`${codeDirectory}${path.sep}`)).map(([command]) => command);
+      for (let left = mine(); left.length; left = mine()) await Promise.allSettled(left);
+    },
+
     /** Turn a repository's code content on with the remote its registration lists first, clone or fetch it, and answer its code state. */
     async enable(workspace: any, repository: string, remote: any) {
       const identity = await storeIdentity(remote);

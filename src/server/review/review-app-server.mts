@@ -291,7 +291,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
 
   function dropView(view: any) {
     view.review.closeViewers();
-    view.watch.stop();
+    void view.watch.stop();
     workspaces.delete(view.id);
     pendingNotices.delete(view.id);
   }
@@ -999,13 +999,17 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   close = ({ handoff = false }: any = {}) => {
     closing ??= (async () => {
       clearInterval(sweep);
+      const fetches = [];
       for (const view of workspaces.values()) {
-        view.watch.stop();
+        fetches.push(view.watch.stop());
         view.review.closeViewers();
       }
       hub.close();
       server.closeAllConnections?.();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      // The app ends once its fetches and the Git commands of its code clones have ended, so no Git process it started still holds a file that its caller removes, which Windows refuses.
+      await Promise.all(fetches);
+      await code.close();
       // Only the lock holder touches the discovery file, so an app that lost its lock never removes the winner's.
       if (ownsLock) {
         if (handoff) await writeDiscovery(directory, { ...published, handoff: true, handedOffAt: new Date().toISOString() }).catch(() => {});
