@@ -547,8 +547,9 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
         clearTimeout(timer);
       }
       if (!(await exists(folder))) return null;
-      const head = await headOf(folder);
-      const tipsKey = tipsKeyOf(head.ok ? head.text.trim() : "", await keptBranches(folder));
+      // While a fetch runs, the answer is for the tips Git holds now rather than those read before it.
+      const { head, branches } = fetching.has(entry.clone) ? await readRefs(folder) : await refsOf(folder);
+      const tipsKey = tipsKeyOf(head.ok ? head.text.trim() : "", branches);
       if (!branchReaders.has(folder)) branchReaders.set(folder, createBranchReader(branchGit(folder)));
       const reader = branchReaders.get(folder)!;
       // A running fetch may be moving the tips one branch at a time, so while it runs only an answer already read goes out, and no read starts for tips it may still move.
