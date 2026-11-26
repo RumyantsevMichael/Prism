@@ -262,7 +262,8 @@ function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = nul
   const chosen = { ...model === null ? {} : { model }, ...provider === null ? {} : { modelProvider: provider } };
   const readOnlyPolicy = () => {
     const { profile, ...selected } = codexReadOnly(checkout, rootsOf(readRoots));
-    return { ...selected, config: { mcp_servers: { [MIGRATION_SERVER]: requiredServer(migrationServer) }, permissions: { [CODEX_READ_ONLY_PROFILE]: profile } } };
+    const server = { ...requiredServer(migrationServer), default_tools_approval_mode: "approve" };
+    return { ...selected, config: { mcp_servers: { [MIGRATION_SERVER]: server }, permissions: { [CODEX_READ_ONLY_PROFILE]: profile } } };
   };
   const policy = readOnly(access2) ? readOnlyPolicy() : { ...CODEX_POLICY, developerInstructions: LAUNCH_NOTE };
   if (!resume) return { method: "thread/start", params: { cwd: checkout, ...policy, ...chosen } };
@@ -329,10 +330,10 @@ function claudeInterrupt(requestId) {
 function codexInterruptRequest({ threadId, turnId }) {
   return { method: "turn/interrupt", params: { threadId, turnId } };
 }
-function resumeCommandOf(host, hostSessionId, env = process.env) {
+function resumeCommandOf(host, hostSessionId, env = process.env, { access: access2 = "full" } = {}) {
   if (!validHostSessionId(hostSessionId)) return null;
   if (host === "claude-code") return `claude --resume ${hostSessionId}`;
-  if (host === "codex") return `codex resume ${hostSessionId}`;
+  if (host === "codex") return `codex resume --sandbox ${readOnly(access2) ? "read-only" : CODEX_POLICY.sandbox} ${hostSessionId}`;
   const template = isAcpHost(host) ? acpHostDefinition(host, env)?.acp.resumeCommand : null;
   return template ? template.replaceAll("{session}", hostSessionId) : null;
 }

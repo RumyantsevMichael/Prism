@@ -1,9 +1,12 @@
 // Generated from src/server/review/code-clones.mts by scripts/native-build/compile.mjs.
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { ComponentError, readComponents } from "../workflow/components.mjs";
-import { runGit } from "../workflow/record-store-sync.mjs";
+import { ReadFailed, byteCache } from "./byte-cache.mjs";
+import { byCodePoint, createBranchReader, tipsKeyOf } from "./code-branches.mjs";
+import { runGit, runGitLines } from "../workflow/record-store-sync.mjs";
 import { storeIdentity } from "../workflow/remote-url.mjs";
 import { REPOSITORIES, portableRepositoryName } from "../workflow/repository-names.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
@@ -14,6 +17,7 @@ const CODE = "code";
 const SAVED = "code-content.json";
 const REGISTRATION_MAX_BYTES = 64 * 1024;
 const BRANCHES = "refs/heads/";
+const FETCH_WAIT_MS = 3e3;
 const BRANCHES_SHOWN = 5;
 const sha16 = (value) => createHash("sha256").update(value).digest("hex").slice(0, 16);
 const byText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
@@ -48,14 +52,24 @@ async function registeredRemotes(folder) {
 }
 const NO_PROMPT_ENV = { GIT_ASKPASS: "", SSH_ASKPASS: "", SSH_ASKPASS_REQUIRE: "never", GCM_INTERACTIVE: "never" };
 const NO_PROMPT_CONFIG = ["-c", "core.askPass=", "-c", "credential.interactive=false"];
-const git = (folder, args, { connects = false } = {}) => runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, connects });
+const working = /* @__PURE__ */ new Map();
+function tracked(folder, command) {
+  working.set(command, folder);
+  const end = () => {
+    working.delete(command);
+  };
+  command.then(end, end);
+  return command;
+}
+const git = (folder, args, { connects = false, input } = {}) => tracked(folder, runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, connects, ...input !== void 0 ? { input } : {} }));
+const branchGit = (folder) => (args, { line, maxRecord, input } = {}) => line ? tracked(folder, runGitLines(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, take: line, ...maxRecord ? { maxRecord } : {}, ...input !== void 0 ? { input } : {} })) : git(folder, args, { input });
 async function branchesOf(folder) {
   const listed = await git(folder, ["for-each-ref", "--format=%(refname)%00%(objectname)", BRANCHES]);
   if (!listed.ok) return [];
   return listed.text.split("\n").filter(Boolean).map((line) => {
     const [ref, commit] = line.split("\0");
     return { name: ref.slice(BRANCHES.length), commit };
-  }).sort((left, right) => byText(left.name, right.name));
+  }).sort((left, right) => byCodePoint(left.name, right.name));
 }
 async function treeEntries(folder, commit, below, { recursive = false } = {}) {
   const listed = await git(folder, ["ls-tree", "-z", ...recursive ? ["-r"] : [], commit, ...below ? ["--", `${below}/`] : []]);
@@ -81,7 +95,117 @@ async function blobBytes(folder, blob) {
   const read = await git(folder, ["cat-file", "blob", blob], { connects: true });
   return read.ok ? read.stdout : null;
 }
-async function createCodeClones({ directory }) {
+const literalGit = (folder, args, { connects = false } = {}) => tracked(folder, runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: { ...NO_PROMPT_ENV, GIT_LITERAL_PATHSPECS: "1" }, connects }));
+const isObject = (value) => typeof value === "string" && /^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(value);
+const LISTINGS_BYTES = 16 * 1024 * 1024;
+const DECLARATIONS_BYTES = 4 * 1024 * 1024;
+const SMALL_BYTES = 1024 * 1024;
+const jsonBytes = (value) => 2 * (JSON.stringify(value)?.length ?? 4) + 64;
+const listingBytes = (listed) => listed.reduce((sum, entry) => sum + 2 * entry.name.length + 220, 64);
+function cloneContents(folder, repository, { run = literalGit } = {}) {
+  const failed = (what) => new ReadFailed(`Prism could not read ${what} from its clone of ${repository} now, for example because its remote is unreachable for an object that the clone has not fetched yet, so it keeps no answer and reads again at the next request.`);
+  const listings = byteCache(LISTINGS_BYTES, listingBytes);
+  const declarations = byteCache(DECLARATIONS_BYTES, jsonBytes);
+  const atCommits = byteCache(DECLARATIONS_BYTES, jsonBytes);
+  const blobs = byteCache(SMALL_BYTES, jsonBytes);
+  const shown = byteCache(SMALL_BYTES, jsonBytes);
+  const merges = byteCache(SMALL_BYTES, jsonBytes);
+  async function entries(commit, below) {
+    if (!isObject(commit)) return [];
+    return listings.read(`${commit}\0${below}`, async () => {
+      const listed = await run(folder, ["ls-tree", "-z", commit, ...below ? ["--", `${below}/`] : []]);
+      if (!listed.ok) throw failed("a folder's entries");
+      const prefix = below ? `${below}/` : "";
+      return listed.stdout.toString("utf8").split("\0").filter(Boolean).flatMap((line) => {
+        const tab = line.indexOf("	");
+        const [, type, object] = line.slice(0, tab).split(" ");
+        const file = line.slice(tab + 1);
+        if (type !== "blob" && type !== "tree" || !file.startsWith(prefix) || file.slice(prefix.length).includes("/")) return [];
+        return [{ name: file.slice(prefix.length), type: type === "tree" ? "folder" : "file", blob: type === "blob" ? object : null }];
+      });
+    });
+  }
+  async function blobOf(commit, file) {
+    if (!commit || !isObject(commit)) return null;
+    return blobs.read(`${commit}\0${file}`, async () => {
+      const listed = await run(folder, ["ls-tree", "-z", commit, "--", file]);
+      if (!listed.ok) throw failed("a file's object");
+      const line = listed.stdout.toString("utf8").split("\0").find((item) => item.slice(item.indexOf("	") + 1) === file);
+      if (!line) return null;
+      const [, type, object] = line.slice(0, line.indexOf("	")).split(" ");
+      return type === "blob" && isObject(object) ? object : null;
+    });
+  }
+  async function read(blob) {
+    if (!isObject(blob)) return null;
+    const size = await run(folder, ["cat-file", "-s", blob], { connects: true });
+    if (!size.ok) throw failed("a file's content");
+    if (Number(size.text) > SOURCE_SIZE_LIMIT) return { withheld: "too_large" };
+    const bytes = await run(folder, ["cat-file", "blob", blob], { connects: true });
+    if (!bytes.ok) throw failed("a file's content");
+    if (bytes.stdout.length > SOURCE_SIZE_LIMIT) return { withheld: "too_large" };
+    if (bytes.stdout.includes(0)) return { withheld: "binary" };
+    const text = bytes.stdout.toString("utf8");
+    return { text, lines: text === "" ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0) };
+  }
+  async function shownOf(blob) {
+    return shown.read(blob, () => read(blob).then((text) => text === null ? null : "withheld" in text ? { withheld: text.withheld } : { lines: text.lines }));
+  }
+  async function diff(before, after, { whole = false, lines = 0 } = {}) {
+    if (!isObject(before) || !isObject(after)) return null;
+    const listed = await run(folder, ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-algorithm=myers", `--unified=${whole ? lines : 0}`, before, after], { connects: true });
+    if (!listed.ok) throw failed("a file's difference");
+    const hunks = [];
+    for (const line of listed.stdout.toString("utf8").split("\n")) {
+      const head = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      if (head) hunks.push({ before: [Number(head[1]), head[2] === void 0 ? 1 : Number(head[2])], after: [Number(head[3]), head[4] === void 0 ? 1 : Number(head[4])], lines: [] });
+      else if (whole && hunks.length && (line.startsWith("+") || line.startsWith("-") || line.startsWith(" "))) hunks.at(-1).lines.push(line);
+    }
+    return hunks;
+  }
+  async function conflicts(base, first, second) {
+    return merges.read(`${base ?? ""}\0${first ?? ""}\0${second ?? ""}`, async () => {
+      if (base && first && second) {
+        const merged = await run(folder, ["merge-file", "-p", "-q", "--object-id", first, base, second], { connects: true });
+        if (merged.ok) return false;
+        if (merged.code > 0 && merged.code < 128) return true;
+      }
+      const texts = await Promise.all([first, base, second].map(async (blob) => blob === null ? "" : (await read(blob))?.text ?? null));
+      if (texts.some((text) => typeof text !== "string")) return null;
+      const temporary = await mkdtemp(path.join(os.tmpdir(), "prism-merge-"));
+      try {
+        const files = ["first", "base", "second"].map((name) => path.join(temporary, name));
+        await Promise.all(files.map((file, index) => writeFile(file, texts[index], { mode: 384 })));
+        const merged = await run(temporary, ["merge-file", "-p", "-q", ...files]);
+        if (merged.ok) return false;
+        if (merged.code > 0 && merged.code < 128) return true;
+        throw failed("a merge check");
+      } finally {
+        await rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    });
+  }
+  async function components(commit) {
+    return atCommits.read(commit, () => declaredAt(commit));
+  }
+  async function declaredAt(commit) {
+    const blob = await blobOf(commit, ".prism/workflow.md");
+    if (!blob) return { declared: [], file: false };
+    return declarations.read(blob, async () => {
+      const text = await read(blob);
+      if (!text || !("text" in text)) return null;
+      try {
+        return { declared: readComponents(parseWorkflowConfig(text.text)).declared.map((component) => ({ name: component.name, folder: component.folder })), file: true };
+      } catch (error) {
+        if (error instanceof ComponentError) return null;
+        throw error;
+      }
+    });
+  }
+  return { repository, entries, blobOf, read, shownOf, diff, conflicts, components };
+}
+async function createCodeClones({ directory, onTipsMoved = () => {
+} }) {
   const codeDirectory = path.join(directory, CODE);
   const savedFile = path.join(directory, SAVED);
   let entries = [];
@@ -108,7 +232,7 @@ async function createCodeClones({ directory }) {
   };
   const heldCommits = /* @__PURE__ */ new Map();
   async function commitsOf(folder) {
-    const tips = (await branchesOf(folder)).map((branch) => branch.commit).join(" ");
+    const tips = (await keptBranches(folder)).map((branch) => branch.commit).join(" ");
     const cached = heldCommits.get(folder);
     if (cached?.tips === tips) return cached.commits;
     const listed = await git(folder, ["rev-list", "--branches"]);
@@ -120,6 +244,32 @@ async function createCodeClones({ directory }) {
   const entryOf = (workspace, repository) => entries.find((entry) => entry.workspace === workspace && entry.repository === repository) ?? null;
   const folderOf = (entry) => path.join(codeDirectory, entry.clone);
   const defaultFiles = /* @__PURE__ */ new Map();
+  const branchReaders = /* @__PURE__ */ new Map();
+  const fileReads = /* @__PURE__ */ new Map();
+  const attempts = /* @__PURE__ */ new WeakMap();
+  const demanded = /* @__PURE__ */ new WeakMap();
+  const fetching = /* @__PURE__ */ new Map();
+  const refreshing = /* @__PURE__ */ new Set();
+  let closed = false;
+  const keptRefs = /* @__PURE__ */ new Map();
+  const readRefs = async (folder) => ({ head: await git(folder, ["symbolic-ref", "--quiet", "HEAD"]), branches: await branchesOf(folder) });
+  function refsOf(folder) {
+    let kept = keptRefs.get(folder);
+    if (!kept && fetching.has(path.basename(folder))) return readRefs(folder);
+    if (!kept) {
+      const read = readRefs(folder);
+      kept = read;
+      keptRefs.set(folder, read);
+      read.then((refs) => {
+        if (!refs.head.ok && keptRefs.get(folder) === read) keptRefs.delete(folder);
+      }, () => {
+        if (keptRefs.get(folder) === read) keptRefs.delete(folder);
+      });
+    }
+    return kept;
+  }
+  const headOf = async (folder) => (await refsOf(folder)).head;
+  const keptBranches = async (folder) => (await refsOf(folder)).branches.map((branch) => ({ ...branch }));
   async function cloneInto(entry) {
     await mkdir(codeDirectory, { recursive: true, mode: 448 });
     const temporary = path.join(codeDirectory, `.${entry.clone}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
@@ -142,18 +292,52 @@ async function createCodeClones({ directory }) {
     if (!fetched.ok) return { ok: false, message: reasonOf(fetched) };
     const head = await git(folder, ["ls-remote", "--symref", "origin", "HEAD"]);
     const named = /^ref: (refs\/heads\/\S+)\tHEAD$/m.exec(head.ok ? head.text : "")?.[1];
-    if (named) await git(folder, ["symbolic-ref", "HEAD", named]);
+    if (named) {
+      const current = await git(folder, ["symbolic-ref", "--quiet", "HEAD"]);
+      if (!current.ok || current.text.trim() !== named) await git(folder, ["symbolic-ref", "HEAD", named]);
+    }
     return { ok: true };
   }
+  async function tipsOf(folder) {
+    if (!await exists(folder)) return "";
+    const head = await git(folder, ["symbolic-ref", "--quiet", "HEAD"]);
+    return tipsKeyOf(head.ok ? head.text.trim() : "", await branchesOf(folder));
+  }
   function refresh(entry) {
-    return serial(entry.clone, async () => {
+    if (closed) return Promise.resolve(false);
+    attempts.set(entry, Date.now());
+    const clone = entry.clone;
+    fetching.set(clone, (fetching.get(clone) ?? 0) + 1);
+    let moved = false;
+    const run = serial(entry.clone, async () => {
       const cloned = await exists(folderOf(entry));
+      const before = await tipsOf(folderOf(entry));
       const outcome = cloned ? await fetchInto(entry) : await cloneInto(entry);
-      if (!entries.includes(entry)) return;
+      moved = await tipsOf(folderOf(entry)) !== before;
+      if (!entries.includes(entry)) return moved;
       if (outcome.ok) Object.assign(entry, { state: "on", message: null, fetchedAt: (/* @__PURE__ */ new Date()).toISOString() });
       else Object.assign(entry, { state: "unreachable", message: cloned ? `Prism could not fetch the code of ${entry.repository}, so it shows what it fetched last: ${outcome.message}` : `Prism could not clone the code of ${entry.repository} and tries again at the next fetch: ${outcome.message}` });
       await save();
+      return moved;
+    }).finally(() => {
+      attempts.set(entry, Date.now());
+      keptRefs.delete(folderOf(entry));
+      if (fetching.get(clone) === 1) fetching.delete(clone);
+      else fetching.set(clone, fetching.get(clone) - 1);
+      if (!moved) return;
+      for (const workspace of new Set(entries.filter((item) => item.clone === clone).map((item) => item.workspace))) {
+        try {
+          onTipsMoved(workspace);
+        } catch {
+        }
+      }
     });
+    refreshing.add(run);
+    const end = () => {
+      refreshing.delete(run);
+    };
+    run.then(end, end);
+    return run;
   }
   async function forget(entry) {
     entries = entries.filter((item) => item !== entry);
@@ -162,10 +346,13 @@ async function createCodeClones({ directory }) {
     await serial(entry.clone, () => rm(folderOf(entry), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
     for (const key of defaultFiles.keys()) if (key.startsWith(`${folderOf(entry)}\0`)) defaultFiles.delete(key);
     heldCommits.delete(folderOf(entry));
+    keptRefs.delete(folderOf(entry));
+    branchReaders.delete(folderOf(entry));
+    fileReads.delete(folderOf(entry));
   }
   async function stateOf(entry) {
     if (!entry) return { state: "off" };
-    const branches = await exists(folderOf(entry)) ? await branchesOf(folderOf(entry)) : [];
+    const branches = await exists(folderOf(entry)) ? await keptBranches(folderOf(entry)) : [];
     if (entry.state === "unreachable") return { state: "unreachable", message: entry.message, branches, fetchedAt: entry.fetchedAt };
     return { state: "on", branches, fetchedAt: entry.fetchedAt };
   }
@@ -174,6 +361,16 @@ async function createCodeClones({ directory }) {
     return entry && await exists(folderOf(entry)) ? folderOf(entry) : null;
   }
   return {
+    /**
+     * Start no fetch from now on, and answer once every fetch and clone under way and every Git command in the code folder has ended,
+     * so no Git process of the closed app still holds a file or folder that its caller removes next, which Windows refuses.
+     */
+    async close() {
+      closed = true;
+      await Promise.allSettled([...refreshing]);
+      const mine = () => [...working].filter(([, folder]) => folder === codeDirectory || folder.startsWith(`${codeDirectory}${path.sep}`)).map(([command]) => command);
+      for (let left = mine(); left.length; left = mine()) await Promise.allSettled(left);
+    },
     /** Turn a repository's code content on with the remote its registration lists first, clone or fetch it, and answer its code state. */
     async enable(workspace, repository, remote) {
       const identity = await storeIdentity(remote);
@@ -207,16 +404,17 @@ async function createCodeClones({ directory }) {
     },
     /** The code state of a repository of a workspace. */
     state: (workspace, repository) => stateOf(entryOf(workspace, repository)),
-    /** Fetch every repository of a workspace whose code content is on. */
+    /** Fetch every repository of a workspace whose code content is on, answering whether any fetch changed a clone's branch tips or default branch. */
     async fetchAll(workspace) {
-      await Promise.all(entries.filter((entry) => entry.workspace === workspace).map((entry) => refresh(entry)));
+      const changed = await Promise.all(entries.filter((entry) => entry.workspace === workspace).map((entry) => refresh(entry)));
+      return changed.some(Boolean);
     },
     /** The entries of a folder on every branch: { path, type, branches } sorted by path, branches { branch, blob } sorted by branch; null without a clone. */
     async tree(workspace, repository, folder) {
       const base = await cloneOf(workspace, repository);
       if (!base) return null;
       const byPath = /* @__PURE__ */ new Map();
-      for (const branch of await branchesOf(base)) {
+      for (const branch of await keptBranches(base)) {
         for (const entry of await treeEntries(base, branch.commit, folder)) {
           const key = `${entry.type}\0${entry.path}`;
           if (!byPath.has(key)) byPath.set(key, { path: entry.path, type: entry.type, branches: [] });
@@ -233,7 +431,7 @@ async function createCodeClones({ directory }) {
     async file(workspace, repository, { branch = null, commit = null, path: file }) {
       const base = await cloneOf(workspace, repository);
       if (!base || typeof file !== "string" || codeFolder(file) === null || codeFolder(file) === "" || secretPath(file)) return null;
-      const branches = await branchesOf(base);
+      const branches = await keptBranches(base);
       let at = null;
       if (branch !== null) at = branches.find((item) => item.name === branch)?.commit ?? null;
       else if (isCommit(commit) && (await commitsOf(base)).has(commit)) at = commit;
@@ -251,32 +449,61 @@ async function createCodeClones({ directory }) {
       return { ...held, bytes: bytes.length, content: bytes.toString("utf8") };
     },
     /**
-     * How every other branch differs from one branch, read from trees alone, so no file's contents are fetched:
-     * { base, branches: [{ branch, changes: [{ path, change: "added" | "modified" | "deleted" }] }] } with base the branch named, or else the branch the remote's HEAD names,
-     * or null without a clone or with no such branch.
+     * The branch model of the repository's clone, as readBranches answers it for the names of the branches that a slice owns: { defaultBranch, branches },
+     * { state: "preparing" } while Prism still clones the repository or reads the branches of the clone's current tips and default branch in the background, or null without a clone.
+     * When no fetch of the clone ran within freshMs, as on a workspace that no page has open, it starts one and waits for it up to FETCH_WAIT_MS from its start,
+     * so an answer follows a push that the remote holds, a slow remote holds a request no longer than that, and an answer for the tips that the clone holds is never withheld;
+     * a fetch already under way, such as the one an open page's fetch timer started, is not followed by another, and its end tells the workspace when it moved the tips;
+     * while any fetch runs on, it answers only an answer already read and starts no read, since the fetch may be moving the tips one branch at a time.
+     * With waitMs, a read that this call leaves preparing is awaited up to waitMs from the end of that wait, so a small repository answers at once rather than on a later request.
      */
-    async compare(workspace, repository, base = null) {
+    async branches(workspace, repository, owned = [], { freshMs = null, waitMs = 0 } = {}) {
+      const entry = entryOf(workspace, repository);
+      if (!entry) return null;
+      const folder = folderOf(entry);
+      const fetchIfDue = () => {
+        if (freshMs === null || demanded.has(entry) || fetching.has(entry.clone) || branchReaders.get(folder)?.reading || Date.now() - (attempts.get(entry) ?? 0) <= freshMs) return;
+        const started = Date.now();
+        const done = refresh(entry).then(() => {
+        }, () => {
+        }).finally(() => demanded.delete(entry));
+        demanded.set(entry, { done, started });
+      };
+      fetchIfDue();
+      const asked = demanded.get(entry);
+      if (asked) {
+        let timer;
+        const waited = new Promise((resolve) => {
+          timer = setTimeout(resolve, Math.max(0, asked.started + FETCH_WAIT_MS - Date.now()));
+        });
+        await Promise.race([asked.done, waited]);
+        clearTimeout(timer);
+      }
+      if (!await exists(folder)) return null;
+      const { head, branches } = fetching.has(entry.clone) ? await readRefs(folder) : await refsOf(folder);
+      const tipsKey = tipsKeyOf(head.ok ? head.text.trim() : "", branches);
+      if (!branchReaders.has(folder)) branchReaders.set(folder, createBranchReader(branchGit(folder)));
+      const reader = branchReaders.get(folder);
+      if (fetching.has(entry.clone)) return reader.ready(tipsKey, owned) ?? { state: "preparing" };
+      let model = reader.answer(tipsKey, owned);
+      if (model === void 0 && waitMs > 0) {
+        let timer;
+        const waited = new Promise((resolve) => {
+          timer = setTimeout(resolve, waitMs);
+        });
+        await Promise.race([reader.idle(), waited]);
+        clearTimeout(timer);
+        model = reader.ready(tipsKey, owned);
+      }
+      if (model !== void 0) fetchIfDue();
+      return model ?? { state: "preparing" };
+    },
+    /** The file reads of the repository's clone that the Code place's files, versions, and differences need, or null without a clone. */
+    async contents(workspace, repository) {
       const folder = await cloneOf(workspace, repository);
       if (!folder) return null;
-      const branches = await branchesOf(folder);
-      const head = await git(folder, ["symbolic-ref", "--quiet", "HEAD"]);
-      const named = base ?? (head.ok && head.text.trim().startsWith(BRANCHES) ? head.text.trim().slice(BRANCHES.length) : branches[0]?.name ?? null);
-      const from = branches.find((branch) => branch.name === named);
-      if (!from) return null;
-      const CHANGES = { A: "added", M: "modified", D: "deleted", T: "modified" };
-      const compared = [];
-      for (const branch of branches) {
-        if (branch.name === from.name) continue;
-        const listed = branch.commit === from.commit ? null : await git(folder, ["diff-tree", "-r", "-z", "--no-renames", "--name-status", from.commit, branch.commit]);
-        const fields = listed?.ok ? listed.stdout.toString("utf8").split("\0").filter(Boolean) : [];
-        const changes = [];
-        for (let index = 0; index + 1 < fields.length; index += 2) {
-          const change = CHANGES[fields[index][0]];
-          if (change) changes.push({ path: fields[index + 1], change });
-        }
-        compared.push({ branch: branch.name, changes });
-      }
-      return { base: from.name, branches: compared };
+      if (!fileReads.has(folder)) fileReads.set(folder, cloneContents(folder, repository));
+      return fileReads.get(folder);
     },
     /** Whether a branch of the repository's clone holds a commit: true or false, or null without a clone. */
     async reachable(workspace, repository, commit) {
@@ -292,11 +519,11 @@ async function createCodeClones({ directory }) {
     async branchesHolding(workspace, repository, commit) {
       const base = await cloneOf(workspace, repository);
       if (!base || !isCommit(commit) || !(await commitsOf(base)).has(commit)) return null;
-      const head = await git(base, ["symbolic-ref", "--quiet", "HEAD"]);
+      const head = await headOf(base);
       const defaultBranch = head.ok && head.text.trim().startsWith(BRANCHES) ? head.text.trim().slice(BRANCHES.length) : null;
       const listed = await git(base, ["for-each-ref", "--format=%(refname)", "--contains", commit, BRANCHES]);
       if (!listed.ok) return null;
-      const holding = listed.text.split("\n").filter(Boolean).map((ref) => ref.slice(BRANCHES.length)).sort(byText);
+      const holding = listed.text.split("\n").filter(Boolean).map((ref) => ref.slice(BRANCHES.length)).sort(byCodePoint);
       const others = holding.filter((name) => name !== defaultBranch);
       return { defaultBranch, onDefault: defaultBranch !== null && holding.includes(defaultBranch), branches: others.slice(0, BRANCHES_SHOWN), branchCount: others.length };
     },
@@ -314,7 +541,7 @@ async function createCodeClones({ directory }) {
     async defaultFile(workspace, repository, file) {
       const base = await cloneOf(workspace, repository);
       if (!base) return null;
-      const head = await git(base, ["symbolic-ref", "--quiet", "HEAD"]);
+      const head = await headOf(base);
       if (!head.ok || !head.text.startsWith(BRANCHES)) return null;
       return this.file(workspace, repository, { branch: head.text.slice(BRANCHES.length), path: file });
     },
@@ -322,9 +549,9 @@ async function createCodeClones({ directory }) {
     async defaultFiles(workspace, repository) {
       const base = await cloneOf(workspace, repository);
       if (!base) return null;
-      const head = await git(base, ["symbolic-ref", "--quiet", "HEAD"]);
+      const head = await headOf(base);
       if (!head.ok || !head.text.startsWith(BRANCHES)) return null;
-      const commit = (await branchesOf(base)).find((item) => item.name === head.text.slice(BRANCHES.length))?.commit;
+      const commit = (await keptBranches(base)).find((item) => item.name === head.text.slice(BRANCHES.length))?.commit;
       if (!commit) return null;
       const key = `${base}\0${commit}`;
       if (!defaultFiles.has(key)) {
@@ -339,7 +566,7 @@ async function createCodeClones({ directory }) {
       if (!base) return null;
       const found = /* @__PURE__ */ new Map();
       const problems = [];
-      for (const branch of await branchesOf(base)) {
+      for (const branch of await keptBranches(base)) {
         const blob = await blobAt(base, branch.commit, ".prism/workflow.md");
         if (!blob) continue;
         const bytes = await blobBytes(base, blob);
@@ -367,6 +594,7 @@ async function createCodeClones({ directory }) {
   };
 }
 export {
+  cloneContents,
   codeFolder,
   createCodeClones,
   registeredRemotes

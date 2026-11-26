@@ -199,6 +199,10 @@ function markManagedStore(base) {
 function runGit(base, args, options) {
   return git(base, args, options);
 }
+async function runGitLines(base, args, { env = {}, take, maxRecord = 4096, input }) {
+  const listed = await gitRecords(base, args, { separator: 10, maxRecord, digestLong: true, env, input, take: (bytes) => take(bytes.toString("utf8")) });
+  return { ok: listed.ok && !listed.long, streamed: true, text: "", stdout: Buffer.alloc(0), stderr: listed.stderr };
+}
 const GIT_OUTPUT_MAX = 64 * 1024 * 1024;
 const GIT_ERRORS_MAX = 64 * 1024;
 async function git(base, args, { env = {}, input, connects = false } = {}) {
@@ -218,7 +222,7 @@ async function git(base, args, { env = {}, input, connects = false } = {}) {
     if (input !== void 0) child.stdin.end(input);
   });
 }
-async function gitRecords(base, args, { separator, limit = Infinity, maxBytes = Infinity, maxRecord = Infinity, take, input, env = {} }) {
+async function gitRecords(base, args, { separator, limit = Infinity, maxBytes = Infinity, maxRecord = Infinity, digestLong = false, take, input, env = {} }) {
   const environment = await commandEnvironment(base, args, env, false);
   return new Promise((resolve) => {
     const child = spawn("git", [...FIXED_CONFIG, "-C", base, ...args], { env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
@@ -229,10 +233,15 @@ async function gitRecords(base, args, { separator, limit = Infinity, maxBytes = 
       done = true;
       child.kill();
     };
-    const record = async (bytesOf) => {
+    const digested = (hash) => Buffer.from(`\0${hash.digest("hex")}`);
+    const record = async (whole) => {
+      let bytesOf = whole;
       if (bytesOf.length > maxRecord) {
-        long = Buffer.from(bytesOf.subarray(0, 512));
-        return false;
+        if (!digestLong) {
+          long = Buffer.from(bytesOf.subarray(0, 512));
+          return false;
+        }
+        bytesOf = digested(createHash("sha256").update(bytesOf));
       }
       if (++count > limit) {
         over = "count";
@@ -270,6 +279,7 @@ async function gitRecords(base, args, { separator, limit = Infinity, maxBytes = 
     child.on("error", (error) => {
       failure ??= error.code === "ENOENT" ? "Git is not available." : error.message;
     });
+    let hashing = null;
     const reading = (async () => {
       let pending = Buffer.alloc(0);
       try {
@@ -294,6 +304,23 @@ async function gitRecords(base, args, { separator, limit = Infinity, maxBytes = 
           }
           pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
           let at = 0;
+          if (hashing) {
+            const end = pending.indexOf(separator);
+            if (end < 0) {
+              hashing.update(pending);
+              pending = Buffer.alloc(0);
+              continue;
+            }
+            hashing.update(pending.subarray(0, end));
+            const ended = hashing;
+            hashing = null;
+            at = end + 1;
+            if (!await record(digested(ended))) {
+              stop();
+              pending = Buffer.alloc(0);
+              continue;
+            }
+          }
           for (let end; !done && (end = pending.indexOf(separator, at)) >= 0; at = end + 1) if (!await record(pending.subarray(at, end))) stop();
           if (done) {
             pending = Buffer.alloc(0);
@@ -301,9 +328,12 @@ async function gitRecords(base, args, { separator, limit = Infinity, maxBytes = 
           }
           pending = Buffer.from(pending.subarray(at));
           if (pending.length > maxRecord) {
-            long = Buffer.from(pending.subarray(0, 512));
+            if (digestLong) hashing = createHash("sha256").update(pending);
+            else {
+              long = Buffer.from(pending.subarray(0, 512));
+              stop();
+            }
             pending = Buffer.alloc(0);
-            stop();
           }
         }
       } catch (error) {
@@ -314,7 +344,8 @@ async function gitRecords(base, args, { separator, limit = Infinity, maxBytes = 
     child.on("close", async (code) => {
       const pending = await reading;
       clearTimeout(timer);
-      if (!done && !failure && pending.length && separator !== null) await record(pending);
+      if (!done && !failure && hashing && separator !== null) await record(digested(hashing));
+      else if (!done && !failure && pending.length && separator !== null) await record(pending);
       const stderr = failure ?? Buffer.concat(errors).toString("utf8").trim();
       resolve({ ok: Boolean(over || long || stopped) || !failure && code === 0, over, long, stopped, stderr });
     });
@@ -2943,6 +2974,7 @@ export {
   releaseSavedConflicts,
   remoteHelperOption,
   runGit,
+  runGitLines,
   scheduleRecordSync,
   syncRecordStore,
   syncRecordStoreNow,

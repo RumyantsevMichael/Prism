@@ -26,6 +26,13 @@ const VIEWS = {
   "migration-run": () => import("./format-migration.js")
 };
 const KNOWLEDGE_PAGES = Object.freeze({ diagrams: "Diagrams", touched: "Touched by my work", changed: "Changed this week" });
+function codeNarrowing(ref) {
+  let match = /^code:work\/([A-Za-z0-9_-]+)(?:\/([A-Za-z0-9_-]+))?$/.exec(ref ?? "");
+  if (match) return { kind: "code", work: { initiative: match[1], slice: match[2] ?? null } };
+  match = /^code:branch\/([^/:\s]+)\/(\S+)$/.exec(ref ?? "");
+  if (match) return { kind: "code", branch: { repository: match[1], branch: match[2] } };
+  return null;
+}
 function parseEntityRef(ref) {
   if (SECTIONS.includes(ref)) return { kind: ref };
   if (ref === "launches") return { kind: "agents" };
@@ -35,6 +42,8 @@ function parseEntityRef(ref) {
   if (match) return { kind: "attention", page: match[1] };
   match = /^knowledge:(diagrams|touched|changed)$/.exec(ref ?? "");
   if (match) return { kind: "knowledge", page: match[1] };
+  const code = codeNarrowing(ref);
+  if (code) return code;
   match = /^initiative:([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "initiative", id: match[1] };
   match = /^slice:([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(ref ?? "");
@@ -130,6 +139,7 @@ export {
   ENTITY_LABELS,
   KNOWLEDGE_PAGES,
   applyWidths,
+  codeNarrowing,
   entityLabel,
   parseEntityRef,
   progressBar,

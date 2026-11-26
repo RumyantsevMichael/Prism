@@ -100,10 +100,14 @@ function watchWorkspace({ base, label, intervalMs = WORKSPACE_FETCH_MS, maxMs = 
         message: failure
       };
     },
+    /** Stop the timer, answering once the fetch under way, if any, has ended, so no Git process of it still works in a folder that the caller removes next. */
     stop() {
       stopped = true;
       clearTimeout(timer);
       timer = null;
+      return Promise.resolve(running).then(() => {
+      }, () => {
+      });
     }
   };
 }

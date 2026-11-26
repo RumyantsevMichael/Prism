@@ -12,7 +12,7 @@ import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { listComponents } from "../workflow/components.mjs";
 import { artifactKinds, parseWorkflowConfig, readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, recordStoreOf, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile, withRecordReads } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, recordStoreOf, listRecordEntries, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile, withRecordReads } from "../workflow/record-store.mjs";
 import { ANSWERED_APPROVAL_KEPT_MS, answeredApprovalGates, artifactStoreLocation, pendingApprovalGates, readStoreArtifact, readStoreArtifactAt, reviewStoreArtifact, reviewStoreArtifactAt, storeArtifactLocation, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
 import { codeRefOf, parseCodeRef, resolveLinks } from "./artifact-links.mjs";
 import { checkoutsOnMachine, knownComponents, registeredRepositories } from "./workspaces.mjs";
@@ -22,8 +22,12 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, viewWatching, loadAttention, loadClaims, loadDeclaredView, loadFormatMark, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, viewWatching, loadAttention, loadClaims, loadDeclaredView, loadFormatMark, loadHeldClaims, loadEntity, loadNavigation, loadInitiativeView, loadRecordChanges, parseEntityRef, placedInitiatives, searchRecords, slicePresence, workGroups } from "./workspace-model.mjs";
+import { isQuiet, placeAnswer } from "./code-place.mjs";
+import { ReadFailed, keptAnswers } from "./byte-cache.mjs";
+import { answerKey, fileDiff, fileVersions, listFiles, readSlot, scopeLines, stopping, withVerified } from "./code-versions.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
+import { branchOwners, ownerKey } from "./code-owners.mjs";
 import { frozenTestFile, verificationLog } from "./verification-view.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
@@ -40,6 +44,7 @@ import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
 import { createCachedValue } from "./cached-value.mjs";
 import { validUntil } from "../workflow/view-validity.mjs";
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
+const QUIET_DAYS = 30;
 const PUBLIC_DIR = path.join(SERVER_DIR, "public");
 const VENDOR_DIR = path.join(PLUGIN_ROOT, "vendor", "plantuml");
 const VIEWS_DIR = path.join(PUBLIC_DIR, "views");
@@ -1029,18 +1034,176 @@ function createProjectReview({
     }
     send(response, 404, "No registered checkout of that repository and no code clone of it on this machine holds the file for review.");
   }
+  function codeShowing(url) {
+    const days = url.searchParams.get("quietDays");
+    const show = url.searchParams.get("showQuiet");
+    if (days !== null && !/^[1-9][0-9]{0,2}$/.test(days)) return null;
+    const quietDays = days === null ? QUIET_DAYS : Number(days);
+    if (quietDays > 365 || show !== null && show !== "true" && show !== "false") return null;
+    return { quietDays, showQuiet: show === "true" };
+  }
   function withheldAnswer(read) {
     const why = read.withheld === "binary" ? "it is a binary file" : "it is over 512 KiB";
     return { code: "file_not_shown", reason: read.withheld, message: `${read.path} is not available here because ${why}, which the review app does not show.` };
   }
+  const ownedIn = (owners, repository) => {
+    const prefix = ownerKey(repository, "");
+    return [...owners.keys()].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length));
+  };
+  const PLACE_READ_WAIT_MS = 5e3;
+  async function codePlaceState(shown) {
+    const names = await storeRepositories();
+    const owners = await branchOwners(projectRoot);
+    const read = await Promise.all(names.map(async (name) => {
+      const code = workspace?.code ? await workspace.code.state(name) : { state: "off" };
+      const model = workspace?.code && code.state !== "off" ? await workspace.code.branches(name, ownedIn(owners, name), { waitMs: PLACE_READ_WAIT_MS }) : null;
+      return { repository: { name, state: code.state, message: code.message ?? null }, model };
+    }));
+    const models = /* @__PURE__ */ new Map();
+    const preparing = [];
+    for (const { repository, model } of read) {
+      if (model?.state === "preparing") preparing.push(repository.name);
+      else if (model) models.set(repository.name, model);
+    }
+    if (preparing.length && !models.size) return null;
+    const groups = await workGroups(projectRoot, await placedInitiatives(projectRoot));
+    const progress = groups.groups.find((group) => group.key === "in-progress")?.initiatives ?? [];
+    const slices = /* @__PURE__ */ new Map();
+    const work = await Promise.all(progress.map(async ({ id, title }) => {
+      const view = await loadInitiativeView(projectRoot, id).catch(() => null);
+      const records = view?.record?.slices ?? {};
+      for (const [slug, slice] of Object.entries(records)) {
+        const claim = slice?.claim ?? slice?.expiredClaim ?? null;
+        const host = typeof claim?.host === "string" && claim.host.trim() ? claim.host.trim() : "Agent";
+        slices.set(ownerKey(id, slug), { title: slice?.title ?? slug, agent: typeof claim?.model === "string" && claim.model ? `${host} \xB7 ${claim.model}` : host });
+      }
+      return { initiative: id, title, root: view?.derived?.root ?? null, children: view?.derived?.children ?? {}, titles: Object.fromEntries(Object.entries(records).map(([slug, slice]) => [slug, slice.title])) };
+    }));
+    const answer = placeAnswer({ repositories: read.map(({ repository }) => repository), models, preparing, owners, work, ...shown });
+    return { answer, models, owners, slice: (owner) => slices.get(ownerKey(owner.initiative, owner.slice)) ?? { title: owner.slice, agent: "Agent" } };
+  }
+  async function serveCodePlace(response, shown) {
+    const state = await codePlaceState(shown);
+    if (!state) sendJson(response, 202, { state: "preparing" });
+    else sendJson(response, 200, state.answer);
+  }
+  async function verifiedFiles(repository, owner) {
+    const runs = await listRecordEntries(projectRoot, { kind: "runs", initiative: owner.initiative, slice: owner.slice }).catch(() => []);
+    const files = /* @__PURE__ */ new Set();
+    for (const { entry } of runs) {
+      if (entry?.kind !== "verification" || entry.passed !== true || entry.checkout?.repository !== repository || !Array.isArray(entry.files)) continue;
+      for (const file of entry.files) if (typeof file?.path === "string") files.add(`${file.path}\0${typeof file.blob === "string" ? file.blob : ""}`);
+    }
+    return files;
+  }
+  const FILES_WAIT_MS = 5e3;
+  const FILES_KEPT_BYTES = 64 * 1024 * 1024;
+  const FILES_RUNS = 8;
+  const fileAnswers = keptAnswers({ waitMs: FILES_WAIT_MS, maxBytes: FILES_KEPT_BYTES, maxRuns: FILES_RUNS, keep: (answer) => !answer?.preparing && !answer?.entries?.some((entry) => entry.error) });
+  const readAnswer = async (key, work, slot) => {
+    try {
+      return await fileAnswers.read(key, work, slot);
+    } catch (error) {
+      if (error instanceof ReadFailed) return { error };
+      throw error;
+    }
+  };
+  async function serveCodeFiles(response, route, url, shown) {
+    const state = await codePlaceState(shown);
+    if (!state) {
+      sendJson(response, 202, { state: "preparing" });
+      return;
+    }
+    const fail = (error) => sendJson(response, error.status, { code: error.code, message: error.message, ...error.reason ? { reason: error.reason } : {} });
+    const contentsOf = (repository2) => workspace.code.contents(repository2);
+    if (route === "/api/code/diff") {
+      const repository2 = url.searchParams.get("repository");
+      const file2 = workspace.code.folder(url.searchParams.get("path") ?? "");
+      if (!repository2 || !state.answer.repositories.some((each) => each.name === repository2)) return fail({ status: 404, code: "repository_unknown", message: "The workspace has no repository of that name." });
+      if (state.answer.preparing.includes(repository2)) return sendJson(response, 202, { state: "preparing" });
+      const contents2 = state.models.has(repository2) ? await contentsOf(repository2) : null;
+      if (!contents2) return fail({ status: 404, code: "code_off", message: `The code content of ${repository2} is off or not fetched yet, so this machine keeps no clone of it.` });
+      if (!file2) return fail({ status: 404, code: "file_unavailable", message: "The path must name a file below the repository's root." });
+      const answer2 = await fileDiff(state, repository2, file2, url.searchParams.get("branch") ?? "", contents2).catch((error) => {
+        if (error instanceof ReadFailed) return { error };
+        throw error;
+      });
+      if (answer2.error) fail(answer2.error);
+      else sendJson(response, 200, answer2);
+      return;
+    }
+    const scope = url.searchParams.get("scope") ?? "all";
+    const lines = scopeLines(state, scope);
+    if (!lines) return fail({ status: 404, code: "scope_unknown", message: "The Code place lists no work item, slice, or branch of that scope." });
+    if (route === "/api/code/files") {
+      const named = url.searchParams.get("folder");
+      const folder = named === null || named === "" ? null : workspace.code.folder(named);
+      if (named !== null && named !== "" && !folder) return fail({ status: 400, code: "invalid_request", message: "The folder must be a repository or a path below a repository's root." });
+      const key2 = JSON.stringify(["files", folder, answerKey(state, lines), state.answer.repositories, state.answer.preparing]);
+      const listed = await readAnswer(key2, (signal) => listFiles(state, lines, folder, async (name) => {
+        const contents2 = await contentsOf(name);
+        return contents2 && stopping(contents2, signal);
+      }), readSlot("files", scope, shown, folder));
+      if (listed === null) sendJson(response, 202, { state: "preparing" });
+      else if (listed.error) fail(listed.error);
+      else if (listed.preparing) sendJson(response, 202, { state: "preparing" });
+      else sendJson(response, 200, { scope, folder: folder ?? null, entries: listed.entries });
+      return;
+    }
+    const repository = url.searchParams.get("repository");
+    const file = workspace.code.folder(url.searchParams.get("path") ?? "");
+    if (!repository || !state.answer.repositories.some((each) => each.name === repository)) return fail({ status: 404, code: "repository_unknown", message: "The workspace has no repository of that name." });
+    if (state.answer.preparing.includes(repository)) return sendJson(response, 202, { state: "preparing" });
+    const contents = state.models.has(repository) ? await contentsOf(repository) : null;
+    if (!contents) return fail({ status: 404, code: "code_off", message: `The code content of ${repository} is off or not fetched yet, so this machine keeps no clone of it.` });
+    if (!file) return fail({ status: 404, code: "file_unavailable", message: "The path must name a file below the repository's root." });
+    const key = JSON.stringify(["versions", repository, file, answerKey(state, lines)]);
+    const answer = await readAnswer(key, (signal) => fileVersions(state, lines, repository, file, stopping(contents, signal)), readSlot("versions", scope, shown, repository, file));
+    if (answer === null) sendJson(response, 202, { state: "preparing" });
+    else if (answer.error) fail(answer.error);
+    else sendJson(response, 200, await withVerified(answer, (owner) => verifiedFiles(repository, owner)));
+  }
   async function serveCode(response, route, url) {
     const repository = url.searchParams.get("repository");
+    const shown = codeShowing(url);
+    if (!shown) {
+      sendJson(response, 400, { code: "invalid_request", message: "quietDays must be a whole number of days from 1 to 365, and showQuiet must be true or false." });
+      return;
+    }
+    if (route === "/api/code/place") {
+      await serveCodePlace(response, shown);
+      return;
+    }
+    if (route === "/api/code/files" || route === "/api/code/versions" || route === "/api/code/diff") {
+      if (!workspace?.code) {
+        sendJson(response, 404, { code: "repository_unknown", message: "The workspace has no repository of that name." });
+        return;
+      }
+      await serveCodeFiles(response, route, url, shown);
+      return;
+    }
     if (!workspace?.code || !repository || !(await storeRepositories()).includes(repository)) {
       sendJson(response, 404, { code: "repository_unknown", message: "The workspace has no repository of that name." });
       return;
     }
     const off = () => sendJson(response, 404, { code: "code_off", message: `The code content of ${repository} is off or not fetched yet, so this machine keeps no clone of it.` });
-    if (route === "/api/code/tree") {
+    if (route === "/api/code/branches") {
+      const owners = await branchOwners(projectRoot);
+      const owned = (branch) => owners.get(ownerKey(repository, branch)) ?? [];
+      const model = await workspace.code.branches(repository, ownedIn(owners, repository));
+      if (model === null) off();
+      else if (model.state === "preparing") sendJson(response, 202, { state: "preparing" });
+      else {
+        const now = Date.now();
+        const branches = model.branches.map(({ commit, paths, blobs, ...branch }) => ({
+          ...branch,
+          // Days count whole, so a commit made a day ago is within a threshold of one day.
+          quiet: isQuiet(branch, shown.quietDays, now),
+          owners: branch.default ? [] : owned(branch.name).map(({ initiative, slice }) => ({ initiative, slice }))
+        }));
+        sendJson(response, 200, { repository, defaultBranch: model.defaultBranch, branches });
+      }
+    } else if (route === "/api/code/tree") {
       const folder = workspace.code.folder(url.searchParams.get("folder") ?? "");
       if (folder === null) {
         sendJson(response, 400, { code: "invalid_request", message: "The folder must be a path below the repository's root." });
@@ -1049,10 +1212,6 @@ function createProjectReview({
       const entries = await workspace.code.tree(repository, folder);
       if (entries === null) off();
       else sendJson(response, 200, { repository, folder, entries });
-    } else if (route === "/api/code/compare") {
-      const compared = await workspace.code.compare(repository, url.searchParams.get("base") || null);
-      if (compared === null) sendJson(response, 404, { code: "branch_unknown", message: "The clone of that repository holds no such branch, or its code content is off." });
-      else sendJson(response, 200, { repository, ...compared });
     } else if (route === "/api/code/file") {
       const read = await workspace.code.file(repository, { branch: url.searchParams.get("branch"), commit: url.searchParams.get("commit"), path: url.searchParams.get("path") });
       if (read?.withheld) sendJson(response, 404, withheldAnswer(read));
@@ -1375,12 +1534,17 @@ function createProjectReview({
       }
       const available = /* @__PURE__ */ new Set([...artifacts, ...sources, ...storeIndex?.every ?? [], ...workspace ? await codeRefs() : []]);
       const snapshot = await followMovedRecords(available);
+      const repositories = workspace ? await storeRepositories() : [];
+      for (const tab of snapshot.openTabs) {
+        const repository = parseCodeRef(tab)?.repository;
+        if (repository && repositories.includes(repository)) available.add(tab);
+      }
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
       const checkout = workspace && await isStoreWithoutCheckout(projectRoot) ? null : await readWorkspaceIdentity(projectRoot);
       const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null, repositories: await codeRepositories() } : { workspace: checkout };
       const scoped = storeIndex ? { artifactScopes: storeIndex.artifactScopes, scopes: storeIndex.scopes, ...storeIndex.scopeFilter ? { scopeFilter: storeIndex.scopeFilter, unknownScopes: storeIndex.unknownScopes } : {}, notes: storeIndex.notes } : { artifactScopes: await listArtifactScopes(projectRoot) };
       send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store), watching: await viewWatching(projectRoot).catch(() => null) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, version: appVersion ?? pluginVersion(), ...privateServer ? { privateServer } : {} }), "application/json; charset=utf-8");
-    } else if (["/api/code/tree", "/api/code/compare", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
+    } else if (["/api/code/place", "/api/code/files", "/api/code/versions", "/api/code/diff", "/api/code/branches", "/api/code/tree", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
       await serveCode(response, route, url);
     } else if (route === "/api/slice-files" && request.method === "GET") {
       const ref = `slice:${url.searchParams.get("initiative") ?? ""}/${url.searchParams.get("slice") ?? ""}`;
@@ -1485,9 +1649,9 @@ function createProjectReview({
         send(response, 404, "The item no longer exists in this project.");
         return;
       }
-      if (ref === "code" && workspace) {
-        const repositories = (await codeRepositories()).map(({ name, code: { fetchedAt, ...code } }) => ({ name, code }));
-        sendJson(response, 200, { ref, kind: "code", data: { repositories } });
+      if ((parseEntityRef(ref)?.kind === "code" || parseCodeRef(ref)) && workspace) {
+        const repositories = (await codeRepositories()).map(({ name, code }) => ({ name, state: code.state, message: code.message ?? null }));
+        sendJson(response, 200, { ref, kind: "code", data: { repositories, file: parseCodeRef(ref) } });
         return;
       }
       const entity = await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() });

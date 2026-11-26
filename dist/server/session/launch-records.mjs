@@ -313,7 +313,7 @@ function launchView(record, { now = Date.now(), gates = null, permission = null,
   }, 0);
   const ended = [...record.runs].reverse().find((run) => run.endedAt);
   const exit = status === "lost" ? null : ended?.exit ? { code: ended.exit.code ?? null, signal: ended.exit.signal ?? null } : null;
-  const command = status === "running" ? null : resumeCommandOf(record.host, record.hostSessionId);
+  const command = status === "running" ? null : resumeCommandOf(record.host, record.hostSessionId, process.env, { access: record.access ?? "full" });
   const last = record.runs.at(-1);
   const end = status === "ended" || status === "lost" ? lastEnd(record, status) : Number.NaN;
   const holder = typeof record.hostSessionId === "string" ? sessionHolder({ CLAUDE_CODE_SESSION_ID: record.hostSessionId }) : null;

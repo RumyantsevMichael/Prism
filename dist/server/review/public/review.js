@@ -15,7 +15,8 @@ import { connectionState, recordProbe, STOPPED_MESSAGE } from "./views/connectio
 import { badgedIcon, notificationText, shouldNotify, signalTitle } from "./views/attention-signal.js";
 import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-tab.js";
 import { createPageBar } from "./views/page-bar.js";
-import { DEFAULT_PLACE, PLACES, placeNamed } from "./views/places.js";
+import { refreshCodePage } from "./views/code.js";
+import { DEFAULT_PLACE, PLACES, placeNamed, placeOf } from "./views/places.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createAgentsMenu } from "./views/agents-menu.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
@@ -79,6 +80,15 @@ const INDEX_CHECK_MS = 5e3;
 const INDEX_UNJOINED_MS = 1500;
 const ACTION_CHECK_MS = 4500;
 const ACTION_JOINED_MS = 3e4;
+const CODE_JOINED_MS = 3e4;
+let codeCheckedAt = 0;
+let codeCheckAsked = false;
+function codeCheckDue() {
+  if (sessionConnected && !codeCheckAsked && Date.now() - codeCheckedAt < CODE_JOINED_MS) return false;
+  codeCheckAsked = false;
+  codeCheckedAt = Date.now();
+  return true;
+}
 let saveQueue = Promise.resolve();
 const STORE_REF = "store:";
 const isStoreRef = (path) => typeof path === "string" && path.startsWith(STORE_REF);
@@ -638,6 +648,11 @@ function openRef(given, { keep = false, fromHistory = false, keepDrawer = false 
   const moved = selectedPath !== path;
   selectedPath = path;
   lastSnapshot = "";
+  if (placeOf(path) === "code" && currentPlace !== "code" && placeShown("code")) {
+    currentPlace = "code";
+    storePlace("code");
+    void loadCodePlace();
+  }
   updateLocation(path, moved && !fromHistory);
   if (navDrawer.isOpen && !keepDrawer) navDrawer.close();
   if (sidebarFlyoutOpen() && !keepDrawer) setSidebarFlyout(false);
@@ -972,8 +987,12 @@ function onStreamEvent(name, data) {
     document.dispatchEvent(new CustomEvent("prism:action", { detail: data }));
     if (data?.artifact?.path && data.artifact.path === selectedPath) void showArtifact(selectedPath);
   } else if (name === "records") {
+    codeCheckAsked = true;
     refreshIndex?.();
     if (connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
+  } else if (name === "code") {
+    void loadCodePlace();
+    refreshCodePage();
   } else if (name === "session") {
     sessionConnected = true;
     try {
@@ -1120,6 +1139,17 @@ function startSettings() {
   });
   sidebarChoice.addEventListener("change", (event) => setSidebarCollapsed(event.detail?.value === "hidden"));
   document.getElementById("settings-sidebar-reset").addEventListener("click", () => setSidebarWidth(null, { remember: true }));
+  const quietDays = document.getElementById("settings-quiet-days");
+  const saveQuietDays = () => {
+    const control = quietDays.control;
+    const days = Number(control?.value);
+    if (!control?.validity.valid || !Number.isInteger(days) || days === preference("code.quietDays")) return;
+    void setPreference("code.quietDays", days).catch(() => showToast("The Code place uses the new threshold here, but the review app could not store it."));
+  };
+  quietDays.addEventListener("change", saveQuietDays);
+  quietDays.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") saveQuietDays();
+  });
   for (const choice of settingsDialog.querySelectorAll("prism-segmented[data-setting]")) {
     choice.addEventListener("change", (event) => savePersonalSetting(choice.dataset.setting, event.detail?.value));
   }
@@ -1137,6 +1167,8 @@ function openSettings() {
   document.getElementById("settings-store-name").textContent = store.hidden ? "No record store" : store.getAttribute("data-name") || "Record store";
   document.getElementById("settings-store-state").textContent = store.hidden ? "This workspace keeps no records yet." : (store.getAttribute("tip") ?? "").split("\n")[0];
   document.getElementById("settings-store-open").hidden = store.hidden;
+  document.getElementById("settings-quiet-row").hidden = !codeRepositories.length;
+  document.getElementById("settings-quiet-days").value = String(preference("code.quietDays"));
   if (settingsDialog.querySelector('.settings-section[data-section="agents"]:not([hidden])')) void codingAgents?.refresh();
   settingsDialog.querySelector(".settings").dataset.pane = "list";
   settingsDialog.show();
@@ -1431,12 +1463,32 @@ function kitElement(tag, attributes = {}, text = "") {
   if (text) node.textContent = text;
   return node;
 }
-function treeItem(value, label, { selected = false, expanded = false, start = [], end = [], children = [], tip = null, href = pageHref(value) } = {}) {
+let drawnRows = /* @__PURE__ */ new Map();
+let drawingRows = null;
+function keptRow(value, label, { selected, expanded, tip, href, meta: meta2, content, children }) {
+  const kept = drawingRows ? drawnRows.get(value) : null;
+  if (!kept || kept.rowContent !== content || kept.rowChildren.length !== children.length || kept.rowChildren.some((child, index) => child !== children[index])) return null;
+  const same = (name, wanted) => kept.getAttribute(name) === (wanted === null || wanted === void 0 || wanted === "" ? null : String(wanted));
+  if (!same("label", label) || !same("tip", tip) || !same("href", href) || !same("meta", meta2) || kept.hasAttribute("selected") !== Boolean(selected) || kept.hasAttribute("expanded") !== Boolean(expanded)) return null;
+  drawnRows.delete(value);
+  return kept;
+}
+function treeItem(value, label, { selected = false, expanded = false, start = [], end = [], children = [], tip = null, href = pageHref(value), meta: meta2 = null } = {}) {
+  const content = JSON.stringify([start.map((node) => node.outerHTML ?? node.textContent), end.map((node) => node.outerHTML ?? node.textContent)]);
+  const kept = keptRow(String(value), label, { selected, expanded, tip, href, meta: meta2, content, children });
+  if (kept) {
+    drawingRows.set(String(value), kept);
+    return kept;
+  }
   const item = document.createElement("prism-tree-item");
+  item.rowContent = content;
+  item.rowChildren = children;
+  if (drawingRows && !drawingRows.has(String(value))) drawingRows.set(String(value), item);
   item.setAttribute("value", value);
   item.setAttribute("label", label);
   if (href) item.setAttribute("href", href);
   if (tip) item.setAttribute("tip", tip);
+  if (meta2 !== null && meta2 !== void 0 && meta2 !== "") item.setAttribute("meta", String(meta2));
   item.toggleAttribute("selected", selected);
   item.toggleAttribute("expanded", expanded);
   for (const node of start) {
@@ -1651,8 +1703,9 @@ let pendingLane = null;
   if (address.get("artifact") === "roadmap" && LANES.some(([name]) => name === lane)) pendingLane = { path: "roadmap", lane };
 }
 const addressedPlace = new URLSearchParams(location.search).get("place");
-const addressedRecord = /^(store|code):/.test(new URLSearchParams(location.search).get("artifact") ?? "");
-let currentPlace = placeNamed(addressedPlace) ? addressedPlace : addressedRecord ? "knowledge" : readStoredPlace() ?? DEFAULT_PLACE;
+const addressedRef = new URLSearchParams(location.search).get("artifact") ?? "";
+const addressedRecord = /^store:/.test(addressedRef) ? "knowledge" : placeOf(addressedRef) === "code" ? "code" : null;
+let currentPlace = placeNamed(addressedPlace) ? addressedPlace : addressedRecord ?? readStoredPlace() ?? DEFAULT_PLACE;
 if (placeNamed(addressedPlace)) storePlace(addressedPlace);
 function showPlaceHead() {
   const place = placeNamed(currentPlace);
@@ -1668,19 +1721,35 @@ function choosePlace(name, { fromRail = false, keep = false } = {}) {
   currentPlace = name;
   storePlace(name);
   renderNavigation();
-  if (fromRail && name === "roadmap") {
+  if (fromRail && (name === "roadmap" || name === "code")) {
+    const ref = name === "code" ? readCodeAddress() ?? "code" : "roadmap";
     const drawn = navDrawer.isOpen;
-    const shown = openRef("roadmap", { keep, keepDrawer: true });
-    if (drawn) closeDrawerAfter(shown, "roadmap");
+    const shown = openRef(ref, { keep, keepDrawer: true });
+    if (drawn) closeDrawerAfter(shown, ref);
   }
+  if (name === "code") void loadCodePlace();
+}
+const placeShown = (name) => name !== "code" || codeRepositories.length > 0;
+function keepShownPlace() {
+  if (placeShown(currentPlace)) return;
+  currentPlace = DEFAULT_PLACE;
+  storePlace(DEFAULT_PLACE);
 }
 function renderRail(rail, questions) {
   const items = new Map([...rail.querySelectorAll("prism-rail-item[data-place]")].map((item) => [item.dataset.place, item]));
-  for (const place of PLACES) {
+  for (const [index, place] of PLACES.entries()) {
     let item = items.get(place.name);
+    if (!placeShown(place.name)) {
+      item?.remove();
+      items.delete(place.name);
+      continue;
+    }
     if (!item) {
       item = kitElement("prism-rail-item", { "data-place": place.name, value: place.name, label: place.label, icon: place.icon });
-      rail.append(item);
+      const next = PLACES.slice(index + 1).map((later) => items.get(later.name)).find(Boolean);
+      if (next) next.before(item);
+      else rail.append(item);
+      items.set(place.name, item);
     }
     item.setAttribute("pressed", String(place.name === currentPlace));
     if (place.name === "attention" && questions > 0) {
@@ -1697,6 +1766,7 @@ const PLACE_NAVIGATION = {
   work: workNavigation,
   roadmap: roadmapNavigation,
   knowledge: knowledgeNavigation,
+  code: codeNavigation,
   history: historyNavigation
 };
 function attentionNavigation() {
@@ -1911,8 +1981,7 @@ function knowledgeNavigation() {
       row("requirements", ENTITY_LABELS.requirements, "list", count(shown("requirements"))),
       row("decisions", ENTITY_LABELS.decisions, "scale", count(shown("decisions"))),
       row("glossary", "Glossary", "book", glossary.exists ? count(shown("terms")) : [element("span", "nav-state", "missing")]),
-      row("knowledge:diagrams", "Diagrams", "diagram", count(shown("diagrams"))),
-      ...codeRepositories.length ? [row("code", ENTITY_LABELS.code, "code", [])] : []
+      row("knowledge:diagrams", "Diagrams", "diagram", count(shown("diagrams")))
     ])
   ];
 }
@@ -1933,15 +2002,202 @@ function historyNavigation() {
     return treeItem(ref, entry.title, { selected: selectedPath === ref, start: [glyph], end, tip });
   }))];
 }
+const CODE_ADDRESS_KEY = "prism.review.code.address";
+const isCodeNarrowing = (ref) => ref === "code" || parseEntityRef(ref ?? "")?.kind === "code";
+let codeNarrowed = "code";
+function readCodeAddress() {
+  try {
+    const stored = localStorage.getItem(CODE_ADDRESS_KEY);
+    return stored && placeOf(stored) === "code" ? stored : null;
+  } catch {
+    return null;
+  }
+}
+function rememberCodeAddress(ref) {
+  if (typeof ref !== "string" || placeOf(ref) !== "code") return;
+  if (isCodeNarrowing(ref)) codeNarrowed = ref;
+  try {
+    if (localStorage.getItem(CODE_ADDRESS_KEY) !== ref) localStorage.setItem(CODE_ADDRESS_KEY, ref);
+  } catch {
+  }
+}
+let codePlace = null;
+let codePlaceRead = null;
+let codePlaceRetry = null;
+const CODE_PREPARING_RETRY_MS = 1e3;
+function codeQuery() {
+  return `quietDays=${encodeURIComponent(preference("code.quietDays"))}&showQuiet=${preference("code.showQuiet") ? "true" : "false"}`;
+}
+function loadCodePlace() {
+  if (!codeRepositories.length) return Promise.resolve();
+  if (codePlaceRead) return codePlaceRead.then(() => codePlace?.query === codeQuery() ? void 0 : loadCodePlace());
+  clearTimeout(codePlaceRetry);
+  const query = codeQuery();
+  codePlaceRead = (async () => {
+    const response = await appFetch(`./api/code/place?${query}`, { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);
+    if (response?.status === 202) {
+      codePlaceRetry = setTimeout(() => void loadCodePlace(), CODE_PREPARING_RETRY_MS);
+      return;
+    }
+    const answer = response?.ok ? await response.json().catch(() => null) : null;
+    if (!answer || !Array.isArray(answer.work)) return;
+    const changed = JSON.stringify(codePlace?.answer) !== JSON.stringify(answer);
+    codePlace = { query, answer };
+    if (currentPlace === "code") renderNavigation();
+    if (changed) refreshCodePage();
+  })().finally(() => {
+    codePlaceRead = null;
+  });
+  return codePlaceRead;
+}
+let codeFilterField = null;
+function codeFilter() {
+  if (!codeFilterField) {
+    codeFilterField = kitElement("prism-field", { type: "search", variant: "filter", label: "Filter work and branches", placeholder: "Filter work and branches", class: "nav-filter" });
+    const icon = navIcon("filter");
+    icon.slot = "start";
+    icon.setAttribute("size", "sm");
+    codeFilterField.append(icon);
+    codeFilterField.addEventListener("input", () => renderNavigation());
+    codeFilterField.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !codeFilterField.value) return;
+      event.preventDefault();
+      event.stopPropagation();
+      codeFilterField.value = "";
+      renderNavigation();
+    });
+  }
+  return codeFilterField;
+}
+const filesChanged = (files) => `${files} ${files === 1 ? "file" : "files"} changed`;
+const lineName = (line) => `${line.repository} \xB7 ${line.branch}`;
+const lineFacts = (line) => `${lineName(line)}, ${line.base ? `from ${line.base}` : "sharing no history with another branch"}`;
+const codeBranchRef = (line) => `code:branch/${line.repository}/${line.branch}`;
+const branchPerson = (line) => !line.people?.count ? null : line.people.count === 1 ? line.people.last : `${line.people.count} people`;
+function sliceAndBelow(nodes, slug) {
+  const found = nodes.filter((node) => node.slug === slug);
+  for (let index = 0; index < found.length; index += 1) found.push(...nodes.filter((node) => node.parent === found[index].slug));
+  return found;
+}
+function codeNavigation() {
+  const field = codeFilter();
+  const typed = (field.value ?? "").trim();
+  const query = typed.toLowerCase();
+  const answer = shownCodeAnswer();
+  const chosen = isCodeNarrowing(selectedPath) ? selectedPath : placeOf(selectedPath) === "code" ? codeNarrowed : null;
+  const matches = (text) => !query || String(text ?? "").toLowerCase().includes(query);
+  const linesMatch = (lines) => lines.some((line) => matches(line.repository) || matches(line.branch));
+  const byId = new Map((navigation.initiatives ?? []).map((item) => [item.id, item]));
+  const toggled = (ref) => treeToggles.get(ref) ?? true;
+  const all = treeItem("code", "All work and branches", { selected: chosen === "code", start: [navIcon("code")], meta: answer ? answer.lines : null, tip: answer ? `All work and branches \xB7 ${answer.lines} ${answer.lines === 1 ? "line of work" : "lines of work"}` : "All work and branches" });
+  const parts = [field, tree("Code", [all])];
+  if (!answer) {
+    parts.push(element("p", "nav-note", "Prism is reading the branches of every repository."));
+    return parts;
+  }
+  const claimOf = (initiative, nodes) => nodes.map((node) => claimIndex?.claimFor(`slice:${initiative}/${node.slug}`)).find(Boolean) ?? null;
+  const agentOf = (claim) => claim ? [claim.host, claim.model].filter(Boolean).join(" \xB7 ") || claim.label : "Agent";
+  const lineRow = (line, who, end = []) => {
+    const ref = codeBranchRef(line);
+    const tip = [lineFacts(line), who, typeof line.files === "number" ? filesChanged(line.files) : null].filter(Boolean).join(" \xB7 ");
+    return treeItem(ref, lineName(line), { selected: chosen === ref, start: [navIcon("branch")], end, meta: typeof line.files === "number" ? line.files : null, tip });
+  };
+  const withLines = (ref, title, lines, who, files, options, own) => {
+    const shown = own ? lines : lines.filter((line) => matches(line.repository) || matches(line.branch));
+    const children = lines.length > 1 ? shown.map((line) => lineRow(line, who)) : [];
+    const tip = [title, ...lines.map(lineFacts), lines.length ? who : null, files ? filesChanged(files) : "No changes yet"].filter(Boolean).join(" \xB7 ");
+    return treeItem(ref, title, { ...options, selected: chosen === ref, children, expanded: children.length > 0 && toggled(ref), meta: files ? files : "No changes yet", tip });
+  };
+  const workRows = [];
+  for (const work of answer.work) {
+    const listed = byId.get(work.initiative) ?? {};
+    const nodes = listed.tree ?? [];
+    const ref = `code:work/${work.initiative}`;
+    const state = listed.state ?? "in-progress";
+    const glyph = kitElement("prism-status", { value: state, label: STATE_WORDS[state] ?? state, "glyph-only": true });
+    const ownMatch = matches(work.title);
+    if (!work.slices.length) {
+      const claim = claimOf(work.initiative, nodes);
+      if (!ownMatch && !linesMatch(work.branches)) continue;
+      workRows.push(withLines(ref, work.title, work.branches, work.branches.length ? agentOf(claim) : null, work.files, { start: [glyph], end: claim ? [claimElement(claim, "avatar")] : [] }, ownMatch || !linesMatch(work.branches)));
+      continue;
+    }
+    const sliceRows = [];
+    for (const slice of work.slices) {
+      const below = sliceAndBelow(nodes, slice.slice);
+      const node = below[0] ?? { slug: slice.slice, title: slice.title, status: "in-progress" };
+      const sliceRef = `code:work/${work.initiative}/${slice.slice}`;
+      const sliceMatch = ownMatch || matches(slice.title);
+      if (!sliceMatch && !linesMatch(slice.branches)) continue;
+      const claim = claimOf(work.initiative, below);
+      const start = [];
+      if (node.hasChildren) {
+        const split = branchState(work.initiative, nodes, node.slug);
+        start.push(kitElement("prism-status", { value: split, label: `Split \xB7 ${STATE_WORDS[split]}`, "glyph-only": true }));
+      } else {
+        const phase = slicePhaseStep(node);
+        start.push(kitElement("prism-phase", { phase: phase?.[0] ?? null, label: [phase ? phase[1] : null, STATUS_WORDS[node.status] ?? node.status].filter(Boolean).join(" \xB7 ") }));
+      }
+      const end = [];
+      if (below.some((each) => each.waits)) end.push(element("span", "prism-tree-flag is-warning", "Waits"));
+      if (claim) end.push(claimElement(claim, "avatar"));
+      sliceRows.push(withLines(sliceRef, slice.title, slice.branches, agentOf(claim), slice.files, { start, end }, sliceMatch || !linesMatch(slice.branches)));
+    }
+    if (!ownMatch && !sliceRows.length) continue;
+    const tip = [work.title, STATE_WORDS[state] ?? state, work.files ? filesChanged(work.files) : "No changes yet"].join(" \xB7 ");
+    workRows.push(treeItem(ref, work.title, { selected: chosen === ref, start: [glyph], children: sliceRows, expanded: sliceRows.length > 0 && toggled(ref), meta: work.files ? work.files : "No changes yet", tip }));
+  }
+  const otherRows = answer.branches.filter((line) => matches(line.repository) || matches(line.branch)).map((line) => {
+    const person = branchPerson(line);
+    const when = shortDate(line.committedAt);
+    const row = lineRow(line, [person, when ? `last commit ${when}` : null, line.quiet ? "quiet" : null].filter(Boolean).join(" \xB7 ") || null, person ? [kitElement("prism-avatar", { kind: "person", name: person, size: "sm" })] : []);
+    return row;
+  });
+  if (workRows.length) parts.push(section("In progress", workRows.length), tree("In progress", workRows, { branching: true }));
+  if (otherRows.length) parts.push(section("Other branches", otherRows.length), tree("Other branches", otherRows));
+  if (!workRows.length && !otherRows.length) parts.push(element("p", "nav-note", typed ? `No work or branch matches "${typed}".` : "No work or branch changes code yet."));
+  if (answer.preparing?.length) parts.push(element("p", "nav-note", `Prism is still reading the branches of ${answer.preparing.join(", ")}.`));
+  const quietNote = codeQuietNote(answer);
+  if (quietNote) parts.push(quietNote);
+  return parts;
+}
+function shownCodeAnswer() {
+  const answer = codePlace?.answer ?? null;
+  if (!answer || preference("code.showQuiet") || !answer.branches.some((line) => line.quiet)) return answer;
+  const quiet = answer.branches.filter((line) => line.quiet).length;
+  return { ...answer, lines: answer.lines - quiet, branches: answer.branches.filter((line) => !line.quiet), quiet: { ...answer.quiet, hidden: answer.quiet.hidden + quiet } };
+}
+function codeQuietNote(answer) {
+  const showing = Boolean(preference("code.showQuiet"));
+  const shown = answer.branches.filter((line) => line.quiet).length;
+  const count = showing ? shown : answer.quiet.hidden;
+  if (!count) return null;
+  const text = showing ? `${count === 1 ? "1 quiet branch is" : `${count} quiet branches are`} shown. ` : `${count === 1 ? "1 quiet branch is" : `${count} quiet branches are`} hidden: no push in ${answer.quiet.days} days. `;
+  const link = element("a", "prism-foot-note-link", showing ? "Hide them" : "Show them");
+  link.setAttribute("href", "#");
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    void setPreference("code.showQuiet", !showing).catch(() => showToast("The quiet branches show here, but the review app could not store the choice."));
+  });
+  const foot = element("p", "prism-foot-note");
+  const glyph = element("span", "prism-foot-note-glyph");
+  glyph.append(kitElement("prism-icon", { name: "clock", size: "xs" }));
+  const words = element("span", "", text);
+  words.append(link);
+  foot.append(glyph, words);
+  return foot;
+}
 let navigationKey = "";
 function renderNavigation() {
+  keepShownPlace();
+  rememberCodeAddress(selectedPath);
   const scope = currentContext?.ref === selectedPath ? currentContext.value.scope : { kind: "global" };
   const attention = navigation.attention ?? {};
   void updateAttentionSignals(attention.gates ?? 0);
   for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label, claim.host, claim.model]) : [];
-  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, currentPlace === "knowledge" ? [lastSlice, touchedCount] : null, storeSignature, scopeFilter && [...scopeFilter]]);
+  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, currentPlace === "knowledge" ? [lastSlice, touchedCount] : null, currentPlace === "code" ? [codePlace, codeQuery(), codeFilterField?.value ?? "", codeNarrowed] : null, storeSignature, scopeFilter && [...scopeFilter]]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
@@ -1950,7 +2206,15 @@ function renderNavigation() {
   showPlaceHead();
   const field = document.activeElement?.closest?.("prism-field");
   const typing = field && navRoot.contains(field) ? { field, start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd } : null;
-  navRoot.replaceChildren(...PLACE_NAVIGATION[place.name]({ scope, entity }));
+  drawingRows = /* @__PURE__ */ new Map();
+  let drawn;
+  try {
+    drawn = PLACE_NAVIGATION[place.name]({ scope, entity });
+  } finally {
+    drawnRows = drawingRows;
+    drawingRows = null;
+  }
+  navRoot.replaceChildren(...drawn);
   if (typing && navRoot.contains(typing.field) && typing.field.control) {
     typing.field.control.focus();
     try {
@@ -2290,7 +2554,7 @@ function modeButtons(state, path) {
     return button;
   });
 }
-async function showEntity(path) {
+async function showEntity(path, { check = false } = {}) {
   const response = await appFetch(`./api/entity?ref=${encodeURIComponent(path)}`, { cache: "no-store" });
   if (response.status === 404) {
     showMissing(path);
@@ -2306,6 +2570,7 @@ async function showEntity(path) {
   const snapshot = JSON.stringify(entity);
   if (path !== selectedPath) return;
   if (snapshot === lastSnapshot) {
+    if (entity.kind === "code" && (!check || codeCheckDue())) refreshCodePage();
     setBusy(false);
     return;
   }
@@ -2313,7 +2578,7 @@ async function showEntity(path) {
   const label = entityLabel(entity);
   const state = viewState(path);
   const memory = beginRebuild(path);
-  memory.stage.innerHTML = `
+  memory.stage.innerHTML = entity.kind === "code" ? "" : `
     <header class="artifact-header">
       <div>
         <h1>${escapeHtml(label.title)}</h1>
@@ -2341,6 +2606,13 @@ async function showEntity(path) {
     // The Code page turns a repository's code content on or off with the tab's write session, and then reads the page again.
     canWrite: () => Boolean(writeSession()),
     setCode: (repository, enabled) => setCodeContent(repository, enabled),
+    // The Code page reads the narrowing the place shows, the person's quiet-branch preferences, the place's work and branches, and opens a file's address.
+    codeNarrowing: () => codeNarrowed,
+    codeQuery,
+    codeAnswer: () => shownCodeAnswer(),
+    narrowingLabel: (ref) => currentContext?.ref === ref ? currentContext.value.trail.at(-1)?.label ?? null : null,
+    pageHref,
+    openRef: (ref, options = {}) => openRef(ref, options),
     refresh: () => {
       lastSnapshot = "";
       if (path === selectedPath) void showArtifact(path);
@@ -2384,7 +2656,7 @@ function noteTouched(slice, answer) {
   touchedCount = count;
   if (currentPlace === "knowledge") renderNavigation();
 }
-async function showArtifact(path) {
+async function showArtifact(path, { check = false } = {}) {
   rememberSlice(path);
   await refreshContext(path);
   if (path !== selectedPath) {
@@ -2395,8 +2667,8 @@ async function showArtifact(path) {
     return;
   }
   refreshHeld = false;
-  if (parseEntityRef(path)) {
-    await showEntity(path);
+  if (parseEntityRef(path) || isCodeRef(path)) {
+    await showEntity(path, { check });
     return;
   }
   const response = await appFetch(`./api/artifact?${artifactQuery(path)}`, { cache: "no-store" });
@@ -2534,7 +2806,7 @@ function viewContext(path, state) {
     // A view's own read route, such as a slice's frozen test or run log, answers JSON, and a refusal throws its text.
     fetchJson: (url) => fetchJson(url),
     fetchEvidence: (id) => fetchJson(`./api/evidence?id=${encodeURIComponent(id)}`),
-    hasArtifact: (artifactPath) => availableArtifacts.has(localTab(artifactPath)) || Boolean(parseEntityRef(artifactPath)),
+    hasArtifact: (artifactPath) => availableArtifacts.has(localTab(artifactPath)) || Boolean(parseEntityRef(artifactPath)) || isCodeRef(artifactPath),
     // A store artifact's scope label, which the record views show beside it, or null for any other file.
     scopeLabel: (artifactPath) => refScopes.get(localTab(artifactPath)) ?? null,
     // The scope filter of Knowledge: whether a scope label is shown, the chosen labels or null for every scope, the store's scopes by label, and a way back to every scope.
@@ -2544,7 +2816,7 @@ function viewContext(path, state) {
     showAllScopes: () => setScopeFilter(null),
     openArtifact(given, options = {}) {
       const artifactPath = localTab(given);
-      if (!availableArtifacts.has(artifactPath) && !parseEntityRef(artifactPath)) {
+      if (!availableArtifacts.has(artifactPath) && !parseEntityRef(artifactPath) && !isCodeRef(artifactPath)) {
         showToast(`Not a reviewable artifact: ${artifactPath}`);
         return;
       }
@@ -2756,6 +3028,8 @@ async function initialize() {
     return;
   }
   useStoreRefs(index);
+  keepShownPlace();
+  if (currentPlace === "code") void loadCodePlace();
   const data = localSession(index);
   startHistory();
   watchHistoryLeave();
@@ -2981,6 +3255,11 @@ async function initialize() {
   onPreferencesChange((keys, preferences) => {
     if (keys.includes("sidebar.collapsed") && preferences["sidebar.collapsed"] !== shell.classList.contains("sidebar-collapsed")) setSidebarCollapsed(preferences["sidebar.collapsed"], { remember: false });
     if (keys.includes("sidebar.width")) setSidebarWidth(preferences["sidebar.width"]);
+    if (keys.some((key) => key.startsWith("code."))) {
+      renderNavigation();
+      void loadCodePlace();
+      refreshCodePage();
+    }
   });
   navDrawer.addEventListener("prism-close", closeDrawer);
   watchDrawerWidth();
@@ -3117,10 +3396,11 @@ async function initialize() {
         const panel = sidePanel.isOpen() ? sidePanel.refresh().catch(() => {
         }) : null;
         if (selectedPath) {
-          await showArtifact(selectedPath);
+          await showArtifact(selectedPath, { check: true });
         }
         await panel;
         if (currentPlace === "knowledge" && lastSlice && selectedPath !== "knowledge:touched") await countTouched(lastSlice);
+        if (currentPlace === "code") await loadCodePlace();
       }
     } catch {
     }

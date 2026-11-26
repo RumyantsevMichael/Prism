@@ -1,5 +1,5 @@
 // Generated from src/server/review/public/views/event-relay.ts by scripts/native-build/compile.mjs.
-const EVENTS = ["session", "action", "notice"];
+const EVENTS = ["session", "action", "notice", "records", "code"];
 const JOIN_RETRY_MS = 2e3;
 function tabId() {
   try {

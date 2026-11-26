@@ -157,12 +157,20 @@ async function recordLaunch(root, id, { launch, status = null, reason = null, fr
     return next;
   });
 }
-async function failOpenRun(root, id, reason, { launch = null, endedAt = null } = {}) {
+async function failOpenRun(root, id, reason, { launch = null, endedAt = null, finish = false } = {}) {
   return withRunLock(root, id, async () => {
     const record = await readRun(root, id);
     if (!record || !OPEN_STATUSES.has(record.status)) return record;
     if (launch !== null && record.launch?.id && record.launch.id !== launch) return record;
     if (typeof endedAt === "string" && typeof record.continuingAt === "string" && Date.parse(record.continuingAt) >= Date.parse(endedAt)) return record;
+    if (finish && proposedAll(record)) {
+      const finished = await finishedRecord(root, record).catch((error) => ({ error }));
+      if (!("error" in finished)) {
+        await writeRun(root, finished);
+        return finished;
+      }
+      reason = `${reason} Prism could not finish the run: ${finished.error?.message ?? finished.error}`;
+    }
     const now = (/* @__PURE__ */ new Date()).toISOString();
     const next = { ...record, status: "failed", failure: { reason: failureReason(reason), at: now }, endedAt: now, reason: null };
     await writeRun(root, next);
@@ -189,7 +197,7 @@ async function launchMigrationRun(projectRoot, id, { env = process.env, status =
 const launchRunSession = ({ projectRoot, run }) => launchMigrationRun(projectRoot, run.id);
 async function sessionEnded(projectRoot, id, { launch = null, reason, endedAt = null }) {
   const root = await realpath(projectRoot);
-  return failOpenRun(root, id, `${LAUNCH_ENDED}${reason}`, { launch, endedAt });
+  return failOpenRun(root, id, `${LAUNCH_ENDED}${reason}`, { launch, endedAt, finish: true });
 }
 async function continueMigrationRun(projectRoot, id, { env = process.env } = {}) {
   const root = await realpath(projectRoot);
@@ -551,6 +559,33 @@ const closed = (record) => fail("migration_run_closed", `The format migration ru
 function requireOpen(record) {
   if (!OPEN_STATUSES.has(record.status)) throw closed(record);
 }
+async function finishedRecord(root, current) {
+  const asked = current.migrations.flatMap((migration) => migration.points.filter((point) => point.asked !== null).map((point) => ({ migration, point })));
+  const answers = current.answers ?? {};
+  const unanswered = asked.filter(({ point }) => !isRecord(answers[point.id]));
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  let next;
+  if (!unanswered.length) {
+    const { applyRun } = await import("./format-migrations.mjs");
+    try {
+      const result = await applyRun(root, current, now);
+      next = { ...current, status: "applied", result, endedAt: now, reason: null };
+    } catch (error) {
+      if (!runFailure(error)) throw error;
+      next = { ...current, status: "failed", failure: { reason: failureReason(error.message), at: now }, endedAt: now, reason: null };
+    }
+  } else if (current.question === null || current.question === void 0) {
+    const points = asked.map(({ migration, point }) => {
+      const { id, kind, settled, asked: question, ...detail } = point;
+      return { id, migration: migration.id, artifact: { path: migration.source.path, scope: migration.source.scope }, kind, ...detail, recommendation: question.recommendation };
+    });
+    next = { ...current, status: "asking", question: { points, askedAt: now }, reason: null };
+  } else {
+    next = { ...current, status: "failed", failure: { reason: ASKED_AGAIN, at: now }, endedAt: now, reason: null };
+  }
+  return next;
+}
+const proposedAll = (record) => record.set.artifacts.every((artifact) => record.migrations.some((migration) => sameArtifact(migration.source, artifact)));
 async function finishMigrationRun(input) {
   runInput(input, "finish_migration_run", ["run"]);
   const root = await realpath(input.projectRoot);
@@ -563,29 +598,7 @@ async function finishMigrationRun(input) {
     if (missing.length) {
       throw fail("migration_run_incomplete", `The format migration run ${current.id} has no proposal yet for ${missing.map(artifactName).join(", ")}: propose a format migration of each artifact of its set before finishing it.`, { run: current.id, artifacts: missing.map(({ path: file, scope }) => ({ path: file, scope })) });
     }
-    const asked = current.migrations.flatMap((migration) => migration.points.filter((point) => point.asked !== null).map((point) => ({ migration, point })));
-    const answers = current.answers ?? {};
-    const unanswered = asked.filter(({ point }) => !isRecord(answers[point.id]));
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    let next;
-    if (!unanswered.length) {
-      const { applyRun } = await import("./format-migrations.mjs");
-      try {
-        const result = await applyRun(root, current, now);
-        next = { ...current, status: "applied", result, endedAt: now, reason: null };
-      } catch (error) {
-        if (!runFailure(error)) throw error;
-        next = { ...current, status: "failed", failure: { reason: failureReason(error.message), at: now }, endedAt: now, reason: null };
-      }
-    } else if (current.question === null || current.question === void 0) {
-      const points = asked.map(({ migration, point }) => {
-        const { id, kind, settled, asked: question, ...detail } = point;
-        return { id, migration: migration.id, artifact: { path: migration.source.path, scope: migration.source.scope }, kind, ...detail, recommendation: question.recommendation };
-      });
-      next = { ...current, status: "asking", question: { points, askedAt: now }, reason: null };
-    } else {
-      next = { ...current, status: "failed", failure: { reason: ASKED_AGAIN, at: now }, endedAt: now, reason: null };
-    }
+    const next = await finishedRecord(root, current);
     await writeRun(root, next);
     return next;
   }));

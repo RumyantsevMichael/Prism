@@ -1476,10 +1476,7 @@ async function computeNavigation(projectRoot) {
   const roadmap = await loadRoadmapView(projectRoot);
   const glossary = await loadGlossary(projectRoot);
   const attention = await loadAttention(projectRoot);
-  const placed = await Promise.all([
-    ...roadmap.items.map((item) => ({ id: item.id, title: item.title, band: item.band, state: item.state })),
-    ...roadmap.unlisted.map((id) => ({ id, title: id, band: null, state: "unlisted" }))
-  ].map(async (item) => ({ ...item, place: await initiativePlace(projectRoot, item.id) })));
+  const placed = await placedInitiatives(projectRoot, roadmap);
   const listedInitiatives = await Promise.all(placed.map(withSliceTree(projectRoot)));
   const settled = (promise) => promise.then((value) => ({ value }), (error) => ({ error }));
   const read = Object.fromEntries(await Promise.all(["requirements", "decisions"].map(async (kind) => [kind, await settled(loadLibrary(projectRoot, kind))])));
@@ -1523,6 +1520,13 @@ const WORK_GROUPS = Object.freeze([
   { key: "designed", label: "Designed, not started" },
   { key: "unlisted", label: "Not on the roadmap" }
 ]);
+async function placedInitiatives(projectRoot, roadmap = null) {
+  const read = roadmap ?? await loadRoadmapView(projectRoot);
+  return Promise.all([
+    ...read.items.map((item) => ({ id: item.id, title: item.title, band: item.band, state: item.state })),
+    ...read.unlisted.map((id) => ({ id, title: id, band: null, state: "unlisted" }))
+  ].map(async (item) => ({ ...item, place: await initiativePlace(projectRoot, item.id) })));
+}
 async function workGroups(projectRoot, initiatives) {
   const live = new Set((await loadClaims(projectRoot).catch(() => ({ claims: [] }))).claims.filter((claim) => !claim.expired).map((claim) => claim.ref));
   const members = new Map(WORK_GROUPS.map((group) => [group.key, []]));
@@ -1561,11 +1565,13 @@ async function initiativeTree(projectRoot, id) {
   const title = view.roadmapItem?.title ?? view.record?.slices?.[view.derived?.root]?.title ?? id;
   const scope = { kind: "initiative", id, title, state: view.roadmapItem?.state ?? (view.exists ? "unlisted" : "envisioned"), valid: view.valid, tree: [] };
   if (!view.derived) return { scope, view };
+  const pending = await readCoordinationState({ projectRoot, initiative: id }).then((read) => read?.state?.pending ?? []).catch(() => []);
+  const waiting = new Set(pending.filter((gate) => gate && typeof gate === "object" && typeof gate.slice === "string" && !gate.answer).map((gate) => gate.slice));
   const visit = (slug, depth) => {
     const slice = view.record.slices[slug];
     const children = view.derived.children[slug] ?? [];
     const review = view.slices[slug]?.review;
-    scope.tree.push({ slug, title: slice.title, status: slice.status, depth, parent: slice.parent, hasChildren: children.length > 0, complete: Boolean(view.derived.complete[slug]), blocking: review && !review.invalid ? review.blocking : 0, ...slicePhase(slice) });
+    scope.tree.push({ slug, title: slice.title, status: slice.status, depth, parent: slice.parent, hasChildren: children.length > 0, complete: Boolean(view.derived.complete[slug]), blocking: review && !review.invalid ? review.blocking : 0, ...waiting.has(slug) ? { waits: true } : {}, ...slicePhase(slice) });
     for (const child of children) visit(child, depth + 1);
   };
   visit(view.derived.root, 0);
@@ -1581,7 +1587,7 @@ async function libraryScope(projectRoot, section) {
   const library = await loadLibrary(projectRoot, section);
   return { kind: "library", section, entries: library.entries.map((entry) => ({ path: entry.path, title: entry.title, status: entry.status, topic: entry.topic, ...entry.scope ? { scope: entry.scope } : {} })) };
 }
-const PLACE_LABELS = Object.freeze({ attention: "Attention", work: "Work", roadmap: "Roadmap", knowledge: "Knowledge", history: "History" });
+const PLACE_LABELS = Object.freeze({ attention: "Attention", work: "Work", roadmap: "Roadmap", knowledge: "Knowledge", code: "Code", history: "History" });
 const PLACE_PAGE_LABELS = Object.freeze({
   attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", formats: "Format findings", answered: "Answered in the last 7 days", "roadmap-questions": "Roadmap questions" },
   knowledge: { touched: "Touched by my work", changed: "Changed this week", diagrams: "Diagrams" }
@@ -1622,7 +1628,8 @@ async function entityContext(projectRoot, ref) {
   if (ref === "attention" || ref === "roadmap") return { trail: [placeCrumb(ref, ref)], scope: { kind: "global" }, place: ref };
   if (parsed?.kind === "requirements" || parsed?.kind === "decisions") return { trail: [placeCrumb("knowledge"), { ref, label: SECTION_LABELS[parsed.kind] }], scope: await libraryScope(projectRoot, parsed.kind), place: "knowledge" };
   if (parsed?.kind === "glossary") return { trail: [placeCrumb("knowledge"), { ref, label: "Glossary" }], scope: { kind: "global" }, place: "knowledge" };
-  if (parsed?.kind === "code") return { trail: [placeCrumb("knowledge"), { ref, label: "Code" }], scope: { kind: "global" }, place: "knowledge" };
+  if (parsed?.kind === "code") return { trail: [placeCrumb("code", "code"), ...ref === "code" ? [] : [{ ref, label: await codeNarrowingLabel(projectRoot, parsed) }]], scope: { kind: "global" }, place: "code" };
+  if (typeof ref === "string" && CODE_FILE_REF.test(ref)) return { trail: [placeCrumb("code", "code"), { ref, label: ref }], scope: { kind: "global" }, place: "code" };
   if (parsed?.kind === "agents") return { trail: [{ ref, label: SECTION_LABELS.agents }], scope: { kind: "global" }, place: null };
   if (parsed?.kind === "initiative" || parsed?.kind === "slice") return initiativeContext(projectRoot, parsed.id, { slug: parsed.kind === "slice" ? parsed.slug : null });
   if (parsed?.kind === "migration-run") return migrationRunContext(projectRoot, ref, parsed.id);
@@ -1676,8 +1683,19 @@ function bandRank(roadmap, id) {
   const rank = roadmap.items.filter((entry) => entry.band === item.band && entry.state !== "shipped" && entry.state !== "superseded").findIndex((entry) => entry.id === id);
   return rank < 0 ? null : rank + 1;
 }
+const CODE_FILE_REF = /^code:[^:/]+:./;
+async function codeNarrowingLabel(projectRoot, parsed) {
+  if (parsed.branch) return `${parsed.branch.repository} \xB7 ${parsed.branch.branch}`;
+  const { scope } = await initiativeTree(projectRoot, parsed.work.initiative).catch(() => ({ scope: null }));
+  if (!parsed.work.slice) return scope?.title ?? parsed.work.initiative;
+  return scope?.tree?.find((node) => node.slug === parsed.work.slice)?.title ?? parsed.work.slice;
+}
 function parseEntityRef(ref) {
   if (SECTION_REFS.includes(ref)) return { kind: ref };
+  let code = /^code:work\/([A-Za-z0-9_-]+)(?:\/([A-Za-z0-9_-]+))?$/.exec(ref ?? "");
+  if (code) return { kind: "code", work: { initiative: code[1], slice: code[2] ?? null } };
+  code = /^code:branch\/([^/:\s]+)\/(\S+)$/.exec(ref ?? "");
+  if (code) return { kind: "code", branch: { repository: code[1], branch: code[2] } };
   if (ref === "launches") return { kind: "agents" };
   const group = /^agents:([a-z-]+)$/.exec(ref ?? "");
   if (group && AGENT_GROUP_PAGES.includes(group[1])) return { kind: "agents", page: group[1] };
@@ -1769,11 +1787,13 @@ export {
   loadSliceView,
   migrationRunTitle,
   parseEntityRef,
+  placedInitiatives,
   recheckViews,
   recordFiles,
   rememberView,
   searchRecords,
   slicePresence,
   viewVersion,
-  viewWatching
+  viewWatching,
+  workGroups
 };

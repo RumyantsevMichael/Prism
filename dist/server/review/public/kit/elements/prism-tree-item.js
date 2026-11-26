@@ -4,7 +4,7 @@ import { remeasure, unwatchShortening, watchShortening } from "../shorten.js";
 class PrismTreeItem extends Base {
   static tag = "prism-tree-item";
   static tooltipBoundary = true;
-  static observedAttributes = ["label", "expanded", "selected", "href"];
+  static observedAttributes = ["label", "expanded", "selected", "href", "meta"];
   static catalog = {
     purpose: "One item of a prism-tree: a row with its label and trailing content, and its child items, which expand and collapse.",
     options: [
@@ -16,9 +16,10 @@ class PrismTreeItem extends Base {
       { name: "tip", values: ["text"], default: "", description: "The tooltip's text on hover and keyboard focus, such as the full label with the item's status." },
       { name: 'slot="start"', values: ["children"], default: "", description: "A glyph before the label, such as an icon, a state, or a phase; a leaf with one gives up the twisty's room." },
       { name: 'slot="end"', values: ["children"], default: "", description: "Content after the label, such as a count or a claim." },
+      { name: "meta", values: ["text"], default: "", description: "Short text at the row's end, after the end content, such as a count of changed files or No changes yet; the item names it as its description, not in its name, so the item is found by its label alone." },
       { name: "span.prism-tree-flag", values: ["kit class"], default: "", description: 'A word in slot="end" that flags the row, such as Blocked in the danger tone; with is-muted it names a settled fact, such as Superseded, and with is-warning a difference to look at, such as a file another branch changes.' }
     ],
-    states: ["leaf", "collapsed", "expanded", "selected", "glyphs", "link", "flag"],
+    states: ["leaf", "collapsed", "expanded", "selected", "glyphs", "link", "flag", "meta"],
     keyboard: ["The tree moves focus between items; Enter or a click selects an item.", "A click on the twisty expands or collapses the item.", "A Ctrl, Cmd, or Shift click or a middle-click on an item with an href opens its address in the browser instead of selecting it."]
   };
   constructor() {
@@ -61,7 +62,18 @@ class PrismTreeItem extends Base {
     this.start = make(this, "span", "prism-tree-start", { id: `${id}-start` });
     this.labelElement = make(this, "span", "prism-tree-label", { id: `${id}-label` });
     this.end = make(this, "span", "prism-tree-end", { id: `${id}-end` });
-    this.row.append(this.twisty, this.start, this.labelElement, this.end);
+    this.metaElement = make(this, "span", "prism-tree-meta", { id: `${id}-meta` });
+    this.row.append(this.twisty, this.start, this.labelElement, this.end, this.metaElement);
+    let pressing = false;
+    this.row.addEventListener("pointerdown", () => {
+      pressing = true;
+    });
+    for (const type of ["pointerup", "pointercancel"]) this.row.addEventListener(type, () => setTimeout(() => {
+      pressing = false;
+    }));
+    this.row.addEventListener("focus", () => {
+      if (!pressing && this.hasAttribute("tabindex")) this.focus({ focusVisible: true });
+    });
     this.group = make(this, "div", "prism-tree-group", { role: "group" });
     this.prepend(this.row);
     this.append(this.group);
@@ -155,6 +167,12 @@ class PrismTreeItem extends Base {
     const hasEnd = this.end.childNodes.length > 0;
     this.end.hidden = !hasEnd;
     setAttribute(this, "aria-labelledby", [this.labelElement.id, hasEnd ? this.end.id : null, hasStart ? this.start.id : null].filter(Boolean).join(" "));
+    const meta = this.getAttribute("meta") ?? "";
+    if (this.metaElement.textContent !== meta) this.metaElement.textContent = meta;
+    this.metaElement.hidden = !meta;
+    const described = (this.getAttribute("aria-describedby") ?? "").split(/\s+/).filter((name) => name && name !== this.metaElement.id);
+    if (meta) described.unshift(this.metaElement.id);
+    setAttribute(this, "aria-describedby", described.length ? described.join(" ") : null);
   }
 }
 export {

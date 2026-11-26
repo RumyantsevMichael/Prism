@@ -1,12 +1,12 @@
 // Generated from src/server/review/public/kit/elements/prism-field.ts by scripts/native-build/compile.mjs.
 import { Base, setAttribute, uniqueId } from "./base.js";
-const TYPES = ["text", "search", "textarea", "select"];
+const TYPES = ["text", "search", "number", "textarea", "select"];
 const sizesToContent = () => globalThis.CSS?.supports?.("field-sizing", "content") ?? false;
 class PrismField extends Base {
   static tag = "prism-field";
-  static observedAttributes = ["label", "hint", "name", "value", "placeholder", "required", "disabled", "invalid", "error", "type"];
+  static observedAttributes = ["label", "hint", "name", "value", "placeholder", "required", "disabled", "invalid", "error", "type", "min", "max", "step"];
   static catalog = {
-    purpose: "A labelled text, search, textarea, or select control: one native control in the light DOM, so it belongs to its form and reports input and change.",
+    purpose: "A labelled text, search, number, textarea, or select control: one native control in the light DOM, so it belongs to its form and reports input and change.",
     options: [
       { name: "type", values: TYPES, default: "text", description: "The kind of native control the field creates; a textarea grows with its text from three lines up to a limit, then scrolls." },
       { name: "label", values: ["text"], default: "", description: "The visible label, associated with the control." },
@@ -14,13 +14,14 @@ class PrismField extends Base {
       { name: "name", values: ["text"], default: "", description: "The control's name in its form." },
       { name: "value", values: ["text"], default: "", description: "The starting value; the value property reads and writes the control." },
       { name: "placeholder", values: ["text"], default: "", description: "Text shown while a text control is empty." },
+      { name: "min, max, step", values: ["number"], default: "", description: "The range and the step of a number field, which the native control checks, so a value outside them is invalid and the arrow keys stay inside them." },
       { name: "required", values: ["boolean"], default: "false", description: "The control must hold a value." },
       { name: "disabled", values: ["boolean"], default: "false", description: "The control takes no input." },
       { name: "invalid", values: ["boolean"], default: "false", description: "Marks the value as wrong, exposed as aria-invalid." },
       { name: "error", values: ["text"], default: "", description: "The message an invalid field shows, linked as its description." },
       { name: "variant", values: ["default", "bare", "filter"], default: "default", description: "bare hides the label, which still names the control, and draws no box, for a search row that its surface frames, such as the command palette's; a bare field places a start-slot icon before the control and an end-slot key hint after it. filter hides the label in the same way and keeps the box at the control height with a start-slot icon inside it, for a list's filter, such as a sidebar's." }
     ],
-    states: ["text", "search", "textarea", "select", "hint", "invalid", "disabled", "bare", "filter"],
+    states: ["text", "search", "number", "textarea", "select", "hint", "invalid", "disabled", "bare", "filter"],
     keyboard: ["The native control takes the keyboard as it always does; Tab reaches it and the label names it."]
   };
   connectedCallback() {
@@ -134,6 +135,7 @@ class PrismField extends Base {
     this.errorElement.hidden = !(invalid && error);
     setAttribute(control, "name", this.getAttribute("name"));
     setAttribute(control, "placeholder", control.tagName === "SELECT" ? null : this.getAttribute("placeholder"));
+    for (const name of ["min", "max", "step"]) setAttribute(control, name, control.type === "number" ? this.getAttribute(name) : null);
     control.required = this.hasAttribute("required");
     control.disabled = this.hasAttribute("disabled");
     setAttribute(control, "aria-invalid", invalid ? "true" : null);

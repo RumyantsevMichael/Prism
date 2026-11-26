@@ -119,7 +119,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   const pendingNotices = /* @__PURE__ */ new Map();
   const stores = /* @__PURE__ */ new Map();
   const added = await createAddedWorkspaces({ directory });
-  const code = await createCodeClones({ directory });
+  const code = await createCodeClones({ directory, onTipsMoved: (id) => workspaces.get(id)?.review?.notify("code", {}) });
   const addedUsage = /* @__PURE__ */ new Map();
   let openGrantedAt = -Infinity;
   let sequence = 0;
@@ -247,7 +247,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   }
   function dropView(view) {
     view.review.closeViewers();
-    view.watch.stop();
+    void view.watch.stop();
     workspaces.delete(view.id);
     pendingNotices.delete(view.id);
   }
@@ -261,7 +261,9 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
     const view = { id, kind, identity, urls, usedAt: addedUsage.get(id) ?? 0, review: null, watch: null, storeRoot: null, get root() {
       return this.review.projectRoot;
     } };
-    view.watch = watchWorkspace({ base: () => syncedClone(view), label: () => remoteLabel(view.urls[0]) ?? view.identity, intervalMs: workspaceFetchMs, maxMs: workspaceFetchMaxMs, fetchCode: () => code.fetchAll(view.id) });
+    view.watch = watchWorkspace({ base: () => syncedClone(view), label: () => remoteLabel(view.urls[0]) ?? view.identity, intervalMs: workspaceFetchMs, maxMs: workspaceFetchMaxMs, fetchCode: async () => {
+      await code.fetchAll(view.id);
+    } });
     view.review = createProjectReview({
       projectRoot: root,
       baseUrl: `http://127.0.0.1:${port}${viewerPrefix()}/w/${view.id}`,
@@ -294,14 +296,15 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
           folder: codeFolder,
           state: (repository) => code.state(view.id, repository),
           tree: (repository, folder) => code.tree(view.id, repository, folder),
-          compare: (repository, base) => code.compare(view.id, repository, base),
+          branches: (repository, owned, { waitMs = 0 } = {}) => code.branches(view.id, repository, owned, { freshMs: workspaceFetchMs, waitMs }),
           file: (repository, at) => code.file(view.id, repository, at),
           defaultFile: (repository, file) => code.defaultFile(view.id, repository, file),
           defaultFiles: (repository) => code.defaultFiles(view.id, repository),
           reachable: (repository, commit) => code.reachable(view.id, repository, commit),
           branchesHolding: (repository, commit) => code.branchesHolding(view.id, repository, commit),
           blobs: (repository, commit, paths) => code.blobs(view.id, repository, commit, paths),
-          components: (repository) => code.components(view.id, repository)
+          components: (repository) => code.components(view.id, repository),
+          contents: (repository) => code.contents(view.id, repository)
         }
       }
     });
@@ -898,13 +901,16 @@ Connection: close\r
   close = ({ handoff = false } = {}) => {
     closing ??= (async () => {
       clearInterval(sweep);
+      const fetches = [];
       for (const view of workspaces.values()) {
-        view.watch.stop();
+        fetches.push(view.watch.stop());
         view.review.closeViewers();
       }
       hub.close();
       server.closeAllConnections?.();
       await new Promise((resolve) => server.close(() => resolve()));
+      await Promise.all(fetches);
+      await code.close();
       if (ownsLock) {
         if (handoff) await writeDiscovery(directory, { ...published, handoff: true, handedOffAt: (/* @__PURE__ */ new Date()).toISOString() }).catch(() => {
         });
