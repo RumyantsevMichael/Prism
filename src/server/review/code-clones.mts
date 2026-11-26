@@ -372,7 +372,11 @@ export async function createCodeClones({ directory, onTipsMoved = () => {} }: { 
     if (!fetched.ok) return { ok: false, message: reasonOf(fetched) };
     const head = await git(folder, ["ls-remote", "--symref", "origin", "HEAD"]);
     const named = /^ref: (refs\/heads\/\S+)\tHEAD$/m.exec(head.ok ? head.text : "")?.[1];
-    if (named) await git(folder, ["symbolic-ref", "HEAD", named]);
+    // HEAD is written only when the remote's HEAD moved, so a fetch never rewrites the file that a concurrent read of the clone opens, which Windows can refuse.
+    if (named) {
+      const current = await git(folder, ["symbolic-ref", "--quiet", "HEAD"]);
+      if (!current.ok || current.text.trim() !== named) await git(folder, ["symbolic-ref", "HEAD", named]);
+    }
     return { ok: true };
   }
 
