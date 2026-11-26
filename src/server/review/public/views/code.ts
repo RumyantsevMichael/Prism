@@ -21,6 +21,12 @@ const memory = {
 // The page drawn last, which a redraw of clause 39 reads again.
 let page: any = null;
 
+// A press of the primary button inside the page holds its redraws until the press ends, and the page held back last then draws,
+// since a redraw that replaces the pressed row between the press and the release would lose the person's click.
+let pressed = false;
+let held: any = null;
+let releaseBound = false;
+
 /** The scope of the Code routes that a narrowing address names: all, work:<initiative>, work:<initiative>/<slice>, or branch:<repository>/<branch>. */
 function scopeOf(ref: string) {
   let match = /^code:work\/([A-Za-z0-9_-]+)(?:\/([A-Za-z0-9_-]+))?$/.exec(ref ?? "");
@@ -388,6 +394,10 @@ function fileHtml(current: any) {
 function draw(current: any) {
   const { container, ctx } = current;
   if (!container.isConnected && current !== page) return;
+  if (pressed) {
+    held = current;
+    return;
+  }
   const choice = filesChoice(current);
   const unknown = current.unknown ? `<prism-inline-note tone="info">${icon("info", "start", "xs")}<span>${escapeHtml(`${narrowingTitle(current.narrowing, ctx)} changes no code that the Code place shows.`)}</span></prism-inline-note>` : "";
   const scope = current.scope !== "all" ? `<p class="code-place-scope">Showing what <b>${escapeHtml(narrowingTitle(current.narrowing, ctx))}</b> changes</p>` : "";
@@ -413,6 +423,23 @@ function bind(current: any) {
   if (container.dataset.codeBound) return;
   container.dataset.codeBound = "true";
   let keep = false;
+  container.addEventListener("pointerdown", (event: any) => {
+    if (event.button === 0) pressed = true;
+  }, { capture: true });
+  if (!releaseBound) {
+    releaseBound = true;
+    // The click follows the release in the same task, so the held redraw comes after the click has been handled.
+    const release = () => {
+      if (!pressed) return;
+      setTimeout(() => {
+        pressed = false;
+        const current = held;
+        held = null;
+        if (current) draw(current);
+      }, 0);
+    };
+    for (const name of ["pointerup", "pointercancel", "blur"]) window.addEventListener(name, release, { capture: true });
+  }
   container.addEventListener("click", (event: any) => {
     keep = Boolean(event.ctrlKey || event.metaKey);
     const target = event.target.closest?.("[data-code-retry], [data-code-on], [data-code-back], [data-code-version]");
