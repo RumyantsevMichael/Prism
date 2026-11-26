@@ -552,8 +552,16 @@ select.prism-field-control {
   opacity: 1;
 }
 
-.prism-field-control[aria-invalid="true"] {
+/* A number outside its field's range is invalid as the native control checks it, and shows so as a field marked invalid does. */
+.prism-field-control:is([aria-invalid="true"], [type="number"]:invalid) {
   border-color: var(--prism-color-danger);
+}
+
+/* A number field holds a few digits, so it is as wide as they need and no wider. */
+input.prism-field-control[type="number"] {
+  width: calc(8 * var(--prism-control-height) / 3);
+  padding-inline-end: var(--prism-space-2);
+  font-variant-numeric: tabular-nums;
 }
 
 .prism-field-control:disabled {
@@ -1012,6 +1020,19 @@ prism-tree-item[selected] > .prism-tree-row > .prism-tree-start,
   font-size: var(--prism-font-size-xs);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* The meta text closes the row after its end content, such as a count of changed files, in the end content's quiet tone. */
+.prism-tree-meta {
+  flex: none;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+prism-tree[rail] .prism-tree-meta {
+  display: none;
 }
 
 /* A word that flags a row, such as `Blocked`, in the danger tone at the end of the row. */
@@ -2413,6 +2434,45 @@ prism-toast[tone="danger"] .prism-toast-icon { color: var(--prism-color-danger);
 prism-time {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* ---------- prism-line-delta: the added and removed line counts of a version ---------- */
+
+prism-line-delta {
+  display: inline;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.prism-line-delta-added { color: var(--prism-color-diff-added); }
+.prism-line-delta-removed { color: var(--prism-color-diff-removed); }
+
+.prism-line-delta-added[hidden],
+.prism-line-delta-removed[hidden] {
+  display: none;
+}
+
+/* ---------- prism-inline-note: a note in a tone with a glyph before its text, that wraps within its container ---------- */
+
+prism-inline-note {
+  display: flex;
+  align-items: baseline;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  color: var(--prism-color-info);
+  font-size: var(--prism-font-size-sm);
+  line-height: var(--prism-line-height);
+  overflow-wrap: anywhere;
+}
+
+prism-inline-note[tone="warning"] { color: var(--prism-color-warning); }
+
+prism-inline-note > [slot="start"] {
+  flex: none;
+  order: -1;
+  align-self: center;
 }
 
 /* ---------- prism-claim: an agent avatar, the holder, the activity with its phase facet, and the time left ---------- */

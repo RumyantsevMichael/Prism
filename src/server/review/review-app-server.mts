@@ -134,7 +134,9 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   // The workspaces a person added from a store URL, which stay listed until the person removes them, and when each one's own page was last opened.
   const added = await createAddedWorkspaces({ directory });
   // The repositories whose code content a person turned on, each with a blobless clone in the app folder's code/, which every workspace fetch also fetches.
-  const code = await createCodeClones({ directory });
+  // Any fetch that moves a clone's branch tips, whether the workspace's own or one that a Code request started, changes the Code place's answers,
+  // so the open pages of each workspace with that clone's code content on hear of it and redraw.
+  const code = await createCodeClones({ directory, onTipsMoved: (id: any) => workspaces.get(id)?.review?.notify("code", {}) });
   const addedUsage = new Map();
   let openGrantedAt = -Infinity;
   // Recency is a counter rather than a clock, so projects touched within one millisecond keep their order.
@@ -305,7 +307,10 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   // The one review of a workspace, read through root, with the fetch timer that its connected pages drive.
   function makeView({ id, kind, identity, urls, root }: { id: string; kind: any; identity: string; urls: any; root: string }) {
     const view: any = { id, kind, identity, urls, usedAt: addedUsage.get(id) ?? 0, review: null, watch: null, storeRoot: null, get root() { return this.review!.projectRoot; } };
-    view.watch = watchWorkspace({ base: () => syncedClone(view), label: () => remoteLabel(view.urls[0]) ?? view.identity, intervalMs: workspaceFetchMs, maxMs: workspaceFetchMaxMs, fetchCode: () => code.fetchAll(view.id) });
+    view.watch = watchWorkspace({ base: () => syncedClone(view), label: () => remoteLabel(view.urls[0]) ?? view.identity, intervalMs: workspaceFetchMs, maxMs: workspaceFetchMaxMs, fetchCode: async () => {
+      // A fetch that moves a branch tip raises the code event through the clones' onTipsMoved.
+      await code.fetchAll(view.id);
+    } });
     view.review = createProjectReview({ projectRoot: root, baseUrl: `http://127.0.0.1:${port}${viewerPrefix()}/w/${view.id}`, instance, appVersion: pluginVersion,
       onViewer: (sendNotice: any) => {
         view.usedAt = ++sequence;
@@ -327,14 +332,15 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
           folder: codeFolder,
           state: (repository: string) => code.state(view.id, repository),
           tree: (repository: string, folder: string) => code.tree(view.id, repository, folder),
-          compare: (repository: string, base: string) => code.compare(view.id, repository, (base as any)),
+          branches: (repository: string, owned: Iterable<string>, { waitMs = 0 }: { waitMs?: number } = {}) => code.branches(view.id, repository, owned, { freshMs: workspaceFetchMs, waitMs }),
           file: (repository: string, at: any) => code.file(view.id, repository, at),
           defaultFile: (repository: string, file: string) => code.defaultFile(view.id, repository, file),
           defaultFiles: (repository: string) => code.defaultFiles(view.id, repository),
           reachable: (repository: string, commit: string) => code.reachable(view.id, repository, commit),
           branchesHolding: (repository: string, commit: string) => code.branchesHolding(view.id, repository, commit),
           blobs: (repository: string, commit: string, paths: string[]) => code.blobs(view.id, repository, commit, paths),
-          components: (repository: string) => code.components(view.id, repository)
+          components: (repository: string) => code.components(view.id, repository),
+          contents: (repository: string) => code.contents(view.id, repository)
         } } });
     workspaces.set(view.id, view);
     return view;

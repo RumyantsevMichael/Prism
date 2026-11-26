@@ -300,6 +300,22 @@ A geometry value that differs by more than 2 pixels is a difference, and so is a
 It exits 0 when no pair differs, 1 when one does, after printing each difference, and 2 with a message for a missing `--out`, an unknown scene, part, width, or theme, an unreadable mockup, or no Playwright.
 A slice that changes a screen that a scene shows is done only when its frozen tests run this comparison for its scenes and parts at 390, 820, and 1440 pixels, it passes, and the implementer has run it in both themes, looked at every pair it wrote, and names in the pull request each difference that the outline does not measure.
 
+The Code place mockups in `scripts/review-demo/mockups/code-place/` have their own comparison, since the places demo registers no repository and so shows no Code place:
+
+```bash
+node scripts/review-demo/code-compare.mjs --out /tmp/code-compare
+```
+
+It builds its own Code demo workspace with `codePlaceWorkspace` from `test/server/fixtures/code-place.mjs`, the workspace that the Code place's frozen tests share: a record store that registers `api`, `infra`, `mobile`, and `web`, with code content on for all but `mobile`, and slices verified on pushed branches of `api`.
+Building it takes about ten seconds, and it is removed when the comparison ends.
+The claims of its verified slices last 30 minutes, which the comparison stays well within.
+For each scene in `scenes.json`, `all` and `work-picked` at 1440 pixels in light and dark and `tree`, `file`, and `drawer` at 390 pixels in light, it injects the kit markup of `content.mjs` into that workspace's review app, with the short host name of this machine as the claim label, and puts the app's own Code page into the same state at the same window width and theme.
+It writes `<scene>-<width>-<theme>.png` with the mockup on the left, the app on the right, and the differences below them, `<scene>-<width>-<theme>.json` with both outlines and their differences, a `report.json` of every pair, and an `index.html` that shows each pair beside its approved picture.
+An outline reads the sidebar's headings and counts, its rows in order with their glyphs, labels, flags, avatars, and counts, the quiet note, the Files control and its choice, the scope line, the files tree's rows with depth, icon, label, flags, badges, and marks, the file head, the version chips with their labels, counts, and pressed state, the conflict notes, the difference rows with their marks and numbers, the back button, and the boxes of the sidebar, the tree pane, and the file pane.
+A box that differs by more than 2 pixels is a difference, and so is any other value that differs.
+`--scenes`, `--widths`, and `--themes` narrow the run to comma-separated values, and `--mockups <folder>` reads the scenes, pictures, and markup from another folder.
+It exits 0 when no pair differs, 1 when one does, after printing each difference as `<scene> <width> <theme>: <difference>`, and 2 with a message for a missing `--out`, an unknown scene, width, or theme, unreadable mockups, or no Playwright.
+
 With both manifests present the CLI validates the marketplace one.
 To validate `plugin.json` in isolation, copy the plugin into a scratch directory without `marketplace.json` and validate that.
 
