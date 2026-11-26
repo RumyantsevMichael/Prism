@@ -276,6 +276,19 @@ test("clause 35: a pair of versions that change many of the same lines names at 
 });
 
 // It runs last, since it pushes branches to web and api and moves their remotes away for a while.
+// Windows refuses to rename a folder that a running Git process works in, as the server's fetch of a code remote does for a moment, so the rename is tried again for a while.
+async function moveFolder(from, to) {
+  const deadline = Date.now() + 30000;
+  for (;;) {
+    try {
+      return await rename(from, to);
+    } catch (error) {
+      if (!["EBUSY", "EPERM", "EACCES"].includes(error.code) || Date.now() > deadline) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 test("clauses 27 and 37: a read that fails while a remote is away answers 503 read_failed for that repository only, is kept nowhere, and is read again on a later request", TIMEOUT, async () => {
   const { api, owner, remotes } = await workspace();
   const NAV_WORKFLOW = "## Components\n- report-ui: packages/reports\n- shell: packages/shell\n- nav: packages/nav\n";
@@ -293,8 +306,8 @@ test("clauses 27 and 37: a read that fails while a remote is away answers 503 re
     return ["feature/nav", "feature/jitter"].every((name) => place?.branches?.some((line) => line.branch === name)) ? place : null;
   }, 60000, "the pushed branches feature/nav and feature/jitter");
   const away = (name) => `${remotes[name].bare}.away`;
-  await rename(remotes.web.bare, away("web"));
-  await rename(remotes.api.bare, away("api"));
+  await moveFolder(remotes.web.bare, away("web"));
+  await moveFolder(remotes.api.bare, away("api"));
   try {
     const top = await files("all", null);
     assert.deepEqual(top.entries.map(({ path: name, error }) => [name, error?.code ?? null]), [["api", null], ["infra", null], ["mobile", null], ["web", "read_failed"]], "only web, whose new .prism/workflow.md cannot be read, is marked, and the other repositories answer");
@@ -317,8 +330,8 @@ test("clauses 27 and 37: a read that fails while a remote is away answers 503 re
     const strategy = await versions("all", "api", "src/retry/strategy.ts");
     assert.equal(strategy.versions.length, 3, "a file whose blobs the clone holds answers 200 while the same repository's remote is away");
   } finally {
-    await rename(away("web"), remotes.web.bare);
-    await rename(away("api"), remotes.api.bare);
+    await moveFolder(away("web"), remotes.web.bare);
+    await moveFolder(away("api"), remotes.api.bare);
   }
   // The first request after the remotes return reads again, since no answer, blob, count, or difference of a failed read was kept.
   const top = await files("all", null);
