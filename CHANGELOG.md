@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.36.0](https://github.com/RumyantsevMichael/Prism/compare/v0.35.0...v0.36.0) (2026-11-27)
+
+
+### Added
+
+* shape emerging work items through question rounds and Draft ADRs ([#490](https://github.com/RumyantsevMichael/Prism/issues/490)) ([1d271d5](https://github.com/RumyantsevMichael/Prism/commit/1d271d5a12d8aaef8d0dc881ae4e1ad62919e4b7))
+
+
+### Fixed
+
+* **review:** keep a Code tree click made while the view is rebuilt ([#491](https://github.com/RumyantsevMichael/Prism/issues/491)) ([2eb21ab](https://github.com/RumyantsevMichael/Prism/commit/2eb21ababf24916a3ab0c56e7a60757924756bba)), closes [#489](https://github.com/RumyantsevMichael/Prism/issues/489)
+* **review:** keep the cursor a person moves while a page is redrawn ([#492](https://github.com/RumyantsevMichael/Prism/issues/492)) ([be426c1](https://github.com/RumyantsevMichael/Prism/commit/be426c1149ec20dd1289e02874b809351c833081)), closes [#480](https://github.com/RumyantsevMichael/Prism/issues/480)
+
 ## [0.35.0](https://github.com/RumyantsevMichael/Prism/compare/v0.34.0...v0.35.0) (2026-11-26)
 
 
