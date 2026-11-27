@@ -2717,6 +2717,13 @@ function controlsOf(root: any) {
 // with the page's height held so the workspace keeps its scroll position while the new view draws.
 function captureView(memory: any) {
   memory.open = [...artifact!.querySelectorAll("prism-disclosure")].map((disclosure) => [disclosure.getAttribute("summary") ?? "", (disclosure as any).open]);
+  captureFocus(memory);
+  artifact!.style.minHeight = `${artifact!.offsetHeight}px`;
+}
+
+// The focused control of the page showing and its caret, read when a rebuild starts and again when it swaps in,
+// since the person may have moved the caret or typed while the new view was built.
+function captureFocus(memory: any) {
   memory.focus = artifact!.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
   // A control whose view names it with data-focus-key, such as a kit button whose own control sits in its shadow, gets its focus back by that name.
   memory.focusKey = artifact!.contains(document.activeElement) ? (document!.activeElement!.closest("[data-focus-key]") as any)?.dataset.focusKey ?? null : null;
@@ -2724,7 +2731,6 @@ function captureView(memory: any) {
   // since moving it to another scope renames its focus key and the controls before it can differ.
   memory.focused = artifact!.contains(document.activeElement) ? document.activeElement : null;
   memory.selection = memory.focused && "selectionStart" in memory.focused ? [memory.focused.selectionStart, memory.focused.selectionEnd] : null;
-  artifact!.style.minHeight = `${artifact!.offsetHeight}px`;
 }
 
 // A rebuilt view starts empty and renders graphs and diagrams asynchronously, so the old height is held until it is done
@@ -2913,8 +2919,11 @@ function endRebuild(memory: any) {
 }
 
 function swapIn(memory: any) {
-  // The reader may have scrolled the page while the new view was built, so a refresh of the same page keeps where they are now.
-  if (renderedPath === memory.path) memory.top = workspace!.scrollTop;
+  // The reader may have scrolled the page, moved the caret, or typed while the new view was built, so a refresh of the same page keeps where they are now.
+  if (renderedPath === memory.path) {
+    memory.top = workspace!.scrollTop;
+    if (artifact!.contains(document.activeElement)) captureFocus(memory);
+  }
   artifact!.replaceChildren(...memory.stage.childNodes);
   memory.stage.remove();
   const state = viewState(memory.path);
