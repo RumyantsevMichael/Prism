@@ -20,7 +20,7 @@ import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 export const RECORD_DIRECTORY = ".prism";
 const INITIATIVES = `${RECORD_DIRECTORY}/initiatives`;
 const ROADMAP_RECORD = `${RECORD_DIRECTORY}/roadmap.json`;
-const RECORD_FILES: Readonly<Record<string, string>> = Object.freeze({ initiative: "initiative.json", state: "state.json", review: "review.json", "change-map": "change-map.json", "design-view": "design-view.json", "frozen-tests": "frozen-tests.json" });
+const RECORD_FILES: Readonly<Record<string, string>> = Object.freeze({ initiative: "initiative.json", state: "state.json", "work-item": "work-item.json", review: "review.json", "change-map": "change-map.json", "design-view": "design-view.json", "frozen-tests": "frozen-tests.json" });
 const SLICE_KINDS = new Set(["review", "change-map", "design-view", "frozen-tests", "runs"]);
 const LEGACY_CHANGE_MAP = "concept-delta.json";
 const CLAIMS = "claims";
@@ -100,8 +100,9 @@ function requireSlug(value: any, label: string) {
 }
 
 /**
- * The project-relative location of a record key: { kind: "roadmap" | "format-migration" | "format-finding" | "initiative" | "state" | "claim" | "asker" | "review" | "change-map" | "design-view" | "frozen-tests" | "runs", id?, initiative?, slice?, gate? },
- * where an asker key names an initiative's gate with initiative, or an approval gate without one.
+ * The project-relative location of a record key: { kind: "roadmap" | "format-migration" | "format-finding" | "initiative" | "state" | "work-item" | "claim" | "asker" | "review" | "change-map" | "design-view" | "frozen-tests" | "runs", id?, initiative?, slice?, gate? },
+ * where an asker key names an initiative's gate with initiative, or an approval gate without one,
+ * and a work-item key names the roadmap entry whose shaping record it is with initiative, so the record sits beside that entry's initiative records.
  */
 export function recordPath(key: any) {
   if (key?.kind === "roadmap") return ROADMAP_RECORD;
@@ -115,7 +116,7 @@ export function recordPath(key: any) {
   }
   if (key?.kind === "asker" && key.initiative === undefined) return `${RECORD_DIRECTORY}/${APPROVAL_ASKERS}/${requireGate(key.gate)}.json`;
   const initiative = requireSlug(key?.initiative, "initiative");
-  if (key.kind === "initiative" || key.kind === "state") return `${INITIATIVES}/${initiative}/${RECORD_FILES[key.kind]}`;
+  if (key.kind === "initiative" || key.kind === "state" || key.kind === "work-item") return `${INITIATIVES}/${initiative}/${RECORD_FILES[key.kind]}`;
   // Each slice's claim is a record of its own, so a claim's changes never touch the initiative record.
   if (key.kind === "claim") return `${INITIATIVES}/${initiative}/${CLAIMS}/${requireSlug(key.slice, "slice")}.json`;
   if (key.kind === "asker") return `${INITIATIVES}/${initiative}/${ASKERS}/${requireGate(key.gate)}.json`;
@@ -132,6 +133,7 @@ export function parseRecordPath(relative: string) {
   if (parts[0] !== RECORD_DIRECTORY || parts[1] !== "initiatives" || !SLUG_PATTERN.test(parts[2] ?? "")) return null;
   if (parts.length === 4 && parts[3] === RECORD_FILES.initiative) return { kind: "initiative", initiative: parts[2] };
   if (parts.length === 4 && parts[3] === RECORD_FILES.state) return { kind: "state", initiative: parts[2] };
+  if (parts.length === 4 && parts[3] === RECORD_FILES["work-item"]) return { kind: "work-item", initiative: parts[2] };
   if (parts.length === 5 && parts[3] === CLAIMS && parts[4].endsWith(".json") && SLUG_PATTERN.test(parts[4].slice(0, -5))) return { kind: "claim", initiative: parts[2], slice: parts[4].slice(0, -5) };
   if (parts.length === 5 && parts[3] === ASKERS && parts[4].endsWith(".json") && ASKER_GATE.test(parts[4].slice(0, -5))) return { kind: "asker", initiative: parts[2], gate: parts[4].slice(0, -5) };
   if (parts[3] !== "slices" || !SLUG_PATTERN.test(parts[4] ?? "")) return null;
@@ -196,7 +198,7 @@ const KiB = 1024, MiB = 1024 * KiB;
  */
 export const STORE_FILE_BOUNDS: Readonly<Record<string, number>> = Object.freeze({
   artifact: 16 * MiB, accepted: 16 * MiB, status: 16 * MiB, identity: 256, comment: 64 * KiB, ledger: 16 * MiB, migration: 16 * MiB, "format-migration": 16 * MiB, "format-finding": 64 * KiB, registration: 64 * KiB,
-  roadmap: MiB, initiative: MiB, state: MiB, "change-map": MiB, review: 4 * MiB, "design-view": 4 * MiB, "frozen-tests": 4 * MiB, claim: 64 * KiB, asker: 64 * KiB, runs: 4 * MiB,
+  roadmap: MiB, initiative: MiB, state: MiB, "work-item": MiB, "change-map": MiB, review: 4 * MiB, "design-view": 4 * MiB, "frozen-tests": 4 * MiB, claim: 64 * KiB, asker: 64 * KiB, runs: 4 * MiB,
   "root-text": MiB, "root-git": 64 * KiB
 });
 /** The most comment files that one artifact's comment folder holds. */
@@ -1241,6 +1243,14 @@ export async function listInitiatives(projectRootPath: string) {
     if (key?.kind === "initiative" || key?.kind === "state") ids.add(key.initiative!);
   }
   return [...ids].sort();
+}
+
+/** The roadmap entries that hold a work item's shaping record, by identifier. */
+export async function listWorkItemRecords(projectRootPath: string) {
+  const store = await openStore(projectRootPath);
+  const ids = [];
+  for (const item of await directoryNames(physical(store, INITIATIVES))) if (await regularFile(physical(store, recordPath({ kind: "work-item", initiative: item })))) ids.push(item);
+  return ids;
 }
 
 /** The slices of an initiative that hold any record. */

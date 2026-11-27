@@ -40,7 +40,7 @@ When a Prism result carries a [person change notice](../workflow/SKILL.md#common
 ## 2. Start
 
 1. Read `.prism/workflow.md`, the settings, and the pending user gates, and act on every recorded answer, first on the gate that a start naming `answered-gate <id>` names, whose answer for an approval gate is `latestAnswer` of its artifact through `get_artifact`; when `.prism/workflow.md` is missing, or a Prism tool or child reports a setting or record that `setup` owns, run `setup` in a fresh child agent while no slice is `in-progress`, asking its blockers as gates.
-2. When the initiative has no Approved requirements or no roadmap entry, run `triage` in a fresh child agent for a reported defect, and `ideate` for new intent or when triage returns `NOT_A_DEFECT`.
+2. When the initiative has no Approved requirements or no roadmap entry, or its entry is an emerging work item, run `triage` in a fresh child agent for a reported defect, and `ideate` for new intent or when triage returns `NOT_A_DEFECT`, and when ideation returns an unanswered question round, wait on its gates with `wait_for_user_gate` before you run `ideate` again.
 3. Read the initiative record with `get_initiative`.
 4. When the record does not exist, call `update_initiative` with `expectedRevision: null` and a `create` operation for the root slice with its slug, title, outcome, and every Approved requirement of the initiative.
 

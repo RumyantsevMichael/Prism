@@ -130,7 +130,7 @@ test("clause 28: a checkout's roadmap view is removed when the store's roadmap r
   const place = await workspace(context);
   // A project without a store keeps its roadmap record and the view generated from it in the checkout, as an existing project does.
   const plain = await checkout(place, "plain", { store: null });
-  ok(await (await server(context, place, plain)).call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
+  ok(await (await server(context, place, plain)).call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now" }] }));
   const record = await text(path.join(plain, ".prism", "roadmap.json"));
   const view = await text(path.join(plain, "docs", "roadmap.md"));
   assert.ok(record && view, "the project without a store holds the roadmap record and its view");
@@ -149,7 +149,7 @@ test("clause 28: a checkout's roadmap view is removed when the store's roadmap r
   assert.equal(ok(await onApi.call("get_artifact", { path: "docs/roadmap.md" })).content, view, "the roadmap view resolves to the workspace scope alone");
 
   // The record changes after the move, so a checkout still holding the earlier view holds a stale one.
-  ok(await onApi.call("update_roadmap", { expectedRevision: ok(await onApi.call("get_roadmap", {})).revision, operations: [{ op: "add_initiative", id: "billing", title: "Billing", intent: "Billing ships.", band: "Next", requirements: ["r.md§2"] }] }));
+  ok(await onApi.call("update_roadmap", { expectedRevision: ok(await onApi.call("get_roadmap", {})).revision, operations: [{ op: "add_initiative", id: "billing", title: "Billing", intent: "Billing ships.", band: "Next" }] }));
   const current = await text(path.join(place.store, "artifacts", "roadmap.md"));
   assert.match(current, /Billing/);
   const edited = `${view}\nA note written by hand.\n`;

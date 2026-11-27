@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { ARTIFACT_FORMATS, ARTIFACT_TYPES, adrStatusOf, glossarySources, inspectArtifact, requirementOutline } from "./artifact-formats.mjs";
+import { ARTIFACT_FORMATS, ARTIFACT_TYPES, adrStatusOf, glossarySources, implementationText, inspectArtifact, requirementOutline } from "./artifact-formats.mjs";
 import { artifactAddress } from "./artifact-paths.mjs";
 import { readComponents } from "./components.mjs";
 import { artifactText, seenArtifactTexts } from "./store-artifacts.mjs";
@@ -369,7 +369,8 @@ export async function checkTargets(root: any, store: any, targets: any, { applie
     }
     const own = reported.get(reportedKey(target.path, target.scope, contentVersion(bytes))) ?? [];
     if (own.length) result = { ...result, conforms: false, findings: [...result.findings, ...own] };
-    artifacts.push({ path: target.path, scope: target.scope, type: target.type, version: result.version, conforms: result.conforms, findings: result.findings, unknowns: result.unknowns, earlierFormat: result.earlierFormat, migration: null });
+    // A requirement file's entry carries its implementation-text warnings, which never count as findings.
+    artifacts.push({ path: target.path, scope: target.scope, type: target.type, version: result.version, conforms: result.conforms, findings: result.findings, unknowns: result.unknowns, earlierFormat: result.earlierFormat, migration: null, ...(target.type === "requirements" ? { warnings: implementationText(bytes) } : {}) });
   }
   if (!artifacts.length) return artifacts;
   const checked = artifacts.map((artifact, index) => ({ ...artifact, formatVersion: artifact.version, version: versions[index] }));

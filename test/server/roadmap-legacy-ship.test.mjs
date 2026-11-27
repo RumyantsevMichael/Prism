@@ -71,11 +71,12 @@ test("with a record store, a migration records legacy shipped initiatives withou
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
+  // Design starts only on a ready work item, and an initiative without a roadmap entry is none, so the record comes before the entry that cites no Approved requirement.
+  ok(await createInitiative(prism, "reports"));
   const migrated = ok(await prism.call("update_roadmap", { expectedRevision: null, actor: "setup", operations: [add("billing"), add("reports"), { op: "record_legacy_ship", id: "billing" }] }));
   assert.deepEqual(migrated.legacyShips, ["billing"]);
   assert.equal(migrated.derived.find((item) => item.id === "billing").state, "shipped");
   assert.equal(migrated.record.initiatives.find((item) => item.id === "billing").decision.legacy, true);
-  ok(await createInitiative(prism, "reports"));
   const roadmap = ok(await prism.call("get_roadmap", {}));
   refused(await prism.call("update_roadmap", { expectedRevision: roadmap.revision, operations: [{ op: "record_legacy_ship", id: "reports" }] }), "validation_failed");
 });

@@ -7,7 +7,7 @@ Each slice is designed when it is next, implemented in fresh agent sessions agai
 
 | Stage | Skill | Result |
 |---|---|---|
-| Shape | `prism:ideate` | Approved EARS requirement files and a roadmap entry, or a decision to stop |
+| Shape | `prism:ideate` | A roadmap entry shaped through your answers into Approved EARS requirement files and Draft ADRs, then confirmed ready, or merged, split, or killed |
 | Triage a bug | `prism:triage` | A reproduction and the Approved requirements it breaks, with a defect on the done slice of an unshipped initiative or a roadmap entry, or a hand-off to ideate |
 | Run an initiative | `prism:orchestrate` | One root slice, then each slice in turn |
 | Design | `prism:design` | A frozen contract, probed assumptions, and failing acceptance tests, or a split into child slices |
@@ -20,6 +20,18 @@ Each slice is designed when it is next, implemented in fresh agent sessions agai
 
 The roadmap owns each initiative's name, intent, priority, and Approved requirement links.
 When those inputs are missing, orchestration runs `ideate` first.
+
+## Shaping
+
+`prism:ideate` starts with a roadmap entry, which stays an emerging work item until it cites Approved requirements and you confirm it ready.
+Before it writes any requirement, ideation asks you a round of at most five questions, each with a recommended answer, what the answer settles, and whether the item can become ready without it.
+You answer each question in the conversation or on the review app's Attention page.
+Inside an orchestration, ideation returns an unanswered round to the orchestrator, which waits for your answers before it runs ideation again.
+Ideation records the links you give it, each research finding with its source, and research it could not do, and it records each architecture choice as a Draft ADR with at least two options, your preferred solution being one of them with your reason.
+When the requirements are Approved, ideation asks you to confirm the item ready, and when two items are one, an item holds independent parts, or an item is no longer wanted, it asks you to merge, split, or kill it.
+Design starts only on a ready item, and it decides each Draft ADR the item cites by choosing one of its options before it proposes a design.
+Ideation runs in one agent session and starts no other agent to check its work.
+[Work items and their shaping records](shared-records.md#work-items-and-their-shaping-records) describes each of these gates.
 Design explores documents and focused code paths, then proposes `FIT`, one contract with a plan of slices, or `SPLIT`, parts with their order and the interfaces between them, or returns `BLOCKED`.
 Prism checks a proposal as soon as design makes it and keeps it pending until the design gate accepts it.
 Design splits a scope only with evidence Prism can check: a contract too large for one implementer to read, an unprobed assumption that one part settles, or your own request at the design gate.

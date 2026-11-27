@@ -98,7 +98,7 @@ test("clause 14: a designed initiative that nobody started is not listed as work
   const { server: prism } = owner;
   const call = async (name, args) => ok(await prism.call(name, args));
   await call("update_initiative", { initiative: "later", expectedRevision: null, operations: [{ op: "create", slug: "later", title: "Later work", requirements: ["docs/requirements/code.md#1"] }] });
-  await call("update_roadmap", { expectedRevision: (await call("get_roadmap", {})).revision, operations: [{ op: "add_initiative", id: "later", title: "Later work", intent: "Later.", band: "Next", requirements: ["code.md§1"] }] });
+  await call("update_roadmap", { expectedRevision: (await call("get_roadmap", {})).revision, operations: [{ op: "add_initiative", id: "later", title: "Later work", intent: "Later.", band: "Next" }] });
   const got = await place(context);
   assert.equal(got.work.some((item) => item.initiative === "later"), false);
 });

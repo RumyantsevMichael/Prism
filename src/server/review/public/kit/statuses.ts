@@ -15,13 +15,16 @@ export const STATUS_CLASSES = Object.freeze({
 
 /** Each status word, lowercased with spaces as hyphens, and its class and label. */
 export const STATUSES: Readonly<Record<string, any>> = Object.freeze({
-  // Initiatives on the roadmap.
+  // Initiatives and work items on the roadmap: an emerging item is still being shaped, and killed, merged, and split items left the bands.
+  emerging: ["idle", "Emerging"],
   envisioned: ["idle", "Envisioned"],
   unlisted: ["idle", "Not on the roadmap"],
   planned: ["ready", "Planned"],
   "in-progress": ["active", "In progress"],
   shipped: ["done", "Shipped"],
   superseded: ["retired", "Superseded"],
+  killed: ["retired", "Killed"],
+  merged: ["retired", "Merged"],
   // Slices.
   "not-started": ["idle", "Not started"],
   "design-review": ["waiting", "Design review"],
@@ -38,6 +41,7 @@ export const STATUSES: Readonly<Record<string, any>> = Object.freeze({
   rejected: ["problem", "Rejected"],
   deprecated: ["retired", "Deprecated"],
   withdrawn: ["retired", "Withdrawn"],
+  declined: ["retired", "Declined"],
   // Review findings and reviewers.
   open: ["idle", "Open"],
   reopened: ["problem", "Reopened"],

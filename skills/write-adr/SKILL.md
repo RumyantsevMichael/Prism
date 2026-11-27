@@ -1,6 +1,6 @@
 ---
 name: write-adr
-description: "Create or revise an ADR for an architectural decision or invariant."
+description: "Create or revise an ADR for an architectural decision or invariant, record an open architecture choice that shaping finds as a Draft ADR with options, or decide a Draft ADR during design."
 sdm: "0.3"
 ---
 
@@ -26,6 +26,8 @@ In a project with a store, ADRs are [store artifacts](../workflow/SKILL.md#commo
   1. Create a Proposed ADR with a descriptive filename that is a [portable name](../workflow/SKILL.md#common-terms) in the configured ADR directory, defaulting to `docs/ADRs/<topic>/`.
   2. Keep related decisions in the same topic.
   3. For supersession, link the replacement and original without changing the original status.
+- If shaping finds an architecture choice that design has not made, create it as a Draft ADR, with `Status: Draft`, its decision drivers, and at least two options and no decision, a person's preferred solution being one option with its `Preferred by:` line.
+- If design decides a Draft ADR, call `update_artifact` `decide` with the chosen option, rationale, consequences, and mechanism, which makes it Proposed and keeps the other options as alternatives; without a store, write the same text and status in the checkout.
 
 The [ADR format](references/adr-format.md) states the rules that `check_artifacts` checks and a complete example, which new ADRs follow.
 

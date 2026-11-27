@@ -41,7 +41,7 @@ async function verified(context) {
   const run = ok(await prism.call("verify_slice", { initiative: "reports", slice: "reports", approvalGate: asked.gateId }));
   assert.equal(run.status, "passed");
   const record = JSON.parse(await readFile(path.join(root, run.run), "utf8"));
-  ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
+  ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now" }] }));
   return { where, code, root, prism, record, head: git(root, "rev-parse", "HEAD") };
 }
 

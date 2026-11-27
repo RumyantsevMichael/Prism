@@ -240,6 +240,42 @@ export function requirementsIn(value: any) {
   return found.filter((sentence) => /\bshall\b/i.test(sentence.text));
 }
 
+// A code span, and the forms of a file path: a word that begins with /, ./, ../, or ~/, holds a \ between two characters, holds two / between non-empty parts, or holds one / and ends in an extension.
+const CODE_SPAN = /`[^`]+`/;
+const WORD_EDGES = /^[("'‘“[{<]+|[.,;:!?)"'’”\]}>]+$/g;
+function isFilePath(word: string) {
+  if (word.includes("://")) return false;
+  if (/^(\/|\.\/|\.\.\/|~\/)/.test(word) && word.length > 1) return true;
+  if (/[^\\]\\[^\\]/.test(word)) return true;
+  if (/[^/]\/[^/]+\/[^/]/.test(word)) return true;
+  return (word.match(/\//g) ?? []).length === 1 && /[^/]\/[^/]/.test(word) && /\.[A-Za-z0-9]{1,10}$/.test(word);
+}
+
+/** Whether a requirement statement describes implementation: it holds a code span or a word that is a file path, its surrounding punctuation aside. */
+export function describesImplementation(statement: string) {
+  if (CODE_SPAN.test(statement)) return true;
+  return statement.replace(/`[^`]*`/g, " ").split(/\s+/).map((word) => word.replace(WORD_EDGES, "")).some((word) => word !== "" && isFilePath(word));
+}
+
+/**
+ * The requirements.implementation-text warnings of a requirement file: { rule, section, line, text, message } for each numbered section whose Requirement: statement holds a code span or a file path.
+ * A warning refuses nothing and is no format finding; it tells the person that the statement may describe implementation rather than observable behavior.
+ */
+export function implementationText(input: any) {
+  const { text } = decode("requirements", input);
+  if (typeof text !== "string") return [];
+  const warnings: any[] = [];
+  for (const section of markdownSections(linesOf(text)).sections) {
+    const match = /^(\d+)\.\s+\S/.exec(section.title);
+    if (!match) continue;
+    const field: any = (section.body as any[]).find((item: any) => !item.fenced && /^Requirement:/.test(item.value));
+    const statement = field ? /^Requirement:\s*(.*?)\s*$/.exec(field.value)![1] : "";
+    if (!field || !statement || !describesImplementation(statement)) continue;
+    warnings.push({ rule: "requirements.implementation-text", section: Number(match[1]), line: field.line, text: statement, message: `Section ${match[1]}'s requirement holds a code span or a file path, so it may describe implementation rather than the behavior a person observes; state what the system does, and leave how to the design.` });
+  }
+  return warnings;
+}
+
 function inspectRequirementSection(section: any, number: any, findings: any, unknowns: any, oneShall: any) {
   const type = "requirements";
   const labels = [...REQUIREMENT_FIELDS, "Supersedes"];
@@ -276,33 +312,84 @@ function inspectRequirementSection(section: any, number: any, findings: any, unk
 // ---- ADRs ----
 
 const ADR_SECTIONS = ["Requirements", "Problem", "Decision", "Rationale", "Alternatives", "Consequences", "Mechanism", "Decision Log"];
-const adrStatus = (value: any) => ["Proposed", "Accepted", "Declined"].includes(value) || /^Superseded by .*\[[^\]]*\]\([^)\s]+\)/.test(value);
+// A Draft ADR states the choice and its options and no decision, from version 2 of the format on.
+export const DRAFT_ADR_SECTIONS = Object.freeze(["Requirements", "Problem", "Decision drivers", "Options", "Decision Log"]);
+const DECIDED_SECTIONS = ["Decision", "Rationale", "Alternatives", "Consequences", "Mechanism"];
+const adrStatus = (drafts: any) => (value: any) => ["Proposed", "Accepted", "Declined", ...(drafts ? ["Draft"] : [])].includes(value) || /^Superseded by .*\[[^\]]*\]\([^)\s]+\)/.test(value);
 
 export function adrStatusOf(text: any) {
   const { head } = markdownSections(linesOf(text));
   return head.map((item) => /^Status:\s*(.*?)\s*$/.exec(item.value)?.[1]).find((value) => value !== undefined) ?? null;
 }
 
-function inspectAdr(text: any) {
+/** The level-two sections of a Markdown text: { head, sections }, each line as { value, line, fenced } and each section as { title, line, body }. */
+export const sectionsOf = (text: any) => markdownSections(linesOf(text));
+
+const OPTION_HEADING = /^###\s+(.*?)\s*$/;
+export const COSTS = /^Costs:\s*(.*?)\s*$/;
+export const RULES_OUT = /^Rules out:\s*(.*?)\s*$/;
+export const PREFERRED = /^Preferred by:\s*(.*?)\s*$/;
+const PREFERENCE = /^\S.*?, because \S/;
+
+/**
+ * The options of a Draft ADR's Options section, each { title, line, body, costs, rulesOut, preferred }:
+ * body holds the option's lines without its heading, and costs, rulesOut, and preferred hold the values of its Costs:, Rules out:, and Preferred by: lines, each a list.
+ */
+export function draftOptions(body: any) {
+  const options: any[] = [];
+  let current: any = null;
+  for (const item of body) {
+    const heading = !item.fenced && OPTION_HEADING.exec(item.value);
+    if (heading) { options.push(current = { title: heading[1], line: item.line, body: [], costs: [], rulesOut: [], preferred: [] }); continue; }
+    if (!current) continue;
+    current.body.push(item);
+    if (item.fenced) continue;
+    const value = item.value.trim();
+    for (const [pattern, field] of [[COSTS, "costs"], [RULES_OUT, "rulesOut"], [PREFERRED, "preferred"]] as const) {
+      const match = pattern.exec(value);
+      if (match) current[field].push(match[1]);
+    }
+  }
+  return options;
+}
+
+/** The options of a Draft ADR's text: { title, line, body, costs, rulesOut, preferred } each, or [] when it has no Options section. */
+export const draftOptionsOf = (text: any) => draftOptions(sectionsOf(text).sections.find((section: any) => section.title === "Options")?.body ?? []);
+
+// Whether an ADR takes the Draft section rules: a Draft one, and a Declined one that was declined as a Draft, with options and no decision.
+function draftShaped(status: any, sections: any) {
+  if (status === "Draft") return true;
+  const titles = sections.map((section: any) => section.title);
+  return status === "Declined" && titles.includes("Options") && !titles.includes("Decision");
+}
+
+const inspectAdr = (version: any) => (text: any) => {
   const type = "adr";
   const findings: any[] = [], unknowns = [];
   const items = linesOf(text);
   title(type, items, findings, "decision");
   const { head, sections } = markdownSections(items);
   const values: any = header(type, head, ["Status", "Created"], findings);
-  if (values.Status && !adrStatus(values.Status.value)) findings.push(finding(`${type}.status`, values.Status.line, `Status must be Proposed, Accepted, Declined, or Superseded by <link>, not "${values.Status.value}".`));
+  const drafts = version >= 2;
+  if (values.Status && !adrStatus(drafts)(values.Status.value)) findings.push(finding(`${type}.status`, values.Status.line, `Status must be ${drafts ? "Draft, " : ""}Proposed, Accepted, Declined, or Superseded by <link>, not "${values.Status.value}".`));
   if (values.Created) {
     if (values.Created.value === UNKNOWN) unknowns.push({ line: values.Created.line, field: "Created" });
     else if (!validDate(values.Created.value)) findings.push(finding(`${type}.dates`, values.Created.line, `Created must be a YYYY-MM-DD date, not "${values.Created.value}".`));
   }
-  const order = sections.map((section) => section.title).filter((name) => ADR_SECTIONS.includes(name));
-  const once = ADR_SECTIONS.every((name) => order.filter((value) => value === name).length === 1);
-  if (!once || order.join("\n") !== ADR_SECTIONS.join("\n")) {
-    const missing = ADR_SECTIONS.filter((name) => !order.includes(name));
-    findings.push(finding(`${type}.sections`, sections[0]?.line ?? null, `The sections ${ADR_SECTIONS.map((name) => `## ${name}`).join(", ")} must appear once each in that order${missing.length ? `; missing ${missing.map((name) => `## ${name}`).join(", ")}` : ""}.`));
+  const draft = drafts && draftShaped(values.Status?.value, sections);
+  const required = draft ? DRAFT_ADR_SECTIONS : ADR_SECTIONS;
+  const order = sections.map((section) => section.title).filter((name) => required.includes(name));
+  const once = required.every((name) => order.filter((value) => value === name).length === 1);
+  if (!once || order.join("\n") !== required.join("\n")) {
+    const missing = required.filter((name) => !order.includes(name));
+    findings.push(finding(`${type}.sections`, sections[0]?.line ?? null, `The sections ${required.map((name) => `## ${name}`).join(", ")} must appear once each in that order${draft ? " in a Draft ADR" : ""}${missing.length ? `; missing ${missing.map((name) => `## ${name}`).join(", ")}` : ""}.`));
+  }
+  if (draft) {
+    const decided = sections.filter((section: any) => DECIDED_SECTIONS.includes(section.title));
+    if (decided.length) findings.push(finding(`${type}.sections`, decided[0].line, `A Draft ADR states no decision, so it has none of ${DECIDED_SECTIONS.map((name) => `## ${name}`).join(", ")}; found ${[...new Set(decided.map((section: any) => `## ${section.title}`))].join(", ")}.`));
   }
   for (const section of sections as any[]) {
-    if (!ADR_SECTIONS.includes(section.title)) continue;
+    if (!required.includes(section.title)) continue;
     const body = bodyText(section.body);
     if (body === UNKNOWN) { unknowns.push({ line: section.body.find((item: any) => !blank(item)).line, field: section.title }); continue; }
     if (body === "") {
@@ -310,6 +397,7 @@ function inspectAdr(text: any) {
       if (section.title !== "Decision Log") findings.push(finding(`${type}.sections`, section.line, `The section ## ${section.title} is empty.`));
       continue;
     }
+    if (section.title === "Options") { inspectOptions(section, findings); continue; }
     if (section.title !== "Requirements" || body === "n/a") continue;
     for (const item of section.body as any[]) {
       if (blank(item) || item.fenced) continue;
@@ -320,6 +408,22 @@ function inspectAdr(text: any) {
     }
   }
   return { findings, unknowns };
+};
+
+// A Draft ADR's options: at least two ### headings, each with a non-empty Costs: line and Rules out: line and at most one Preferred by: <who>, because <why> line.
+function inspectOptions(section: any, findings: any) {
+  const type = "adr";
+  const options = draftOptions(section.body);
+  if (options.length < 2) findings.push(finding(`${type}.sections`, section.line, `The section ## Options of a Draft ADR holds at least two options, each a ### <option> heading; found ${options.length}.`));
+  const titles = options.map((option: any) => option.title);
+  for (const option of options) {
+    const named = `The option "${option.title}"`;
+    if (titles.filter((value: any) => value === option.title).length > 1) findings.push(finding(`${type}.sections`, option.line, `${named} is named by more than one ### heading.`));
+    if (option.costs.length !== 1 || !option.costs[0]) findings.push(finding(`${type}.sections`, option.line, `${named} must hold one non-empty Costs: line.`));
+    if (option.rulesOut.length !== 1 || !option.rulesOut[0]) findings.push(finding(`${type}.sections`, option.line, `${named} must hold one non-empty Rules out: line.`));
+    if (option.preferred.length > 1) findings.push(finding(`${type}.sections`, option.line, `${named} holds more than one Preferred by: line.`));
+    else if (option.preferred.length === 1 && !PREFERENCE.test(option.preferred[0])) findings.push(finding(`${type}.sections`, option.line, `${named} must write its preference as "Preferred by: <who>, because <why>", not "Preferred by: ${option.preferred[0]}".`));
+  }
 }
 
 // ---- Feature files ----
@@ -540,13 +644,16 @@ const requirementFormat = (version: any) => format("requirements", version, "ski
   { Status: "Draft", Approved: "n/a", "Design questions": "n/a", Disposition: "Active", Related: "n/a" },
   { Problem: ["Context", "Background", "Motivation"], Goals: ["Objectives"], "Non-goals": ["Out of scope"], "Design questions": ["Open questions", "Questions"] }, inspectRequirements(version >= 2));
 
+// Version 2 adds the Draft status and its sections and keeps every rule of version 1 for an ADR that is not Draft.
+const adrFormat = (version: any) => format("adr", version, "skills/write-adr/references/adr-format.md",
+  ["adr.text", "adr.title", "adr.header", "adr.status", "adr.dates", "adr.sections", "adr.requirements"],
+  { Status: "Proposed", Requirements: "n/a", ...(version >= 2 ? { "Decision drivers": "n/a" } : {}), "Decision Log": "n/a" },
+  { Requirements: ["Drivers", "Decision drivers"], Problem: ["Context", "Background", "Problem Statement", "Goals", "Non-Goals"], Decision: ["Outcome"], Rationale: ["Reasons", "Justification"], Alternatives: ["Options considered", "Considered options"], Consequences: ["Implications"], "Decision Log": ["History", "Status history", "Decision Log — <date> <title>"] }, inspectAdr(version));
+
 /** Prism's own formats, in the order every result lists them, each the newest version of its type. */
 export const ARTIFACT_FORMATS = Object.freeze([
   requirementFormat(2),
-  format("adr", 1, "skills/write-adr/references/adr-format.md",
-    ["adr.text", "adr.title", "adr.header", "adr.status", "adr.dates", "adr.sections", "adr.requirements"],
-    { Status: "Proposed", Requirements: "n/a", "Decision Log": "n/a" },
-    { Requirements: ["Drivers", "Decision drivers"], Problem: ["Context", "Background", "Problem Statement", "Goals", "Non-Goals"], Decision: ["Outcome"], Rationale: ["Reasons", "Justification"], Alternatives: ["Options considered", "Considered options"], Consequences: ["Implications"], "Decision Log": ["History", "Status history", "Decision Log — <date> <title>"] }, inspectAdr),
+  adrFormat(2),
   format("glossary", 1, "skills/workflow/references/glossary-format.md",
     ["glossary.text", "glossary.title", "glossary.purpose", "glossary.identity", "glossary.definition", "glossary.fields", "glossary.source", "glossary.source-decided", "glossary.source-withdrawn"],
     { Title: "Glossary" }, {}, inspectGlossary),
@@ -558,7 +665,7 @@ export const ARTIFACT_FORMATS = Object.freeze([
 export const ARTIFACT_TYPES = Object.freeze(ARTIFACT_FORMATS.map((entry) => entry.type));
 
 /** Every version of Prism's own formats, the earlier ones a file may still conform to before the newest. */
-export const FORMAT_VERSIONS = Object.freeze([requirementFormat(1), ...ARTIFACT_FORMATS]);
+export const FORMAT_VERSIONS = Object.freeze([requirementFormat(1), adrFormat(1), ...ARTIFACT_FORMATS]);
 
 /** The formats of one type, oldest first, from the given list. */
 const formatsOf = (type: any, formats: any) => formats.filter((entry: any) => entry.type === type).sort((a: any, b: any) => a.version - b.version);

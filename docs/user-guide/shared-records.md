@@ -1,6 +1,6 @@
 # Share Prism state across worktrees and machines
 
-Prism keeps its machine records (roadmap, initiatives, slice state, reviews, change maps, design views, frozen tests, and runs) under each checkout's `.prism` folder by default.
+Prism keeps its machine records (roadmap, work items' shaping records, initiatives, slice state, reviews, change maps, design views, frozen tests, and runs) under each checkout's `.prism` folder by default.
 Each linked worktree and each clone then holds its own copy, so work started in one checkout is invisible to the others.
 A record store moves those records into one folder that every checkout shares, and store sync shares that folder between machines through Git.
 Name the store by its Git remote to share records between machines, or by a folder path to share them between checkouts on one machine.
@@ -75,6 +75,51 @@ Its result lists each moved file with its place in the store, each file that sta
 `.prism/workflow.md` is left out of that list, since its configured paths stay the files' addresses.
 Frozen tests of accepted designs stay in the checkout.
 [Sync status](#sync-status) says when a move happens and what an interrupted move leaves behind.
+
+## Work items and their shaping records
+
+Every roadmap entry is a work item, and an agent reads one with `get_work_item` and changes it with `update_work_item`, by its roadmap identifier.
+While an idea is shaped, its work item keeps a shaping record beside the entry: the inputs an agent was given, each a link with a one-line note, the findings it made, each with a link to its source, the research it could not do, and the ADRs the item cites.
+Prism keeps only the link of an input, never a copy of what it names.
+The requirement files an item cites stay on its roadmap entry, so the roadmap still names them, and one file or ADR can serve any number of items.
+A shaping record is a shared record like the roadmap, so every checkout of a store reads the same one, and each change is checked against the revision the agent last read, so a change someone made in the meantime refuses the whole update with `revision_conflict`.
+An entry stays emerging while it cites no Approved requirement file, or while it has a shaping record and is not marked ready, and `get_roadmap` shows such an entry without an initiative record as `emerging` rather than `envisioned`.
+You add to an item by commenting in the review browser on a requirement file or ADR it cites: the agent's next read of each item that cites the file returns the comments made since the item's record last changed.
+
+Shaping asks you about an item in rounds of up to five questions.
+Each question appears in Attention as its own question with the agent's recommended answer, what the answer settles, and whether the item can become ready without it.
+Pick the recommended answer, with a note if you want to add to it, or answer in your own words with a note alone, and Prism records your answer on the question in the item's shaping record.
+An agent can withdraw a question you have not answered, which removes it from Attention.
+Until you have answered a round, and while any question stays open, an emerging item cannot cite a requirement file that is not Approved, so no requirement is drafted before you have answered.
+
+When shaping is done, the agent asks you in Attention whether the item is ready, listing each file it cites with its status.
+Prism asks only while the item cites an Approved requirement file, cites no requirement file that is not Approved, cites no Draft ADR that breaks the ADR format, and has no open question that readiness needs; otherwise the agent's request is refused with `readiness_unmet`, naming each condition.
+Answer Ready to mark the item ready, or Not ready with a note on what it still needs.
+If a condition stopped holding before you answered, such as a cited requirement file losing its approval, your Ready answer leaves the item emerging.
+Any later change to the item's shaping withdraws an open readiness question and clears the ready mark, so your confirmation always covers what you saw.
+Design does not start on an emerging item: creating its initiative, or claiming it for design, is refused with `item_emerging`, naming what is missing.
+A design that links a Draft ADR is refused with `adr_draft` until design decides that ADR by choosing one of its options.
+
+When shaping finds that two emerging items are one, the agent asks you in Attention whether to merge them, naming both with what each holds and why.
+Answer with the item whose identifier survives, or keep both apart.
+The item you keep holds every input, question with your answer, finding, research gap, cited ADR, and requirement reference of both, and has to be confirmed ready again, while the other stays on the roadmap as merged into it, so anyone holding its identifier is led to the survivor.
+When one item holds two needs, the agent asks whether to split it, listing each part with what it takes, and every entry of the shaping record, requirement reference, and cited ADR goes to at least one part.
+Answer Split to add each part as a new roadmap entry right after the item in its band, with its share of the shaping record, and to record the item as split into them, or Keep whole to leave it as it is.
+Prism asks only while each item is emerging and has no initiative, no other pending proposal, and no unanswered question; if that stopped holding before you answered, your answer changes nothing and the agent can propose again.
+The same holds when a split's parts no longer take every requirement reference the item cites, or when writing your answer fails: Prism puts back what it had changed and closes the question with why, and reports an error if it cannot put everything back.
+When shaping finds that an emerging item is no longer wanted, the agent asks you in Attention whether to kill it, with its reason and everything that uses each requirement file and ADR it cites: other work items, initiative slices and plans, feature files, requirement files, and ADRs.
+Each cited file gets a question of its own: keep it, or withdraw a requirement file or decline an ADR.
+Prism refuses to withdraw or decline a file while anything else still uses it, naming each use, except another file that the same kill withdraws or declines, so answer the files that others depend on first.
+Answer each file's question before the kill question, and give a note with Kill, since it is kept as the reason.
+Prism refuses the kill while a file you chose to withdraw or decline has gained a use since you answered.
+Kill sets each withdrawn requirement file to Withdrawn and each declined ADR to Declined, keeps the other files as they are, closes the item's open questions, and takes the item out of every band, while Keep leaves everything as it is.
+A killed, merged, or split entry leaves every band and appears under Killed context with its reason, Merged context, or Split context in the roadmap view, and the roadmap refuses to place or update it.
+A checkout of an earlier Prism version that shares the store reports the roadmap as invalid once it holds a killed, merged, or split entry, naming that entry's decision, until that checkout updates Prism.
+
+When an agent asks you to approve a requirement file or ADR, the question in Attention names each work item that cites the file, or says that no work item cites it.
+An agent cannot ask you to approve a requirement file that an emerging item cites until you have answered a question round about that item: the request is refused with `shaping_unasked`, naming the item.
+A requirement whose statement holds a code span or a file path may describe how the system is built rather than what you observe, so Prism warns about it when the file is written, edited, checked, or sent for approval, and the approval question names each such section, such as §1.
+A warning refuses nothing, and the file still conforms to its format.
 
 ## Share records between machines
 
@@ -410,6 +455,8 @@ An initiative's coordination state stays within 1 MiB.
 When a write or a merge would exceed that, the oldest history entries give way first and then the oldest closed gates, so your settings and open gates are always kept, and a write always keeps the history entry of the change it records.
 A history entry or closed gate that gave way on either machine stays gone after a merge, and an agent is never told about it later.
 A write is refused with `artifact_too_large` only when the state exceeds 1 MiB with all of its history and closed gates gone.
+A work item's shaping record merges too, so inputs, findings, research gaps, and cited ADRs that agents add to one item on two machines all survive, and the record keeps the later of the two change times.
+A shaping record collides when one entry changed differently on both machines, when its entries were reordered differently, or when another field, such as a ready mark, changed differently on both.
 Other records, such as slice claims, collide whenever Git cannot merge their lines.
 In a collision the first push wins.
 The machine whose push lost keeps the upstream version and saves its own version under `.prism-sync/conflicts/<time>/` in the store, so no bytes are lost.

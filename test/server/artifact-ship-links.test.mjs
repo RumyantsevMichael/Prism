@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { acceptAtShip, linkedPaths, mergeStatusRecord, newRecord } from "../../dist/server/workflow/artifact-status.mjs";
 import { createInitiative } from "./fixtures/repository-checkouts.mjs";
-import { adrFile, answerGate, browserRequest, checkout, git, isolateGit, ok, refused, reviewBrowser, server, syncedWorkspace, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { adrFile, answerGate, browserRequest, checkout, git, isolateGit, ok, refused, requirementFile, reviewBrowser, server, shapedEntry, syncedWorkspace, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // A ship accepts the ADRs that the Markdown links of an initiative's slice.md files name, after a person's confirmation of the initiative as it stands (contract clauses 43 and 44).
 const environment = await isolateGit();
@@ -108,7 +108,15 @@ test("a status record merge keeps a ship's acceptance and ends an approval that 
 });
 
 // An initiative of one slice in checkout api that links the given ADRs, verified and done.
-async function finished(context, { contract = CONTRACT, adrs = [CITED] } = {}) {
+// A ready roadmap entry: it cites the requirement file r.md, which the person approves first, so design may claim its done slice again.
+async function readyEntry(prism, review) {
+  await writeArtifact(prism, "docs/requirements/r.md", requirementFile("Reports"));
+  const asked = ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: "docs/requirements/r.md", question: "Approve reports?", context: "Reports." }] }));
+  assert.equal((await answerGate(review, { id: asked.artifacts[0].gate, choice: "approve" })).status, 200);
+  ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
+}
+
+async function finished(context, { contract = CONTRACT, adrs = [CITED], ready = false } = {}) {
   const place = await workspace(context);
   const api = await checkout(place, "api", { files: { [TEST_FILE]: TEST_SOURCE } });
   git(api, "config", "user.name", "Ada Reviewer");
@@ -118,7 +126,8 @@ async function finished(context, { contract = CONTRACT, adrs = [CITED] } = {}) {
   ok(await createInitiative(prism, "reports"));
   await writeArtifact(prism, SLICE, contract);
   await designAndVerify(prism, review, "reports", "reports", TEST_FILE);
-  ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
+  if (ready) await readyEntry(prism, review);
+  else await shapedEntry(prism, review, { id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] });
   return { place, api, prism, review };
 }
 
@@ -177,7 +186,7 @@ test("clause 43: an answered gate keeps its kind and question, so an approved vi
 
 test("clause 43: a correctness gate asked before a slice.md changed, or before a later passing run, confirms no ship", async (context) => {
   const OTHER = "docs/ADRs/billing/ledger.md";
-  const { prism, review } = await finished(context, { adrs: [CITED, OTHER] });
+  const { prism, review } = await finished(context, { adrs: [CITED, OTHER], ready: true });
   const early = await approved(prism, review);
   const current = ok(await prism.call("get_artifact", { path: SLICE }));
   await writeArtifact(prism, SLICE, `${CONTRACT}\nSee [ledger](../../ADRs/billing/ledger.md).\n`, { expectedVersion: current.version });
@@ -303,7 +312,7 @@ test("clause 44: a ship accepts an ADR of the repository of the slice that links
   ok(await onApi.call("update_initiative", { initiative: "reports", expectedRevision: await revision(onApi), operations: [{ op: "split", parent: "reports", children: [{ slug: "a", title: "A", requirements: ["r.md#1"] }, { slug: "b", title: "B", requirements: ["r.md#1"] }], evidence: { kind: "unfrozen", assumption: "the split holds", settledBy: "a" } }] }));
   await designAndVerify(onApi, apiReview, "reports", "a", TEST_FILE);
   await designAndVerify(onWeb, webReview, "reports", "b", "test/web.test.mjs");
-  ok(await onApi.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
+  await shapedEntry(onApi, apiReview, { id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] });
   const shipped = ok(await ship(onApi, await approved(onApi, apiReview)));
   assert.deepEqual(shipped.acceptedAdrs.map((adr) => [adr.path, adr.scope.label]), [["docs/ADRs/web/client.md", "web"]]);
   const client = ok(await onWeb.call("get_artifact", { path: "docs/ADRs/web/client.md" }));
@@ -352,7 +361,7 @@ test("clause 44: a link that could name ADRs in two scopes names the one in its 
   const apiSlice = path.join(place.store, "artifacts", "repositories", "api", "plans", "reports", "b", "slice.md");
   await mkdir(path.dirname(apiSlice), { recursive: true });
   await writeFile(apiSlice, "# B\n\n[split](../../../ADRs/x/split.md)\n");
-  ok(await onApi.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
+  await shapedEntry(onApi, apiReview, { id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] });
   const before = ok(await onApi.call("get_roadmap", {}));
   const entry = before.derived.find((item) => item.id === "reports");
   assert.equal(entry.readyToShip, false, "readyToShip runs the ship's check of ambiguous links");
@@ -409,7 +418,7 @@ test("clause 44: a sync that meets a ship's acceptance and an approval asked on 
   ok(await createInitiative(onA, "reports", { claim: false }));
   await writeArtifact(onA, SLICE, CONTRACT);
   await designAndVerify(onA, reviewA, "reports", "reports", TEST_FILE);
-  ok(await onA.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
+  await shapedEntry(onA, reviewA, { id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] });
   const gate = await approved(onA, reviewA);
   assert.equal((await syncRecordStoreNow(place.storeA)).state, "ok");
 

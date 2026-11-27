@@ -122,7 +122,7 @@ test("serves navigation and entity views built from Prism records", async (conte
   const review = await startReviewServer({ projectRoot });
   try {
     const index = (await get(`${review.baseUrl}/api/index`)).json();
-    assert.deepEqual(index.navigation.initiatives.map((item) => [item.id, item.state]), [["reports", "in-progress"], ["search", "envisioned"], ["orphan", "unlisted"]]);
+    assert.deepEqual(index.navigation.initiatives.map((item) => [item.id, item.state]), [["reports", "in-progress"], ["search", "emerging"], ["orphan", "unlisted"]]);
     assert.equal(index.navigation.glossary.exists, false);
     assert.deepEqual(index.navigation.diagnostics.map((item) => item.code), ["path_unknown"]);
     const entity = async (ref) => (await get(`${review.baseUrl}/api/entity?ref=${encodeURIComponent(ref)}`)).json();

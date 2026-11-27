@@ -1,52 +1,54 @@
 ---
 name: ideate
-description: "Shape a raw idea into Approved EARS requirements and a roadmap entry before design. Use when the user brings a new capability idea, or orchestration or triage finds behavior that no Approved requirement covers; not for a defect against an existing requirement."
+description: "Shape a raw idea as a roadmap work item into Approved EARS requirements before design. Use when the user brings a new capability idea, or orchestration or triage finds behavior that no Approved requirement covers; not for a defect against an existing requirement."
 argument-hint: '[idea]'
 sdm: "0.3"
 ---
 
-# Shape product intent
+# Shape a work item
 
-Ideation defines observable obligations, without choosing architecture or delivery slices.
+Ideation defines observable obligations without choosing architecture or slices.
 Rejecting an idea or recognizing existing coverage is a valid result.
 
 ## 1. Prepare
 
-1. If `.prism/workflow.md` exists, read it first.
-2. Read the [workflow](../workflow/SKILL.md), glossary, roadmap, product strategy when present, and related requirements, ADRs, and features.
+1. Read `.prism/workflow.md` when present, the [workflow](../workflow/SKILL.md), glossary, roadmap, product strategy, and related requirements, ADRs, and features.
+2. If Approved requirements or Accepted ADRs conflict with the idea, stop with the conflict.
 
-Configured paths override `docs/Glossary.md`, `docs/roadmap.md`, and `docs/requirements/`.
-In a project with a store, ideation reads and writes the glossary and requirements through `get_artifact` and `update_artifact`, as [store artifacts](../workflow/SKILL.md#common-terms).
+With a store, the glossary, requirements, and ADRs are [store artifacts](../workflow/SKILL.md#common-terms).
 
-## 2. Test the idea
+## 2. Start the item
 
-1. Establish the problem, affected actors, current workaround, and intended observable change with the user.
-2. Separate evidence from assumptions.
-3. Use [delegation.md](../workflow/references/delegation.md) to check existing coverage, durable conflicts, capability ownership, and strategy alignment.
-4. If Approved requirements or Accepted ADRs conflict with the idea, stop with the conflict for user resolution.
-5. Challenge the need against doing nothing and cheaper process, policy, documentation, or removal alternatives.
-6. Test problem evidence, frequency, importance, and what the idea complicates or prevents.
-7. If no new obligation survives, return the reason to stop or the existing requirement links.
+1. When the idea has no roadmap entry, agree with the user on a [portable name](../workflow/SKILL.md#common-terms) as identifier, a title, a one-sentence intent, and a band.
+2. Call `update_roadmap` with an `add_initiative` operation that cites each Approved requirement section as `<file>.md§<number>` that already applies.
+3. Read the item with `get_work_item` and change it only through `update_work_item`.
 
-## 3. Write requirements
+## 3. Ask a question round
 
-1. Group surviving obligations by coherent product capability, using separate files when capabilities can change independently.
-2. Use `write-requirements` to author and review the files through its approval procedure, which adds their new terms to the glossary with the approval.
+1. Call `ask_round` with at most five questions that narrow what the item should and should not do, each with a recommended answer, what it settles, and whether readiness needs it.
+2. Wait for the answers with `wait_for_user_gate`, except that inside an orchestration you return the round as a [blocker](../workflow/SKILL.md#common-terms).
+3. When answers open new questions, ask another round.
 
-Existing capabilities use amendments under the requirement supersession rules.
-External constraints can be requirements, but internal technology choices are design decisions.
+## 4. Research and record
 
-## 4. Add the roadmap entry
+- Record each link the user gives with `add_input`.
+- Record each finding with `add_finding` and its source, or research that could not reach sources with `add_research_gap`.
+- Challenge the need against doing nothing and cheaper alternatives.
+- For each architecture choice, use `write-adr` for a Draft ADR with at least two options, a person's preferred solution being one option with who prefers it and why, and `cite` it.
 
-1. When the approved requirements start a new initiative, read the roadmap with `get_roadmap` and keep its revision.
-2. Agree with the user on a stable initiative identifier, a title, a one-sentence intent, and a band of `Now`, `Next`, `Later`, or `Parked`.
-3. Call `update_roadmap` with an `add_initiative` operation that cites each Approved requirement section as `<file>.md§<number>`, the same form initiatives use.
-4. When the requirements amend an existing initiative, link them through the `update_roadmap` operation `update_initiative` instead.
+## 5. Write requirements
 
-The identifier is a [portable name](../workflow/SKILL.md#common-terms), never changes, and names the initiative's plans folder.
+1. Use `write-requirements` to author the files, one per independent capability, `cite` their sections, and approve them.
+2. When they are Approved, call `request_ready` and wait for its gate.
 
-## 5. Return the result
+Internal technology choices are Draft ADRs, not requirements.
 
-1. Report requirement paths, approval status, the roadmap entry, and any unresolved product question.
+## 6. Merge, split, or kill
 
-Ideation does not create coordination files or start design, orchestration, or implementation.
+- When the item duplicates another, holds independent parts, or is no longer wanted, call `propose_merge`, `propose_split`, or `propose_kill`, and wait for its gate.
+
+## 7. Return
+
+1. Report the item, requirement paths and statuses, cited ADRs, readiness, and open questions.
+
+Ideation starts no design, orchestration, or implementation.

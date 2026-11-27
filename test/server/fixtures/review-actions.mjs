@@ -19,6 +19,9 @@ export const RETENTION_CONTEXT = "Signed exports are kept on disk, and the windo
 export const RETENTION_REASON = "Thirty days covers a monthly audit.";
 export const SIGNING_CONTEXT = "Signing needs a key in the operating system's key store, which only you can add.";
 
+// A conforming Approved requirement file with one Active section, which the fixture's roadmap entry cites.
+const APPROVED_REQUIREMENT = "# Export reports\n\nStatus: Approved\nCreated: 2026-11-09\nApproved: 2026-11-10\n\n## Problem\n\nReports cannot leave the app.\n\n## Goals\n\n- Export reports.\n\n## Non-goals\n\n- n/a\n\n## Design questions\n\n- n/a\n\n<a id=\"1\"></a>\n## 1. Export a report\n\nPattern: Event-driven\n\nDisposition: Active\n\nRequirement: When a person asks, the system shall export the report.\n\nRationale: People need it.\n\nRelated: n/a\n";
+
 /**
  * A Git checkout on branch main with a local Git identity, a roadmap entry, an initiative record of one root slice, and coordination state that holds one gate of each kind.
  * components declares the repository name reports-app and one component api, so the checkout has two index targets.
@@ -39,8 +42,11 @@ export async function actionProject(context, { gates = true, components = false 
   execFileSync("git", ["config", "user.name", AUTHOR.name], { cwd: root, stdio: "pipe" });
   execFileSync("git", ["config", "user.email", AUTHOR.email], { cwd: root, stdio: "pipe" });
   await writeFile(path.join(root, "docs/plans", INITIATIVE, "slice.md"), "# Export reports\n");
+  // Design starts only on a ready work item, so the entry cites an Approved requirement file.
+  await mkdir(path.join(root, "docs/requirements"), { recursive: true });
+  await writeFile(path.join(root, "docs/requirements/reports.md"), APPROVED_REQUIREMENT);
   await updateRoadmap({ projectRoot: root, expectedRevision: null, operations: [
-    { op: "add_initiative", id: INITIATIVE, title: "Export reports", intent: "Signed exports.", band: "Now" },
+    { op: "add_initiative", id: INITIATIVE, title: "Export reports", intent: "Signed exports.", band: "Now", requirements: ["reports.md§1"] },
     { op: "add_initiative", id: "search", title: "Search", intent: "Find activity.", band: "Later" }
   ] });
   await updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: null, operations: [{ op: "create", slug: INITIATIVE, title: "Export reports", requirements: ["docs/requirements/reports.md#1"] }] });

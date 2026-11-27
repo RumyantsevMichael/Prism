@@ -35,7 +35,7 @@ export async function answeredApproval(t, { client, env = {}, initiative = INITI
   t.after(() => { for (const [name, value] of Object.entries(saved)) if (value === undefined) delete process.env[name]; else process.env[name] = value; });
   const prism = await server(t, place, api, { client, env: { PATH: process.env.PATH, CODEX_HOME: codexHome, ...env } });
   await writeArtifact(prism, FILE, requirementFile("Billing"));
-  if (initiative) ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: initiative, title: "Monthly reports", intent: "Reports ship.", band: "Now", requirements: ["billing.md§1"] }] }));
+  if (initiative) ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: initiative, title: "Monthly reports", intent: "Reports ship.", band: "Now" }] }));
   const asked = ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: FILE, question: "Approve billing?", context: "Billing.", ...(initiative ? { initiative } : {}) }] }));
   const gate = asked.artifacts[0].gate;
   const review = await reviewBrowser(t, api);

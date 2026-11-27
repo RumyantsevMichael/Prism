@@ -1368,6 +1368,14 @@
   min-width: 0;
 }
 
+/* A work item's shaping, its readiness, cited artifacts, questions, inputs, findings, and research gaps, stacks its panels as the page does. */
+.work-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-5);
+  min-width: 0;
+}
+
 /* The view switch and the slices that can be designed next share one row above the slices. */
 .initiative-toolbar {
   display: flex;

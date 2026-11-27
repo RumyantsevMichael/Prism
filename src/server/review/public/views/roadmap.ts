@@ -44,8 +44,25 @@ function dependencyLinks(item: any, titles: any) {
   return lines ? `<span class="roadmap-rels">${lines}</span>` : "";
 }
 
+// The readiness conditions an emerging item has yet to meet, as one chip whose tooltip names each of them.
+function unmetChip(item: any) {
+  const unmet = item.state === "emerging" ? item.workItem?.unmet ?? [] : [];
+  if (!unmet.length) return "";
+  return `<prism-chip tone="warning" tip="${escapeHtml(unmet.map(unmetText).join(" "))}">${escapeHtml(`${plural(unmet.length, "readiness condition")} unmet`)}</prism-chip>`;
+}
+
+/** One unmet readiness condition of a work item in words. */
+export function unmetText(condition: any) {
+  if (condition.code === "no_approved_requirement") return "It cites no Approved requirement file.";
+  if (condition.code === "requirement_not_approved") return `${condition.path} is ${condition.status ?? "missing"}, not Approved.`;
+  if (condition.code === "draft_adr_nonconforming") return `${condition.path} is a Draft ADR that breaks the ADR format.`;
+  if (condition.code === "question_unanswered") return `A question it cannot be ready without has no answer: ${condition.text}`;
+  if (condition.code === "not_confirmed") return "Nobody has confirmed that it is ready.";
+  return String(condition.code ?? "");
+}
+
 function signals(item: any) {
-  const parts = [];
+  const parts = [unmetChip(item)];
   if (item.readyToShip && item.state !== "shipped") parts.push(badge("ready to ship", "success"));
   if (item.findings?.blocking) parts.push(badge(plural(item.findings.blocking, "blocking finding"), "danger"));
   else if (item.findings?.unresolved) parts.push(badge(plural(item.findings.unresolved, "open finding"), "warning"));
@@ -65,19 +82,26 @@ export function claimStack(claims = []) {
 }
 
 const ARCHIVED = new Set(["shipped", "superseded"]);
+// A killed, merged, or split item left every band, so the roadmap never shows it and History lists it.
+const CLOSED = new Set(["killed", "merged", "split"]);
 
 function visibleItems(data: any, archive: any) {
-  return archive ? data.items : data.items.filter((item: any) => !ARCHIVED.has(item.state));
+  const open = data.items.filter((item: any) => !CLOSED.has(item.state));
+  return archive ? open : open.filter((item: any) => !ARCHIVED.has(item.state));
 }
 
 const BAND_HINTS: Record<string, any> = { Now: "being built", Next: "designed next", Later: "envisioned", Parked: "not planned", Shipped: "done" };
+// The roadmap's states by name, for the graph's node lines.
+const STATE_NAMES: Readonly<Record<string, string>> = Object.freeze({ "in-progress": "In progress", planned: "Planned", envisioned: "Envisioned", emerging: "Emerging", shipped: "Shipped", superseded: "Superseded" });
 // The status groups in the order work moves through them; shipped and superseded only show with the archive.
+// An emerging item has not been shaped into an envisioned one yet, so it sits in the Envisioned group, where its card names its state.
 const STATUS_GROUPS = [["in-progress", "In progress"], ["planned", "Planned"], ["envisioned", "Envisioned"], ["shipped", "Shipped"], ["superseded", "Superseded"]];
+const GROUPED_STATES: Readonly<Record<string, string[]>> = Object.freeze({ envisioned: ["envisioned", "emerging"] });
 
 // One segment per leaf slice in its status's color, the same palette as every status, with the count of done slices beside it.
 export function sliceBar(item: any) {
   const slices = item.slices ?? [];
-  if (!slices.length || item.state === "envisioned") return "";
+  if (!slices.length || item.state === "envisioned" || item.state === "emerging") return "";
   const done = slices.filter((slice: any) => slice.status === "done").length;
   const started = slices.filter((slice: any) => slice.status !== "not-started").length;
   const label = done || started ? `${done} of ${slices.length} done` : `0 of ${slices.length} started`;
@@ -117,7 +141,7 @@ function groups(data: any, archive: any, grouping: any) {
   const items = visibleItems(data, archive);
   if (grouping === "status") {
     return STATUS_GROUPS.filter(([value]) => archive || !ARCHIVED.has(value)).map(([value, name]) => ({
-      key: value, name, hint: "by band, then priority", glyph: status(value, { glyphOnly: true, attributes: ' aria-hidden="true"' }), members: items.filter((item: any) => item.state === value)
+      key: value, name, hint: "by band, then priority", glyph: status(value, { glyphOnly: true, attributes: ' aria-hidden="true"' }), members: items.filter((item: any) => (GROUPED_STATES[value] ?? [value]).includes(item.state))
     }));
   }
   const bands = archive ? data.bands : data.bands.filter((band: any) => band !== "Shipped");
@@ -174,7 +198,7 @@ async function graph(container: any, data: any, ctx: any, titles: any, archive: 
   const nodes = items.map((item: any) => ({
     id: item.id,
     title: item.title,
-    subtitle: `${item.band} · ${item.state}${item.progress ? ` · ${item.progress.done}/${item.progress.leaves}` : ""}`,
+    subtitle: `${item.band} · ${STATE_NAMES[item.state] ?? item.state}${item.progress ? ` · ${item.progress.done}/${item.progress.leaves}` : ""}`,
     tooltip: item.intent,
     cluster: item.state === "superseded" ? "Superseded" : item.band,
     className: `initiative-node state-${item.state}`
@@ -246,6 +270,7 @@ export async function render(container: any, entity: any, ctx: any) {
   };
   if (lane) view.collapsedLanes = view.collapsedLanes.filter((band: any) => band !== lane);
   const archived = data.items.filter((item: any) => ARCHIVED.has(item.state)).length;
+  const open = data.items.filter((item: any) => !CLOSED.has(item.state));
   const titles = new Map(data.items.map((item: any) => [item.id, item.title]));
   const missing = data.error
     ? `<p class="error">${escapeHtml(data.error)}</p>`
@@ -254,16 +279,17 @@ export async function render(container: any, entity: any, ctx: any) {
       : !data.valid
         ? `<p class="error">The roadmap record is invalid: ${escapeHtml(data.errors.join(" "))}</p>`
         : "";
-  const counts = Object.fromEntries(["in-progress", "planned", "envisioned", "shipped"].map((state) => [state, data.items.filter((item: any) => item.state === state).length]));
+  const counts = Object.fromEntries(["in-progress", "planned", "envisioned", "emerging", "shipped"].map((state) => [state, open.filter((item: any) => item.state === state).length]));
   const metric = (count: number, label: string, state = "") => `<span class="roadmap-metric">${state ? status(state, { glyphOnly: true, attributes: ' aria-hidden="true"' }) : ""}<strong>${count}</strong> <span>${label}</span></span>`;
   container.innerHTML = `
     ${missing ? `<prism-panel class="view-section summary-block">${missing}</prism-panel>` : ""}
     <div class="roadmap-meta">
       <div class="roadmap-metrics" aria-label="Initiatives by state">
-        ${metric(data.items.length, data.items.length === 1 ? "initiative" : "initiatives")}
+        ${metric(open.length, open.length === 1 ? "initiative" : "initiatives")}
         ${metric(counts["in-progress"], "in progress", "in-progress")}
         ${metric(counts.planned, "planned", "planned")}
         ${metric(counts.envisioned, "envisioned", "envisioned")}
+        ${counts.emerging ? metric(counts.emerging, "emerging", "emerging") : ""}
         ${metric(counts.shipped, "shipped", "shipped")}
       </div>
       ${questionsChip(data.openQuestions?.length ?? 0)}

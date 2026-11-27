@@ -91,7 +91,7 @@ async function squashAndShip(slice, { keep = false } = {}) {
   git(work, "commit", "-q", "-m", "Reports (#12)");
   const squashed = git(work, "rev-parse", "HEAD");
   git(work, "push", "-q", "origin", "main", ...(keep ? [] : [":feature-x"]));
-  ok(await slice.prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
+  ok(await slice.prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now" }] }));
   const state = ok(await slice.prism.call("get_coordination_state", { initiative: "reports" }));
   const gate = ok(await slice.prism.call("update_coordination_state", { initiative: "reports", expectedRevision: state.revision, changes: { gateOperations: [{ op: "ask", kind: "correctness", question: "Ship the reports initiative?", context: "Every slice passed verification.", artifacts: [] }] } })).openedGates[0].id;
   assert.equal((await answerGate(slice.review, { initiative: "reports", id: gate, choice: "approve" })).status, 200);

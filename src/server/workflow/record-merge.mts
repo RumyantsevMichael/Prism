@@ -9,6 +9,8 @@ const MERGES = [
   { matches: (relative: string) => relative === "roadmap.json", load: async () => (await import("./roadmap.mjs")).mergeRoadmapRecord },
   { matches: (relative: string) => /^initiatives\/[A-Za-z0-9_-]+\/initiative\.json$/.test(relative), load: async () => (await import("./initiative.mjs")).mergeInitiativeRecord },
   { matches: (relative: string) => /^initiatives\/[A-Za-z0-9_-]+\/state\.json$/.test(relative), load: async () => (await import("./state.mjs")).mergeCoordinationState },
+  // A work item's shaping record merges entry by entry, so inputs, findings, and gaps that two machines add to one item all survive.
+  { matches: (relative: string) => /^initiatives\/[A-Za-z0-9_-]+\/work-item\.json$/.test(relative), load: async () => (await import("./work-items.mjs")).mergeShapingRecord },
   // A status record merges by what its versions say, so a ship's acceptance on one machine and an approval asked on another leave the ADR's file and recorded status agreeing.
   { matches: (relative: string) => /^artifact-status\/.+\/status\.json$/.test(relative), load: async () => (await import("./artifact-status.mjs")).mergeStatusRecord }
 ];
