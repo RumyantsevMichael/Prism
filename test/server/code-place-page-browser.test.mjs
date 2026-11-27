@@ -55,9 +55,6 @@ const text = async (locator) => (await locator.innerText()).replace(/\s+/g, " ")
 async function codePage(ref = "code", options = {}) {
   const { browser, base } = await workspace();
   const page = await open(browser, base, ref, options);
-  if (globalThis.diagAll) { await page.evaluate(() => { globalThis.__codeDiag = true; }); }
-  page.on("console", (m) => { if (m.text().startsWith("CODEDIAG")) console.log(m.text()); });
-  page.on("response", (r) => { if (r.url().includes("/api/code/") && (globalThis.diagAll || r.status() !== 200)) console.log("DIAGR", Date.now() % 1000000, r.status(), Math.round(r.request().timing().responseEnd), decodeURIComponent(r.url().replace(/^.*\/api\/code\//, ""))); });
   await tree(page).waitFor({ timeout: 20000 });
   return page;
 }
@@ -65,10 +62,8 @@ async function codePage(ref = "code", options = {}) {
 async function expand(page, ...names) {
   for (const name of names) {
     const row = treeRow(page, name);
-    if (globalThis.diagAll) console.log("DIAGE", name, Date.now() % 1000000, await row.getAttribute("aria-expanded"));
     if (await row.getAttribute("aria-expanded") !== "true") await row.locator(":scope > a").first().click();
-    try { await page.waitForFunction((label) => [...document.querySelectorAll("prism-tree-item")].some((node) => node.getAttribute("label") === label && node.hasAttribute("expanded")), name); }
-    catch (error) { console.log("DIAG", name, await page.evaluate(() => [...document.querySelectorAll("prism-tree-item")].map((n) => `${n.getAttribute("label")}${n.hasAttribute("expanded") ? "+" : ""}[${n.getAttribute("aria-expanded") ?? ""}]`).join(" ")), JSON.stringify((await treeRow(page, name).innerText()).slice(0, 400))); throw error; }
+    await page.waitForFunction((label) => [...document.querySelectorAll("prism-tree-item")].some((node) => node.getAttribute("label") === label && node.hasAttribute("expanded")), name);
   }
 }
 
@@ -289,8 +284,6 @@ test("clauses 37 and 44: a repository or file that Prism cannot read now shows a
     await moveFolder(away("web"), remotes.web.bare);
     await moveFolder(away("api"), remotes.api.bare);
   };
-  globalThis.diagAll = true;
-  console.log("DIAGT moved", Date.now() % 1000000);
   try {
     const page = await codePage();
     const web = treeRow(page, "web");
