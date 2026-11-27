@@ -150,3 +150,50 @@ test("an answer being written survives another answer of the same initiative: th
   assert.equal(await page.locator(".attention-detail .action-error:not([hidden])").count(), 0);
   assert.deepEqual(page.errors, []);
 });
+
+// Attention is built out of sight and replaces the page once drawn, so a person who moves the cursor or types while it is built keeps where they are then,
+// not where they were when the build started.
+test("a cursor the person moves while Attention is drawn again stays where they moved it, and a letter they type meanwhile is kept", { skip, timeout: 90000 }, async (context) => {
+  const page = await writableAttention(context, { width: 1440, height: 900 });
+  await pick(page, "Review the change map");
+  const row = answerOf(page).locator('.action-row[data-action-key$="|gate.answer"]');
+  await row.waitFor();
+  const target = await answerOf(page).getAttribute("data-answer-target");
+  await row.locator("prism-choice-option").nth(1).click();
+  const note = row.locator('prism-field[data-field="note"] textarea');
+  await note.fill("Split the parser.");
+  await note.evaluate((element) => element.setSelectionRange(5, 5));
+  // Once the new view starts to be built beside the page, the person moves the cursor to after "Sp" and types there.
+  await page.evaluate(() => {
+    const observer = new MutationObserver((records) => {
+      if (!records.some((record) => [...record.addedNodes].some((node) => node.classList?.contains("artifact-stage")))) return;
+      observer.disconnect();
+      const control = document.activeElement;
+      control.setSelectionRange(2, 2);
+      control.setRangeText("l", 2, 2, "end");
+      control.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "l" }));
+      window.movedWhileBuilt = true;
+    });
+    observer.observe(document.getElementById("workspace"), { childList: true });
+  });
+  const status = await page.evaluate(async (own) => {
+    const initiative = own.split("/")[0];
+    const attention = await (await fetch("./api/entity?ref=attention")).json();
+    const gate = attention.data.needsYou.find((item) => item.type === "gate" && `gate:${item.initiative?.id}/${item.id}` !== own && `gate:${item.initiative?.id}` === initiative);
+    const headers = { "Content-Type": "application/json", "X-Prism-Write": sessionStorage.getItem("prism-write-session") };
+    const listing = await (await fetch(`./api/actions?target=${encodeURIComponent(`gate:${gate.initiative.id}/${gate.id}`)}`, { headers })).json();
+    const action = listing.actions.find((item) => item.id === "gate.answer");
+    return (await fetch("./api/actions/apply", { method: "POST", headers, body: JSON.stringify({ action: "gate.answer", target: action.target, input: { note: "Approve it now." }, revision: action.revision }) })).status;
+  }, target);
+  assert.equal(status, 200);
+  await settled(() => page.evaluate(() => window.movedWhileBuilt === true), true);
+  await settled(() => page.locator(".attention-group[aria-labelledby='attention-group-answered'] prism-inbox-item").count(), (count) => count > 0);
+  await settled(() => page.locator("#workspace > .artifact-stage").count(), 0);
+  await repainted(page);
+  const kept = await page.evaluate(() => {
+    const active = document.activeElement;
+    return { tag: active?.localName, value: active?.value, at: [active?.selectionStart, active?.selectionEnd], field: active?.closest("prism-field")?.dataset.field };
+  });
+  assert.deepEqual(kept, { tag: "textarea", value: "Spllit the parser.", at: [3, 3], field: "note" }, "the note keeps the letter typed and the cursor after it");
+  assert.deepEqual(page.errors, []);
+});

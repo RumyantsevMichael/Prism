@@ -418,6 +418,8 @@ function draw(current: any) {
 }
 
 // The page's controls answer through the container, so a redraw keeps them working.
+// A view that the app builds again out of sight stays the one showing until it is drawn, so a click on the view still showing acts on the page being built:
+// what it opens or closes is kept in memory, which the new view draws, rather than lost with the view it was made on.
 function bind(current: any) {
   const container = current.container;
   if (container.dataset.codeBound) return;
@@ -443,7 +445,7 @@ function bind(current: any) {
   container.addEventListener("click", (event: any) => {
     keep = Boolean(event.ctrlKey || event.metaKey);
     const target = event.target.closest?.("[data-code-retry], [data-code-on], [data-code-back], [data-code-version]");
-    if (!target || page?.container !== container) return;
+    if (!target || !page) return;
     if (target.dataset.codeRetry !== undefined) {
       event.preventDefault();
       event.stopPropagation();
@@ -474,7 +476,7 @@ function bind(current: any) {
     }
   }, { capture: true });
   container.addEventListener("change", (event: any) => {
-    if (!event.target.matches?.("[data-code-files]") || page?.container !== container) return;
+    if (!event.target.matches?.("[data-code-files]") || !page) return;
     memory.files.set(page.scope, event.detail?.value ?? event.target.value);
     draw(page);
     void sync(page);
@@ -482,7 +484,7 @@ function bind(current: any) {
   container.addEventListener("prism-toggle", (event: any) => {
     const item = event.target;
     const path = item.dataset?.codeFolder ?? item.dataset?.codeRepository;
-    if (!path || page?.container !== container) return;
+    if (!path || !page) return;
     if (event.detail.expanded) {
       memory.expanded.add(path);
       memory.closed.delete(path);
@@ -494,7 +496,7 @@ function bind(current: any) {
     void sync(page);
   });
   container.addEventListener("prism-select", (event: any) => {
-    if (page?.container !== container) return;
+    if (!page) return;
     const item = [...container.querySelectorAll("prism-tree-item")].find((node: any) => node.selected && node.getAttribute("value") === event.detail?.value) as any;
     const opened = page.file ? `${page.file.repository}/${page.file.path}` : null;
     const reselect = () => { for (const node of container.querySelectorAll("prism-tree-item")) (node as any).selected = node.getAttribute("value") === opened && node.hasAttribute("data-code-file"); };
