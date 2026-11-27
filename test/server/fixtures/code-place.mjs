@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { shapedEntry } from "./workspace-artifacts.mjs";
 import { alias, eventually, git, networkStore, ok, place, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./workspace-view.mjs";
 import { checkout } from "./workspace-artifacts.mjs";
 import { answerGate, reviewBrowser } from "./workspace-artifacts.mjs";
@@ -158,7 +159,6 @@ export async function verifiedWork(owner, { initiative, title, slices, scopes = 
       await split(scope.slug, slices.filter((slice) => slice.parent === scope.slug));
     }
   }
-  ok(await prism.call("update_roadmap", { expectedRevision: ok(await prism.call("get_roadmap", {})).revision, operations: [{ op: "add_initiative", id: initiative, title, intent: `${title}.`, band: "Now", requirements: ["code.md§1"] }] }));
   for (const slice of slices) {
     const frozen = `test/${initiative}-${slice.slug}.test.mjs`;
     git(root, "checkout", "-q", "main");
@@ -179,6 +179,8 @@ export async function verifiedWork(owner, { initiative, title, slices, scopes = 
     assert.equal(run.status, "passed", JSON.stringify(run));
   }
   git(root, "checkout", "-q", "main");
+  // An emerging entry refuses design, so the shaped entry joins the roadmap once its slices are designed.
+  await shapedEntry(prism, owner.review, { id: initiative, title, intent: `${title}.`, band: "Now", requirements: ["code.md§1"] });
 }
 
 /**
@@ -190,7 +192,6 @@ export async function startedWork(owner, { initiative, title }) {
   const requirements = ["docs/requirements/code.md#1"];
   ok(await prism.call("update_initiative", { initiative, expectedRevision: null, operations: [{ op: "create", slug: initiative, title, requirements }] }));
   await writeArtifact(prism, `docs/plans/${initiative}/slice.md`, `# ${title}\n\n## Contract\n1. It works.\n\n## Changes\n- add \`src/x.ts\`: work.\n`);
-  ok(await prism.call("update_roadmap", { expectedRevision: ok(await prism.call("get_roadmap", {})).revision, operations: [{ op: "add_initiative", id: initiative, title, intent: `${title}.`, band: "Now", requirements: ["code.md§1"] }] }));
   const frozen = `test/${initiative}-${initiative}.test.mjs`;
   git(root, "checkout", "-q", "main");
   await writeFile(path.join(root, frozen), "// frozen acceptance test\n");
@@ -199,6 +200,8 @@ export async function startedWork(owner, { initiative, title }) {
   git(root, "push", "-q", "origin", "main");
   ok(await prism.call("update_initiative", { initiative, expectedRevision: await revision(prism, initiative), operations: [{ op: "accept_design", slug: initiative, frozenTests: [frozen], review: "required" }] }));
   ok(await prism.call("update_initiative", { initiative, expectedRevision: await revision(prism, initiative), operations: [{ op: "set_status", slug: initiative, status: "in-progress" }] }));
+  // An emerging entry refuses design, and citing a file needs an answered question round, so the entry joins the roadmap uncited once its slice is designed.
+  ok(await prism.call("update_roadmap", { expectedRevision: ok(await prism.call("get_roadmap", {})).revision, operations: [{ op: "add_initiative", id: initiative, title, intent: `${title}.`, band: "Now" }] }));
 }
 
 /** Write a slice's files, remove its removed paths, and commit them on the checked-out branch. */
