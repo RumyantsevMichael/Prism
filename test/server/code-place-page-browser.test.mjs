@@ -55,6 +55,8 @@ const text = async (locator) => (await locator.innerText()).replace(/\s+/g, " ")
 async function codePage(ref = "code", options = {}) {
   const { browser, base } = await workspace();
   const page = await open(browser, base, ref, options);
+  if (globalThis.diagAll) { await page.evaluate(() => { globalThis.__codeDiag = true; }); }
+  page.on("console", (m) => { if (m.text().startsWith("CODEDIAG")) console.log(m.text()); });
   page.on("response", (r) => { if (r.url().includes("/api/code/") && (globalThis.diagAll || r.status() !== 200)) console.log("DIAGR", Date.now() % 1000000, r.status(), Math.round(r.request().timing().responseEnd), decodeURIComponent(r.url().replace(/^.*\/api\/code\//, ""))); });
   await tree(page).waitFor({ timeout: 20000 });
   return page;

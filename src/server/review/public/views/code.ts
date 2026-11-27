@@ -94,7 +94,10 @@ function badges(components: any[]) {
 
 const badgeTips = (components: any[]) => (components ?? []).filter((component) => component.declaredOn?.length).map((component) => `${component.name} is declared only on ${component.declaredOn.join(", ")}`);
 
+const DIAG = (...args: any[]) => { if ((globalThis as any).__codeDiag) console.log("CODEDIAG", Date.now() % 1000000, ...args); };
+
 export async function render(container: any, entity: any, ctx: any) {
+  DIAG("render", container === page?.container, JSON.stringify((entity.data?.repositories ?? []).map((r: any) => [r.name, r.state])));
   const repositories = entity.data?.repositories ?? [];
   if (!repositories.length) {
     page = null;
@@ -198,6 +201,7 @@ function neededUrls(current: any, cache: Map<string, any>) {
  */
 async function sync(current: any, { fresh = false } = {}) {
   const generation = ++current.generation;
+  DIAG("sync", fresh, generation, current === page, [...memory.expanded].join(","));
   clearTimeout(current.retry);
   const cache = fresh ? new Map() : current.cache;
   // A redraw shows the answers it read last until each is read again, and keeps an answer that Prism now prepares again until the final draw.
@@ -395,6 +399,7 @@ function draw(current: any) {
   const { container, ctx } = current;
   if (!container.isConnected && current !== page) return;
   if (pressed) {
+    DIAG("draw-held");
     held = current;
     return;
   }
@@ -482,6 +487,7 @@ function bind(current: any) {
   container.addEventListener("prism-toggle", (event: any) => {
     const item = event.target;
     const path = item.dataset?.codeFolder ?? item.dataset?.codeRepository;
+    DIAG("toggle", path, event.detail.expanded, page?.container === container);
     if (!path || page?.container !== container) return;
     if (event.detail.expanded) {
       memory.expanded.add(path);
@@ -494,8 +500,10 @@ function bind(current: any) {
     void sync(page);
   });
   container.addEventListener("prism-select", (event: any) => {
+    DIAG("select", event.detail?.value, page?.container === container, container.isConnected);
     if (page?.container !== container) return;
     const item = [...container.querySelectorAll("prism-tree-item")].find((node: any) => node.selected && node.getAttribute("value") === event.detail?.value) as any;
+    DIAG("select-item", Boolean(item), item?.hasAttribute("data-code-placeholder"), Boolean(item?.querySelector(":scope > .prism-tree-group > prism-tree-item")), item?.expanded);
     const opened = page.file ? `${page.file.repository}/${page.file.path}` : null;
     const reselect = () => { for (const node of container.querySelectorAll("prism-tree-item")) (node as any).selected = node.getAttribute("value") === opened && node.hasAttribute("data-code-file"); };
     if (!item || item.hasAttribute("data-code-placeholder")) {
