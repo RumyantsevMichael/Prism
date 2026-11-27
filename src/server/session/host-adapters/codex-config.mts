@@ -10,8 +10,9 @@ const CONFIG_KEYS = [
 ];
 const CAPACITY_KEYS = CONFIG_KEYS.slice(1);
 // A Codex app server answers config/read in about 0.3 s, but on a busy Windows runner about one read in thirty took over 1.2 s, and the slowest of 280 took 2.7 s.
-// The read returns as soon as the answer arrives, so the bound costs time only when the app server is slow, and it stays inside the hook's 5 s budget.
-// A hook that runs past its budget is stopped before it writes, so the session keeps the settings it last read.
+// The read returns as soon as the answer arrives, so the bound costs time only when the app server is slow.
+// A hook that runs past its budget is stopped before it writes, so the session keeps the settings it last read, and a session's first tool call then has none.
+// The tool call's fact hook therefore has 10 s: a busy Windows runner can take more than the 1 s left by a 5 s budget to start Node and read the transcript.
 const CONFIG_TIMEOUT_MS = 4000;
 const MAX_APP_SERVER_OUTPUT_BYTES = 1024 * 1024;
 

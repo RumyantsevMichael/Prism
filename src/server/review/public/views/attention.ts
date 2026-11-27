@@ -118,7 +118,7 @@ function kindChip(item: any) {
 }
 
 // Only a review question moves its slice to the next phase, so only its card names the phase gate and shows the lifecycle;
-// a decision or an action needed while a slice is in design is not a design gate.
+// a decision or an action needed while a slice is in design is not a design gate. The tag alone says it; the slice's page shows the whole lifecycle.
 const PHASE_KINDS = new Set(["visual-review", "correctness"]);
 
 // The head holds what the question is and where it belongs: its kind, its time, the question, and the work it serves as links,
@@ -126,17 +126,26 @@ const PHASE_KINDS = new Set(["visual-review", "correctness"]);
 function gateHead(item: any, ctx: any, time: any) {
   const phase = PHASE_KINDS.has(item.kind) ? gatePhase(item) : null;
   const tag = phase !== null && phase < PHASES.length ? `<prism-phase variant="tag" phase="${PHASES[phase][0]}">${escapeHtml(PHASE_GATES[PHASES[phase][0]])}</prism-phase>` : "";
-  return `<div class="gate-chips">${tag}${kindChip(item)}${when(time, "attention-time gate-time")}</div>
+  return `<div class="gate-chips">${kindChip(item)}${tag}${when(time, "attention-time gate-time")}</div>
     <h3 class="gate-question">${escapeHtml(item.question)}</h3>
-    ${item.kind === "approval" ? "" : gateWork(item, ctx)}`;
+    ${item.kind === "approval" ? servedWork(item, ctx) : gateWork(item, ctx)}`;
 }
 
-// The initiative and slice a question belongs to, as links that wrap, so a long title reads whole.
+// The work a question belongs to, as a row under the question: the slice with its initiative below it, or the initiative alone.
+// Outside a review gate, whose tag already names the phase, the row shows the slice's phase, kept on a phone by stacking it under the text.
+function workRow(initiative: string, slice: string | null, phase: number | null, extra = "") {
+  const tag = phase !== null && phase < PHASES.length ? `<prism-phase slot="kind" phase="${PHASES[phase][0]}">${escapeHtml(PHASES[phase][1])}</prism-phase>` : "";
+  const row = slice
+    ? `<prism-row wrap${tag ? " stack" : ""} icon="layers" tone="accent">${slice}<span slot="description">Slice of ${initiative}</span>${tag}</prism-row>`
+    : `<prism-row wrap icon="roadmap" tone="neutral">${initiative}<span slot="description">Initiative</span></prism-row>`;
+  return `<div class="prism-rows gate-work${extra}" role="list" aria-label="Work">${row}</div>`;
+}
+
 function gateWork(item: any, ctx: any) {
   if (!item.initiative) return "";
-  const parts = [artifactLink(`initiative:${item.initiative.id}`, ctx, item.initiative.title)];
-  if (item.slice) parts.push(artifactLink(`slice:${item.initiative.id}/${item.slice.slug}`, ctx, item.slice.title));
-  return `<p class="gate-work">${parts.join('<span class="crumb-separator" aria-hidden="true">›</span>')}</p>`;
+  const initiative = artifactLink(`initiative:${item.initiative.id}`, ctx, item.initiative.title);
+  const slice = item.slice ? artifactLink(`slice:${item.initiative.id}/${item.slice.slug}`, ctx, item.slice.title) : null;
+  return workRow(initiative, slice, item.slice && !PHASE_KINDS.has(item.kind) ? gatePhase(item) : null);
 }
 
 // The state of the session that asked, as an icon beside its name: the icon's name is the state in words, and its tooltip says what the state means for the answer.
@@ -199,13 +208,6 @@ function sendTo(item: any) {
   const asker = item.asker;
   if (!asker?.known) return "";
   return `<prism-avatar class="gate-send-to" kind="agent" size="sm" name="${escapeHtml(askerName(asker))}" tip="${escapeHtml(`Your answer goes to ${askerName(asker)}`)}"${asker.state === "waiting" ? " live" : ""}></prism-avatar>`;
-}
-
-function gateSteps(item: any) {
-  if (!PHASE_KINDS.has(item.kind)) return "";
-  const current = gatePhase(item);
-  if (current === null) return "";
-  return `<prism-stepper class="gate-steps" label="Where this slice is in the workflow">${PHASES.map(([phase, label], index) => `<prism-step phase="${phase}" state="${index < current ? "done" : index === current ? "current" : "upcoming"}">${label}</prism-step>`).join("")}</prism-stepper>`;
 }
 
 // The situation the agent wrote for a person who has not followed the run, rendered as Markdown where the page can.
@@ -335,10 +337,10 @@ function servedWork(item: any, ctx: any) {
   const work = item.workItem;
   if (!work?.initiative) return "";
   const { initiative, slice } = work;
-  const unknown = (id: string, why: string) => `<span class="approval-work-part"><code class="approval-path" data-code-subject>${escapeHtml(id)}</code> <span class="muted">${why}</span></span>`;
-  const parts = [initiative.known ? `<span class="approval-work-part">${artifactLink(`initiative:${initiative.id}`, ctx, initiative.title)}</span>` : unknown(initiative.id, "not on the roadmap yet")];
-  if (slice) parts.push(initiative.known && slice.known ? `<span class="approval-work-part">${artifactLink(`slice:${initiative.id}/${slice.slug}`, ctx, slice.title)}</span>` : unknown(slice.slug, "no slice yet"));
-  return `<span class="approval-work">${parts.join('<span class="approval-work-separator" aria-hidden="true">›</span>')}</span>`;
+  const unknown = (id: string, why: string) => `<span class="approval-work-part"><span data-code-subject>${escapeHtml(id)}</span> <span class="muted">${why}</span></span>`;
+  const named = initiative.known ? artifactLink(`initiative:${initiative.id}`, ctx, initiative.title) : unknown(initiative.id, "not on the roadmap yet");
+  const part = slice ? (initiative.known && slice.known ? artifactLink(`slice:${initiative.id}/${slice.slug}`, ctx, slice.title) : unknown(slice.slug, "no slice yet")) : null;
+  return workRow(named, part, null, " approval-work");
 }
 
 // The file an approval applies to, as a row that names it by title and kind, links it, and shows its whole path, since the answer applies to exactly that file.
@@ -360,7 +362,6 @@ function approvalSubject(item: any, ctx: any) {
   return `${keyValues([
       ["Document", approvalDocument(item, ctx)],
       ["Scope", chip(escapeHtml(scope))],
-      ["Asked for", servedWork(item, ctx)],
       ["Approving records", change]
     ])}
     ${item.ambiguous ? `<p class="notice">Another pending approval holds this question's id, so an answer cannot tell which file it approves and is refused. The agent asks again for the file it means.</p>` : ""}
@@ -391,7 +392,6 @@ export function gateDetail(item: any, ctx: any) {
   return `<article class="gate attention-item gate-${escapeHtml(item.kind)}" aria-label="${escapeHtml(GATE_LABELS[item.kind] ?? "Question")}">
     <header class="gate-head">
       ${gateHead(item, ctx, item.askedAt)}
-      ${gateSteps(item)}
     </header>
     <div class="gate-body">
       <div class="gate-main">
@@ -855,7 +855,7 @@ function runEntry(item: any, ctx: any) {
     const note = `Prism could not settle ${plural(item.points, "point")} in ${files.length} of the run's ${plural(item.files, "file")}. One answer on the run's page settles all of them, each prefilled with Prism's recommendation.`;
     return {
       row: { icon: "layers", tone: "accent", unread: true, title, meta: escapeHtml(`${plural(item.points, "point")} in ${files.length} of ${plural(item.files, "file")} · Format migration`), end: shortTime(item.askedAt) },
-      detail: detailSheet({ className: "note-migration-question", head: `${badge("Format migration asks you", "accent")}${where}${when(item.askedAt, "attention-time gate-time")}`, title, body: `<p class="attention-note">${escapeHtml(note)}</p>${rows}<div class="gate-actions"><span></span>${openRun(item, "Answer on the run's page", "primary")}</div>` })
+      detail: detailSheet({ className: "note-migration-question", head: `${badge("Format migration asks you", "accent")}${where}${when(item.askedAt, "attention-time gate-time")}`, title, body: `<p class="attention-note">${escapeHtml(note)}</p>${rows}<div class="gate-actions">${openRun(item, "Answer on the run's page", "primary")}</div>` })
     };
   }
   const title = escapeHtml(`${runTitle(item)} failed`);
@@ -871,7 +871,7 @@ function waitingRunEntry(item: any) {
   const title = escapeHtml(`${runTitle(item)} waits for a host`);
   return {
     row: { icon: "clock", tone: "warning", title, meta: escapeHtml(`${item.reason ?? "No host is available on this machine"} · Problem`) },
-    detail: detailSheet({ className: "watch-migration-waiting", head: `${badge("Waits for a host", "warning")}<span class="attention-where">${whereChip(item.scope)}</span>`, title, body: `<p class="watch-detail run-reason">${escapeHtml(item.reason ?? "No host is available on this machine.")}</p><div class="gate-actions"><span></span>${openRun(item, "Open the run")}</div>` })
+    detail: detailSheet({ className: "watch-migration-waiting", head: `${badge("Waits for a host", "warning")}<span class="attention-where">${whereChip(item.scope)}</span>`, title, body: `<p class="watch-detail run-reason">${escapeHtml(item.reason ?? "No host is available on this machine.")}</p><div class="gate-actions">${openRun(item, "Open the run")}</div>` })
   };
 }
 
@@ -1031,12 +1031,21 @@ function renderAnswered(container: any, answered: any, ctx: any) {
 const formatTitle = (item: any) => `${escapeHtml(item.label)} · ${escapeHtml(plural(item.count, "file"))} ${item.count === 1 ? "breaks" : "break"} the format`;
 const formatSummary = (item: any) => item.earlier ? `${item.earlier} of them ${item.earlier === 1 ? "keeps" : "keep"} an earlier Prism format.` : "None of them keeps a Prism format.";
 
-// One nonconforming artifact: its path with its format mark, the scope that holds it, and each broken rule with its message and line.
+// The action of a nonconforming artifact's format migration: run a failed one again, answer one that asks, or open one that runs or waits.
+function migrationAction(artifact: any) {
+  const migration = artifact.migration;
+  if (!migration?.run) return "";
+  if (migration.status === "failed") return `<prism-button slot="action" size="sm" data-migration-rerun="${escapeHtml(migration.run)}">Run again</prism-button>`;
+  const label = migration.status === "asking" ? "Answer" : "Open the run";
+  return `<prism-button slot="action" size="sm" data-artifact="${escapeHtml(runRef(migration))}">${label}</prism-button>`;
+}
+
+// One nonconforming artifact: its path with its format mark, the scope that holds it, each broken rule with its message and line, and its migration's action.
 function formatArtifact(artifact: any) {
   const scope = artifact.scope?.label ?? null;
   const mark = formatBadge({ rules: [...new Set((artifact.findings ?? []).map((finding: any) => finding.rule))].sort(), findings: artifact.findings ?? [] });
   const earlier = artifact.earlierFormat ? `Keeps format version ${artifact.earlierFormat.version}` : "Keeps no Prism format";
-  return `<prism-row wrap icon="document" tone="warning"><span data-code-subject>${escapeHtml(artifact.path)}</span> ${mark}<span slot="description">${escapeHtml(earlier)} · ${plural((artifact.findings ?? []).length, "finding")}</span><span slot="detail">${findingsList(artifact.findings)}</span><prism-chip slot="kind"${scope ? ' tip="The record store scope that holds this file"' : ' tip="A file in this checkout"'}>${escapeHtml(scope ? `Scope ${scope}` : "Checkout")}</prism-chip></prism-row>`;
+  return `<prism-row wrap icon="document" tone="warning"><span data-code-subject>${escapeHtml(artifact.path)}</span> ${mark}<span slot="description">${escapeHtml(earlier)} · ${plural((artifact.findings ?? []).length, "finding")}</span><span slot="detail">${findingsList(artifact.findings)}</span><prism-chip slot="kind"${scope ? ' tip="The record store scope that holds this file"' : ' tip="A file in this checkout"'}>${escapeHtml(scope ? `Scope ${scope}` : "Checkout")}</prism-chip>${migrationAction(artifact)}</prism-row>`;
 }
 
 function formatGroup(label: string, note: string, artifacts: any[]) {
@@ -1055,6 +1064,17 @@ function formatPanel(entry: any) {
 }
 
 // The format findings page: every format whose files break it.
+// A failed format migration run runs again from its sheet or its file's format finding, after the person confirms it.
+function bindReruns(container: any, ctx: any) {
+  for (const button of container.querySelectorAll("[data-migration-rerun]")) {
+    button.addEventListener("click", async () => {
+      button.toggleAttribute("disabled", true);
+      if (await rerunRun(ctx, button.dataset.migrationRerun)) ctx.rerender();
+      else button.toggleAttribute("disabled", false);
+    });
+  }
+}
+
 function renderFormats(container: any, data: any, ctx: any) {
   const filter = data.filter;
   filterLine(container, `${filter.label} · ${filter.items.length} of ${filter.total} ${filter.total === 1 ? "item" : "items"}`, ctx);
@@ -1062,6 +1082,8 @@ function renderFormats(container: any, data: any, ctx: any) {
   container.innerHTML = shown.length
     ? `<div class="format-panels">${shown.map(formatPanel).join("")}</div>`
     : `<div class="attention-nothing">${emptyState("Every file keeps its format", "No requirement, decision, glossary, or feature file breaks its Prism format.")}</div>`;
+  bindLinks(container, ctx);
+  bindReruns(container, ctx);
 }
 
 export function render(container: any, entity: any, ctx: any) {
@@ -1078,8 +1100,13 @@ export function render(container: any, entity: any, ctx: any) {
   const earlier = data.earlier ?? [];
   const recent = data.recentChanges ?? [];
   const claims = data.claims ?? [];
+  // The questions and the failed format migration runs list newest first together, by when each was asked or failed; the notes without a time follow them.
+  const timeOf = (item: any) => item.type === "gate" || item.type === "migration-question" ? item.askedAt : item.type === "migration-failed" ? item.at : null;
+  const millis = (item: any) => { const at = Date.parse(timeOf(item) ?? ""); return Number.isFinite(at) ? at : -Infinity; };
+  const timed = data.needsYou.map((item: any, index: number) => ({ item, index })).filter(({ item }: any) => timeOf(item) !== null)
+    .sort((left: any, right: any) => millis(right.item) - millis(left.item) || left.index - right.index);
+  const notes = data.needsYou.filter((item: any) => timeOf(item) === null);
   const gates = data.needsYou.filter((item: any) => item.type === "gate");
-  const notes = data.needsYou.filter((item: any) => item.type !== "gate");
   const watched = data.watch.length + claims.length;
 
   const permissions = data.permissions ?? [];
@@ -1090,12 +1117,12 @@ export function render(container: any, entity: any, ctx: any) {
       row: { icon: "lock", tone: "warning", unread: true, title: escapeHtml(item.action), meta: escapeHtml(["Permission", sessionPlace(item.initiative, item.host)].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
       detail: permissionDetail(item, permissionDrafts[item.id] ?? {})
     })),
-    ...gates.map((item: any) => ({
+    ...timed.map(({ item, index }: any) => item.type !== "gate" ? { key: `note:${index}`, ...noteEntry(item, ctx) } : {
       key: `gate:${item.id}`,
       row: item.launch && item.kind === "assistance" ? { icon: "question", tone: "info", unread: true, title: escapeHtml(item.question), meta: escapeHtml([NO_RESULT_CHIP, sessionPlace(item.initiative, item.launch.host)].join(" · ")), end: shortTime(item.askedAt) } : { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
       detail: gateDetail(item, ctx)
-    })),
-    ...notes.map((item: any, index: number) => ({ key: `note:${index}`, ...noteEntry(item, ctx) }))
+    }),
+    ...notes.map((item: any) => ({ key: `note:${data.needsYou.indexOf(item)}`, ...noteEntry(item, ctx) }))
   ];
   // A shipped initiative's open questions can no longer be answered, so they list apart from Needs you and raise no count.
   const shippedRows = (data.shippedGates ?? []).map((item: any) => ({
@@ -1154,7 +1181,7 @@ export function render(container: any, entity: any, ctx: any) {
     head.querySelector(".attention-stats")?.remove();
     head.insertAdjacentHTML("beforeend", `<div class="attention-stats">
       ${stat(`${gates.length + permissions.length === 1 ? "question waits" : "questions wait"} on you`, String(gates.length + permissions.length), { tone: gates.length + permissions.length ? "accent" : "success", attributes: ' layout="inline"' })}
-      ${stat(`other ${notes.length === 1 ? "item needs" : "items need"} you`, String(notes.length), { attributes: ' layout="inline"' })}
+      ${stat(`other ${data.needsYou.length - gates.length === 1 ? "item needs" : "items need"} you`, String(data.needsYou.length - gates.length), { attributes: ' layout="inline"' })}
       ${stat(`${watched === 1 ? "thing" : "things"} to watch`, String(watched), { attributes: ' layout="inline"' })}
     </div>`);
   }
@@ -1188,14 +1215,7 @@ export function render(container: any, entity: any, ctx: any) {
   // The page is built out of sight and shows once drawn, so it waits for the first listing of each question's answer, Withdraw, and Continue,
   // which would otherwise move the page under the person when they arrive.
   const actionLists = [...mountAnswers(container, ctx, gates), ...mountGateActions(container, ctx)];
-  // A failed format migration run runs again from its sheet, after the person confirms it.
-  for (const button of container.querySelectorAll("[data-migration-rerun]")) {
-    button.addEventListener("click", async () => {
-      button.toggleAttribute("disabled", true);
-      if (await rerunRun(ctx, button.dataset.migrationRerun)) ctx.rerender();
-      else button.toggleAttribute("disabled", false);
-    });
-  }
+  bindReruns(container, ctx);
   bindPermissions(container, ctx);
   bindArchiveSession(container, ctx);
   bindDocuments(container, ctx);

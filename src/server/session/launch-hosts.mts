@@ -63,7 +63,7 @@ const CODEX_POLICY = Object.freeze({ approvalPolicy: "on-request", approvalsRevi
 // works in an empty folder of its own outside the checkout, and reads nothing of the checkout: it gets the run's sources, the project's paths, and the sources'
 // Git history, and the format reference through the run's own Prism tools. A read-only Claude Code run has no built-in tool and adds no folder, so it reads no file,
 // allows only the run's Prism tools and no shell, and denies every other call, since nothing asks; a read-only Codex thread selects a permission profile of its own,
-// which reads only in its working folder, Prism's own folder, Codex's plugin cache and install folder, and the platform's minimal ones, writes nowhere,
+// which reads only in its working folder, Prism's own folder, Codex's plugin cache and program folders, and the platform's minimal ones, writes nowhere,
 // has no network, and never asks to run a command outside it.
 // Prism's server, which the session starts with PRISM_MIGRATION_RUN naming the run and PRISM_MIGRATION_PROJECT naming the checkout,
 // lists and takes only the run's tools for that run's project and artifacts.
@@ -392,9 +392,12 @@ export function codexThreadRequest({ checkout, hostSessionId, resume, coordinato
   // A read-only thread's configuration names Prism's scoped server as its only MCP server, in place of those of the person's own configuration,
   // and defines the permission profile that the thread selects, on a launch and on each resume alike.
   // A migration run asks the person through its own tools, so its thread gets no start note, which names the gate tools that it cannot call.
+  // Under the approval policy never, Codex refuses a call to an MCP tool that it would ask about, such as one marked destructive, so the scoped server,
+  // which lists only the run's own tools, approves each of its tools.
   const readOnlyPolicy = () => {
     const { profile, ...selected } = codexReadOnly(checkout, rootsOf(readRoots));
-    return { ...selected, config: { mcp_servers: { [MIGRATION_SERVER]: requiredServer(migrationServer) }, permissions: { [CODEX_READ_ONLY_PROFILE]: profile } } };
+    const server = { ...(requiredServer(migrationServer) as object), default_tools_approval_mode: "approve" };
+    return { ...selected, config: { mcp_servers: { [MIGRATION_SERVER]: server }, permissions: { [CODEX_READ_ONLY_PROFILE]: profile } } };
   };
   const policy = readOnly(access) ? readOnlyPolicy() : { ...CODEX_POLICY, developerInstructions: LAUNCH_NOTE };
   if (!resume) return { method: "thread/start", params: { cwd: checkout, ...policy, ...chosen } };
@@ -487,11 +490,13 @@ export function codexInterruptRequest({ threadId, turnId }: { threadId: string |
 /**
  * The command that continues a host session in a terminal, or null for an id that breaks HOST_SESSION_ID_PATTERN; an ACP agent's is
  * its declared resumeCommand with {session} replaced, and null without one or once the agent is no longer offered.
+ * Codex's names the sandbox mode of the launch's access, since Codex can refuse to resume without one a thread that ran under a permission profile
+ * of the thread's own configuration, and so a read-only run stays read-only in the person's terminal.
  */
-export function resumeCommandOf(host: string, hostSessionId: unknown, env: NodeJS.ProcessEnv = process.env) {
+export function resumeCommandOf(host: string, hostSessionId: unknown, env: NodeJS.ProcessEnv = process.env, { access = "full" }: { access?: string } = {}) {
   if (!validHostSessionId(hostSessionId)) return null;
   if (host === "claude-code") return `claude --resume ${hostSessionId}`;
-  if (host === "codex") return `codex resume ${hostSessionId}`;
+  if (host === "codex") return `codex resume --sandbox ${readOnly(access) ? "read-only" : CODEX_POLICY.sandbox} ${hostSessionId}`;
   const template = isAcpHost(host) ? acpHostDefinition(host, env)?.acp.resumeCommand : null;
   return template ? template.replaceAll("{session}", hostSessionId) : null;
 }

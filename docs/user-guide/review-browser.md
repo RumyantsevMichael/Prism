@@ -44,6 +44,7 @@ It keeps one size whichever section shows, and a section longer than the dialog 
 On a phone Settings fills the window and opens on its list of sections; choosing one shows that section, and **All settings** returns to the list.
 **Appearance** offers the themes System, Light, and Dark and the densities Compact and Comfortable.
 A choice applies at once, and System follows the operating system again.
+In a workspace whose store registers a repository, **Appearance** also offers **Quiet branches after**, a whole number of days from 1 to 365, 30 by default, after which the [Code place](#the-code-place) hides a branch with no newer commit; Enter or leaving the field saves it among your preferences, and a number outside that range is marked and not saved.
 **Layout** shows or hides the sidebar on windows wider than 1100 pixels and returns the sidebar to its default width.
 **Personal** shows your [personal settings](workflow.md#personal-settings), which stay on this machine and apply to every project and every host you run Prism in: **Questions** (Question tool or Numbered options), **Review browser** (Auto, Internal, or External), **Open at session start** (On or Off), and **Offer Prism** (Ask or Off).
 Each row shows the value Prism uses and where it comes from: **Your choice**, **Adopted from a repository's configuration**, **From this repository's configuration**, or **Default**.
@@ -64,7 +65,8 @@ The catalog's own toolbar changes its theme, density, and width for that tab onl
 The top bar holds the Prism mark, the workspace switcher, the search button that opens the Jump palette, and the **Agents** button.
 The status bar at the bottom starts with **Settings**, then shows where the project's records live, naming a shared store, with their sync state, whose color the store icon takes, and ends with the repository index.
 Times in words, such as when a question was asked, how long ago the records synced, or how long a claim has left, count on while the page is open, and hovering one shows the exact date and time.
-The rail at the left edge switches between five places, and the sidebar beside it shows only the current place, under its title and a line that says what it holds.
+The rail at the left edge switches between the places Attention, Work, Roadmap, Knowledge, Code, and History, and the sidebar beside it shows only the current place, under its title, whose tooltip says what the place holds.
+**Code** shows on the rail only in a workspace whose store registers at least one repository, and a checkout's own page has no Code place.
 **Attention** shows what waits on you, and the rail's Attention button carries the number of recorded questions that wait for an answer.
 Its sidebar lists **Everything**, then under **By kind** **Questions**, **Review findings**, **Failed verifications**, **Blocked work**, **Ready to ship**, **Problems**, and **Format findings**, each with its count, also at 0, then under **By work** the three initiatives with the most items and a row such as `2 more` that shows the rest below it, and under **Answered** **Answered in the last 7 days**.
 **Work** lists each initiative that has an initiative record and is neither shipped nor superseded, with its slices, under the groups **In progress**, **Blocked**, **Designed, not started**, and **Not on the roadmap**, each with its count, and leaves out an empty group.
@@ -103,7 +105,7 @@ Hover or focus a row to see when it shipped, when it was superseded and by which
 It says `Nothing has shipped yet.` while there is none.
 Choosing any other place leaves the open page as it is, and the place stays while you change tabs, follow links, use the palette, or go back.
 The browser remembers the current place, so a reload or a new window shows it again, and an address with `place=work`, or another place's name, chooses that place.
-An address that opens a store artifact or a code file and names no place opens Knowledge, whose sidebar holds the scope filter.
+An address that opens a store artifact and names no place opens Knowledge, whose sidebar holds the scope filter, and every Code address, a code file's among them, opens the Code place.
 The page bar's trail starts with the place of the open page, and choosing that crumb makes the place current without leaving the page.
 An initiative's row shows its state as a round glyph and its shipped leaf slices out of all, such as `0/4`.
 Expanded, it lists at most five of its unfinished slices, each with a triangle in the color of its phase, its holder, and `Blocked` when it is blocked: the slice you have open first, then those in progress or claimed, then blocked ones, then the rest.
@@ -241,6 +243,7 @@ Nothing starts until you confirm the launch, resume, or wake outside the browser
 Answering a question starts no session by itself, here or when an answer arrives from another machine through the shared records.
 Continue is unavailable while a session waits on the question or the asking session is open, since that session reads your answer itself, and for a session that Prism launched, which resumes from its launched session.
 An answered requirement or ADR approval whose asking session Prism recorded stays under Answered with its answer, so you can continue its work, until a newer approval of the same file is asked or for 7 days.
+Under **Needs you**, after the permission requests, the questions, each format migration run that asks you, and each failed format migration run list together, newest first by when each was asked or failed, and the problems and notes without a time follow them.
 Attention also lists blocked slices, open findings, failed verifications, and active work.
 In a window as narrow as a phone, Attention opens on its list, and picking an item shows its card in place of the list, with **All items** to go back.
 A slice that is not done is a failed verification while its latest verification run failed, with the reason in words, such as `The tests failed, 2 tests failed`, until a later run passes or the slice is done.
@@ -249,6 +252,7 @@ Each filtered item opens where it is handled: a question opens Attention with th
 Questions are the recorded questions that wait for an answer and the notes left for you; problems are unreadable or invalid records, a missing or invalid roadmap, initiatives with a record that the roadmap does not list, the roadmap's open questions, and workflow settings warnings.
 Format findings are the requirement files, ADRs, glossaries, and feature files that break their Prism format, one item per kind of file, as `check_artifacts` reports them, in the checkout and in every record store scope the checkout sees.
 The page `attention:formats`, which an agent can also open with `present_review`, shows each kind with its count, its files that keep an earlier Prism format under **Earlier Prism format** apart from the others under **No Prism format**, each file's path and the scope that holds it, and each broken rule with its message and line.
+A file whose format migration failed offers **Run again**, which runs that migration again after you confirm it, one whose migration asks you offers **Answer**, and one whose migration runs or waits for a host offers **Open the run**.
 Every file that breaks its format counts, and nothing hides one; a changed file shows its new findings the next time the page loads, and a file that comes to keep its format leaves the count.
 **Answered in the last 7 days** lists the questions answered or closed in the last 7 days, newest first, each with its initiative and slice and your answer or the reason the agent closed it.
 Under Earlier questions it shows the 20 most recently closed questions with your answer, or with the reason the agent gave when it closed a question you had not answered in the browser.
@@ -296,8 +300,19 @@ Only a tab that Prism opened for you can make changes.
 When Prism opens the browser, for a presentation, a session start, or `prism review`, the address it opens carries a one-time grant after `#write=`, which the tab exchanges for a write session as it loads and then removes from its address.
 The grant works once and only within two minutes, and the write session stays with that one browser tab, also across reloads and when you switch it to another checkout of the same review app.
 A review URL that an agent prints, or that a tool returns, carries no grant, so a tab opened from it, a second tab on the same address, or a bookmark can only read.
-A read-only tab says `This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.`, and its controls are disabled.
+A read-only tab says `This tab can only read.`, then why, then `To make changes, run prism review in this project, or ask the agent to present the review.`, and its controls are disabled.
+The reason is one of these:
+
+| Reason the tab shows | What happened |
+|---|---|
+| `It was opened from a review link, and only a tab that Prism opens itself can make changes.` | The tab was opened from a review URL, a bookmark, history, or a copied address, which carry no grant. |
+| `The link that Prism opened it with was already used or was more than two minutes old.` | The tab loaded the address Prism opened, but the grant in it no longer worked. |
+| `Its write session ended, because the review app restarted.` | The review app refused the tab's write session, so the tab dropped it. |
+
 To get a tab that can make changes, run `prism review` in the project, or ask the agent to present the review, which opens the system browser, while no tab that can make changes is open.
+Prism opens the browser with `open` on macOS, through the Windows URL handler on Windows, and with `xdg-open` on Linux.
+Under WSL it tries the Windows URL handler first, through the `rundll32.exe` that Windows puts on the WSL path, so the review opens in your Windows browser, and then `wslview` and `xdg-open`.
+When no opener takes the address, the agent's result and `prism review` say that Prism could not open a browser and that the URL opens a tab that can only read, so answer gates in the conversation, and the [Prism log](#logs) names each opener that failed with its reason as a `browser_open_failed` warning.
 The review app keeps the write sessions it issued when a newer session replaces it on the same port, and accepts none after it exits and starts again, so after such a restart open the review again the same way.
 Only a tab that can make changes counts as an open review tab, so a read-only tab never stops Prism from opening a tab that can.
 A session of an earlier Prism release that presents through a newer review app opens only tabs that can read, so for that session any open review tab still counts and it opens no further tab.
@@ -361,7 +376,7 @@ On a slice page's card, picking an option applies it at once.
 A change that needs your confirmation opens a dialog that says what it lets agents do, with **Confirm** and **Cancel**; Esc or **Cancel** leaves the setting as it was.
 Every control works with Tab, Enter, and Space.
 When an agent or another tab changed the setting after the page showed it, the page refuses your change, shows the current value, and says `Someone changed this since you opened it; it now shows the current value.`
-The card checks for changes every few seconds and at once when any tab applies an action, so it shows a value an agent set without a reload.
+The card checks for changes when the records change and at once when any tab applies an action, so it shows a value an agent set without a reload, and otherwise every 30 seconds, or every few seconds while the tab has lost its connection to the review app.
 In a tab that can only read, the card shows the read-only notice and its controls are disabled.
 A question's answer shows the situation the agent described, what each option does, and the option the agent recommends with its reason, when the agent gave them.
 
@@ -554,7 +569,7 @@ A run on an ACP agent fails with `<label> stopped: <reason>.` when the agent sto
 A format migration run's session reads only.
 It runs in an empty folder of its own, `launch-work/<launch id>` in the review app folder, outside the checkout, and that folder is removed with its launch.
 Claude Code runs with `--tools ""`, so it has no built-in tool and reads no file, `--mcp-config` naming only Prism's own server, `prism-run`, scoped to the run, with `--strict-mcp-config`, so no MCP server of your own configuration or of another plugin loads, `--settings` with `disableClaudeAiConnectors` and `ENABLE_CLAUDEAI_MCP_SERVERS=false`, so no claude.ai connector loads, an `--allowedTools` list of that server's five tools alone, a `--disallowedTools` list that denies `Read` of the checkout and everything below it, which wins over any allow rule or added folder in your own Claude Code settings, naming a Windows checkout as Claude Code matches it, such as `//c/Users/me/api`, no `--add-dir`, and `--permission-mode dontAsk` in place of the automatic permission mode, so no shell command runs, and the prompt is `/prism:migrate-artifact <run id>`.
-Codex runs with the approval policy `never` and the permission profile `prism-read-only`, which the thread's configuration defines and which reads only in its folder, Prism's own folder, Codex's plugin cache and install folder, and the platform's minimal ones, writes nowhere, and has no network; the same configuration's `mcp_servers` names only Prism's scoped server, and the prompt is `$prism:migrate-artifact <run id>`.
+Codex runs with the approval policy `never` and the permission profile `prism-read-only`, which the thread's configuration defines and which reads only in its folder, Prism's own folder, Codex's plugin cache, the folder of each link on the way from the Codex that Prism started to its real program, that program's own folder, and the platform's minimal ones, writes nowhere, and has no network; the same configuration's `mcp_servers` names only Prism's scoped server, with `default_tools_approval_mode` set to `approve`, because under `never` Codex refuses a call to any tool it would ask about, such as `finish_migration_run`, and the prompt is `$prism:migrate-artifact <run id>`.
 Whether Codex replaces your own `mcp_servers` with that configuration or adds it to them is not confirmed, and an MCP server that Codex loads runs outside its sandbox, so keep MCP servers that read your files out of the Codex configuration of a computer that runs Prism's own runs on Codex.
 The session's environment holds `PRISM_MIGRATION_RUN` with the run's id and `PRISM_MIGRATION_PROJECT` with the checkout's real path, and a Prism server started with them lists and takes only `get_migration_run`, `get_artifact`, `propose_migration`, `finish_migration_run`, and `fail_migration_run`, each for that run and that project only, so a call may leave `projectRoot` out.
 There `get_migration_run` also gives the configured paths, whether a record store is configured, each source's Git history, and `format`, the set type's current format with the path and exact text of its reference in the Prism that serves the run, which the session takes in place of reading the reference file, and `get_artifact` reads the run's artifacts and the files of their type under its configured path, by that type's extension and name rules, in the checkout too and without a store, and refuses every other path, every dot-file, and everything in a dot-folder, such as `.env`, `.prism`, or `.git/config`, and every other call with `migration_scope`.
@@ -654,7 +669,7 @@ A session that ended without a result offers **Answer**, which opens its card on
 A claim offers no action.
 
 The details of a session on an ACP agent start with the usage the agent reported for its last run: **Tokens** with the total and the cached tokens, such as `182,400 (12,000 cached)`, **Context** as the used and whole context, such as `61,200 of 200,000`, and **Cost** with its currency, such as `0.42 USD`, each `Not reported by <agent>` when the agent gave none.
-The details hold the session's reason, the command that continues it in a terminal while no run runs and the host reported its session id, `claude --resume <session id>`, `codex resume <thread id>`, or an ACP agent's declared `resumeCommand` with `{session}` replaced, with the folder to run it in and **Copy**, which copies the command, and the session's own actions, such as **Resume**.
+The details hold the session's reason, the command that continues it in a terminal while no run runs and the host reported its session id, `claude --resume <session id>`, `codex resume --sandbox workspace-write <thread id>`, or `codex resume --sandbox read-only <thread id>` for a format migration run, so the session keeps its launch's sandbox in your terminal, or an ACP agent's declared `resumeCommand` with `{session}` replaced, with the folder to run it in and **Copy**, which copies the command, and the session's own actions, such as **Resume**.
 The page reads the list again every 5 seconds and after each action you apply there, and moves a claim to **Claims that expired** once its lease passes.
 In a tab that cannot make changes the page says so, **Stop**, **Archive**, **Unarchive**, and **Archive all ended** stay unavailable with the tip `This tab can only read.`, and the details offer no action, while **Answer** still opens the question.
 With no agent and no launched session it says `No agent works on this workspace, and nothing was launched on this computer.`.
@@ -971,28 +986,52 @@ A link that names no artifact and no file keeps its text and shows **link not fo
 An image, a link inside a fenced code block of backticks or tildes, and a link inside inline code are not links.
 The Jump palette lists each store artifact once, names its scope in its row, and finds only the artifacts of the scopes the filter shows.
 
+### The Code place
+
+**Code** shows what the code in flight changes, across every repository of the workspace.
+Its sidebar starts with a **Filter work and branches** field and **All work and branches**, with the number of lines of work it shows, where a line of work is one pushed branch of one repository other than its default branch.
+**In progress** lists each initiative of Work's **In progress** group with its status and the number of files its lines of work change, or **No changes yet** while no pushed branch holds its work.
+Below an initiative with slices, each slice that changes code shows its phase, the agent that holds it, **Waits** while a question it asked waits for your answer, and its number of changed files.
+A slice, or an initiative without slices, whose work lies on more than one branch lists one row per branch, such as `api · claude/signed-download`, with its number of changed files.
+**Other branches** lists the pushed branches that no slice owns and that change a file, newest commit first, each with its last author, or the number of people who committed since it started, and its number of changed files.
+Hovering or focusing a row names its title, each of its branches with the branch it started from, such as `api · claude/signed-download, from main`, its agent or person, and its number of changed files.
+Prism reads which branch a branch started from from its Git history, since Git records none, so the hover shows that reading.
+A branch whose last commit is older than **Quiet branches after** in Settings is quiet, and the note below the groups says how many are hidden, such as `1 quiet branch is hidden: no push in 30 days. Show them`; **Show them** lists them with the other branches until **Hide them**, and the review app keeps that choice among your preferences.
+The filter keeps the rows whose title, repository, or branch holds the text you type, with the rows that hold them, and Escape clears it.
+Choosing a row opens the Code page narrowed to it, at an address such as `review?artifact=code:work/retries/deadline` or `review?artifact=code:branch/api/feature/http`, and choosing Code on the rail opens **All work and branches** the first time and then the Code address you showed last.
+The sidebar follows pushes and new verification runs within one workspace fetch interval, without a reload.
+A link to a code file, `code:<repository>:<path>`, opens that file in the Code place's file view, from any record, and choosing that link opens Code on the rail.
+
+The Code page shows the files tree of every repository beside the open file.
+Above the tree, a narrowed page says what it shows, such as `Showing what Retry timed-out requests until a deadline changes`, and **Files** offers **All files** and **Touched**: **All files** shows every file and folder, and **Touched** only the files that the shown work changes and the folders that hold them.
+**All work and branches** starts on **All files**, and a narrowed page on **Touched**, until you choose the other.
+A narrowing that the sidebar does not list shows **All work and branches** with a note such as `api · nothing changes no code that the Code place shows.`, while a work item in progress that changes no code yet narrows the tree to no touched file.
+A repository row shows its name and its root component, a folder its components and, while closed, who changed something below it, and a file `<n> versions`, **New**, or **Removed** with the avatars of the agents and people whose work changes it.
+A component that not every shown branch declares also shows `1 branch` or `<n> branches`, and hovering or focusing it names those branches.
+Choosing a file opens it at its address, `code:<repository>:<path>`, with the same narrowing, and a Ctrl or Cmd click opens it in a tab that stays open.
+The file view names the file as `<repository> / <path>` with its components, then **Versions of this file**: a chip per base branch, such as **main base**, and a chip per distinct version that lines of work hold, named by the first slice that owns it or by its repository and branch, with its agent or person, its added and removed lines, and **verified** when a passing verification run recorded that version.
+The file opens on its first owned version, or else its first version, or else its base; a version shows its difference from the point where its branch started, with both line numbers and each added and removed line marked, and a base shows the file with line numbers.
+When another version changes lines that overlap or directly follow the open version's, the view says so, such as `Report retry attempts as metrics also changes lines 2–4, so whichever merges second will conflict.`, and it says nothing about versions that do not conflict.
+On a window 1100 pixels wide or narrower the Code sidebar is in the navigation drawer, and the tree and the open file are two screens: the file screen starts with a **Files** button that returns to the tree with the same file chosen.
+When Prism cannot read a repository, a folder, or a file just now, as while a remote is away and the clone has not fetched that file's contents yet, its row or the file view says `Prism could not read <repository> just now.`, `Prism could not read this folder just now.`, or `Prism could not read this file just now.` with **Try again**, and every other repository shows as usual; the note goes once a read succeeds, on Try again or at the next redraw.
+
 A store that holds no artifacts yet, because no Prism session moved a checkout's files into it, shows a note in Knowledge's sidebar that names its repositories and says that each keeps its artifacts in its checkouts until a Prism session there moves them into the store.
 
 ### Code content
 
-The **Code** page under **Knowledge** shows one repository of the workspace at a time, which the repository menu at the start of its toolbar picks.
-Its **Repositories** button opens a dialog that lists each repository with its code content state: **Off**, **On**, or **Unreachable**.
-Choose **Turn code content on** there for a repository to have Prism keep a clone of its code on this machine, also when this machine has no checkout of it.
+A repository whose code content is off shows **Off** on its row in the Code page's tree, and an unreachable one **Unreachable** with Git's reason on hover.
+Choose **Turn code content on** on its row to have Prism keep a clone of its code on this machine, also when this machine has no checkout of it.
 Prism clones the first remote that the store's registration of the repository lists, with the machine's Git configuration and credential helpers and without asking for a password on a terminal, into `code/` of its state directory, one clone per remote.
 The clone is bare and blobless: it holds every branch of the remote with its commits and folders, and it fetches a file's contents only when someone opens the file, so it uses little disk.
 A repository whose registration lists no remote cannot take code content.
-Only a tab that can make changes turns code content on or off; see [Which tabs can make changes](#which-tabs-can-make-changes).
+Only a tab that can make changes turns code content on; see [Which tabs can make changes](#which-tabs-can-make-changes).
 Which repositories have code content on survives a restart of the app.
 
 While a page of the workspace is open, each fetch of the workspace also fetches every repository with code content on, bringing new branches and dropping branches that left the remote.
-When a repository's remote cannot be reached, the Repositories dialog shows it as **Unreachable** with Git's reason, and the clone keeps what it fetched last; when the first clone fails, Prism keeps no folder and tries the clone again at the next fetch.
-For a repository with code content on, the Code page shows a tree of the files and folders of every branch together, beside the file you open.
-**Compare with** names one branch, at first the remote's default branch, and the tree marks each file that another branch adds, changes, or removes against it, such as **New on 1** or **Differs on 2**, and each folder with the number of branches that change something in it; hover a mark to see the branches.
-A file or folder that every branch holds the same way carries no mark, and a file only another branch holds still shows in the tree.
-**Branch** picks which version of the open file the viewer shows, with line numbers, the branch it is read from, and how it stands against Compare with, such as **New on this branch** or **Differs from main**.
-When the branch in Branch lacks the open file, the viewer shows the version of a branch that holds it and says so.
+When a repository's remote cannot be reached, the Code page shows it as **Unreachable** with Git's reason, and the clone keeps what it fetched last; when the first clone fails, Prism keeps no folder and tries the clone again at the next fetch.
+The Code page reads a file's line counts, differences, and conflicts only when you open the file.
 It shows no secret, binary file, or file over 512 KiB, and it never names the Git host's address.
-Choose **Turn code content off** to delete the repository's clone from this machine.
+A code file of a repository whose code content is off opens in the file view as a checkout on this machine holds it, with a note that Prism shows no versions of it.
 Removing an added workspace that leaves the switcher also turns code content off for each of its repositories and deletes each clone that no other workspace on this machine still uses.
 Code clones never show a password prompt or a credential dialog, because a teammate can change the remote they fetch from; they sign in only through a credential helper or SSH key that answers without asking.
 
@@ -1077,6 +1116,7 @@ The log records each process start and stop, index builds with their phases, dur
 A tool call that Prism refuses with a reason you can act on, such as an invalid argument, is information named `request_refused` with that reason's code, if it has one, not a warning.
 Each record store sync that commits, merges, or pushes records is information named `store_synced`, a sync that fails is a warning named `store_sync_failed` with its reason, once until the reason changes, and a sync with nothing to share leaves no line.
 It also records each time a process stops answering for more than a second, with what it was doing at the time, such as the index phase of the component being built.
+Each browser opener that cannot start or exits with an error is a warning named `browser_open_failed` with the opener's command and reason.
 Past 5 MiB the file moves to `prism.log.1`, replacing the older one.
 Set `PRISM_LOG_LEVEL` to `debug`, `info` (the default), `warn`, `error`, or `off`, and set `PRISM_LOG_DIR` to write the log to another folder.
 An MCP server also writes its warnings and errors to its error output, which the agent host keeps with its own logs.

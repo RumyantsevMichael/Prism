@@ -75,6 +75,8 @@ test("a run's Codex thread runs under a read-only permission profile, readable o
   assert.deepEqual(Object.keys(thread.params.config.mcp_servers), ["prism-run"]);
   assert.equal(thread.params.config.mcp_servers["prism-run"].env.PRISM_MIGRATION_RUN, run);
   assert.equal(thread.params.config.mcp_servers["prism-run"].env.PRISM_MIGRATION_PROJECT, await realpath(root));
+  // Under never, Codex refuses a call that it would ask about, such as finish_migration_run, which is marked destructive, so the run's own server approves its tools.
+  assert.equal(thread.params.config.mcp_servers["prism-run"].default_tools_approval_mode, "approve");
   assert.equal("approvalsReviewer" in thread.params, false, "no automatic reviewer lets a command out of the sandbox");
   const turn = await waitFor(() => hosts.inputs(started.pid).find((message) => message.method === "turn/start") ?? null, { what: "the turn start" });
   assert.equal("sandboxPolicy" in turn.params, false, "the turn keeps the thread's profile");
@@ -260,4 +262,26 @@ test("two machines that see one waiting run in a synced store launch it once", {
   await waitFor(async () => (await readRun(callA2, run)).status === "running" || null, { what: "the run to launch", ms: 60000 });
   await pause(3000, "the check is that no second session starts, which no event marks");
   assert.equal(hostsA.runs("claude").length + hostsB.runs("claude").length, 1, "one session of the run starts");
+});
+
+test("a Codex run reads the folder of each link to Codex and of its real program, since its sandbox runs Codex again, and never the checkout", { skip: posixOnly }, async (context) => {
+  const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-codex-install-")));
+  context.after(() => rm(parent, { recursive: true, force: true }));
+  // Codex's own installer links a PATH folder's codex to the program through a `current` folder link, as ~/.local/bin/codex reaches packages/standalone/releases/<version>.
+  const linked = path.join(parent, "bin");
+  const standalone = path.join(parent, "packages", "standalone");
+  const own = path.join(standalone, "releases", "1.0.0", "bin");
+  const checkout = path.join(parent, "project");
+  await mkdir(linked, { recursive: true });
+  await mkdir(own, { recursive: true });
+  await mkdir(checkout, { recursive: true });
+  await writeFile(path.join(own, "codex"), "#!/bin/sh\n", { mode: 0o755 });
+  await symlink(path.join("releases", "1.0.0"), path.join(standalone, "current"));
+  await symlink(path.join(standalone, "current", "bin", "codex"), path.join(linked, "codex"));
+  const { migrationReadRoots } = await import("../../dist/server/session/launched-sessions.mjs");
+  const roots = await migrationReadRoots(checkout, "codex", { CODEX_HOME: path.join(parent, "codex-home") }, path.join(linked, "codex"));
+  assert.ok(roots.includes(linked), `the PATH folder is readable: ${roots.join(", ")}`);
+  assert.ok(roots.includes(standalone), `the folder that holds the current link is readable: ${roots.join(", ")}`);
+  assert.ok(roots.includes(own) || roots.some((root) => own.startsWith(`${root}${path.sep}`)), `the real program's folder is readable: ${roots.join(", ")}`);
+  assert.equal(roots.some((root) => checkout === root || checkout.startsWith(`${root}${path.sep}`)), false, "no readable folder holds the checkout");
 });

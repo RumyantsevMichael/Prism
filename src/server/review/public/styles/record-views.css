@@ -1455,75 +1455,133 @@ a.code-link:hover {
 
 /* ---------- Code content from code clones ---------- */
 
-/* The Code page: one repository's file tree beside the open file, which stack on a narrow page. */
-.code-repository-name {
+/* The Code page: the files tree of every repository beside the open file, running to the main island's edges as Attention's list and detail do.
+   Above 1100px both panes show and scroll apart; at 1100px and below the tree and the file are two screens, and the file screen starts with its Files button. */
+.artifact-view:has(> .structured-view > .code-place) {
+  display: flex;
+  flex-direction: column;
+  max-width: none;
+  height: 100%;
+  padding: 0;
+}
+
+.artifact-view:has(> .structured-view > .code-place) > .structured-view {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.code-place {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: var(--prism-list-width) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.code-place-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--prism-space-4);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--prism-space-4);
+  overflow: auto;
+  border-inline-end: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.code-place-tools {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--prism-space-4);
+  min-width: 0;
+}
+
+.code-place-scope,
+.code-place-none {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+}
+
+.code-place-scope b {
+  color: var(--prism-color-ink);
+}
+
+/* The marks of who changed a file or a folder sit side by side at the row's end. */
+.code-place-people {
   display: inline-flex;
-  align-items: center;
-  gap: var(--prism-space-2);
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.code-browser {
-  display: grid;
-  grid-template-columns: minmax(200px, 1fr) minmax(0, 3fr);
-  gap: var(--prism-space-5);
-  align-items: start;
-  min-width: 0;
-}
-
-.code-tree-pane {
-  min-width: 0;
-  padding: var(--prism-space-3);
-  border: var(--prism-stroke) solid var(--prism-color-line);
-  border-radius: var(--prism-radius-lg);
-  background: var(--prism-color-surface);
-}
-
-.code-view {
-  min-width: 0;
-}
-
-/* The open file's path, its branch, and how it stands against the compared branch share a row that wraps. */
-.code-view-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--prism-space-2) var(--prism-space-3);
-  min-width: 0;
-  margin: 0 0 var(--prism-space-3);
-  overflow-wrap: anywhere;
-}
-
-.code-view-head > .muted,
-.code-view-note {
-  font-size: var(--prism-font-size-xs);
-}
-
-.code-view-note {
-  margin: 0 0 var(--prism-space-3);
-}
-
-/* A repository in the Repositories dialog: its name and state, then its switch, on one row that wraps. */
-.code-repository-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--prism-space-2) var(--prism-space-4);
-  min-width: 0;
-}
-
-.code-repository-about {
-  display: grid;
   gap: var(--prism-space-1);
+}
+
+.code-place-file {
+  display: flex;
+  flex-direction: column;
+  gap: var(--prism-space-4);
   min-width: 0;
+  min-height: 0;
+  padding: var(--prism-space-5) var(--prism-space-6);
+  overflow: auto;
+}
+
+.code-place-file-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--prism-space-4);
+  min-width: 0;
+}
+
+.code-place-head,
+.code-place-versions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.code-place-path {
+  font-family: var(--prism-font-code);
+  font-size: var(--prism-font-size-md);
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 900px) {
-  .code-browser {
+.code-place-repository {
+  color: var(--prism-color-ink-muted);
+}
+
+/* A version's difference shows the whole file, so it grows with the file and the pane scrolls it. */
+.code-place-diff {
+  max-height: none;
+}
+
+.code-place-diff .line-diff {
+  width: 100%;
+}
+
+.code-place-back {
+  display: none;
+  align-self: flex-start;
+}
+
+@media (max-width: 1100px) {
+  .code-place {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .code-place-files {
+    border-inline-end: 0;
+  }
+
+  .code-place[data-screen="tree"] > .code-place-file,
+  .code-place[data-screen="file"] > .code-place-files {
+    display: none;
+  }
+
+  .code-place-back {
+    display: inline-flex;
   }
 }
 

@@ -7,6 +7,8 @@ export const PLACES = Object.freeze([
   { name: "work", label: "Work", icon: "tree", subtitle: "Designed and not shipped" },
   { name: "roadmap", label: "Roadmap", icon: "roadmap", subtitle: "Priorities by lane" },
   { name: "knowledge", label: "Knowledge", icon: "book", subtitle: "Requirements, decisions, glossary" },
+  // Code shows only in a workspace whose store registers a repository, so the rail leaves it out elsewhere.
+  { name: "code", label: "Code", icon: "code", subtitle: "What the code in flight changes" },
   { name: "history", label: "History", icon: "clock", subtitle: "Shipped and superseded" }
 ].map((place) => Object.freeze(place)));
 
@@ -22,7 +24,7 @@ export function placeNamed(name: string) {
 const SETTLED = new Set(["shipped", "superseded", "killed", "merged", "split"]);
 
 /**
- * The place a page belongs to, as the review server names it: Attention's pages, the Roadmap, Knowledge's lists and records,
+ * The place a page belongs to, as the review server names it: Attention's pages, the Roadmap, Knowledge's lists and records, the Code place's addresses,
  * an initiative's pages by whether it is worked on, settled, or only planned, and null for any other page.
  * `context` is the page's context from the server when it has one, and `initiatives` the navigation's initiatives with their `place`.
  */
@@ -32,6 +34,7 @@ export function placeOf(ref: any, { context = null, initiatives = [] }: any = {}
   if (ref === "attention" || ref.startsWith("attention:")) return "attention";
   if (ref === "roadmap") return "roadmap";
   if (["requirements", "decisions", "glossary"].includes(ref) || ref.startsWith("knowledge:")) return "knowledge";
+  if (ref === "code" || ref.startsWith("code:")) return "code";
   const match = /^(?:initiative|slice):([A-Za-z0-9_-]+)/.exec(ref);
   if (!match) return null;
   const initiative = initiatives.find((item: any) => item.id === match[1]);

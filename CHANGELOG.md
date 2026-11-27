@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.35.0](https://github.com/RumyantsevMichael/Prism/compare/v0.34.0...v0.35.0) (2026-11-26)
+
+
+### Added
+
+* **review:** add the Code place with work items, one files tree, and file versions ([#485](https://github.com/RumyantsevMichael/Prism/issues/485)) ([3c97fdb](https://github.com/RumyantsevMichael/Prism/commit/3c97fdb5f0df2c71a3969afce75b684b7a925b77)), closes [#484](https://github.com/RumyantsevMichael/Prism/issues/484)
+
+
+### Fixed
+
+* give a tool call's session facts hook room for its settings read ([#478](https://github.com/RumyantsevMichael/Prism/issues/478)) ([febd108](https://github.com/RumyantsevMichael/Prism/commit/febd108d15253a990abde757ba99e17c0311cae3)), closes [#462](https://github.com/RumyantsevMichael/Prism/issues/462)
+* **launch:** let Codex migration runs finish, and finish runs left unfinished ([#481](https://github.com/RumyantsevMichael/Prism/issues/481)) ([4e415e3](https://github.com/RumyantsevMichael/Prism/commit/4e415e392b9615023d6f84f08325ef0170d550c6)), closes [#59](https://github.com/RumyantsevMichael/Prism/issues/59)
+* let the test's other machine push again after a failed ref lock ([#479](https://github.com/RumyantsevMichael/Prism/issues/479)) ([8652f1b](https://github.com/RumyantsevMichael/Prism/commit/8652f1b4a1395368953756e06fcdc61233a224dc)), closes [#475](https://github.com/RumyantsevMichael/Prism/issues/475)
+* retry removing an artifact format test's project folder ([#477](https://github.com/RumyantsevMichael/Prism/issues/477)) ([7017488](https://github.com/RumyantsevMichael/Prism/commit/7017488c756ca44a3d0ced6c11087ed9f7bddb4b)), closes [#461](https://github.com/RumyantsevMichael/Prism/issues/461)
+* return a verify_slice run that settled after its caller returned ([#482](https://github.com/RumyantsevMichael/Prism/issues/482)) ([4e58024](https://github.com/RumyantsevMichael/Prism/commit/4e580248f3b40dce70432fb298ecf049c006ca88)), closes [#471](https://github.com/RumyantsevMichael/Prism/issues/471)
+* **review:** keep a click on the Code tree through a redraw ([#487](https://github.com/RumyantsevMichael/Prism/issues/487)) ([e1de091](https://github.com/RumyantsevMichael/Prism/commit/e1de091cb7c02bce4cf263521668409979a3a52b)), closes [#486](https://github.com/RumyantsevMichael/Prism/issues/486)
+* **review:** keep migration runs reachable from Attention and resumable ([#483](https://github.com/RumyantsevMichael/Prism/issues/483)) ([400bcf7](https://github.com/RumyantsevMichael/Prism/commit/400bcf7ba0a45d16c506cc9ae9cf8407bdcc5bbd)), closes [#59](https://github.com/RumyantsevMichael/Prism/issues/59)
+* **review:** wait for the review app's Git work before it closes ([#488](https://github.com/RumyantsevMichael/Prism/issues/488)) ([61a737b](https://github.com/RumyantsevMichael/Prism/commit/61a737be08b8c3ca45ed6e6591d5c21ebef9e494)), closes [#486](https://github.com/RumyantsevMichael/Prism/issues/486)
+* wait for the run dialog's hosts before reading its host message ([#465](https://github.com/RumyantsevMichael/Prism/issues/465)) ([173e2fa](https://github.com/RumyantsevMichael/Prism/commit/173e2face49e705af713a242ea319e0b737c662d)), closes [#460](https://github.com/RumyantsevMichael/Prism/issues/460)
+
+## [0.34.0](https://github.com/RumyantsevMichael/Prism/compare/v0.33.0...v0.34.0) (2026-11-25)
+
+
+### Added
+
+* **review:** name a gate's work as a row under its question ([#470](https://github.com/RumyantsevMichael/Prism/issues/470)) ([176a818](https://github.com/RumyantsevMichael/Prism/commit/176a818b5e90c85859ce4ff1dfce8fc3283897a7)), closes [#454](https://github.com/RumyantsevMichael/Prism/issues/454)
+
+
+### Fixed
+
+* judge an accepted design's test examples against its frozen tests ([#473](https://github.com/RumyantsevMichael/Prism/issues/473)) ([4639841](https://github.com/RumyantsevMichael/Prism/commit/463984157476375794b5c9b58866184b2e197d67)), closes [#472](https://github.com/RumyantsevMichael/Prism/issues/472)
+* **launch:** let Codex migration runs start on macOS installs ([#457](https://github.com/RumyantsevMichael/Prism/issues/457)) ([20ce2d7](https://github.com/RumyantsevMichael/Prism/commit/20ce2d7afebfdac4471d93be3ecc96c4767bf2fb)), closes [#59](https://github.com/RumyantsevMichael/Prism/issues/59)
+* load a browser test page again when a network change broke it ([#463](https://github.com/RumyantsevMichael/Prism/issues/463)) ([a524408](https://github.com/RumyantsevMichael/Prism/commit/a524408543283eb9ce533294c79d1551f70e246e)), closes [#262](https://github.com/RumyantsevMichael/Prism/issues/262)
+* **review:** report a browser that never opened and say why a tab is read-only ([#469](https://github.com/RumyantsevMichael/Prism/issues/469)) ([713aa90](https://github.com/RumyantsevMichael/Prism/commit/713aa906cdc035259965dbdd3f2f9dfca909e2f8))
+* stop the review app's idle rebuild loop and repeated reads ([#464](https://github.com/RumyantsevMichael/Prism/issues/464)) ([29db9d7](https://github.com/RumyantsevMichael/Prism/commit/29db9d75cfcfe6abca39620f3ea721264cb328f0)), closes [#418](https://github.com/RumyantsevMichael/Prism/issues/418)
+* wait for the Codex deferred hold's renewal instead of a fixed sleep ([#459](https://github.com/RumyantsevMichael/Prism/issues/459)) ([8493de6](https://github.com/RumyantsevMichael/Prism/commit/8493de6bd46d54250fb9630d6999fbfa06608c95)), closes [#458](https://github.com/RumyantsevMichael/Prism/issues/458)
+
 ## [0.33.0](https://github.com/RumyantsevMichael/Prism/compare/v0.32.0...v0.33.0) (2026-11-24)
 
 

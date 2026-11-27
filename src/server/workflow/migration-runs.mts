@@ -232,13 +232,23 @@ async function recordLaunch(root: any, id: any, { launch, status = null, reason 
 }
 
 // Fail an open run, applying nothing, unless a later session of the run took over from the one that names launch.
-async function failOpenRun(root: any, id: any, reason: any, { launch = null, endedAt = null }: any = {}) {
+// With finish, a run whose set has a proposal for every artifact is finished as finish_migration_run finishes it, in place of failing.
+async function failOpenRun(root: any, id: any, reason: any, { launch = null, endedAt = null, finish = false }: any = {}) {
   return withRunLock(root, id, async () => {
     const record = await readRun(root, id);
     if (!record || !OPEN_STATUSES.has(record.status)) return record;
     if (launch !== null && record.launch?.id && record.launch.id !== launch) return record;
     // A session that ended before the run continued is not the session the continuation runs, so its late report fails nothing.
     if (typeof endedAt === "string" && typeof record.continuingAt === "string" && Date.parse(record.continuingAt) >= Date.parse(endedAt)) return record;
+    if (finish && proposedAll(record)) {
+      // A store that refuses the write leaves the run failed with that refusal, as any other end of its session would.
+      const finished = await finishedRecord(root, record).catch((error: any) => ({ error }));
+      if (!("error" in finished)) {
+        await writeRun(root, finished);
+        return finished;
+      }
+      reason = `${reason} Prism could not finish the run: ${finished.error?.message ?? finished.error}`;
+    }
     const now = new Date().toISOString();
     const next = { ...record, status: "failed", failure: { reason: failureReason(reason), at: now }, endedAt: now, reason: null };
     await writeRun(root, next);
@@ -275,12 +285,13 @@ export async function launchMigrationRun(projectRoot: any, id: any, { env = proc
 export const launchRunSession = ({ projectRoot, run }: any) => launchMigrationRun(projectRoot, run.id);
 
 /**
- * The end of a run's session, by its exit, a host error, or a stop: a run that is still starting, running, or continuing fails with the session's last reason,
- * applying nothing, while a run that asks, waits, or ended keeps its status, and so does a run that continued after the session's endedAt.
+ * The end of a run's session, by its exit, a host error, or a stop: a run that is still starting, running, or continuing and has a proposal for every artifact
+ * of its set is finished as finish_migration_run finishes it, so it asks the person or applies, while one that lacks a proposal fails with the session's last reason,
+ * applying nothing; a run that asks, waits, or ended keeps its status, and so does a run that continued after the session's endedAt.
  */
 export async function sessionEnded(projectRoot: any, id: any, { launch = null, reason, endedAt = null }: any) {
   const root = await realpath(projectRoot);
-  return failOpenRun(root, id, `${LAUNCH_ENDED}${reason}`, { launch, endedAt });
+  return failOpenRun(root, id, `${LAUNCH_ENDED}${reason}`, { launch, endedAt, finish: true });
 }
 
 /**
@@ -715,6 +726,38 @@ export function requireOpen(record: any) {
 
 // ---- Finishing ----
 
+// A run whose set has a proposal for every artifact, finished: applied when every asked point has an answer or none was asked,
+// asking the person once about every asked point when no question was asked yet, and failed when it asked once and still holds an unanswered point,
+// or when the write check refuses what it would write.
+async function finishedRecord(root: any, current: any) {
+  const asked = current.migrations.flatMap((migration: any) => migration.points.filter((point: any) => point.asked !== null).map((point: any) => ({ migration, point })));
+  const answers = current.answers ?? {};
+  const unanswered = asked.filter(({ point }: any) => !isRecord(answers[point.id]));
+  const now = new Date().toISOString();
+  let next;
+  if (!unanswered.length) {
+    const { applyRun } = await import("./format-migrations.mjs");
+    try {
+      const result = await applyRun(root, current, now);
+      next = { ...current, status: "applied", result, endedAt: now, reason: null };
+    } catch (error) {
+      if (!runFailure(error)) throw error;
+      next = { ...current, status: "failed", failure: { reason: failureReason(error.message), at: now }, endedAt: now, reason: null };
+    }
+  } else if (current.question === null || current.question === undefined) {
+    const points = asked.map(({ migration, point }: any) => {
+      const { id, kind, settled, asked: question, ...detail } = point;
+      return { id, migration: migration.id, artifact: { path: migration.source.path, scope: migration.source.scope }, kind, ...detail, recommendation: question.recommendation };
+    });
+    next = { ...current, status: "asking", question: { points, askedAt: now }, reason: null };
+  } else {
+    next = { ...current, status: "failed", failure: { reason: ASKED_AGAIN, at: now }, endedAt: now, reason: null };
+  }
+  return next;
+}
+
+const proposedAll = (record: any) => record.set.artifacts.every((artifact: any) => record.migrations.some((migration: any) => sameArtifact(migration.source, artifact)));
+
 /**
  * Finish a run: once every artifact of its set has a proposal, apply all its migrations when every asked point has an answer or none was asked,
  * ask the person once about every asked point when no question was asked yet, and fail the run when it asked once and still holds an unanswered point.
@@ -732,29 +775,7 @@ export async function finishMigrationRun(input: any) {
     if (missing.length) {
       throw fail("migration_run_incomplete", `The format migration run ${current.id} has no proposal yet for ${missing.map(artifactName).join(", ")}: propose a format migration of each artifact of its set before finishing it.`, { run: current.id, artifacts: missing.map(({ path: file, scope }: any) => ({ path: file, scope })) });
     }
-    const asked = current.migrations.flatMap((migration: any) => migration.points.filter((point: any) => point.asked !== null).map((point: any) => ({ migration, point })));
-    const answers = current.answers ?? {};
-    const unanswered = asked.filter(({ point }: any) => !isRecord(answers[point.id]));
-    const now = new Date().toISOString();
-    let next;
-    if (!unanswered.length) {
-      const { applyRun } = await import("./format-migrations.mjs");
-      try {
-        const result = await applyRun(root, current, now);
-        next = { ...current, status: "applied", result, endedAt: now, reason: null };
-      } catch (error) {
-        if (!runFailure(error)) throw error;
-        next = { ...current, status: "failed", failure: { reason: failureReason(error.message), at: now }, endedAt: now, reason: null };
-      }
-    } else if (current.question === null || current.question === undefined) {
-      const points = asked.map(({ migration, point }: any) => {
-        const { id, kind, settled, asked: question, ...detail } = point;
-        return { id, migration: migration.id, artifact: { path: migration.source.path, scope: migration.source.scope }, kind, ...detail, recommendation: question.recommendation };
-      });
-      next = { ...current, status: "asking", question: { points, askedAt: now }, reason: null };
-    } else {
-      next = { ...current, status: "failed", failure: { reason: ASKED_AGAIN, at: now }, endedAt: now, reason: null };
-    }
+    const next = await finishedRecord(root, current);
     await writeRun(root, next);
     return next;
   }));

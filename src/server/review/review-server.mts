@@ -1,9 +1,9 @@
 import { createServer } from "node:http";
 import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup, openerOf } from "./public/views/tab-groups.js";
 import { randomBytes } from "node:crypto";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
+import { openBrowser } from "./browser-opener.mjs";
 import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT, pluginVersion } from "../plugin-root.mjs";
@@ -11,18 +11,22 @@ import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { listComponents } from "../workflow/components.mjs";
 import { artifactKinds, parseWorkflowConfig, readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, recordStoreOf, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile, withRecordReads } from "../workflow/record-store.mjs";
-import { artifactStoreLocation, readStoreArtifact, readStoreArtifactAt, reviewStoreArtifact, reviewStoreArtifactAt, storeArtifactLocation, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
+import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, recordStoreOf, listRecordEntries, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile, withRecordReads } from "../workflow/record-store.mjs";
+import { ANSWERED_APPROVAL_KEPT_MS, answeredApprovalGates, artifactStoreLocation, pendingApprovalGates, readStoreArtifact, readStoreArtifactAt, reviewStoreArtifact, reviewStoreArtifactAt, storeArtifactLocation, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
 import { codeRefOf, parseCodeRef, resolveLinks } from "./artifact-links.mjs";
 import { checkoutsOnMachine, knownComponents, registeredRepositories } from "./workspaces.mjs";
 import { withoutCredentials } from "../workflow/remote-url.mjs";
-import { readWorkspaceName } from "../workflow/roadmap.mjs";
+import { readRoadmap, readWorkspaceName } from "../workflow/roadmap.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, viewWatching, loadAttention, loadClaims, loadDeclaredView, loadFormatMark, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, rememberView, viewVersion, viewWatching, loadAttention, loadClaims, loadDeclaredView, loadFormatMark, loadHeldClaims, loadEntity, loadNavigation, loadInitiativeView, loadRecordChanges, parseEntityRef, placedInitiatives, searchRecords, slicePresence, workGroups } from "./workspace-model.mjs";
+import { isQuiet, placeAnswer } from "./code-place.mjs";
+import { ReadFailed, keptAnswers } from "./byte-cache.mjs";
+import { answerKey, fileDiff, fileVersions, listFiles, readSlot, scopeLines, stopping, withVerified } from "./code-versions.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
+import { branchOwners, ownerKey } from "./code-owners.mjs";
 import { frozenTestFile, verificationLog } from "./verification-view.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
@@ -37,8 +41,11 @@ import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
 import { createCachedValue } from "./cached-value.mjs";
+import { validUntil } from "../workflow/view-validity.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
+// A line of work is quiet after this many days without a commit, unless a Code request names another threshold.
+const QUIET_DAYS = 30;
 
 const PUBLIC_DIR = path.join(SERVER_DIR, "public");
 const VENDOR_DIR = path.join(PLUGIN_ROOT, "vendor", "plantuml");
@@ -224,6 +231,18 @@ async function artifactStoreRefusal(projectRoot: string) {
 
 // The checkout's tracked files under its artifact paths that an available store does not hold, which the browser shows beside the store's status; the browser itself never moves them:
 // awaitingMove counts those that an agent's tool call still moves or reports, and keptInCheckout those that a move kept for a person to settle.
+// Each shown action list reads its target again at every check and whenever the page draws it, and an approval card's listing reads every requirement and ADR and the roadmap,
+// so a listing answers those reads as the views are reused; an answered gate leaves the list at the end of its kept week even when no file changes.
+const actionListingReads = {
+  roadmap: (root: string) => rememberView(root, "actions-roadmap", () => readRoadmap(root)),
+  pendingApprovalGates: (root: string) => rememberView(root, "pending-approval-gates", () => pendingApprovalGates(root)),
+  answeredApprovalGates: (root: string) => rememberView(root, "answered-approval-gates", async () => {
+    const gates = await answeredApprovalGates(root);
+    for (const gate of gates) validUntil((Date.parse(gate.answer?.answeredAt ?? "") || 0) + ANSWERED_APPROVAL_KEPT_MS);
+    return gates;
+  })
+};
+
 async function checkoutArtifactsOf(projectRoot: string, store: any) {
   if (store.kind === "project" || store.unavailable) return {};
   return artifactsInCheckout(projectRoot);
@@ -679,21 +698,7 @@ export function publicAsset(route: string) {
   return isInside(root, file) ? { file, type: ASSET_TYPES.get(extension) } : null;
 }
 
-export function openBrowser(url: any) {
-  const platform = process.platform;
-  // cmd.exe's start would read an & in the URL's query as a second command, so Windows opens the URL through the shell's URL handler.
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "rundll32" : "xdg-open";
-  const args = platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
-  try {
-    // A browser that the opener starts inherits its working folder, so it starts in the home folder and never keeps a project folder busy, which Windows would refuse to remove or rename.
-    const child = spawn(command, args, { cwd: homedir(), detached: true, stdio: "ignore", windowsHide: true });
-    child.on("error", () => {});
-    child.unref();
-    return true;
-  } catch {
-    return false;
-  }
-}
+export { openBrowser };
 
 /** The open tabs whose file the review no longer lists, or whose entity no longer resolves, in tab order. */
 export async function findMissingTabs(tabs: any, available: any, entityResolves: any) {
@@ -1180,7 +1185,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const sources = new Map();
     for (const member of await workspace?.checkouts?.() ?? []) {
       if (!member.repository) continue;
-      const files = await listReviewSources(member.root).catch(() => null);
+      // The kept listing of each checkout, renewed behind as a checkout page's listing is, since listing a checkout checks every file.
+      const files = await reviewListing(member.root).get().then((listing: any) => listing.sources, () => null);
       if (files === null) continue;
       const known = sources.get(member.repository) ?? new Set();
       for (const file of files) known.add(file);
@@ -1226,20 +1232,203 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // A code file that a clone holds but does not show answers 404 with why, so the page says the file is not shown rather than gone.
+  // The quiet threshold and whether quiet branches show, as a Code request names them: { quietDays, showQuiet }, 30 days and hidden by default, or null for a value outside them.
+  function codeShowing(url: any) {
+    const days = url.searchParams.get("quietDays");
+    const show = url.searchParams.get("showQuiet");
+    if (days !== null && !/^[1-9][0-9]{0,2}$/.test(days)) return null;
+    const quietDays = days === null ? QUIET_DAYS : Number(days);
+    if (quietDays > 365 || (show !== null && show !== "true" && show !== "false")) return null;
+    return { quietDays, showQuiet: show === "true" };
+  }
+
   function withheldAnswer(read: any) {
     const why = read.withheld === "binary" ? "it is a binary file" : "it is over 512 KiB";
     return { code: "file_not_shown", reason: read.withheld, message: `${read.path} is not available here because ${why}, which the review app does not show.` };
   }
 
+  // The owned branch names of one repository among the keys that branchOwners answers, which its branch model ranks as owned.
+  const ownedIn = (owners: Map<string, any>, repository: string) => {
+    const prefix = ownerKey(repository, "");
+    return [...owners.keys()].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length));
+  };
+
+  // How long the Code place's answer waits for a repository's branch read that it starts, so small repositories answer on the first request.
+  const PLACE_READ_WAIT_MS = 5000;
+
+  // The Code place's state of the work in progress and the other branches, read from every repository's branch model at once,
+  // since a repository whose fetch is due holds its read for up to the fetch's wait: { answer, models, owners, slice }, or null while every repository with a clone is still read.
+  async function codePlaceState(shown: { quietDays: number; showQuiet: boolean }) {
+    const names = await storeRepositories();
+    const owners = await branchOwners(projectRoot);
+    const read = await Promise.all(names.map(async (name) => {
+      const code = workspace?.code ? await workspace.code.state(name) : { state: "off" };
+      const model = workspace?.code && code.state !== "off" ? await workspace.code.branches(name, ownedIn(owners, name), { waitMs: PLACE_READ_WAIT_MS }) : null;
+      return { repository: { name, state: code.state, message: code.message ?? null }, model };
+    }));
+    const models = new Map<string, any>();
+    const preparing: string[] = [];
+    for (const { repository, model } of read) {
+      if (model?.state === "preparing") preparing.push(repository.name);
+      else if (model) models.set(repository.name, model);
+    }
+    if (preparing.length && !models.size) return null;
+    const groups = await workGroups(projectRoot, await placedInitiatives(projectRoot));
+    const progress = groups.groups.find((group: any) => group.key === "in-progress")?.initiatives ?? [];
+    // Each slice's title and its agent, named as the Work sidebar names its claim's host: the host, or Agent, and then its model.
+    const slices = new Map<string, { title: string; agent: string }>();
+    const work = await Promise.all(progress.map(async ({ id, title }: any) => {
+      const view = await loadInitiativeView(projectRoot, id).catch((): any => null);
+      const records = view?.record?.slices ?? {};
+      for (const [slug, slice] of Object.entries<any>(records)) {
+        const claim = slice?.claim ?? slice?.expiredClaim ?? null;
+        const host = typeof claim?.host === "string" && claim.host.trim() ? claim.host.trim() : "Agent";
+        slices.set(ownerKey(id, slug), { title: slice?.title ?? slug, agent: typeof claim?.model === "string" && claim.model ? `${host} · ${claim.model}` : host });
+      }
+      return { initiative: id, title, root: view?.derived?.root ?? null, children: view?.derived?.children ?? {}, titles: Object.fromEntries(Object.entries<any>(records).map(([slug, slice]) => [slug, slice.title])) };
+    }));
+    const answer = placeAnswer({ repositories: read.map(({ repository }) => repository), models, preparing, owners, work, ...shown });
+    return { answer, models, owners, slice: (owner: { initiative: string; slice: string }) => slices.get(ownerKey(owner.initiative, owner.slice)) ?? { title: owner.slice, agent: "Agent" } };
+  }
+
+  async function serveCodePlace(response: any, shown: { quietDays: number; showQuiet: boolean }) {
+    const state = await codePlaceState(shown);
+    // While every repository with a clone is still being read, the answer has nothing to show yet.
+    if (!state) sendJson(response, 202, { state: "preparing" });
+    else sendJson(response, 200, state.answer);
+  }
+
+  // The file paths, as `<path>\0<blob>`, that the passing verification runs of a slice recorded for a repository, read from its run records.
+  async function verifiedFiles(repository: string, owner: { initiative: string; slice: string }) {
+    const runs = await listRecordEntries(projectRoot, { kind: "runs", initiative: owner.initiative, slice: owner.slice }).catch((): any[] => []);
+    const files = new Set<string>();
+    for (const { entry } of runs) {
+      if (entry?.kind !== "verification" || entry.passed !== true || entry.checkout?.repository !== repository || !Array.isArray(entry.files)) continue;
+      for (const file of entry.files) if (typeof file?.path === "string") files.add(`${file.path}\0${typeof file.blob === "string" ? file.blob : ""}`);
+    }
+    return files;
+  }
+
+  // How long a request for a folder's entries or a file's versions waits for its reads, which go on in the background past it,
+  // so a folder or file that many branches show answers 202 preparing until its reads are done rather than holding the request;
+  // each finished answer is kept for its key, everything of the branch models that it reads, so the request after a 202 answers it without reading again,
+  // with FILES_KEPT_BYTES of answers kept in all besides the latest one, and at most FILES_RUNS reads going on at once, each of at most PARALLEL Git processes,
+  // with a read for a newer key of the same slot, its route, scope, quiet settings, and folder or path, as after tips move, stopping the earlier read at its next Git step;
+  // a top-level listing that marks a repository's failed read is never kept, so a later request reads that repository again.
+  const FILES_WAIT_MS = 5000;
+  const FILES_KEPT_BYTES = 64 * 1024 * 1024;
+  const FILES_RUNS = 8;
+  const fileAnswers = keptAnswers({ waitMs: FILES_WAIT_MS, maxBytes: FILES_KEPT_BYTES, maxRuns: FILES_RUNS, keep: (answer) => !answer?.preparing && !answer?.entries?.some((entry: any) => entry.error) });
+  // A kept answer's read, or its failed Git read's error, which is answered as stated and never kept, so a later request reads again.
+  const readAnswer = async (key: string, work: (signal: AbortSignal) => Promise<any>, slot: string) => {
+    try { return await fileAnswers.read(key, work, slot); }
+    catch (error) {
+      if (error instanceof ReadFailed) return { error };
+      throw error;
+    }
+  };
+
+  // The Code place's files tree, a file's versions, and a version's difference, for the lines of work of the scope that a request names.
+  async function serveCodeFiles(response: any, route: string, url: any, shown: { quietDays: number; showQuiet: boolean }) {
+    const state = await codePlaceState(shown);
+    if (!state) {
+      sendJson(response, 202, { state: "preparing" });
+      return;
+    }
+    const fail = (error: any) => sendJson(response, error.status, { code: error.code, message: error.message, ...(error.reason ? { reason: error.reason } : {}) });
+    const contentsOf = (repository: string) => workspace.code.contents(repository);
+    if (route === "/api/code/diff") {
+      const repository = url.searchParams.get("repository");
+      const file = workspace.code.folder(url.searchParams.get("path") ?? "");
+      if (!repository || !state.answer.repositories.some((each: any) => each.name === repository)) return fail({ status: 404, code: "repository_unknown", message: "The workspace has no repository of that name." });
+      if (state.answer.preparing.includes(repository)) return sendJson(response, 202, { state: "preparing" });
+      const contents = state.models.has(repository) ? await contentsOf(repository) : null;
+      if (!contents) return fail({ status: 404, code: "code_off", message: `The code content of ${repository} is off or not fetched yet, so this machine keeps no clone of it.` });
+      if (!file) return fail({ status: 404, code: "file_unavailable", message: "The path must name a file below the repository's root." });
+      const answer: any = await fileDiff(state, repository, file, url.searchParams.get("branch") ?? "", contents).catch((error) => {
+        if (error instanceof ReadFailed) return { error };
+        throw error;
+      });
+      if (answer.error) fail(answer.error);
+      else sendJson(response, 200, answer);
+      return;
+    }
+    const scope = url.searchParams.get("scope") ?? "all";
+    const lines = scopeLines(state, scope);
+    if (!lines) return fail({ status: 404, code: "scope_unknown", message: "The Code place lists no work item, slice, or branch of that scope." });
+    if (route === "/api/code/files") {
+      const named = url.searchParams.get("folder");
+      const folder = named === null || named === "" ? null : workspace.code.folder(named);
+      if (named !== null && named !== "" && !folder) return fail({ status: 400, code: "invalid_request", message: "The folder must be a repository or a path below a repository's root." });
+      const key = JSON.stringify(["files", folder, answerKey(state, lines), state.answer.repositories, state.answer.preparing]);
+      const listed: any = await readAnswer(key, (signal) => listFiles(state, lines, folder, async (name) => {
+        const contents = await contentsOf(name);
+        return contents && stopping(contents, signal);
+      }), readSlot("files", scope, shown, folder));
+      if (listed === null) sendJson(response, 202, { state: "preparing" });
+      else if (listed.error) fail(listed.error);
+      else if (listed.preparing) sendJson(response, 202, { state: "preparing" });
+      else sendJson(response, 200, { scope, folder: folder ?? null, entries: listed.entries });
+      return;
+    }
+    const repository = url.searchParams.get("repository");
+    const file = workspace.code.folder(url.searchParams.get("path") ?? "");
+    if (!repository || !state.answer.repositories.some((each: any) => each.name === repository)) return fail({ status: 404, code: "repository_unknown", message: "The workspace has no repository of that name." });
+    if (state.answer.preparing.includes(repository)) return sendJson(response, 202, { state: "preparing" });
+    const contents = state.models.has(repository) ? await contentsOf(repository) : null;
+    if (!contents) return fail({ status: 404, code: "code_off", message: `The code content of ${repository} is off or not fetched yet, so this machine keeps no clone of it.` });
+    if (!file) return fail({ status: 404, code: "file_unavailable", message: "The path must name a file below the repository's root." });
+    // One read at a time for each file and key of what it reads, which a later request joins.
+    // The verified marks are read for each request, so a run that a store sync brings shows on an answer kept for unchanged tips.
+    const key = JSON.stringify(["versions", repository, file, answerKey(state, lines)]);
+    const answer: any = await readAnswer(key, (signal) => fileVersions(state, lines, repository, file, stopping(contents, signal)), readSlot("versions", scope, shown, repository, file));
+    if (answer === null) sendJson(response, 202, { state: "preparing" });
+    else if (answer.error) fail(answer.error);
+    else sendJson(response, 200, await withVerified(answer, (owner: any) => verifiedFiles(repository, owner)));
+  }
+
   // The code routes of a workspace's page, which read the code clones Prism keeps and never answer a URL of a Git host.
   async function serveCode(response: any, route: string, url: any) {
     const repository = url.searchParams.get("repository");
+    const shown = codeShowing(url);
+    if (!shown) {
+      sendJson(response, 400, { code: "invalid_request", message: "quietDays must be a whole number of days from 1 to 365, and showQuiet must be true or false." });
+      return;
+    }
+    if (route === "/api/code/place") {
+      await serveCodePlace(response, shown);
+      return;
+    }
+    if (route === "/api/code/files" || route === "/api/code/versions" || route === "/api/code/diff") {
+      if (!workspace?.code) {
+        sendJson(response, 404, { code: "repository_unknown", message: "The workspace has no repository of that name." });
+        return;
+      }
+      await serveCodeFiles(response, route, url, shown);
+      return;
+    }
     if (!workspace?.code || !repository || !(await storeRepositories()).includes(repository)) {
       sendJson(response, 404, { code: "repository_unknown", message: "The workspace has no repository of that name." });
       return;
     }
     const off = () => sendJson(response, 404, { code: "code_off", message: `The code content of ${repository} is off or not fetched yet, so this machine keeps no clone of it.` });
-    if (route === "/api/code/tree") {
+    if (route === "/api/code/branches") {
+      const owners = await branchOwners(projectRoot);
+      const owned = (branch: string) => owners.get(ownerKey(repository, branch)) ?? [];
+      const model = await workspace.code.branches(repository, ownedIn(owners, repository));
+      if (model === null) off();
+      else if (model.state === "preparing") sendJson(response, 202, { state: "preparing" });
+      else {
+        const now = Date.now();
+        const branches = model.branches.map(({ commit, paths, blobs, ...branch }: any) => ({
+          ...branch,
+          // Days count whole, so a commit made a day ago is within a threshold of one day.
+          quiet: isQuiet(branch, shown.quietDays, now),
+          owners: branch.default ? [] : owned(branch.name).map(({ initiative, slice }) => ({ initiative, slice }))
+        }));
+        sendJson(response, 200, { repository, defaultBranch: model.defaultBranch, branches });
+      }
+    } else if (route === "/api/code/tree") {
       const folder = workspace.code.folder(url.searchParams.get("folder") ?? "");
       if (folder === null) {
         sendJson(response, 400, { code: "invalid_request", message: "The folder must be a path below the repository's root." });
@@ -1248,10 +1437,6 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const entries = await workspace.code.tree(repository, folder);
       if (entries === null) off();
       else sendJson(response, 200, { repository, folder, entries });
-    } else if (route === "/api/code/compare") {
-      const compared = await workspace.code.compare(repository, url.searchParams.get("base") || null);
-      if (compared === null) sendJson(response, 404, { code: "branch_unknown", message: "The clone of that repository holds no such branch, or its code content is off." });
-      else sendJson(response, 200, { repository, ...compared });
     } else if (route === "/api/code/file") {
       const read = await workspace.code.file(repository, { branch: url.searchParams.get("branch"), commit: url.searchParams.get("commit"), path: url.searchParams.get("path") });
       if (read?.withheld) sendJson(response, 404, withheldAnswer(read));
@@ -1642,13 +1827,19 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       }
       const available = new Set([...artifacts, ...sources, ...(storeIndex?.every ?? []), ...(workspace ? await codeRefs() : [])]);
       const snapshot = await followMovedRecords(available);
+      // A code file's tab is the Code place's file view, which says itself when no version of the file is shown, so it is never missing while its repository is registered.
+      const repositories = workspace ? await storeRepositories() : [];
+      for (const tab of snapshot.openTabs) {
+        const repository = parseCodeRef(tab)?.repository;
+        if (repository && repositories.includes(repository)) available.add(tab);
+      }
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref: any) => entityExists(projectRoot, ref));
       // A workspace read through its store's clone alone has no checkout to name.
       const checkout = workspace && await isStoreWithoutCheckout(projectRoot) ? null : await readWorkspaceIdentity(projectRoot);
       const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null, repositories: await codeRepositories() } : { workspace: checkout };
       const scoped = storeIndex ? { artifactScopes: storeIndex.artifactScopes, scopes: storeIndex.scopes, ...(storeIndex.scopeFilter ? { scopeFilter: storeIndex.scopeFilter, unknownScopes: storeIndex.unknownScopes } : {}), notes: storeIndex.notes } : { artifactScopes: await listArtifactScopes(projectRoot) };
       send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store), watching: await viewWatching(projectRoot).catch(() => null) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, version: appVersion ?? pluginVersion(), ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
-    } else if (["/api/code/tree", "/api/code/compare", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
+    } else if (["/api/code/place", "/api/code/files", "/api/code/versions", "/api/code/diff", "/api/code/branches", "/api/code/tree", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
       await serveCode(response, route, url);
     } else if (route === "/api/slice-files" && request.method === "GET") {
       const ref = `slice:${url.searchParams.get("initiative") ?? ""}/${url.searchParams.get("slice") ?? ""}`;
@@ -1686,7 +1877,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       send(response, 200, JSON.stringify(await inSessionOrder(() => updateSession(body))), "application/json; charset=utf-8");
     } else if (route === "/api/actions" && request.method === "GET") {
       try {
-        const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer, checkouts: await checkoutRoots() });
+        const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer, checkouts: await checkoutRoots(), reads: actionListingReads });
         sendJson(response, 200, { target: listed.target, writable: writableRequest(request), actions: listed.actions });
       } catch (error) {
         sendActionError(response, error);
@@ -1766,10 +1957,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         send(response, 404, "The item no longer exists in this project.");
         return;
       }
-      if (ref === "code" && workspace) {
-        // The page leaves out when each clone was last fetched, so a fetch that brings nothing new does not redraw the page the person is reading.
-        const repositories = (await codeRepositories()).map(({ name, code: { fetchedAt, ...code } }) => ({ name, code }));
-        sendJson(response, 200, { ref, kind: "code", data: { repositories } });
+      if ((parseEntityRef(ref)?.kind === "code" || parseCodeRef(ref)) && workspace) {
+        // Every Code address, a code file's among them, answers the Code page, which reads its tree, versions, and differences from the Code routes itself;
+        // the page names each repository's state alone, so a fetch that moves a branch tip does not draw the page the person is reading again.
+        const repositories = (await codeRepositories()).map(({ name, code }) => ({ name, state: code.state, message: code.message ?? null }));
+        sendJson(response, 200, { ref, kind: "code", data: { repositories, file: parseCodeRef(ref) } });
         return;
       }
       const entity: any = await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() });
@@ -1962,7 +2154,7 @@ export async function startReviewServer(options: any = {}) {
       if (!opened) {
         review.releaseBrowserOpen();
       }
-      return { url, opened, ...review.getSession() };
+      return { url, opened, ...(opened ? {} : { openFailed: true }), ...review.getSession() };
     },
     close() {
       review.closeViewers();

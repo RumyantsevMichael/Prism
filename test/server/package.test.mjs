@@ -58,6 +58,9 @@ test("packages compatible capacity and trace hooks at the default plugin path", 
   assert.ok(commands("UserPromptSubmit").includes(factCommand));
   assert.ok(commands("PreToolUse").includes(factCommand));
   assert.ok(commands("PreToolUse").indexOf(factCommand) < commands("PreToolUse").indexOf(traceCommand));
+  // A tool call's fact hook reads Codex's settings within 4 s, so its budget leaves a slow runner's Node start and transcript read room on top.
+  const toolFactHook = hookManifest.hooks.PreToolUse.flatMap((group) => group.hooks).find((hook) => hook.command === factCommand);
+  assert.equal(toolFactHook.timeout, 10);
   for (const event of ["SessionStart", "UserPromptSubmit"]) {
     const factHook = hookManifest.hooks[event]
       .flatMap((group) => group.hooks)

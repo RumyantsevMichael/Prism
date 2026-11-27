@@ -13,6 +13,8 @@ const UNBROKEN = "a-record-name-with-no-spaces-anywhere-that-cannot-wrap-and-kee
 const canvasOf = (scale: any, extra = "") => `<prism-canvas class="catalog-canvas" scale="${scale}"${extra}><svg class="catalog-canvas-drawing" viewBox="0 0 120 48" data-zoom="${Math.round(scale * 100)}" aria-hidden="true" focusable="false"><rect x="1" y="1" width="118" height="46" rx="6"/><text x="60" y="29" text-anchor="middle">Drawing at ${Math.round(scale * 100)}%</text></svg></prism-canvas>`;
 const TONES = ["neutral", "accent", "danger", "warning", "success", "info"];
 const html = escapeHtml;
+// An inline note in a tone with its tone's glyph.
+const noteOf = (tone: string, text: string) => `<prism-inline-note tone="${tone}"><prism-icon slot="start" name="${tone}" size="xs"></prism-icon>${text}</prism-inline-note>`;
 
 let ids = 0;
 const id = (prefix: string) => `${prefix}-${(ids += 1)}`;
@@ -289,6 +291,7 @@ const SPECIMENS: Record<string, any> = {
   "prism-field": {
     text: `<prism-field type="text" label="Name" name="name" placeholder="Name the slice"></prism-field>`,
     search: `<prism-field type="search" label="Jump to" name="q" placeholder="Search"></prism-field>`,
+    number: `<prism-field type="number" label="Quiet branches after" name="days" value="30" min="1" max="365" step="1"></prism-field>`,
     bare: `<prism-field type="search" variant="bare" label="Search or jump to" name="bare" placeholder="Search"><prism-icon slot="start" name="search"></prism-icon><prism-kbd slot="end">Esc</prism-kbd></prism-field>`,
     filter: `<div class="catalog-narrow"><prism-field type="search" variant="filter" label="Filter work" name="filter" placeholder="Filter work"><prism-icon slot="start" name="filter" size="sm"></prism-icon></prism-field></div>`,
     textarea: `<prism-field type="textarea" label="Note" name="note" placeholder="Write a note"></prism-field>`,
@@ -395,7 +398,8 @@ const SPECIMENS: Record<string, any> = {
     "unbroken-name": `<prism-tree label="Unbroken item"><prism-tree-item label="${UNBROKEN}" value="unbroken"></prism-tree-item></prism-tree>`,
     glyphs: `<prism-tree label="Glyphs"><prism-tree-item label="Attention" value="attention"><prism-icon slot="start" name="bell"></prism-icon><prism-badge slot="end" variant="count" solid>5</prism-badge></prism-tree-item><prism-tree-item label="Harden request retries" value="retries" expanded tip="Harden request retries · In progress · 0 of 5 shipped"><prism-status slot="start" value="in-progress" glyph-only></prism-status><span slot="end">0/5</span><prism-tree-item label="Retry timed-out requests until a total deadline" value="timeout" tip="Retry timed-out requests until a total deadline · Design"><prism-phase slot="start" phase="design" label="Design"></prism-phase></prism-tree-item><prism-tree-item label="Retry dropped connections" value="dropped" tip="Retry dropped connections · Blocked"><prism-phase slot="start" phase="build" label="Build"></prism-phase><span slot="end" class="prism-tree-flag">Blocked</span></prism-tree-item></prism-tree-item></prism-tree>`,
     flag: `<prism-tree label="Flags"><prism-tree-item label="Retry dropped connections" value="dropped" tip="Retry dropped connections · Build · Blocked"><prism-phase slot="start" phase="build" label="Build · Blocked"></prism-phase><span slot="end" class="prism-tree-flag">Blocked</span></prism-tree-item><prism-tree-item label="CSV-only exports" value="csv" tip="CSV-only exports · Superseded 3 Nov"><prism-status slot="start" value="superseded" glyph-only aria-hidden="true"></prism-status><span slot="end" class="prism-tree-flag is-muted">Superseded</span><span slot="end">3 Nov</span></prism-tree-item><prism-tree-item label="deadline.ts" value="deadline" tip="deadline.ts · Differs on feature/deadline and feature/jitter"><prism-icon slot="start" name="file" size="sm"></prism-icon><span slot="end" class="prism-tree-flag is-warning">Differs on 2</span></prism-tree-item><prism-tree-item label="${LONG}" value="flag-long"><prism-phase slot="start" phase="build" label="Build · Blocked"></prism-phase><span slot="end" class="prism-tree-flag">Blocked</span></prism-tree-item><prism-tree-item label="${UNBROKEN}" value="flag-unbroken"><prism-status slot="start" value="superseded" glyph-only aria-hidden="true"></prism-status><span slot="end" class="prism-tree-flag is-muted">Superseded</span></prism-tree-item></prism-tree>`,
-    link: `<prism-tree label="Links"><prism-tree-item label="Roadmap" value="roadmap" href="#roadmap"><prism-icon slot="start" name="roadmap"></prism-icon></prism-tree-item><prism-tree-item label="Requirements" value="requirements" href="#requirements"><prism-icon slot="start" name="list"></prism-icon><span slot="end">4</span></prism-tree-item></prism-tree>`
+    link: `<prism-tree label="Links"><prism-tree-item label="Roadmap" value="roadmap" href="#roadmap"><prism-icon slot="start" name="roadmap"></prism-icon></prism-tree-item><prism-tree-item label="Requirements" value="requirements" href="#requirements"><prism-icon slot="start" name="list"></prism-icon><span slot="end">4</span></prism-tree-item></prism-tree>`,
+    meta: `<prism-tree label="Meta"><prism-tree-item label="Harden request retries" value="meta-retries" meta="6" expanded><prism-status slot="start" value="in-progress" glyph-only></prism-status><prism-tree-item label="api · claude/retry-deadline" value="meta-branch" meta="5"><prism-icon slot="start" name="branch" size="sm"></prism-icon><prism-avatar slot="end" kind="person" name="Sam Ortiz" size="sm"></prism-avatar></prism-tree-item></prism-tree-item><prism-tree-item label="Wait for retry budgets" value="meta-waiting" meta="No changes yet"><prism-status slot="start" value="in-progress" glyph-only></prism-status></prism-tree-item><prism-tree-item label="${LONG}" value="meta-long" meta="12"></prism-tree-item></prism-tree>`
   },
   "prism-rail": {
     default: `<prism-rail label="Places">${railPlaces()}</prism-rail>`,
@@ -699,6 +703,20 @@ const third = 3;</code></pre></prism-code>`,
     segment: `<span class="catalog-segments"><prism-status value="done" variant="segment" glyph-only></prism-status><prism-status value="in-progress" variant="segment" glyph-only></prism-status><prism-status value="design-review" variant="segment" glyph-only></prism-status><prism-status value="blocked" variant="segment" glyph-only></prism-status><prism-status value="not-started" variant="segment" glyph-only></prism-status></span>`,
     "long-text": `<prism-status value="planned">${LONG}</prism-status>`,
     "unbroken-name": `<prism-status value="in-progress">${UNBROKEN}</prism-status>`
+  },
+  "prism-line-delta": {
+    both: `<prism-line-delta added="3" removed="2"></prism-line-delta>`,
+    "added-only": `<prism-line-delta added="12"></prism-line-delta>`,
+    "removed-only": `<prism-line-delta removed="1"></prism-line-delta>`,
+    zero: `<prism-line-delta added="0" removed="0"></prism-line-delta>`,
+    "long-text": `<span class="catalog-note">${html(LONG)} <prism-line-delta added="123456" removed="78901"></prism-line-delta></span>`,
+    "unbroken-name": `<span class="catalog-note">${UNBROKEN} <prism-line-delta added="4" removed="1"></prism-line-delta></span>`
+  },
+  "prism-inline-note": {
+    warning: noteOf("warning", "Report retry attempts also changes lines 2–4, so whichever merges second will conflict."),
+    info: noteOf("info", "Shown for the chosen branch only."),
+    "long-text": `<div class="catalog-narrow">${noteOf("warning", `${LONG} ${LONG}`)}${noteOf("info", LONG)}</div>`,
+    "unbroken-name": `<div class="catalog-narrow">${noteOf("warning", UNBROKEN)}</div>`
   }
 };
 

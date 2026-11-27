@@ -7,6 +7,18 @@ import { createRunChoices, createRunOptionsReader, HOST_HINT, hostFieldOf, hostL
 // and a select prism-field per run action's own choice of host, a prism-picker
 // per run choice, such as a model and its effort, and prism-buttons to apply and reset.
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
+// Why this tab cannot write, which the page learns as it loads and as the review app refuses its write session; the read-only notice names it.
+export const READ_ONLY_REASONS: Record<string, string> = {
+  link: "It was opened from a review link, and only a tab that Prism opens itself can make changes.",
+  grant: "The link that Prism opened it with was already used or was more than two minutes old.",
+  ended: "Its write session ended, because the review app restarted."
+};
+let readOnlyReason = "link";
+
+/** Records why this tab cannot write, as one of READ_ONLY_REASONS, for every read-only notice the page shows from then on. */
+export function noteReadOnlyReason(reason: string) {
+  if (reason in READ_ONLY_REASONS) readOnlyReason = reason;
+}
 export const STALE_MESSAGE = "Someone changed this since you opened it; it now shows the current value.";
 
 const isRecord = (value: any) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -120,9 +132,11 @@ export function valueText(action: any, input = currentInput(action)) {
   return isRecord(action.value) ? Object.values<any>(action.value).filter((item) => item !== null).join(", ") : String(action.value);
 }
 
-/** The note that a tab without a write session can only read, as the kit's notice. */
+/** The note that a tab without a write session can only read, and why, as the kit's notice. */
 export function readOnlyNotice() {
-  return `<p class="notice action-notice" role="note">${escapeHtml(READ_ONLY_NOTICE).replace("prism review", "<code>prism review</code>")}</p>`;
+  const [first, ...rest] = READ_ONLY_NOTICE.split(". ");
+  const text = `${first}. ${READ_ONLY_REASONS[readOnlyReason]} ${rest.join(". ")}`;
+  return `<p class="notice action-notice" role="note">${escapeHtml(text).replace("prism review", "<code>prism review</code>")}</p>`;
 }
 
 const keyOf = (target: any, action: any) => `${target}|${action.id}`;

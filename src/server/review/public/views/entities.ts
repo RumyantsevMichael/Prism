@@ -30,7 +30,19 @@ const VIEWS: Record<string, any> = {
 // Knowledge's own pages by the part of their address after `knowledge:`.
 export const KNOWLEDGE_PAGES: Readonly<Record<string, any>> = Object.freeze({ diagrams: "Diagrams", touched: "Touched by my work", changed: "Changed this week" });
 
-// Mirrors the server's entity references: sections, Attention's filtered pages, Knowledge's pages, initiative:<id>, slice:<id>/<slug>, and migration-run:<run id>.
+/**
+ * The Code place's narrowing addresses: code:work/<initiative>, code:work/<initiative>/<slice>, and code:branch/<repository>/<branch>, whose branch may hold `/`,
+ * as the Code page with the work item, slice, or line of work it narrows to; a code file, code:<repository>:<path>, is a file and no entity.
+ */
+export function codeNarrowing(ref: any): any {
+  let match = /^code:work\/([A-Za-z0-9_-]+)(?:\/([A-Za-z0-9_-]+))?$/.exec(ref ?? "");
+  if (match) return { kind: "code", work: { initiative: match[1], slice: match[2] ?? null } };
+  match = /^code:branch\/([^/:\s]+)\/(\S+)$/.exec(ref ?? "");
+  if (match) return { kind: "code", branch: { repository: match[1], branch: match[2] } };
+  return null;
+}
+
+// Mirrors the server's entity references: sections, the Code place's narrowing addresses, Attention's filtered pages, Knowledge's pages, initiative:<id>, slice:<id>/<slug>, and migration-run:<run id>.
 export function parseEntityRef(ref: any) {
   if (SECTIONS.includes(ref)) return { kind: ref };
   // The Launched sessions address, as a restored tab or an old link, opens the Agents page that replaced it; agents:<group> opens it with that Show choice made.
@@ -43,6 +55,8 @@ export function parseEntityRef(ref: any) {
   // Knowledge's own pages: the diagrams, the records behind the open slice, and this week's record changes.
   match = /^knowledge:(diagrams|touched|changed)$/.exec(ref ?? "");
   if (match) return { kind: "knowledge", page: match[1] };
+  const code = codeNarrowing(ref);
+  if (code) return code;
   match = /^initiative:([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "initiative", id: match[1] };
   match = /^slice:([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(ref ?? "");
