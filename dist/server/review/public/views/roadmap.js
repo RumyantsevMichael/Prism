@@ -25,8 +25,21 @@ function dependencyLinks(item, titles) {
   const lines = line("needs", item.requires, "needs") + line("unblocks", item.requiredBy, "unblocks");
   return lines ? `<span class="roadmap-rels">${lines}</span>` : "";
 }
+function unmetChip(item) {
+  const unmet = item.state === "emerging" ? item.workItem?.unmet ?? [] : [];
+  if (!unmet.length) return "";
+  return `<prism-chip tone="warning" tip="${escapeHtml(unmet.map(unmetText).join(" "))}">${escapeHtml(`${plural(unmet.length, "readiness condition")} unmet`)}</prism-chip>`;
+}
+function unmetText(condition) {
+  if (condition.code === "no_approved_requirement") return "It cites no Approved requirement file.";
+  if (condition.code === "requirement_not_approved") return `${condition.path} is ${condition.status ?? "missing"}, not Approved.`;
+  if (condition.code === "draft_adr_nonconforming") return `${condition.path} is a Draft ADR that breaks the ADR format.`;
+  if (condition.code === "question_unanswered") return `A question it cannot be ready without has no answer: ${condition.text}`;
+  if (condition.code === "not_confirmed") return "Nobody has confirmed that it is ready.";
+  return String(condition.code ?? "");
+}
 function signals(item) {
-  const parts = [];
+  const parts = [unmetChip(item)];
   if (item.readyToShip && item.state !== "shipped") parts.push(badge("ready to ship", "success"));
   if (item.findings?.blocking) parts.push(badge(plural(item.findings.blocking, "blocking finding"), "danger"));
   else if (item.findings?.unresolved) parts.push(badge(plural(item.findings.unresolved, "open finding"), "warning"));
@@ -43,14 +56,18 @@ function claimStack(claims = []) {
   return `<div class="claim-stack"><span class="avatar-stack">${[...live, ...claims.filter((claim) => isExpired(claim, now))].map((claim) => `<prism-claim variant="avatar"${claimAttributes(claim)}></prism-claim>`).join("")}</span><span class="claim-counts">${counts.map((text, index) => `<span class="${index && expired ? "is-expired" : ""}">${text}</span>`).join('<span aria-hidden="true"> \xB7 </span>')}</span></div>`;
 }
 const ARCHIVED = /* @__PURE__ */ new Set(["shipped", "superseded"]);
+const CLOSED = /* @__PURE__ */ new Set(["killed", "merged", "split"]);
 function visibleItems(data, archive) {
-  return archive ? data.items : data.items.filter((item) => !ARCHIVED.has(item.state));
+  const open = data.items.filter((item) => !CLOSED.has(item.state));
+  return archive ? open : open.filter((item) => !ARCHIVED.has(item.state));
 }
 const BAND_HINTS = { Now: "being built", Next: "designed next", Later: "envisioned", Parked: "not planned", Shipped: "done" };
+const STATE_NAMES = Object.freeze({ "in-progress": "In progress", planned: "Planned", envisioned: "Envisioned", emerging: "Emerging", shipped: "Shipped", superseded: "Superseded" });
 const STATUS_GROUPS = [["in-progress", "In progress"], ["planned", "Planned"], ["envisioned", "Envisioned"], ["shipped", "Shipped"], ["superseded", "Superseded"]];
+const GROUPED_STATES = Object.freeze({ envisioned: ["envisioned", "emerging"] });
 function sliceBar(item) {
   const slices = item.slices ?? [];
-  if (!slices.length || item.state === "envisioned") return "";
+  if (!slices.length || item.state === "envisioned" || item.state === "emerging") return "";
   const done = slices.filter((slice) => slice.status === "done").length;
   const started = slices.filter((slice) => slice.status !== "not-started").length;
   const label = done || started ? `${done} of ${slices.length} done` : `0 of ${slices.length} started`;
@@ -83,7 +100,7 @@ function groups(data, archive, grouping) {
       name,
       hint: "by band, then priority",
       glyph: status(value, { glyphOnly: true, attributes: ' aria-hidden="true"' }),
-      members: items.filter((item) => item.state === value)
+      members: items.filter((item) => (GROUPED_STATES[value] ?? [value]).includes(item.state))
     }));
   }
   const bands = archive ? data.bands : data.bands.filter((band) => band !== "Shipped");
@@ -134,7 +151,7 @@ async function graph(container, data, ctx, titles, archive) {
   const nodes = items.map((item) => ({
     id: item.id,
     title: item.title,
-    subtitle: `${item.band} \xB7 ${item.state}${item.progress ? ` \xB7 ${item.progress.done}/${item.progress.leaves}` : ""}`,
+    subtitle: `${item.band} \xB7 ${STATE_NAMES[item.state] ?? item.state}${item.progress ? ` \xB7 ${item.progress.done}/${item.progress.leaves}` : ""}`,
     tooltip: item.intent,
     cluster: item.state === "superseded" ? "Superseded" : item.band,
     className: `initiative-node state-${item.state}`
@@ -197,18 +214,20 @@ async function render(container, entity, ctx) {
   };
   if (lane) view.collapsedLanes = view.collapsedLanes.filter((band) => band !== lane);
   const archived = data.items.filter((item) => ARCHIVED.has(item.state)).length;
+  const open = data.items.filter((item) => !CLOSED.has(item.state));
   const titles = new Map(data.items.map((item) => [item.id, item.title]));
   const missing = data.error ? `<p class="error">${escapeHtml(data.error)}</p>` : !data.exists ? `<p>No roadmap record exists yet.</p><p class="muted">Run <code>setup</code> to create or migrate it.</p>` : !data.valid ? `<p class="error">The roadmap record is invalid: ${escapeHtml(data.errors.join(" "))}</p>` : "";
-  const counts = Object.fromEntries(["in-progress", "planned", "envisioned", "shipped"].map((state) => [state, data.items.filter((item) => item.state === state).length]));
+  const counts = Object.fromEntries(["in-progress", "planned", "envisioned", "emerging", "shipped"].map((state) => [state, open.filter((item) => item.state === state).length]));
   const metric = (count, label, state = "") => `<span class="roadmap-metric">${state ? status(state, { glyphOnly: true, attributes: ' aria-hidden="true"' }) : ""}<strong>${count}</strong> <span>${label}</span></span>`;
   container.innerHTML = `
     ${missing ? `<prism-panel class="view-section summary-block">${missing}</prism-panel>` : ""}
     <div class="roadmap-meta">
       <div class="roadmap-metrics" aria-label="Initiatives by state">
-        ${metric(data.items.length, data.items.length === 1 ? "initiative" : "initiatives")}
+        ${metric(open.length, open.length === 1 ? "initiative" : "initiatives")}
         ${metric(counts["in-progress"], "in progress", "in-progress")}
         ${metric(counts.planned, "planned", "planned")}
         ${metric(counts.envisioned, "envisioned", "envisioned")}
+        ${counts.emerging ? metric(counts.emerging, "emerging", "emerging") : ""}
         ${metric(counts.shipped, "shipped", "shipped")}
       </div>
       ${questionsChip(data.openQuestions?.length ?? 0)}
@@ -226,16 +245,16 @@ async function render(container, entity, ctx) {
     toggle.addEventListener("click", () => {
       const lanes = new Set(view.collapsedLanes);
       const band = toggle.dataset.lane;
-      const open = lanes.has(band);
-      if (open) lanes.delete(band);
+      const open2 = lanes.has(band);
+      if (open2) lanes.delete(band);
       else lanes.add(band);
       view.collapsedLanes = [...lanes];
       void setPreference("roadmap.collapsedLanes", view.collapsedLanes).catch(() => {
       });
-      toggle.closest(".roadmap-band").querySelector(".roadmap-band-items").hidden = !open;
-      toggle.setAttribute("aria-expanded", String(open));
-      toggle.setAttribute("label", `${open ? "Collapse" : "Expand"} ${band}`);
-      toggle.querySelector("prism-icon").setAttribute("name", open ? "chevron-down" : "chevron-right");
+      toggle.closest(".roadmap-band").querySelector(".roadmap-band-items").hidden = !open2;
+      toggle.setAttribute("aria-expanded", String(open2));
+      toggle.setAttribute("label", `${open2 ? "Collapse" : "Expand"} ${band}`);
+      toggle.querySelector("prism-icon").setAttribute("name", open2 ? "chevron-down" : "chevron-right");
     });
   }
   const choose = (key, value) => {
@@ -262,5 +281,6 @@ export {
   laneHeading,
   render,
   sliceBar,
-  stateBadge
+  stateBadge,
+  unmetText
 };

@@ -42,6 +42,7 @@ import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs
 import { INITIATIVE_TOOLS, InitiativeError, claimedByUpdate, getInitiative, initiativeAcknowledgement, initiativeWork, readInitiative, requireClaimedWork, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, roadmapAcknowledgement, updateRoadmap } from "./workflow/roadmap.mjs";
 import { ARTIFACT_TOOLS, artifactAtLocation, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
+import { WORK_ITEM_TOOLS, WorkItemError, getWorkItem, updateWorkItem } from "./workflow/work-items.mjs";
 import { savedComment } from "./workflow/artifact-comments.mjs";
 import { keptExplanation, shownPath } from "./workflow/artifact-migration.mjs";
 import { ARTIFACT_MIGRATIONS, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX } from "./workflow/artifact-paths.mjs";
@@ -354,7 +355,10 @@ function stateErrorData(error) {
     return { code: error.code, key: error.key, folder: error.folder, ...error.component === void 0 ? {} : { component: error.component } };
   }
   if (error?.name === "ArtifactError") {
-    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "path", "location", "limit", "nameLimit", "component", "components", "proposed", "artifacts"].filter((key) => error[key] !== void 0).map((key) => [key, error[key]])) };
+    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "path", "location", "limit", "nameLimit", "component", "components", "proposed", "artifacts", "options", "findings", "items"].filter((key) => error[key] !== void 0).map((key) => [key, error[key]])) };
+  }
+  if (error instanceof WorkItemError) {
+    return { code: error.code, ...Object.fromEntries(["errors", "currentRevision", "item", "decision", "unmet", "stage", "proposal", "questions", "missing"].filter((key) => error[key] !== void 0).map((key) => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
   }
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };
@@ -366,7 +370,7 @@ function stateErrorData(error) {
     return { code: error.code, ...error.errors ? { errors: error.errors } : {}, ...error.currentRevision === void 0 ? {} : { currentRevision: error.currentRevision } };
   }
   if (error instanceof InitiativeError || error instanceof RoadmapError || ["ShippedHistoryError", "UnreadableRoadmapError", "InitiativeGraphError", "VerificationError", "SliceDesignError", "DesignViewError", "ComponentError"].includes(error?.name)) {
-    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState", "entry", "components", "component", "dependency", "cycle", "slice", "paths", "folder", "scope", "waiting", "scopes", "afterGate", "changed", "adrs", "gates", "claims", "proposals", "fixes", "initiative", "shippedAt"].filter((key) => error[key] !== void 0).map((key) => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
+    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState", "entry", "components", "component", "dependency", "cycle", "slice", "paths", "folder", "scope", "waiting", "scopes", "afterGate", "changed", "adrs", "gates", "claims", "proposals", "fixes", "initiative", "shippedAt", "item", "decision", "unmet"].filter((key) => error[key] !== void 0).map((key) => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
   }
   if (error?.name !== "CoordinationStateError") {
     if (["validation_failed", "invalid_path", "lock_timeout", "stale_snapshot", "preparation_failed", "unsupported_runtime", "corrupt_asset", "resource_limit", "incomplete_structure", "evidence_missing", "gate_blocked", "revision_conflict", "deferral_refused"].includes(error.code)) return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "expectedSnapshot", "currentSnapshot", "evidenceId"].filter((key) => error[key] !== void 0).map((key) => [key, Array.isArray(error[key]) && !(error.code === "deferral_refused" && key === "problems") ? error[key].slice(0, 100) : error[key]])) };
@@ -461,6 +465,7 @@ const activeSessionInputSchema = {
 const sessionInputSchema = { oneOf: [explicitSessionInputSchema, activeSessionInputSchema] };
 const tools = [
   ...ROADMAP_TOOLS,
+  ...WORK_ITEM_TOOLS,
   ...INITIATIVE_TOOLS,
   ...ARTIFACT_TOOLS,
   GET_SKILL_TOOL,
@@ -563,7 +568,7 @@ const tools = [
   },
   {
     name: "check_artifacts",
-    description: `Check the project's requirement files, ADRs, glossary, and feature files against Prism's artifact formats. Without paths it checks every .md file other than README.md up to four folders below the configured Requirements and ADRs paths, every .feature file up to four folders below the Feature files path, and the configured Glossary file. In a project whose .prism/workflow.md names a record store, requirements, ADRs, and glossaries are store artifacts, read from every scope this checkout sees (the workspace, its repository, and that repository's components), each listed once per scope that holds it, while feature files are read from the checkout. It returns each format's type, version, and reference file, and for each artifact its path, its scope (the scope object get_artifact returns, or null for a checkout file), whether it conforms, each finding with its rule id, line, and message, each value written as unknown, and the newest earlier format version it conforms to. A required value written as unknown is listed under unknowns in every artifact, and is also a finding with the rule <type>.unknown unless the artifact is a requirement file whose status is Draft or an ADR whose status is Proposed, read as the recorded status in a project with a store; each finding that report_format_finding recorded for the artifact's current version is listed too, with the rule <type>.reported. update_artifact refuses a write that would leave a requirement file, ADR, or glossary breaking its format. A glossary source counts by the requirement's or ADR's recorded status and resolves in the glossary's own scope, else in the nearest scope above it. Each paths entry is a project-relative path or { path, scope, component }, with scope "workspace", "repository", or "component" and component as get_artifact takes them. Refusals: artifact_type_unknown for a path under none of the configured paths, artifact_missing for a path that no checkout file or seen scope holds, artifact_ambiguous with scopes when two seen scopes hold a path until its scope is named, scope_invalid for a scope on a feature file or in a project without a store, component_unknown for an undeclared component, and the store's own refusal, such as store_unavailable, when the store cannot be used; it never falls back to checkout copies. This tool reads files and changes nothing.`,
+    description: `Check the project's requirement files, ADRs, glossary, and feature files against Prism's artifact formats. Without paths it checks every .md file other than README.md up to four folders below the configured Requirements and ADRs paths, every .feature file up to four folders below the Feature files path, and the configured Glossary file. In a project whose .prism/workflow.md names a record store, requirements, ADRs, and glossaries are store artifacts, read from every scope this checkout sees (the workspace, its repository, and that repository's components), each listed once per scope that holds it, while feature files are read from the checkout. It returns each format's type, version, and reference file, and for each artifact its path, its scope (the scope object get_artifact returns, or null for a checkout file), whether it conforms, each finding with its rule id, line, and message, each value written as unknown, and the newest earlier format version it conforms to; a requirement file's entry also carries warnings, [{ rule: requirements.implementation-text, section, line, text, message }] for each section whose Requirement: statement holds a code span or a file path and so may describe implementation, which never counts as a finding. A required value written as unknown is listed under unknowns in every artifact, and is also a finding with the rule <type>.unknown unless the artifact is a requirement file whose status is Draft or an ADR whose status is Proposed, read as the recorded status in a project with a store; each finding that report_format_finding recorded for the artifact's current version is listed too, with the rule <type>.reported. update_artifact refuses a write that would leave a requirement file, ADR, or glossary breaking its format. A glossary source counts by the requirement's or ADR's recorded status and resolves in the glossary's own scope, else in the nearest scope above it. Each paths entry is a project-relative path or { path, scope, component }, with scope "workspace", "repository", or "component" and component as get_artifact takes them. Refusals: artifact_type_unknown for a path under none of the configured paths, artifact_missing for a path that no checkout file or seen scope holds, artifact_ambiguous with scopes when two seen scopes hold a path until its scope is named, scope_invalid for a scope on a feature file or in a project without a store, component_unknown for an undeclared component, and the store's own refusal, such as store_unavailable, when the store cannot be used; it never falls back to checkout copies. This tool reads files and changes nothing.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -1139,7 +1144,8 @@ async function callGateWait(argumentsValue, metadata, requestId) {
       value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
     }
   } else if (unsupported) {
-    value = await peekWithdrawn({ projectRoot, ...source, gateIds }) ?? { status: "unsupported_host", gateIds, client: clientName, reason: unsupported };
+    const peeked = await waitForUserGates({ projectRoot, ...source, gateIds, maxWaitMinutes: 1e-4, settleMs: 0, knownEntries: void 0, signal: void 0, onProgress: void 0, holdAskers: false }).catch(() => null);
+    value = peeked?.status === "answered" ? peeked : await peekWithdrawn({ projectRoot, ...source, gateIds }) ?? { status: "unsupported_host", gateIds, client: clientName, reason: unsupported };
   } else {
     const controller = new AbortController();
     if (requestId !== void 0) pendingWaits.set(requestId, controller);
@@ -1828,6 +1834,17 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     value = await withRecordStore(projectRoot, value);
     const marks = name === "get_initiative" ? await historyMarksContent(projectRoot, value.shippedHistory) : name === "get_roadmap" ? await Promise.all((value.markedHistory ?? []).map(async (item) => ({ type: "text", text: await historyMarksText(projectRoot, item.initiative, item.marked) }))) : [];
     return { content: [{ type: "text", text: JSON.stringify(value) }, ...marks], structuredContent: value };
+  }
+  if (name === "get_work_item" || name === "update_work_item") {
+    const input2 = { ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) };
+    let value;
+    try {
+      value = name === "get_work_item" ? await getWorkItem(input2) : await updateWorkItem(input2);
+    } catch (error) {
+      if (!(error instanceof ArtifactCitationError)) throw error;
+      return { content: [{ type: "text", text: error.message }], structuredContent: { code: error.code, message: error.message, artifacts: error.artifacts }, isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (name === "get_artifact" || name === "update_artifact") {
     const input2 = { ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) };

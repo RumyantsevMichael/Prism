@@ -640,15 +640,15 @@ const third = 3;</code></pre></prism-code>`,
     "unbroken-name": `<div class="catalog-resize-demo"><prism-resizer label="${UNBROKEN}" tip="${UNBROKEN}"></prism-resizer></div>`
   },
   "prism-status": {
-    idle: `<prism-status value="envisioned"></prism-status> <prism-status value="not-started"></prism-status> <prism-status value="open"></prism-status>`,
+    idle: `<prism-status value="emerging"></prism-status> <prism-status value="envisioned"></prism-status> <prism-status value="not-started"></prism-status> <prism-status value="open"></prism-status>`,
     ready: `<prism-status value="planned"></prism-status>`,
     active: `<prism-status value="in-progress"></prism-status>`,
     waiting: `<prism-status value="design-review"></prism-status> <prism-status value="proposed"></prism-status> <prism-status value="fixed"></prism-status>`,
     problem: `<prism-status value="blocked"></prism-status> <prism-status value="reopened"></prism-status> <prism-status value="rejected"></prism-status>`,
     done: `<prism-status value="shipped"></prism-status> <prism-status value="accepted"></prism-status> <prism-status value="verified"></prism-status>`,
-    retired: `<prism-status value="superseded"></prism-status> <prism-status value="deferred"></prism-status> <prism-status value="deprecated"></prism-status>`,
+    retired: `<prism-status value="superseded"></prism-status> <prism-status value="killed"></prism-status> <prism-status value="merged"></prism-status> <prism-status value="split"></prism-status> <prism-status value="deferred"></prism-status> <prism-status value="deprecated"></prism-status>`,
     pill: `<prism-status value="in-progress" variant="pill"></prism-status> <prism-status value="design-review" variant="pill"></prism-status> <prism-status value="shipped" variant="pill"></prism-status>`,
-    "glyph-only": `<prism-status value="envisioned" glyph-only></prism-status> <prism-status value="planned" glyph-only></prism-status> <prism-status value="in-progress" glyph-only></prism-status> <prism-status value="design-review" glyph-only></prism-status> <prism-status value="blocked" glyph-only></prism-status> <prism-status value="done" glyph-only></prism-status> <prism-status value="superseded" glyph-only></prism-status>`,
+    "glyph-only": `<prism-status value="emerging" glyph-only></prism-status> <prism-status value="envisioned" glyph-only></prism-status> <prism-status value="planned" glyph-only></prism-status> <prism-status value="in-progress" glyph-only></prism-status> <prism-status value="design-review" glyph-only></prism-status> <prism-status value="blocked" glyph-only></prism-status> <prism-status value="done" glyph-only></prism-status> <prism-status value="superseded" glyph-only></prism-status>`,
     segment: `<span class="catalog-segments"><prism-status value="done" variant="segment" glyph-only></prism-status><prism-status value="in-progress" variant="segment" glyph-only></prism-status><prism-status value="design-review" variant="segment" glyph-only></prism-status><prism-status value="blocked" variant="segment" glyph-only></prism-status><prism-status value="not-started" variant="segment" glyph-only></prism-status></span>`,
     "long-text": `<prism-status value="planned">${LONG}</prism-status>`,
     "unbroken-name": `<prism-status value="in-progress">${UNBROKEN}</prism-status>`

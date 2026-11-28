@@ -381,7 +381,7 @@ function bind(current) {
   container.addEventListener("click", (event) => {
     keep = Boolean(event.ctrlKey || event.metaKey);
     const target = event.target.closest?.("[data-code-retry], [data-code-on], [data-code-back], [data-code-version]");
-    if (!target || page?.container !== container) return;
+    if (!target || !page) return;
     if (target.dataset.codeRetry !== void 0) {
       event.preventDefault();
       event.stopPropagation();
@@ -410,7 +410,7 @@ function bind(current) {
     }
   }, { capture: true });
   container.addEventListener("change", (event) => {
-    if (!event.target.matches?.("[data-code-files]") || page?.container !== container) return;
+    if (!event.target.matches?.("[data-code-files]") || !page) return;
     memory.files.set(page.scope, event.detail?.value ?? event.target.value);
     draw(page);
     void sync(page);
@@ -418,7 +418,7 @@ function bind(current) {
   container.addEventListener("prism-toggle", (event) => {
     const item = event.target;
     const path = item.dataset?.codeFolder ?? item.dataset?.codeRepository;
-    if (!path || page?.container !== container) return;
+    if (!path || !page) return;
     if (event.detail.expanded) {
       memory.expanded.add(path);
       memory.closed.delete(path);
@@ -429,7 +429,7 @@ function bind(current) {
     void sync(page);
   });
   container.addEventListener("prism-select", (event) => {
-    if (page?.container !== container) return;
+    if (!page) return;
     const item = [...container.querySelectorAll("prism-tree-item")].find((node) => node.selected && node.getAttribute("value") === event.detail?.value);
     const opened = page.file ? `${page.file.repository}/${page.file.path}` : null;
     const reselect = () => {

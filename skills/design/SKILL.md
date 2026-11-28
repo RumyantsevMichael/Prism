@@ -7,15 +7,14 @@ sdm: "0.3"
 
 # Design a contract
 
-Design does the quality work of the [workflow](../workflow/SKILL.md).
-It designs one contract scope: the root slice of an initiative, or a part that an earlier design split off.
+Design does the quality work of the [workflow](../workflow/SKILL.md) for one contract scope: the root slice of an initiative, or a part that an earlier design split off.
 Implementers later work from its output in fresh sessions, and they are judged on correct behavior, not on passing its tests, so a contract or suite that is easy to pass but misses required behavior is a design defect.
 Every slug, folder, test, probe, and view that design creates has a [portable name](../workflow/SKILL.md#common-terms), and in a project with a store, design reads requirements, ADRs, and `slice.md` files through `get_artifact` and writes each `slice.md` and each view in a plan folder through `update_artifact`, as [store artifacts](../workflow/SKILL.md#common-terms), while its tests stay in the checkout.
 
 ## 1. Prepare
 
 1. Read `.prism/workflow.md`, the project instructions, and the glossary.
-2. Read the scope's title, outcome, and requirement assignment, and for a done scope its reported defects, through `get_initiative`.
+2. Read the scope's title, outcome, and requirement assignment, and for a done scope its reported defects, through `get_initiative`, and the initiative's work item, with its shaping record and cited ADRs, through `get_work_item`.
 3. Read the assigned Approved requirements, relevant ADRs, and the parent's `slice.md` when the scope has a parent, and cite a shipped initiative's contracts, slice documents, frozen tests, and reviews only as history, because current intent lives only in Approved requirements, Accepted ADRs, the glossary, and feature files.
 4. Explore the code where the required behavior enters the system and every part it must change, until a fit decision is supported.
 5. When existing concepts overlap the required behavior, use `refactor` in analysis mode before deciding to add a new one.
@@ -46,7 +45,7 @@ Every slug, folder, test, probe, and view that design creates has a [portable na
 11. Recommend review `required` for a slice when an independent implementation review pays off, such as for authentication, authorization, secrets, untrusted input, or data loss risk, and `none` otherwise.
 12. When the project keeps Gherkin feature files, use `write-feature` for the scenarios and list them as frozen tests.
 13. When production code, generated code, or verification consumes a changed boundary, use `write-contracts` after reusing governing types or schemas.
-14. Use `write-adr` for each settled architectural decision that outlives the initiative, and link each ADR that the contract relies on from the scope's `slice.md`, because with a store a ship accepts only the Proposed ADRs that the initiative's `slice.md` files link.
+14. Use `write-adr` for each settled architectural decision that outlives the initiative, and to decide through `decide` each Draft ADR that the work item cites before you propose, since Prism refuses a design that links a Draft ADR, and link each ADR that the contract relies on from the scope's `slice.md`, because with a store a ship accepts only the Proposed ADRs that the initiative's `slice.md` files link.
 15. Commit the design when commits are on.
 
 - Don't

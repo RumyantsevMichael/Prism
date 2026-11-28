@@ -660,6 +660,10 @@ const ACTION_STATUS = {
   migration_run_conforming: 409,
   migration_run_closed: 409,
   invalid_input: 400,
+  // A work item kill's answers are refused while an artifact is still in use, an artifact's question is unanswered, or the kill has no reason.
+  artifact_in_use: 409,
+  dispositions_unanswered: 409,
+  reason_required: 409,
   // The refusals of a launch, a stop, and a resume, and of the confirmation outside the page that comes before a start.
   confirmation_pending: 409,
   confirmation_cooldown: 409,

@@ -1451,7 +1451,7 @@ function trailOf(path) {
     return { ref: crumb.ref, label: owned || named.label === named.kind ? named.kind : named.label };
   });
 }
-const STATE_WORDS = { envisioned: "Envisioned", planned: "Planned", "in-progress": "In progress", shipped: "Shipped", superseded: "Superseded", unlisted: "Not on the roadmap" };
+const STATE_WORDS = { emerging: "Emerging", envisioned: "Envisioned", planned: "Planned", "in-progress": "In progress", shipped: "Shipped", superseded: "Superseded", killed: "Killed", merged: "Merged", split: "Split", unlisted: "Not on the roadmap" };
 const STATUS_WORDS = { "not-started": "Not started", "in-progress": "In progress", blocked: "Blocked", split: "Split", done: "Done" };
 const PHASE_STEPS = [["requirements", "Requirements"], ["design", "Design"], ["frozen", "Tests frozen"], ["build", "Build"], ["review", "Review"], ["shipped", "Shipped"]];
 function pageHref(ref) {
@@ -1989,16 +1989,18 @@ function historyNavigation() {
   const settled = navigation.places?.history ?? [];
   if (!settled.length) return [element("p", "nav-note", "Nothing has shipped yet.")];
   const titles = new Map((navigation.initiatives ?? []).map((item) => [item.id, item.title]));
+  const named = (id) => titles.get(id) ?? id;
   return [tree("History", settled.map((entry) => {
     const ref = `initiative:${entry.id}`;
     const date = shortDate(entry.at);
-    const superseded = entry.decision === "superseded";
+    const shipped = entry.decision === "shipped";
+    const word = STATE_WORDS[entry.decision] ?? entry.decision;
     const end = [];
-    if (superseded) end.push(element("span", "prism-tree-flag is-muted", "Superseded"));
+    if (!shipped) end.push(element("span", "prism-tree-flag is-muted", word));
     if (date) end.push(meta(date));
-    const by = superseded && entry.by ? ` by ${titles.get(entry.by) ?? entry.by}` : "";
-    const tip = `${entry.title} \xB7 ${superseded ? "Superseded" : "Shipped"}${date ? ` ${date}` : ""}${by}`;
-    const glyph = kitElement("prism-status", { value: superseded ? "superseded" : "shipped", "glyph-only": true, "aria-hidden": superseded ? "true" : null });
+    const after = entry.decision === "superseded" && entry.by ? ` by ${named(entry.by)}` : entry.decision === "merged" && entry.by ? ` into ${named(entry.by)}` : entry.decision === "split" && entry.into?.length ? ` into ${entry.into.map(named).join(", ")}` : entry.decision === "killed" && entry.reason ? `: ${entry.reason}` : "";
+    const tip = `${entry.title} \xB7 ${word}${date ? ` ${date}` : ""}${after}`;
+    const glyph = kitElement("prism-status", { value: entry.decision, "glyph-only": true, "aria-hidden": shipped ? null : "true" });
     return treeItem(ref, entry.title, { selected: selectedPath === ref, start: [glyph], end, tip });
   }))];
 }
@@ -2258,11 +2260,14 @@ function controlsOf(root) {
 }
 function captureView(memory) {
   memory.open = [...artifact.querySelectorAll("prism-disclosure")].map((disclosure) => [disclosure.getAttribute("summary") ?? "", disclosure.open]);
+  captureFocus(memory);
+  artifact.style.minHeight = `${artifact.offsetHeight}px`;
+}
+function captureFocus(memory) {
   memory.focus = artifact.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
   memory.focusKey = artifact.contains(document.activeElement) ? document.activeElement.closest("[data-focus-key]")?.dataset.focusKey ?? null : null;
   memory.focused = artifact.contains(document.activeElement) ? document.activeElement : null;
   memory.selection = memory.focused && "selectionStart" in memory.focused ? [memory.focused.selectionStart, memory.focused.selectionEnd] : null;
-  artifact.style.minHeight = `${artifact.offsetHeight}px`;
 }
 function beginRebuild(path) {
   const same = renderedPath === path;
@@ -2414,7 +2419,10 @@ function endRebuild(memory) {
   swapIn(memory);
 }
 function swapIn(memory) {
-  if (renderedPath === memory.path) memory.top = workspace.scrollTop;
+  if (renderedPath === memory.path) {
+    memory.top = workspace.scrollTop;
+    if (artifact.contains(document.activeElement)) captureFocus(memory);
+  }
   artifact.replaceChildren(...memory.stage.childNodes);
   memory.stage.remove();
   const state = viewState(memory.path);

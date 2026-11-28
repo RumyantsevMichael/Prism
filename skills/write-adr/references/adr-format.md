@@ -1,9 +1,10 @@
 # ADR format
 
-Format version: 1
+Format version: 2
 Example path: `docs/ADRs/uploads/upload-token.md`
 
 An ADR records one architectural decision or invariant and the Approved requirements it serves.
+A Draft ADR records an architecture choice that design has not decided yet: its problem, its decision drivers, and its options, with no decision.
 The `check_artifacts` tool reports each rule below that an ADR breaks, by its rule id.
 Any required field value or required section body may be the single word `unknown` while the status is `Proposed`, except the title and the status.
 
@@ -12,17 +13,37 @@ Any required field value or required section body may be the single word `unknow
 - `adr.text`: The file is UTF-8 text of at most 1 MiB.
 - `adr.title`: The first line is `# <decision>`.
 - `adr.header`: `Status:` and then `Created:` follow the title before any section.
-- `adr.status`: The status is `Proposed`, `Accepted`, `Declined`, or `Superseded by <link>`.
+- `adr.status`: The status is `Draft`, `Proposed`, `Accepted`, `Declined`, or `Superseded by <link>`.
 - `adr.dates`: Created is a `YYYY-MM-DD` date.
-- `adr.sections`: `## Requirements`, `## Problem`, `## Decision`, `## Rationale`, `## Alternatives`, `## Consequences`, `## Mechanism`, and `## Decision Log` appear once each in that order, where only the Decision Log may be empty.
+- `adr.sections`: `## Requirements`, `## Problem`, `## Decision`, `## Rationale`, `## Alternatives`, `## Consequences`, `## Mechanism`, and `## Decision Log` appear once each in that order, where only the Decision Log may be empty; a Draft ADR instead has `## Requirements`, `## Problem`, `## Decision drivers`, `## Options`, and `## Decision Log` once each in that order and none of `## Decision`, `## Rationale`, `## Alternatives`, `## Consequences`, or `## Mechanism`, and its Options section holds at least two options, each a `### <option>` heading whose body holds one non-empty `Costs:` line, one non-empty `Rules out:` line, and at most one `Preferred by: <who>, because <why>` line.
 - `adr.requirements`: The Requirements section is `n/a` or paragraphs or list items in which every Markdown link targets a relative `<path>.md` with an optional `#<anchor>`; write one link to `<path>.md#<anchor>` per list item, as the example does.
 - `adr.unknown`: A required value or section body is `unknown` only while the status is `Proposed`, where a project with a record store reads the recorded status.
 - `adr.reported`: No agent has reported, through `report_format_finding`, a break of this format on this version of the ADR that the other rules do not see.
+
+## Draft ADRs
+
+A new ADR written with `Status: Draft` is recorded Draft.
+Design decides a Draft ADR through Prism, which writes the chosen option as its decision, keeps every other option as an alternative and its `Decision drivers` section, and makes it Proposed.
+A gate may only decline a Draft ADR.
+Write a person's preferred solution as one option with its `Preferred by:` line.
+
+```markdown
+## Options
+
+### Push over a socket
+
+The server pushes each change to every client.
+
+Costs: A socket per client.
+Rules out: Clients behind proxies that drop sockets.
+Preferred by: The platform team, because it already runs sockets
+```
 
 ## Defaults
 
 - Default `Status`: `Proposed`
 - Default `Requirements`: `n/a`
+- Default `Decision drivers`: `n/a`
 - Default `Decision Log`: `n/a`
 
 ## Corresponding sections

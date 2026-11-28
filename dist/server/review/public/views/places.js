@@ -12,7 +12,7 @@ const DEFAULT_PLACE = "attention";
 function placeNamed(name) {
   return PLACES.find((place) => place.name === name) ?? null;
 }
-const SETTLED = /* @__PURE__ */ new Set(["shipped", "superseded"]);
+const SETTLED = /* @__PURE__ */ new Set(["shipped", "superseded", "killed", "merged", "split"]);
 function placeOf(ref, { context = null, initiatives = [] } = {}) {
   if (context && Object.hasOwn(context, "place")) return context.place;
   if (typeof ref !== "string" || !ref) return null;

@@ -10,7 +10,8 @@ import { hostDefinition } from "../session/launch-hosts.mjs";
 import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workflow/initiative.mjs";
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
-import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
+import { DISPLAY_BANDS, readRoadmap, withWorkItems } from "../workflow/roadmap.mjs";
+import { getWorkItem } from "../workflow/work-items.mjs";
 import { historyOrder, readCoordinationState } from "../workflow/state.mjs";
 import { readIndexHistory } from "../workflow/index-history.mjs";
 import { RECORD_DIRECTORY, inArtifactStore, isStoreWithoutCheckout, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordStoreOf, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
@@ -308,10 +309,11 @@ async function computeRoadmapView(projectRoot) {
   } catch (error) {
     return { config: { paths: config.paths, diagnostics: config.diagnostics }, error: error.message, bands: DISPLAY_BANDS, items: [], unlisted: await initiativeFolders(projectRoot) };
   }
-  const { resolved, loaded, derived } = roadmap;
+  const { resolved, loaded } = roadmap;
   const record = loaded.record;
   const items = [];
   if (loaded.valid && record) {
+    const derived = await withWorkItems(resolved.root, resolved.config, record.initiatives, roadmap.derived);
     for (const [index, item] of record.initiatives.entries()) {
       const facts = derived[index];
       items.push({
@@ -331,6 +333,7 @@ async function computeRoadmapView(projectRoot) {
         requiredBy: record.initiatives.filter((other) => other.requires.includes(item.id)).map((other) => other.id),
         rationale: item.rationale ?? null,
         decision: item.decision,
+        workItem: facts.workItem ?? null,
         findings: await initiativeFindings(projectRoot, config, item.id),
         ...sliceFacts(await claimedSlices(projectRoot, item.id))
       });
@@ -447,6 +450,9 @@ async function computeInitiativeView(projectRoot, id) {
     relatedTitles: relatedTitles(roadmap, id),
     // A superseded initiative's page names the initiative that superseded it by its title.
     supersededBy: supersedingItem(roadmap, id),
+    workItem: await initiativeWorkItem(projectRoot, roadmap, id),
+    // A merged or split item's page names the items it went into by their titles.
+    closedInto: closedInto(roadmap, id),
     exists: loaded.exists,
     valid: loaded.valid,
     errors: loaded.errors,
@@ -458,6 +464,23 @@ async function computeInitiativeView(projectRoot, id) {
     slices,
     config: { paths: config.paths }
   };
+}
+async function initiativeWorkItem(projectRoot, roadmap, id) {
+  if (!roadmap.items.some((item) => item.id === id)) return null;
+  try {
+    const { stage, unmet, revision, record, requirements, cited, proposal } = await getWorkItem({ projectRoot, item: id });
+    const citing = new Set(cited.flatMap((entry) => entry.citedBy));
+    const titles = Object.fromEntries(roadmap.items.filter((other) => citing.has(other.id)).map((other) => [other.id, other.title]));
+    return { stage, unmet, revision, record, requirements, cited, proposal, titles };
+  } catch (error) {
+    return { stage: null, unmet: [], revision: null, record: null, requirements: [], cited: [], proposal: null, titles: {}, problem: { code: error?.code ?? "work_item_unreadable", message: error?.message ?? String(error) } };
+  }
+}
+function closedInto(roadmap, id) {
+  const decision = roadmap.items.find((item) => item.id === id)?.decision;
+  if (decision?.kind !== "merged" && decision?.kind !== "split") return [];
+  const ids = decision.kind === "merged" ? [decision.into] : Array.isArray(decision.into) ? decision.into : [];
+  return ids.filter((other) => typeof other === "string").map((other) => ({ id: other, title: roadmap.items.find((item) => item.id === other)?.title ?? other }));
 }
 function supersedingItem(roadmap, id) {
   const decision = roadmap.items.find((item) => item.id === id)?.decision;
@@ -1506,13 +1529,26 @@ async function computeNavigation(projectRoot) {
     places: { attention: attentionPlace(attention), work: await workGroups(projectRoot, listedInitiatives), history: historyEntries(roadmap), knowledge: await knowledgeEntries(projectRoot, { config, glossary, diagrams, ...readable }) }
   };
 }
+const SETTLED_DECISIONS = /* @__PURE__ */ new Set(["shipped", "superseded", "killed", "merged", "split"]);
 function historyEntries(roadmap) {
-  const settled = (roadmap.items ?? []).filter((item) => item.decision?.kind === "shipped" || item.decision?.kind === "superseded");
+  const settled = (roadmap.items ?? []).filter((item) => SETTLED_DECISIONS.has(item.decision?.kind));
   const time = (item) => {
     const value = Date.parse(item.decision.at ?? "");
     return Number.isFinite(value) ? value : -Infinity;
   };
-  return settled.map((item, order) => ({ item, order })).sort((left, right) => time(right.item) - time(left.item) || left.order - right.order).map(({ item }) => ({ id: item.id, title: item.title, decision: item.decision.kind, at: item.decision.at ?? null, by: item.decision.kind === "superseded" ? item.decision.by ?? null : null }));
+  return settled.map((item, order) => ({ item, order })).sort((left, right) => time(right.item) - time(left.item) || left.order - right.order).map(({ item }) => {
+    const { kind } = item.decision;
+    const by = kind === "superseded" ? item.decision.by ?? null : kind === "merged" ? item.decision.into ?? null : null;
+    return {
+      id: item.id,
+      title: item.title,
+      decision: kind,
+      at: item.decision.at ?? null,
+      by,
+      ...kind === "killed" ? { reason: item.decision.reason ?? null } : {},
+      ...kind === "split" ? { into: Array.isArray(item.decision.into) ? [...item.decision.into] : [] } : {}
+    };
+  });
 }
 const WORK_GROUPS = Object.freeze([
   { key: "in-progress", label: "In progress" },
@@ -1546,7 +1582,7 @@ async function initiativePlace(projectRoot, id) {
   const view = await loadInitiativeView(projectRoot, id).catch(() => null);
   const roadmap = view ? null : await loadRoadmapView(projectRoot);
   const decision = (view?.roadmapItem ?? roadmap?.items.find((item) => item.id === id))?.decision?.kind;
-  if (decision === "shipped" || decision === "superseded") return "history";
+  if (SETTLED_DECISIONS.has(decision)) return "history";
   return view?.exists ? "work" : "roadmap";
 }
 const NAVIGATION_TREE_STATES = /* @__PURE__ */ new Set(["planned", "in-progress", "unlisted"]);
@@ -1679,8 +1715,8 @@ function relatedTitles(roadmap, id) {
 }
 function bandRank(roadmap, id) {
   const item = roadmap.items.find((entry) => entry.id === id);
-  if (!item || item.state === "shipped" || item.state === "superseded") return null;
-  const rank = roadmap.items.filter((entry) => entry.band === item.band && entry.state !== "shipped" && entry.state !== "superseded").findIndex((entry) => entry.id === id);
+  if (!item || SETTLED_DECISIONS.has(item.state)) return null;
+  const rank = roadmap.items.filter((entry) => entry.band === item.band && !SETTLED_DECISIONS.has(entry.state)).findIndex((entry) => entry.id === id);
   return rank < 0 ? null : rank + 1;
 }
 const CODE_FILE_REF = /^code:[^:/]+:./;

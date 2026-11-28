@@ -16,6 +16,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readRoadmap } from "./roadmap.mjs";
 import { roadmapEntry, shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction, validEarlierName } from "./state.mjs";
+import { recordWorkItemAnswer } from "./work-items.mjs";
 import { recommendedChoice } from "./format-migrations.mjs";
 import { RUN_ID, allRuns, answerMigrationRun, continueMigrationRun, failContinuation, followedRun, readRun, rerunMigration, settledRunLaunches } from "./migration-runs.mjs";
 import { ambiguousApprovalMessage, answerArtifactApproval, answeredApprovalGates, commentOnArtifact, pendingApprovalGates, storeArtifactTarget, withdrawArtifactApproval } from "./store-artifacts.mjs";
@@ -1242,14 +1243,15 @@ async function applyAction({ projectRoot, target, action, input, revision, confi
       await appendIndexHistory(read.component.root, applied);
     }
   } else {
-    const written = await recordPersonAction({ projectRoot, initiative: parsed.initiative, prepare: async (coordination) => {
+    const record = async (guard) => (await recordPersonAction({ projectRoot, initiative: parsed.initiative, prepare: async (coordination) => {
       const context = await readTarget(projectRoot, parsed, indexer, coordination, env, checkouts, readOptions);
       const checked = await check(definition, context, request);
       if (!checked) return null;
+      if (guard) await guard(checked.after, coordination);
       const entry = await entryOf(checked, context);
       return { entry, ...definition.change(context, checked.after) };
-    } });
-    applied = written.entry;
+    } })).entry;
+    applied = parsed.kind === "gate" && definition.id === "gate.answer" ? await recordWorkItemAnswer({ projectRoot, item: parsed.initiative, gate: parsed.gate, write: record }) : await record();
   }
   if (parsed.kind === "approval") return { applied, actions: [], artifact: { path: read.gateRecord.artifact.path, scope: read.gateRecord.artifact.scope } };
   if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, ...read.artifact.path === null ? { location: read.artifact.location } : {}, scope: read.artifact.scope }, comment: stored.id };
