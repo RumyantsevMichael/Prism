@@ -39,19 +39,19 @@ const tracer = () => {
   const ssr = proto.setSelectionRange;
   proto.setSelectionRange = function (...a) { log(`ssr(${a.slice(0, 2)}) conn=${this.isConnected} ${where()}`); return ssr.apply(this, a); };
   const desc = Object.getOwnPropertyDescriptor(proto, "value");
-  Object.defineProperty(proto, "value", { get() { return desc.get.call(this); }, set(v) { if (v) log(`value=${String(v).length} conn=${this.isConnected} ${where()}`); desc.set.call(this, v); }, configurable: true });
+  Object.defineProperty(proto, "value", { get() { return desc.get.call(this); }, set(v) { if (v) log(`value=${String(v).length} conn=${this.isConnected}`); desc.set.call(this, v); }, configurable: true });
   const fetch0 = window.fetch;
   window.fetch = async (...a) => {
     const url = String(a[0]?.url ?? a[0]);
     const response = await fetch0(...a);
-    if (/api\/(entity|events|actions)/.test(url)) {
+    if (/api\/(entity|events)/.test(url) || (/api\/actions/.test(url) && a[1]?.method === "POST")) {
       log(`fetch ${(a[1]?.method ?? "GET")} ${url.replace(/^.*\/api\//, "")} ${response.status}`);
-      if (url.includes("entity?ref=attention")) response.clone().text().then((text) => { if (window.__snaps.at(-1)?.text !== text) { window.__snaps.push({ at: Math.round(performance.now() - t0), text }); log(`snapshot changed #${window.__snaps.length}`); } });
+      if (false) response.clone().text().then((text) => { if (window.__snaps.at(-1)?.text !== text) { window.__snaps.push({ at: Math.round(performance.now() - t0), text }); log(`snapshot changed #${window.__snaps.length}`); } });
     }
     return response;
   };
   document.addEventListener("focusin", (e) => log(`focusin ${e.target.localName}`), true);
-  document.addEventListener("focusout", (e) => log(`focusout ${e.target.localName} -> ${e.relatedTarget?.localName ?? "none"}`), true);
+  document.addEventListener("focusout", (e) => log(`focusout ${e.target.localName} -> ${e.relatedTarget?.localName ?? "none"} conn=${e.target.isConnected} vis=${e.target.checkVisibility?.()} ${where()}`), true);
   const start = () => new MutationObserver((records) => { for (const r of records) { for (const n of r.addedNodes) if (n.classList?.contains("artifact-stage")) log("STAGE begin"); for (const n of r.removedNodes) if (n.querySelector?.("textarea")) log(`removed textarea from ${r.target.id || r.target.className || r.target.localName}`); } }).observe(document.body, { childList: true, subtree: true });
   if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);
 };
@@ -72,7 +72,7 @@ const info = (element) => {
   return { h: rect.height, val: element.value.length, conn: element.isConnected, active: document.activeElement === element, at: element.selectionStart };
 };
 
-for (let round = 1; round <= 12; round += 1) test(`DIAG2 note grows ${round}`, { skip, timeout: 90000 }, async (context) => {
+for (let round = 1; round <= 16; round += 1) test(`DIAG2 note grows ${round}`, { skip, timeout: 90000 }, async (context) => {
   await useAppDirectory(context);
   const page = await openPage(await launch(context), await writableReviewUrl(context, await demoProject(context, "seed-stress.mjs"), "attention"), { viewport: { width: 1440, height: 900 }, prepare: (browserContext) => browserContext.addInitScript(tracer) });
   const note = page.locator('.attention-sheet:not([hidden]) .gate-answer prism-field[data-field="note"] textarea');
@@ -84,7 +84,7 @@ for (let round = 1; round <= 12; round += 1) test(`DIAG2 note grows ${round}`, {
   const grown = await note.evaluate(info);
   const ok = grown.h > empty.h;
   console.log(`DIAG2 ${round} ${ok ? "PASS" : "FAIL"} ${JSON.stringify({ empty, grown })}`);
-  if (!ok || round === 1) await report(page, `494 round ${round}`);
+  if (!ok) await report(page, `494 round ${round}`);
 });
 
 async function writableAttention(context, viewport, init) {
@@ -110,7 +110,7 @@ async function submitState(answer) {
   return { label: await shownText(submit), variant: await submit.getAttribute("variant"), disabled: await submit.evaluate((element) => element.hasAttribute("disabled")) };
 }
 
-for (let round = 1; round <= 10; round += 1) test(`DIAG3 cursor ${round} survives another answer of the same initiative: the note keeps its text and focus while Attention is drawn again, and Send goes against the new revision`, { skip, timeout: 90000 }, async (context) => {
+for (let round = 1; round <= 24; round += 1) test(`DIAG3 cursor ${round} survives another answer of the same initiative: the note keeps its text and focus while Attention is drawn again, and Send goes against the new revision`, { skip, timeout: 90000 }, async (context) => {
   const page = await writableAttention(context, { width: 1440, height: 900 }, tracer);
   await pick(page, "Review the change map");
   const row = answerOf(page).locator('.action-row[data-action-key$="|gate.answer"]');
@@ -141,7 +141,7 @@ for (let round = 1; round <= 10; round += 1) test(`DIAG3 cursor ${round} survive
     return { tag: active?.localName, value: active?.value, at: active?.selectionStart, field: active?.closest("prism-field")?.dataset.field };
   });
   console.log(`DIAG3 ${round} ${kept.at === 5 ? "PASS" : "FAIL"} ${JSON.stringify(kept)}`);
-  if (kept.at !== 5 || round === 1) await report(page, `480 round ${round}`);
+  if (kept.at !== 5) await report(page, `480 round ${round}`);
   assert.deepEqual(kept, { tag: "textarea", value: "Split the parser.", at: 5, field: "note" }, "the note keeps its text, its focus, and its cursor");
   const submit = answerOf(page).locator("prism-button[data-apply]");
   assert.deepEqual([await shownText(submit), await submit.getAttribute("variant")], ["Request changes", "danger"], "the picked answer is kept too");
