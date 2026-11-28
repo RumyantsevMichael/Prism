@@ -4,7 +4,7 @@ import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { INITIATIVE, TARGET, acpFixture, apply, fakeEntry, get, launches, setSettings } from "./fixtures/acp-agents.mjs";
-import { permissionHosts } from "./fixtures/permission-hosts.mjs";
+import { permissionHosts, RELEASED, releaseFile } from "./fixtures/permission-hosts.mjs";
 import { pause, settled } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/launched-sessions.md §29, §30, §31, and §32.
@@ -76,6 +76,7 @@ async function onCodexWith(t, plan) {
   const s = await onCodex(t);
   const hosts = await permissionHosts(s);
   await hosts.setPlan({ codex: plan });
+  s.release = hosts.release;
   return s;
 }
 // An ACP run whose permission request the wrapper of permission-hosts.mjs rewrites under `plan`.
@@ -83,6 +84,7 @@ async function onAgentWith(t, plan) {
   const s = await acpFixture(t, { plans: { gemini: { permission: {} } } });
   const hosts = await permissionHosts(s);
   await hosts.setPlan({ acp: plan });
+  s.release = hosts.release;
   await s.declare([{ ...fakeEntry(s, "gemini", { label: "Gemini CLI" }), command: hosts.acp }]);
   await setSettings(s.root, INITIATIVE, { host: "acp-gemini" });
   return s;
@@ -332,6 +334,7 @@ test("clause 40: a Codex file change whose patch changes while its request waits
   const s = await onCodexWith(t, { before: [patchStarted()], request: fileChange(), after: [{ method: "item/fileChange/patchUpdated", params: { itemId: "item_patch", changes: changed } }] });
   await launchRun(s);
   await pending(s);
+  await s.release();
   assert.deepEqual((await codexAnswer(s))?.result, { decision: "decline" }, "Codex is told the changed patch was declined");
   assert.deepEqual(await settled(async () => (await attention(s)).permissions, (list) => list.length === 0), []);
 });
@@ -462,6 +465,7 @@ test("clause 40: a request that Codex reports resolved is withdrawn and answered
   const s = await onCodexWith(t, { request: { method: "item/commandExecution/requestApproval", params: { itemId: "item_ask", startedAtMs: 1, command: "touch /etc/hosts" } }, after: [{ method: "serverRequest/resolved", params: { requestId: "approval-1" } }] });
   const id = await launchRun(s);
   const [request] = await pending(s);
+  await s.release();
   await withdrawnUnanswered(s, id, request);
   assert.equal(inputsOf(s, "codex").some((message) => message.id === "approval-1" && message.method === undefined), false, "Codex is answered nothing");
 });
@@ -470,16 +474,19 @@ test("clause 40: a request that an ACP agent cancels with $/cancel_request is wi
   const s = await onAgentWith(t, { cancelAfter: true });
   const id = await launchRun(s);
   const [request] = await pending(s);
+  await s.release();
   await withdrawnUnanswered(s, id, request);
   assert.deepEqual(answers(s), [], "the agent is answered nothing");
 });
 
 test("clause 40: a request that Claude Code cancels with control_cancel_request is withdrawn and answered nothing", { skip: posixOnly }, async (t) => {
-  const cancelling = CLAUDE_ASKING.replace('tool_use_id: "toolu_1" } });', 'tool_use_id: "toolu_1" } });\n      setTimeout(() => write({ type: "control_cancel_request", request_id: "ask-1" }), 300);');
+  const released = RELEASED('require("node:path").join(__dirname, "permission-hosts.release")');
+  const cancelling = CLAUDE_ASKING.replace('tool_use_id: "toolu_1" } });', 'tool_use_id: "toolu_1" } });\n      released(() => write({ type: "control_cancel_request", request_id: "ask-1" }));').replace("let buffer", `${released}\nlet buffer`);
   assert.notEqual(cancelling, CLAUDE_ASKING);
   const s = await onClaude(t, cancelling);
   const id = await launchRun(s);
   const [request] = await pending(s);
+  await writeFile(releaseFile(s), "");
   await withdrawnUnanswered(s, id, request);
   assert.equal(inputsOf(s, "claude").some((message) => message.type === "control_response"), false, "Claude Code is answered nothing");
 });
