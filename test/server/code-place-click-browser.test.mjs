@@ -9,11 +9,14 @@ import { repainted } from "./fixtures/wait.mjs";
 // Requirements: docs/requirements/code-place.md §2, §18, §24.
 // Contract: docs/plans/code-place/code-page-redraws/slice.md clauses 1 and 2, through the review page of a workspace in a browser.
 const environment = await isolateGit();
-test.after(() => rm(environment, { recursive: true, force: true }));
 
 const cleanups = [];
 const suite = { after: (cleanup) => cleanups.push(cleanup) };
-test.after(async () => { for (const cleanup of cleanups.reverse()) await cleanup(); });
+// The app and the browser close before their Git settings and data folder go, since Windows refuses to delete a file that a running Git process holds.
+test.after(async () => {
+  for (const cleanup of cleanups.reverse()) await cleanup();
+  await rm(environment, { recursive: true, force: true });
+});
 const TIMEOUT = { skip, timeout: 600000 };
 
 const tree = (page) => page.getByRole("tree", { name: "Files of every repository" });

@@ -8,10 +8,13 @@ import { STRATEGY, codePlaceWorkspace, commitWork } from "./fixtures/code-place.
 // A kept files or versions answer is keyed on everything of the branch models that it reads, so a push to the default branch alone,
 // which moves no shown line's tip, still shows in the next answers of every scope.
 const environment = await isolateGit();
-test.after(() => rm(environment, { recursive: true, force: true }));
 const cleanups = [];
 const suite = { after: (cleanup) => cleanups.push(cleanup) };
-test.after(async () => { for (const cleanup of cleanups.reverse()) await cleanup(); });
+// The app and the browser close before their Git settings and data folder go, since Windows refuses to delete a file that a running Git process holds.
+test.after(async () => {
+  for (const cleanup of cleanups.reverse()) await cleanup();
+  await rm(environment, { recursive: true, force: true });
+});
 
 test("kept answers follow a push to the default branch that moves no shown line's tip", { timeout: 600000 }, async () => {
   const workspace = await codePlaceWorkspace(suite);
