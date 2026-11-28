@@ -10,11 +10,14 @@ import { repainted } from "./fixtures/wait.mjs";
 // Requirements: docs/requirements/code-place.md §2, §3, §9, §10, §14 to §19, §22 to §24, §26 to §29.
 // Contract: docs/plans/code-place/slice.md clauses 3 to 5, 37, and 39 to 49, through the review page of a workspace in a browser.
 const environment = await isolateGit();
-test.after(() => rm(environment, { recursive: true, force: true }));
 
 const cleanups = [];
 const suite = { after: (cleanup) => cleanups.push(cleanup) };
-test.after(async () => { for (const cleanup of cleanups.reverse()) await cleanup(); });
+// The app and the browser close before their Git settings and data folder go, since Windows refuses to delete a file that a running Git process holds.
+test.after(async () => {
+  for (const cleanup of cleanups.reverse()) await cleanup();
+  await rm(environment, { recursive: true, force: true });
+});
 let shared = null;
 const workspace = () => (shared ??= codePlaceWorkspace(suite).then(async (built) => {
   await built.ready("place");

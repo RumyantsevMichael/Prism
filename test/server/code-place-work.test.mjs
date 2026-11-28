@@ -7,12 +7,15 @@ import { codePlaceWorkspace, commitWork } from "./fixtures/code-place.mjs";
 // Requirements: docs/requirements/code-place.md §4, §5, §6, §7, §11, §12, §24.
 // Contract: docs/plans/code-place/slice.md clauses 11 and 13 to 18, through GET ./api/code/place of a workspace page.
 const environment = await isolateGit();
-test.after(() => rm(environment, { recursive: true, force: true }));
 
 // One shared workspace: building it verifies five slices, so every test reads the same one, and it is removed after the last test.
 const cleanups = [];
 const suite = { after: (cleanup) => cleanups.push(cleanup) };
-test.after(async () => { for (const cleanup of cleanups.reverse()) await cleanup(); });
+// The app and the browser close before their Git settings and data folder go, since Windows refuses to delete a file that a running Git process holds.
+test.after(async () => {
+  for (const cleanup of cleanups.reverse()) await cleanup();
+  await rm(environment, { recursive: true, force: true });
+});
 let shared = null;
 const workspace = () => (shared ??= codePlaceWorkspace(suite));
 
