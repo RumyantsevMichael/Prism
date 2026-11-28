@@ -122,7 +122,8 @@ test("an answer being written survives another answer of the same initiative: th
   await row.locator("prism-choice-option").nth(1).click();
   const note = row.locator('prism-field[data-field="note"] textarea');
   await note.fill("Split the parser.");
-  await note.evaluate((element) => element.setSelectionRange(5, 5));
+  // The answer form may draw itself again after the fill, replacing the note, so the cursor is placed in the note that has focus at that moment, found and moved in one step.
+  await page.evaluate(() => document.activeElement.setSelectionRange(5, 5));
   // Another tab answers the initiative's other question, which changes the initiative's record and so the revision this card read.
   const other = await page.evaluate(async (own) => {
     const initiative = own.split("/")[0];
@@ -162,7 +163,8 @@ test("a cursor the person moves while Attention is drawn again stays where they 
   await row.locator("prism-choice-option").nth(1).click();
   const note = row.locator('prism-field[data-field="note"] textarea');
   await note.fill("Split the parser.");
-  await note.evaluate((element) => element.setSelectionRange(5, 5));
+  // The answer form may draw itself again after the fill, replacing the note, so the cursor is placed in the note that has focus at that moment, found and moved in one step.
+  await page.evaluate(() => document.activeElement.setSelectionRange(5, 5));
   // Once the new view starts to be built beside the page, the person moves the cursor to after "Sp" and types there.
   await page.evaluate(() => {
     const observer = new MutationObserver((records) => {
