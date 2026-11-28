@@ -173,16 +173,26 @@ test("a gate's note grows with its text up to a limit", { skip, timeout: 90000 }
   // Only a tab that can make changes edits the note.
   await useAppDirectory(context);
   const page = await openPage(await launch(context), await writableReviewUrl(context, await demoProject(context, "seed-stress.mjs"), "attention"), { viewport: { width: 1440, height: 900 } });
-  const note = page.locator('.attention-sheet:not([hidden]) .gate-answer prism-field[data-field="note"] textarea');
-  const empty = await note.evaluate((element) => element.getBoundingClientRect().height);
-  await note.fill(Array.from({ length: 8 }, (_, index) => `Line ${index + 1} of a longer note.`).join("\n"));
+  const selector = '.attention-sheet:not([hidden]) .gate-answer prism-field[data-field="note"] textarea';
+  const note = page.locator(selector);
+  // The answer form may draw itself again while the note is written, which replaces the note with a new one that holds the same text,
+  // so each reading measures the note the page shows at that moment, found and measured in one step.
+  const measure = () => page.evaluate((query) => {
+    const element = document.querySelector(query);
+    return { height: element.getBoundingClientRect().height, hidden: element.scrollHeight - element.clientHeight, scrolls: element.scrollHeight > element.clientHeight, length: element.value.length };
+  }, selector);
+  await note.waitFor();
+  const empty = (await measure()).height;
+  const eight = Array.from({ length: 8 }, (_, index) => `Line ${index + 1} of a longer note.`).join("\n");
+  await note.fill(eight);
   await repainted(page);
-  const grown = await note.evaluate((element) => ({ height: element.getBoundingClientRect().height, hidden: element.scrollHeight - element.clientHeight }));
+  const grown = await measure();
+  assert.equal(grown.length, eight.length, "the note keeps its text");
   assert.ok(grown.height > empty, "the note grows with its text");
   assert.ok(grown.hidden <= 1, "and shows all of it");
   await note.fill(Array.from({ length: 80 }, (_, index) => `Line ${index + 1}.`).join("\n"));
   await repainted(page);
-  const capped = await note.evaluate((element) => ({ height: element.getBoundingClientRect().height, scrolls: element.scrollHeight > element.clientHeight }));
+  const capped = await measure();
   assert.ok(capped.height < 800 && capped.scrolls, "past its limit the note scrolls");
   assert.deepEqual(page.errors, []);
 });
