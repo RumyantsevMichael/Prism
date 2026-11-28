@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.1](https://github.com/RumyantsevMichael/Prism/compare/v0.36.0...v0.36.1) (2026-11-28)
+
+
+### Fixed
+
+* measure and move the answer note the page shows when the form redraws ([#497](https://github.com/RumyantsevMichael/Prism/issues/497)) ([696c412](https://github.com/RumyantsevMichael/Prism/commit/696c412a7b450bef3288c9bc0aa5ac8babf3f0b0)), closes [#494](https://github.com/RumyantsevMichael/Prism/issues/494) [#480](https://github.com/RumyantsevMichael/Prism/issues/480)
+
 ## [0.36.0](https://github.com/RumyantsevMichael/Prism/compare/v0.35.0...v0.36.0) (2026-11-27)
 
 
