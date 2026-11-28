@@ -9,11 +9,14 @@ import { DEADLINE_STRATEGY, METRICS_STRATEGY, STRATEGY, TIDY_STRATEGY, applyStep
 // Requirements: docs/requirements/code-place.md §2, §9, §15 to §20, §22, §23, §25, §26, §31.
 // Contract: docs/plans/code-place/slice.md clauses 26 to 39, through GET ./api/code/files, versions, and diff of a workspace page.
 const environment = await isolateGit();
-test.after(() => rm(environment, { recursive: true, force: true }));
 
 const cleanups = [];
 const suite = { after: (cleanup) => cleanups.push(cleanup) };
-test.after(async () => { for (const cleanup of cleanups.reverse()) await cleanup(); });
+// The app and the browser close before their Git settings and data folder go, since Windows refuses to delete a file that a running Git process holds.
+test.after(async () => {
+  for (const cleanup of cleanups.reverse()) await cleanup();
+  await rm(environment, { recursive: true, force: true });
+});
 let shared = null;
 const workspace = () => (shared ??= codePlaceWorkspace(suite));
 const TIMEOUT = { timeout: 600000 };
